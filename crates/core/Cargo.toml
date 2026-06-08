@@ -1,0 +1,11 @@
+[package]
+name = "tileworld_core"
+version = "0.1.0"
+edition = "2024"
+
+# Pure, deterministic game logic — NO bevy, NO rendering, NO I/O. This is the
+# port of the TS `src/world/*` pure modules (pathfinding, wave director, frontier
+# gradient, ork config, factions, map constants). Everything here is unit-tested
+# with plain `cargo test` and is the validation spec the Bevy port must satisfy.
+# f64 throughout to match JS `number` semantics for cross-language parity.
+[dependencies]

@@ -1,0 +1,22 @@
+[workspace]
+members = ["crates/core"]
+
+[package]
+name = "tileworld_bevy_forest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.18.1"
+bevy_egui = "0.39.1" # live debug-tuning panel (egui), targets bevy 0.18
+# Pure, deterministic game logic vendored from the ditched port (zero deps, edition 2024).
+# Source of the parity-tested stores: pathfinding, waves, upgrades, inventory, animals, etc.
+tileworld_core = { path = "crates/core" }
+
+# Compile bevy deps with optimizations even in dev — otherwise the scene runs
+# at single digit FPS. Our own crate stays fast-to-compile at opt-level 0.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1

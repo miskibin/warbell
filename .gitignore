@@ -1,0 +1,7 @@
+# Rust build output
+/target
+/target-hero
+
+# Dev screenshots / comparison renders dropped in the repo root (the FOREST_SHOT harness
+# writes PNGs here). Real game art lives under assets/.
+/*.png

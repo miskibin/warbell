@@ -1,0 +1,143 @@
+//! Forest biome — the reference implementation every other biome mirrors. Ports the
+//! original hand-tuned forest (grass ground, broadleaf/birch/dead trees, bushes, rocks,
+//! ground cover) into the declarative [`BiomeConfig`], plus a `landmarks` hook that
+//! drops the ruins + the full `decor` charm (logs, reeds, fireflies…).
+//!
+//! Land/ocean split: hills + treeline fill the `z < 0` half (`land_dir = -π/2`,
+//! `land_arc = π/2`); the `z > 0` half is open sea.
+
+use bevy::prelude::*;
+
+use crate::biome::{Backdrop, Biome, BiomeConfig, BiomeEntity, GroundDetail, ParticleKind, PropClass};
+use crate::groundcover as gc;
+use crate::palette::FOREST_GROUND;
+use crate::props;
+use crate::trees::{build_tree_mesh, TreeKind};
+
+/// Trees are authored ~1.5u tall; scale up so they tower at eye level.
+const TREE_SCALE: f32 = 1.7;
+
+pub fn config() -> BiomeConfig {
+    BiomeConfig {
+        biome: Biome::Forest,
+        name: "Forest",
+
+        ground_color: FOREST_GROUND,
+        ground_roughness: 0.95,
+        detail: GroundDetail {
+            scale: 0.18,
+            strength: 0.45,
+            variation: 0.70,
+            seed: 1.0,
+            dark: 0x356b28,
+            base: 0x5d9e44,
+            light: 0x95d162,
+            grain: 0.55,
+            streak: 0.5,
+        },
+
+        sky: 0xb2d1ed,
+        fog_density: 0.009,
+        sun_color: 0xffedc7,
+        sun_illuminance: 10_500.0,
+        ambient_color: 0xe0edff,
+        ambient_brightness: 85.0,
+        sun_pos: Vec3::new(16.0, 40.0, 10.0),
+
+        seed: 2027,
+        tree_min_dist: 2.7,
+        classes: vec![
+            // Trees: 75% broadleaf / 18% birch / 7% dead.
+            PropClass {
+                variants: vec![
+                    (build_tree_mesh(TreeKind::Broadleaf), 0.75),
+                    (build_tree_mesh(TreeKind::Birch), 0.18),
+                    (build_tree_mesh(TreeKind::Dead), 0.07),
+                ],
+                chance: 0.075,
+                scale: (0.85 * TREE_SCALE, 1.3 * TREE_SCALE),
+                tree: true,
+            },
+            // Bushes (also the tree-too-close fallback).
+            PropClass {
+                variants: (0..props::NUM_BUSH_VARIANTS)
+                    .map(|v| (props::build_bush_mesh(v), 1.0))
+                    .collect(),
+                chance: 0.06,
+                scale: (0.8, 1.35),
+                tree: false,
+            },
+            // Rocks.
+            PropClass {
+                variants: (0..props::NUM_ROCK_VARIANTS)
+                    .map(|v| (props::build_rock_mesh(v), 1.0))
+                    .collect(),
+                chance: 0.03,
+                scale: (0.6, 1.6),
+                tree: false,
+            },
+        ],
+        cover: vec![
+            PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.15, scale: (0.45, 0.7), tree: false },
+            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.40, scale: (0.7, 1.2), tree: false },
+            PropClass {
+                variants: (0..2).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
+                chance: 0.13,
+                scale: (0.7, 1.2),
+                tree: false,
+            },
+            PropClass {
+                variants: (0..3).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
+                chance: 0.12,
+                scale: (0.8, 1.3),
+                tree: false,
+            },
+            PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.08, scale: (0.7, 1.1), tree: false },
+        ],
+        cover_per_tile: 2,
+
+        river: true,
+        river_color: 0x2f8fd6,
+        backdrop: Backdrop {
+            land_dir: -std::f32::consts::FRAC_PI_2,
+            land_arc: std::f32::consts::FRAC_PI_2,
+            ocean: true,
+            ocean_color: 0x2f6fae,
+            hill_body: 0x8f9aa0,
+            hill_cap: 0xb8c2c6,
+            hill_foot: 0x7a8890,
+            treeline: true,
+            treeline_dark: 0x2c4a34,
+            treeline_mid: 0x365c3e,
+            hill_h: (34.0, 78.0),
+        },
+        particle: ParticleKind::None,
+    }
+}
+
+/// Ruins + the decor charm.
+pub fn landmarks(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(crate::ruins::build_trilithon_mesh())),
+        MeshMaterial3d(mat.clone()),
+        Transform::from_xyz(-11.0, 0.0, -12.0).with_rotation(Quat::from_rotation_y(0.4)),
+        BiomeEntity,
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(crate::ruins::build_giant_dead_tree_mesh())),
+        MeshMaterial3d(mat),
+        Transform::from_xyz(10.0, 0.0, -13.0),
+        BiomeEntity,
+    ));
+
+    crate::decor::build(commands, meshes, materials);
+}

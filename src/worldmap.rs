@@ -1,0 +1,643 @@
+//! The **world map** — a faithful Bevy port of the TS game's island
+//! (`src/world/tileMap.ts`) at the original BASE resolution (144×108): an elliptical
+//! island with a noisy coast, five biome blobs (snow NW, desert NE, rock E, forest SW,
+//! swamp S), a grass centre safe-zone (the future castle spot), a grass frontier with
+//! scattered forest clumps, a beach ring, two carved rivers + one lake, and **terraced**
+//! stepped heights (flat tile-tops + cliff faces; snow peak 9, rock peak 15).
+//!
+//! Differences from the game (this is a static viewer): no ork camps / castle / wildlife.
+//! Biome boundaries get **smooth colour blending** (the ground mesh's per-vertex colour is
+//! a soft distance-weighted mix of the biome palettes), while the discrete classification
+//! still drives heights + which biome's props scatter on each tile.
+
+use std::sync::OnceLock;
+
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::ExtendedMaterial;
+use bevy::prelude::*;
+
+use crate::biome::{
+    scatter_region, Backdrop, Biome, BiomeConfig, GroundDetail, ParticleKind, PropClass,
+};
+use crate::groundcover as gc;
+use crate::palette::lin;
+use crate::terrain::TerrainMaterial;
+use crate::water::{WaterExt, WaterMaterial, WaterParams};
+
+// ── Map dimensions ───────────────────────────────────────────────────────────────
+/// Map enlargement vs the original base island (more tiles → more land + props).
+pub const MAP_SCALE: f32 = 1.4;
+// The GRID is the enlarged resolution; GENERATION still runs in *base* space — the grid
+// loop samples `classify(ix / MAP_SCALE, …)`, so the island shape is identical, just
+// drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
+// `GX/GZ` are the GRID centre used for world placement + tile-cache indexing.
+const COLS: i32 = 202; // round(144 * 1.4)
+const ROWS: i32 = 151; // round(108 * 1.4)
+const CX: f32 = 72.0; // base COLS/2 — generation centre
+const CZ: f32 = 54.0;
+/// Grid centre (enlarged) — world placement recentres the map onto the origin here.
+pub const GX: f32 = COLS as f32 / 2.0;
+pub const GZ: f32 = ROWS as f32 / 2.0;
+const ISLAND_RX: f32 = 71.0;
+const ISLAND_RZ: f32 = 53.0;
+const ISLAND_EXP: f32 = 2.6;
+const SAFE_R: f32 = 18.0; // castle safe-zone radius (forced flat grass)
+const GROUND_STEP: f32 = 0.5; // world-Y per height class
+const SEA_Y: f32 = -0.4;
+/// Colour-blend half-width (tiles) at biome edges.
+const BLEND: f32 = 4.5;
+
+/// Shared daytime atmosphere: (sky, fog_density, sun_color, sun_illuminance,
+/// ambient_color, ambient_brightness, sun_pos). Light fog so the big island reads across.
+pub const ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
+    (0xb4d2ec, 0.0060, 0xffedc7, 11_000.0, 0xe6edf5, 165.0, Vec3::new(80.0, 110.0, 40.0));
+
+// ── Biome palette (sRGB hex) for the blended ground colour ──────────────────────
+const COL_GRASS: u32 = 0x6fb24c;
+const COL_SAND: u32 = 0xcdb079;
+const COL_FOREST: u32 = 0x5d9e44;
+const COL_ROCK: u32 = 0x8d847a;
+const COL_SNOW: u32 = 0xe4ecf5;
+const COL_DESERT: u32 = 0xddc189;
+const COL_SWAMP: u32 = 0x55613a;
+/// Exposed soil on grass-biome cliff faces (lip lighter, base darker).
+const COL_DIRT: u32 = 0x6b4f30;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TB {
+    Grass,
+    Sand,
+    Forest,
+    Rock,
+    Snow,
+    Desert,
+    Swamp,
+}
+
+struct Region {
+    x: f32,
+    z: f32,
+    r: f32,
+    biome: TB,
+    /// centre height class for mountain biomes (0 = flat biome).
+    peak: i32,
+}
+
+const REGIONS: [Region; 5] = [
+    Region { x: 26.0, z: 24.0, r: 26.0, biome: TB::Snow, peak: 9 }, // NW snow massif
+    Region { x: 112.0, z: 28.0, r: 34.0, biome: TB::Desert, peak: 0 }, // NE dunes
+    Region { x: 122.0, z: 58.0, r: 22.0, biome: TB::Rock, peak: 15 }, // E rock range
+    Region { x: 32.0, z: 80.0, r: 34.0, biome: TB::Forest, peak: 0 }, // SW forest
+    Region { x: 72.0, z: 92.0, r: 32.0, biome: TB::Swamp, peak: 0 }, // S swamp
+];
+
+struct Plateau {
+    x: f32,
+    z: f32,
+    r: f32,
+    peak: i32,
+}
+const PLATEAUS: [Plateau; 2] =
+    [Plateau { x: 98.0, z: 72.0, r: 9.0, peak: 5 }, Plateau { x: 52.0, z: 50.0, r: 7.0, peak: 4 }];
+
+const DELIBERATE_LAKE: (f32, f32, f32, f32) = (92.0, 80.0, 5.0, 3.0); // x,z,rx,rz
+
+// ── Procedural generation (ported from tileMap.ts, base space) ──────────────────
+fn noise_a(x: f32, z: f32) -> f32 {
+    (x * 0.13 + 1.7).sin() * (z * 0.11 - 2.3).cos() + (x * 0.31 + z * 0.29 + 4.5).sin() * 0.5
+}
+fn noise_b(x: f32, z: f32) -> f32 {
+    (x * 0.21 - 3.1).sin() * (z * 0.19 + 0.7).cos() + ((x + z) * 0.07 + 5.2).sin() * 0.4
+}
+
+fn is_land_shape(x: f32, z: f32) -> bool {
+    let dx = (x - CX).abs() / ISLAND_RX;
+    let dz = (z - CZ).abs() / ISLAND_RZ;
+    let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
+    let coast = noise_a(x, z) * 0.08;
+    r + coast < 1.0
+}
+
+fn dist_from_coast(x: f32, z: f32) -> i32 {
+    let mut min = 10;
+    const DIRS: [(f32, f32); 8] =
+        [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)];
+    for (dx, dz) in DIRS {
+        for d in 1..=10 {
+            if !is_land_shape(x + dx * d as f32, z + dz * d as f32) {
+                if d < min {
+                    min = d;
+                }
+                break;
+            }
+        }
+    }
+    min
+}
+
+fn dist_from_castle(x: f32, z: f32) -> f32 {
+    (x - CX).hypot(z - CZ)
+}
+
+fn river_x(z: f32) -> f32 {
+    40.0 + (z * 0.18).sin() * 5.0 + (z * 0.07 + 1.4).sin() * 3.0
+}
+fn river_z(x: f32) -> f32 {
+    20.0 + (x * 0.13 + 0.7).sin() * 4.0
+}
+fn in_mountain(x: f32, z: f32) -> bool {
+    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    REGIONS.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 2.0)
+}
+fn is_river(x: f32, z: f32) -> bool {
+    if dist_from_castle(x, z) < SAFE_R {
+        return false;
+    }
+    if in_mountain(x, z) {
+        return false;
+    }
+    let cx = river_x(z);
+    let w = 0.75 + (z * 0.5).sin() * 0.2;
+    if (x - cx).abs() < w {
+        return true;
+    }
+    if x > 46.0 && x < COLS as f32 - 10.0 {
+        let cz = river_z(x);
+        if (z - cz).abs() < 0.7 {
+            return true;
+        }
+    }
+    false
+}
+fn is_lake(x: f32, z: f32) -> bool {
+    let dx = (x - DELIBERATE_LAKE.0) / DELIBERATE_LAKE.2;
+    let dz = (z - DELIBERATE_LAKE.1) / DELIBERATE_LAKE.3;
+    dx * dx + dz * dz < 1.0
+}
+
+fn edge_fray(x: f32, z: f32) -> f32 {
+    (x * 0.5 + z * 0.35 + 1.3).sin() * 1.1
+        + (x * 0.9 - z * 0.82 + 4.0).sin() * 1.6
+        + (x * 1.5 + z * 1.3 + 2.2).sin() * 1.0
+}
+
+fn region_at(x: f32, z: f32) -> Option<usize> {
+    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    let mut best: Option<usize> = None;
+    let mut best_edge = f32::INFINITY;
+    for (i, reg) in REGIONS.iter().enumerate() {
+        let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
+        let d = (x - reg.x).hypot(z - reg.z) + wob + fray;
+        let edge = d - reg.r;
+        if edge < 0.0 && edge < best_edge {
+            best_edge = edge;
+            best = Some(i);
+        }
+    }
+    best
+}
+
+fn plateau_height(x: f32, z: f32) -> i32 {
+    for p in &PLATEAUS {
+        let d = (x - p.x).hypot(z - p.z);
+        if d >= p.r {
+            continue;
+        }
+        let tiers = (p.peak - 1) as f32;
+        let cls = 2 + ((1.0 - d / p.r) * tiers).floor() as i32;
+        return cls.clamp(2, p.peak);
+    }
+    0
+}
+
+const RAMP_HALF_TILES: f32 = 1.7;
+fn ramp_class(x: f32, z: f32, reg: &Region) -> Option<i32> {
+    if reg.peak <= 0 {
+        return None;
+    }
+    let dx = x - reg.x;
+    let dz = z - reg.z;
+    let dc = dx.hypot(dz);
+    if dc >= reg.r {
+        return None;
+    }
+    let ramp_ang = (CZ - reg.z).atan2(CX - reg.x);
+    let mut da = (dz.atan2(dx) - ramp_ang) % std::f32::consts::TAU;
+    if da < -std::f32::consts::PI {
+        da += std::f32::consts::TAU;
+    }
+    if da > std::f32::consts::PI {
+        da -= std::f32::consts::TAU;
+    }
+    let half_ang = (RAMP_HALF_TILES / dc.max(1.5)).min(std::f32::consts::PI);
+    if da.abs() >= half_ang {
+        return None;
+    }
+    let span = (reg.peak - 2).max(1) as f32;
+    let step_len = reg.r / span;
+    let cls = 2 + ((reg.r - dc) / step_len).floor() as i32;
+    Some(cls.clamp(2, reg.peak))
+}
+
+fn mountain_height(x: f32, z: f32, reg: &Region) -> i32 {
+    if let Some(rc) = ramp_class(x, z, reg) {
+        return rc;
+    }
+    let dc = (x - reg.x).hypot(z - reg.z);
+    let peak = reg.peak;
+    let t = (1.0 - dc / reg.r).max(0.0);
+    let h = (peak as f32 * t * t + noise_b(x, z) * (0.35 + t * 0.95)).round() as i32;
+    h.clamp(1, peak)
+}
+
+fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
+    if !is_land_shape(x, z) {
+        return None;
+    }
+    let dc = dist_from_castle(x, z);
+    if dc < SAFE_R + edge_fray(x, z).max(-4.0) {
+        return Some((TB::Grass, 1));
+    }
+    if is_river(x, z) {
+        return None;
+    }
+    if is_lake(x, z) {
+        return None;
+    }
+    let d = dist_from_coast(x, z) as f32;
+    let beach_w =
+        1.0 + (1.0 + (x * 0.6 + z * 0.42 + 2.1).sin() * 0.8 + (x * 1.25 - z * 0.95 + 0.4).sin() * 0.6).max(0.0);
+    if d <= beach_w {
+        return Some((TB::Sand, 1));
+    }
+    let ph = plateau_height(x, z);
+    if ph > 0 {
+        return Some((TB::Grass, ph));
+    }
+    if let Some(ri) = region_at(x, z) {
+        let reg = &REGIONS[ri];
+        if reg.biome == TB::Swamp && dc < SAFE_R {
+            return Some((TB::Grass, 1));
+        }
+        if reg.peak > 0 {
+            return Some((reg.biome, mountain_height(x, z, reg)));
+        }
+        return Some((reg.biome, 1));
+    }
+    let forest_n = noise_a(x, z) * noise_b(x + 7.0, z - 3.0);
+    if forest_n > 0.5 {
+        return Some((TB::Forest, 1));
+    }
+    Some((TB::Grass, 1))
+}
+
+// ── Tile cache ──────────────────────────────────────────────────────────────────
+static TILES: OnceLock<Vec<Option<(TB, i32)>>> = OnceLock::new();
+fn tiles() -> &'static Vec<Option<(TB, i32)>> {
+    TILES.get_or_init(|| {
+        let mut v = Vec::with_capacity((COLS * ROWS) as usize);
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                // Sample generation in BASE space so the island shape is unchanged.
+                v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
+            }
+        }
+        v
+    })
+}
+fn tile_at(ix: i32, iz: i32) -> Option<(TB, i32)> {
+    if ix < 0 || iz < 0 || ix >= COLS || iz >= ROWS {
+        return None;
+    }
+    tiles()[(iz * COLS + ix) as usize]
+}
+
+// World ↔ tile helpers (world is the enlarged tile-space recentred on the origin).
+fn tile_biome_world(wx: f32, wz: f32) -> Option<Biome> {
+    let t = tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32)?;
+    match t.0 {
+        TB::Forest => Some(Biome::Forest),
+        TB::Snow => Some(Biome::Snow),
+        TB::Rock => Some(Biome::Rocky),
+        TB::Desert => Some(Biome::Desert),
+        TB::Swamp => Some(Biome::Swamp),
+        _ => None,
+    }
+}
+pub fn is_grass_world(wx: f32, wz: f32) -> bool {
+    matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Grass))
+}
+fn tile_top_y_world(wx: f32, wz: f32) -> f32 {
+    match tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32) {
+        Some((_, h)) => (h - 1) as f32 * GROUND_STEP,
+        None => 0.0,
+    }
+}
+
+// ── Public sampling API (wildlife placement + ground-following) ──────────────────
+/// Terrain top Y at world `(x, z)`; `None` over water / off the island. Wildlife uses
+/// this to sit creatures flush on the ground and to reject water/off-map wander steps.
+pub fn ground_at_world(wx: f32, wz: f32) -> Option<f32> {
+    tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|(_, h)| (h - 1) as f32 * GROUND_STEP)
+}
+/// Biome at world `(x, z)` (`None` = grass / sand / water) — wildlife biome placement.
+pub fn biome_at_world(wx: f32, wz: f32) -> Option<Biome> {
+    tile_biome_world(wx, wz)
+}
+
+// ── Blended ground colour ───────────────────────────────────────────────────────
+fn lin3(hex: u32) -> [f32; 3] {
+    let l = lin(hex);
+    [l[0], l[1], l[2]]
+}
+fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+}
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+fn biome_col(b: TB) -> [f32; 3] {
+    lin3(match b {
+        TB::Grass => COL_GRASS,
+        TB::Sand => COL_SAND,
+        TB::Forest => COL_FOREST,
+        TB::Rock => COL_ROCK,
+        TB::Snow => COL_SNOW,
+        TB::Desert => COL_DESERT,
+        TB::Swamp => COL_SWAMP,
+    })
+}
+
+/// Smooth blended ground colour at tile-space (x,z): grass base, each biome blob mixed in
+/// over a soft `BLEND` band at its edge, plus a sandy coast fade.
+fn ground_color(x: f32, z: f32) -> [f32; 4] {
+    let mut col = lin3(COL_GRASS);
+    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    for reg in &REGIONS {
+        let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
+        let d = (x - reg.x).hypot(z - reg.z) + wob + fray;
+        let edge = reg.r - d; // >0 inside
+        let w = smoothstep(-BLEND, BLEND, edge);
+        col = mix3(col, biome_col(reg.biome), w);
+    }
+    // Sandy coast fade.
+    let dco = dist_from_coast(x, z) as f32;
+    col = mix3(col, lin3(COL_SAND), smoothstep(3.5, 0.5, dco) * 0.85);
+    [col[0], col[1], col[2], 1.0]
+}
+
+// ── Build ────────────────────────────────────────────────────────────────────────
+#[allow(clippy::too_many_arguments)]
+pub fn build(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    std_mats: &mut Assets<StandardMaterial>,
+    terrain_mats: &mut Assets<TerrainMaterial>,
+    water_mats: &mut Assets<WaterMaterial>,
+) {
+    // ── Terraced ground mesh (one mesh, blended vertex colours, per-face normals) ──
+    let ground = build_terrain_mesh();
+    let grass_detail = GroundDetail {
+        scale: 0.18,
+        strength: 0.40,
+        variation: 0.70,
+        seed: 1.0,
+        dark: 0x356b28,
+        base: 0x5d9e44,
+        light: 0x95d162,
+        grain: 0.55,
+        streak: 0.5,
+    };
+    let ground_mat = crate::terrain::make_material(&grass_detail, 0.95, images, terrain_mats);
+    commands.spawn((
+        Mesh3d(meshes.add(ground)),
+        MeshMaterial3d(ground_mat),
+        Transform::default(),
+        crate::biome::BiomeEntity,
+    ));
+
+    // ── Sea (big animated water plane under everything; shows at coast/rivers/lake) ──
+    let sea_mesh = meshes.add(Plane3d::default().mesh().size(900.0, 900.0).subdivisions(8).build());
+    let sea = water_mats.add(ExtendedMaterial {
+        base: StandardMaterial {
+            base_color: Color::srgba(0x2f as f32 / 255.0, 0x6f as f32 / 255.0, 0xae as f32 / 255.0, 0.9),
+            perceptual_roughness: 0.3,
+            reflectance: 0.5,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            ..default()
+        },
+        extension: WaterExt {
+            params: WaterParams {
+                params: Vec4::new(0.16, 0.45, 0.4, 0.0),
+                sky_tint: Vec4::new(0.70, 0.82, 0.93, 0.0),
+            },
+        },
+    });
+    commands.spawn((
+        Mesh3d(sea_mesh),
+        MeshMaterial3d(sea),
+        Transform::from_xyz(0.0, SEA_Y, 0.0),
+        crate::biome::BiomeEntity,
+    ));
+
+    // ── Plan the ork camps BEFORE scatter so their clearings can be reserved. ──
+    crate::camps::plan();
+
+    // ── Scatter: each biome's props on its tiles (height-aware), + grass cover ──
+    let lo = -GX;
+    let hi = GX; // square covers the whole grid; off-map tiles mask out
+    for biome in [Biome::Forest, Biome::Snow, Biome::Rocky, Biome::Desert, Biome::Swamp] {
+        let cfg = config_for(biome);
+        scatter_region(
+            &cfg,
+            commands,
+            meshes,
+            std_mats,
+            lo,
+            hi,
+            false,
+            &move |x, z| tile_biome_world(x, z) == Some(biome) && !crate::camps::in_clearing(x, z),
+            &|x, z| tile_top_y_world(x, z),
+        );
+    }
+    // Grass frontier cover (tufts/clover/flowers) on grass tiles.
+    let grass_cfg = grass_config();
+    scatter_region(
+        &grass_cfg,
+        commands,
+        meshes,
+        std_mats,
+        lo,
+        hi,
+        false,
+        &|x, z| is_grass_world(x, z) && !crate::castle::in_footprint(x, z) && !crate::camps::in_clearing(x, z),
+        &|x, z| tile_top_y_world(x, z),
+    );
+
+    // ── Central castle (fully built) on the flat grass centre ──
+    crate::castle::build(commands, meshes, images, std_mats);
+
+    // ── Ork camps: tents/fire/banner/cage + a patrolling warband (registers blockers). ──
+    crate::camps::build(commands, meshes, std_mats);
+
+    // ── Castle townsfolk: ambient villagers milling the courtyard + gates. ──
+    crate::villagers::populate(commands, meshes, std_mats);
+
+    // ── Ambient wildlife — biome-placed animals that wander/graze/startle ──
+    crate::wildlife::populate(commands, meshes, std_mats);
+
+    // ── Biome verbs: mineable ore (rock), forage (swamp herbs / forest apples), chests ──
+    crate::verbs::populate_ore(commands, meshes, std_mats);
+    crate::verbs::populate_forage(commands, meshes, std_mats);
+    crate::verbs::populate_chests(commands, meshes, std_mats);
+
+    // ── Castle defenses: tower/archer/ballista fire emitters (upgrade-gated at runtime) ──
+    crate::defenses::populate_defenders(commands, meshes, std_mats);
+
+    // No distant horizon hills — open ocean fading into fog reads cleaner.
+}
+
+fn config_for(b: Biome) -> BiomeConfig {
+    match b {
+        Biome::Forest => crate::biome_forest::config(),
+        Biome::Snow => crate::biome_snow::config(),
+        Biome::Rocky => crate::biome_rocky::config(),
+        Biome::Desert => crate::biome_desert::config(),
+        Biome::Swamp => crate::biome_swamp::config(),
+    }
+}
+
+/// A cover-only pseudo-config for the open grass frontier (no trees/rocks).
+fn grass_config() -> BiomeConfig {
+    BiomeConfig {
+        biome: Biome::Forest,
+        name: "Grass",
+        ground_color: COL_GRASS,
+        ground_roughness: 0.95,
+        detail: GroundDetail {
+            scale: 0.18, strength: 0.4, variation: 0.7, seed: 1.0,
+            dark: 0x356b28, base: 0x5d9e44, light: 0x95d162, grain: 0.55, streak: 0.5,
+        },
+        sky: 0xb4d2ec, fog_density: 0.0035, sun_color: 0xffedc7, sun_illuminance: 11_000.0,
+        ambient_color: 0xe6edf5, ambient_brightness: 95.0, sun_pos: Vec3::new(80.0, 110.0, 40.0),
+        seed: 7777,
+        tree_min_dist: 2.0,
+        classes: vec![],
+        cover: vec![
+            PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.26, scale: (0.45, 0.8), tree: false },
+            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.30, scale: (0.7, 1.2), tree: false },
+            PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.10, scale: (0.5, 0.85), tree: false },
+            PropClass {
+                variants: (0..3).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
+                chance: 0.12,
+                scale: (0.8, 1.4),
+                tree: false,
+            },
+            PropClass {
+                variants: (0..2).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
+                chance: 0.05,
+                scale: (0.6, 1.0),
+                tree: false,
+            },
+        ],
+        cover_per_tile: 2,
+        river: false,
+        river_color: 0x2f8fd6,
+        backdrop: Backdrop {
+            land_dir: 0.0, land_arc: std::f32::consts::PI, ocean: false, ocean_color: 0x2f6fae,
+            hill_body: 0x8f9aa0, hill_cap: 0xb8c2c6, hill_foot: 0x7a8890,
+            treeline: false, treeline_dark: 0x2c4a34, treeline_mid: 0x365c3e, hill_h: (40.0, 90.0),
+        },
+        particle: ParticleKind::None,
+    }
+}
+
+// ── Terraced terrain mesh ─────────────────────────────────────────────────────────
+fn build_terrain_mesh() -> Mesh {
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    let quad =
+        |p: [[f32; 3]; 4], n: [f32; 3], c: [[f32; 4]; 4], idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
+            let b = pos.len() as u32;
+            for k in 0..4 {
+                pos.push(p[k]);
+                nrm.push(n);
+                col.push(c[k]);
+            }
+            idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+        };
+
+    const NB: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+
+    for iz in 0..ROWS {
+        for ix in 0..COLS {
+            let Some((tb, h)) = tile_at(ix, iz) else { continue };
+            let top = (h - 1) as f32 * GROUND_STEP;
+            let wx = ix as f32 - GX;
+            let wz = iz as f32 - GZ;
+
+            // Top quad (per-corner blended colour). Colour samples in BASE space.
+            let c = |cx: f32, cz: f32| ground_color(cx / MAP_SCALE, cz / MAP_SCALE);
+            quad(
+                [[wx, top, wz], [wx + 1.0, top, wz], [wx + 1.0, top, wz + 1.0], [wx, top, wz + 1.0]],
+                [0.0, 1.0, 0.0],
+                [c(ix as f32, iz as f32), c(ix as f32 + 1.0, iz as f32), c(ix as f32 + 1.0, iz as f32 + 1.0), c(ix as f32, iz as f32 + 1.0)],
+                &mut indices, &mut positions, &mut normals, &mut colors,
+            );
+
+            // Walls down to lower neighbours / water. Grass-biome cliffs show exposed
+            // dirt (lighter soil at the lip, darker toward the base, slight per-tile
+            // jitter); every other biome just darkens its own top colour.
+            let top_col = ground_color((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE);
+            let (wall_top, wall_bot) = if tb == TB::Grass {
+                let j = 0.82 + 0.32 * (noise_b(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) * 0.5 + 0.5);
+                let d = lin3(COL_DIRT);
+                let top = [d[0] * j, d[1] * j, d[2] * j, 1.0];
+                let bot = [d[0] * j * 0.55, d[1] * j * 0.52, d[2] * j * 0.5, 1.0];
+                (top, bot)
+            } else {
+                let dk = [top_col[0] * 0.5, top_col[1] * 0.5, top_col[2] * 0.5, 1.0];
+                (dk, dk)
+            };
+            // Wall quad corner order is [bottom, bottom, top, top].
+            let wc = [wall_bot, wall_bot, wall_top, wall_top];
+            for (dx, dz) in NB {
+                let nh_top = match tile_at(ix + dx, iz + dz) {
+                    Some((_, nh)) => (nh - 1) as f32 * GROUND_STEP,
+                    None => SEA_Y, // coast / river / lake bank
+                };
+                if top <= nh_top + 1e-4 {
+                    continue;
+                }
+                // Shared edge between this tile and the neighbour, vertical nh_top..top.
+                let (e0, e1, n): ([f32; 2], [f32; 2], [f32; 3]) = match (dx, dz) {
+                    (1, 0) => ([wx + 1.0, wz], [wx + 1.0, wz + 1.0], [1.0, 0.0, 0.0]),
+                    (-1, 0) => ([wx, wz + 1.0], [wx, wz], [-1.0, 0.0, 0.0]),
+                    (0, 1) => ([wx + 1.0, wz + 1.0], [wx, wz + 1.0], [0.0, 0.0, 1.0]),
+                    _ => ([wx, wz], [wx + 1.0, wz], [0.0, 0.0, -1.0]),
+                };
+                quad(
+                    [[e0[0], nh_top, e0[1]], [e1[0], nh_top, e1[1]], [e1[0], top, e1[1]], [e0[0], top, e0[1]]],
+                    n,
+                    wc,
+                    &mut indices, &mut positions, &mut normals, &mut colors,
+                );
+            }
+        }
+    }
+
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+

@@ -1,0 +1,443 @@
+//! **Ork camps** — the ambient diorama layer ported from the TS `OrkCamp.tsx` / `Tent.tsx` /
+//! `Campfire.tsx` / `CampCage.tsx`. One camp guards each wilderness biome (snow, desert,
+//! forest, swamp, rock). Each is a clearing of tents, a flickering campfire, a warband banner,
+//! skull-spikes and a prisoner cage with captives, patrolled by a mixed warband (`orks.rs`).
+//!
+//! The scene is a viewer: **no rescue, respawn, combat or faction fighting** — pure set-dressing.
+//! Camps render only in the Combined world-map view (built from `worldmap::build`, like the
+//! castle); single-biome views (keys 1–5) have no island layout, so no camps.
+//!
+//! Placement ([`plan`]) deterministically reject-samples one flat 7×7 walkable clearing per
+//! biome (mountainous snow/rock land on the flat grass apron at the biome edge — what the TS
+//! camps did). The plan is cached in a `OnceLock`; [`in_clearing`] lets the scatter + wildlife
+//! keep their props/herds out of the camps. Solid props register in [`crate::blockers`] so the
+//! orks + wildlife route around them.
+
+use std::f32::consts::{FRAC_PI_2, TAU};
+use std::sync::OnceLock;
+
+use bevy::mesh::MeshBuilder;
+use bevy::prelude::*;
+
+use crate::biome::{Biome, BiomeEntity};
+use crate::orks::{self, Faction, VARIANTS};
+use crate::palette::lin;
+use crate::worldmap::{self, GX, GZ};
+
+// ── Plugin (campfire flicker + smoke) ────────────────────────────────────────────────
+
+pub struct CampsPlugin;
+
+impl Plugin for CampsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, (flicker_flames, drift_smoke));
+    }
+}
+
+/// Campfire flame marker — also the anchor the audio module hangs a spatial campfire loop on.
+#[derive(Component)]
+pub struct Flicker {
+    phase: f32,
+}
+#[derive(Component)]
+struct CampSmoke {
+    base: Vec3,
+    phase: f32,
+    speed: f32,
+}
+
+fn flicker_flames(time: Res<Time>, mut q: Query<(&Flicker, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (f, mut tf) in &mut q {
+        let sx = 1.0 + (t * 7.0 + f.phase).sin() * 0.12 + (t * 14.3 + f.phase).sin() * 0.06;
+        let sy = 1.0 + (t * 9.5 + f.phase).sin() * 0.22;
+        tf.scale = Vec3::new(sx, sy, sx);
+    }
+}
+
+fn drift_smoke(time: Res<Time>, mut q: Query<(&CampSmoke, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (s, mut tf) in &mut q {
+        let cycle = (t * s.speed + s.phase).rem_euclid(1.0);
+        tf.translation.x = s.base.x + (t * 0.7 + s.phase * 6.0).sin() * 0.18 * cycle;
+        tf.translation.z = s.base.z + (t * 0.6 + s.phase * 6.0).cos() * 0.18 * cycle;
+        tf.translation.y = s.base.y + cycle * 1.6;
+        let sc = (0.1 + cycle * 0.4) * (1.0 - cycle).max(0.0);
+        tf.scale = Vec3::splat(sc.max(0.001));
+    }
+}
+
+// ── Placement ─────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+pub struct CampSite {
+    centre: Vec2,
+    faction: Faction,
+    rot: f32,
+    seed: u32,
+}
+
+static SITES: OnceLock<Vec<CampSite>> = OnceLock::new();
+
+/// Half-extent (world units) of a camp's reserved clearing — scatter + wildlife stay out.
+const CLEAR_HALF: f32 = 3.6;
+
+/// Plan one camp per wilderness biome (cached). Pure tile-map queries, so it's deterministic
+/// and stable across biome-switch rebuilds. Call before scatter so clearings get reserved.
+pub fn plan() -> &'static [CampSite] {
+    SITES
+        .get_or_init(|| {
+            let targets = [Biome::Snow, Biome::Desert, Biome::Forest, Biome::Swamp, Biome::Rocky];
+            let mut rng = 0xca37_5eedu32;
+            let mut placed: Vec<CampSite> = Vec::new();
+            for (i, b) in targets.iter().enumerate() {
+                let faction = if i % 2 == 0 { Faction::Red } else { Faction::Blue };
+                let mut found = None;
+                for _ in 0..8000 {
+                    let cx = rng_range(&mut rng, -GX + 8.0, GX - 8.0);
+                    let cz = rng_range(&mut rng, -GZ + 8.0, GZ - 8.0);
+                    if site_ok(cx, cz, *b, &placed) {
+                        found = Some((cx, cz));
+                        break;
+                    }
+                }
+                if let Some((cx, cz)) = found {
+                    let rot = rng_range(&mut rng, 0.0, TAU);
+                    let seed = next_u32(&mut rng);
+                    placed.push(CampSite { centre: Vec2::new(cx, cz), faction, rot, seed });
+                } else {
+                    info!("camps: no flat clearing found for {:?}", b);
+                }
+            }
+            placed
+        })
+        .as_slice()
+}
+
+/// Each camp's `(prisoner-cage world XZ, camp-centre world XZ)` — the rescue interaction walks
+/// up to the cage, and the centre is used to test whether the warband guarding it is cleared.
+/// The cage sits at camp-local `(-2.2, 2.2)` (see `build`), rotated by the site yaw.
+pub fn cage_positions() -> Vec<(Vec2, Vec2)> {
+    plan()
+        .iter()
+        .map(|s| {
+            let w = Quat::from_rotation_y(s.rot) * Vec3::new(-2.2, 0.0, 2.2);
+            (s.centre + Vec2::new(w.x, w.z), s.centre)
+        })
+        .collect()
+}
+
+/// True if `(wx, wz)` is inside any planned camp's clearing (axis-aligned box around centre).
+pub fn in_clearing(wx: f32, wz: f32) -> bool {
+    match SITES.get() {
+        Some(sites) => sites
+            .iter()
+            .any(|c| (wx - c.centre.x).abs() <= CLEAR_HALF && (wz - c.centre.y).abs() <= CLEAR_HALF),
+        None => false,
+    }
+}
+
+/// A candidate `(cx, cz)` is a valid camp centre for `biome` if a flat 7×7 clearing of
+/// base-height land sits there, clear of the castle + central safe-zone + other camps, and it's
+/// in the biome (or on grass within ~8 tiles of it, for the mountainous biomes).
+fn site_ok(cx: f32, cz: f32, biome: Biome, placed: &[CampSite]) -> bool {
+    let Some(h0) = worldmap::ground_at_world(cx, cz) else { return false };
+    if h0 > 0.01 {
+        return false; // flat base ground only (avoids plateaus + mountain terraces)
+    }
+    for dz in -3..=3 {
+        for dx in -3..=3 {
+            match worldmap::ground_at_world(cx + dx as f32, cz + dz as f32) {
+                Some(h) if (h - h0).abs() < 1e-3 => {}
+                _ => return false,
+            }
+        }
+    }
+    if crate::castle::in_footprint(cx, cz) || Vec2::new(cx, cz).length() < 24.0 {
+        return false;
+    }
+    let on_biome = worldmap::biome_at_world(cx, cz) == Some(biome);
+    if !on_biome && !(worldmap::is_grass_world(cx, cz) && biome_within(cx, cz, biome, 8)) {
+        return false;
+    }
+    !placed.iter().any(|c| c.centre.distance(Vec2::new(cx, cz)) < 18.0)
+}
+
+/// True if `biome` occurs on any tile within `r` tiles of `(cx, cz)`.
+fn biome_within(cx: f32, cz: f32, biome: Biome, r: i32) -> bool {
+    for dz in -r..=r {
+        for dx in -r..=r {
+            if worldmap::biome_at_world(cx + dx as f32, cz + dz as f32) == Some(biome) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+// ── Build ────────────────────────────────────────────────────────────────────────
+
+/// Warband member offsets around the fire (camp-local), one per `orks::VARIANTS` entry.
+const WARBAND: [(f32, f32); 4] = [(-0.6, 1.0), (2.6, 1.4), (-2.0, -0.6), (0.3, 2.4)];
+
+/// Build every planned camp: props (registering blockers) + the warband. Tagged `BiomeEntity`
+/// so the biome switch despawns/rebuilds them. Called from `worldmap::build` after the castle.
+pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+    let sites = plan();
+    if sites.is_empty() {
+        return;
+    }
+
+    // Shared vertex-colour material (props + orks) — batches to few draw calls.
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
+    // Emissive flame (bloom-lit, like the castle torches) + translucent smoke.
+    let flame_mat = materials.add(StandardMaterial {
+        base_color: crate::palette::srgb(0xff8a30),
+        emissive: crate::palette::srgb(0xff8a30).to_linear() * 4.0,
+        ..default()
+    });
+    let smoke_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.55, 0.55, 0.57, 0.4),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let smoke_puff = meshes.add(Sphere::new(0.5).mesh().ico(1).unwrap());
+
+    let armory = orks::Armory::new(meshes, mat.clone());
+
+    for site in sites {
+        let rot_q = Quat::from_rotation_y(site.rot);
+        let cy = worldmap::ground_at_world(site.centre.x, site.centre.y).unwrap_or(0.0);
+        let centre3 = Vec3::new(site.centre.x, cy, site.centre.y);
+        let place = |local: Vec3| centre3 + rot_q * local;
+
+        // Static props: (mesh, camp-local pos, local yaw, footprint half-extents (hw,hd) in the
+        // prop's own frame; (0,0) = no collision). Tents are long+thin along their ridge (local
+        // Z), so an ORIENTED box hugs the silhouette instead of a fat square.
+        let (ta, tb) = tent_cols(site.faction);
+        let solids = vec![
+            (tent_mesh(ta), v(-1.1, 0.0, -0.6), 0.3_f32, (0.45_f32, 0.85_f32)),
+            (tent_mesh(tb), v(1.3, 0.0, 0.4), -0.4, (0.45, 0.85)),
+            (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.25, 0.25)),
+            (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
+            (cage_mesh(), v(-2.2, 0.0, 2.2), 0.6, (0.95, 0.95)),
+            (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.55, 0.55)),
+        ];
+        for (m, local, lyaw, (hw, hd)) in solids {
+            let h = meshes.add(m);
+            let world = place(local);
+            commands.spawn((
+                Mesh3d(h),
+                MeshMaterial3d(mat.clone()),
+                Transform { translation: world, rotation: rot_q * ry(lyaw), scale: Vec3::ONE },
+                BiomeEntity,
+            ));
+            if hw > 0.0 && hd > 0.0 {
+                crate::blockers::add_obb(world.x, world.z, hw, hd, site.rot + lyaw);
+            }
+        }
+
+        // Campfire flame (emissive + flicker) + rising smoke, at the fire.
+        let fire = place(v(0.2, 0.0, 0.0));
+        let phase = (site.seed % 1000) as f32 * 0.01;
+        commands.spawn((
+            Mesh3d(meshes.add(flame_mesh())),
+            MeshMaterial3d(flame_mat.clone()),
+            Transform::from_translation(fire + Vec3::Y * 0.28),
+            Flicker { phase },
+            BiomeEntity,
+        ));
+        for i in 0..3 {
+            commands.spawn((
+                Mesh3d(smoke_puff.clone()),
+                MeshMaterial3d(smoke_mat.clone()),
+                Transform::from_translation(fire).with_scale(Vec3::splat(0.01)),
+                CampSmoke { base: fire + Vec3::Y * 0.4, phase: i as f32 / 3.0, speed: 0.3 },
+                BiomeEntity,
+            ));
+        }
+
+        // Warband: one of each variant at its offset, home-anchored to the camp centre.
+        for (i, variant) in VARIANTS.iter().enumerate() {
+            let (lx, lz) = WARBAND[i];
+            let world = place(v(lx, 0.0, lz));
+            let seed = site.seed.wrapping_add((i as u32).wrapping_mul(0x9e37_79b1));
+            armory.spawn(commands, *variant, site.faction, site.centre, Vec2::new(world.x, world.z), seed);
+        }
+    }
+}
+
+// ── Prop models (vertex-coloured, flat-shaded; ported from the TS components) ─────────
+
+const POLE: u32 = 0x3a2a1a;
+const SKULL: u32 = 0xe0d8c0;
+const WOOD: u32 = 0x4b3724;
+const WOOD_DARK: u32 = 0x33271a;
+const BAR: u32 = 0x6b6f76;
+const CAPTIVE_BODY: u32 = 0x7c6a54;
+const CAPTIVE_HEAD: u32 = 0xcaa980;
+const STONE: u32 = 0x6e6e76;
+const LOG_LIGHT: u32 = 0x7a4a26;
+const LOG_DARK: u32 = 0x3a2a1a;
+
+fn tent_cols(f: Faction) -> ([f32; 4], [f32; 4]) {
+    match f {
+        Faction::Blue => (lin(0x3a4a6a), lin(0x2e3a56)),
+        Faction::Red => (lin(0x5a4a38), lin(0x4a3a26)),
+    }
+}
+
+/// Ridge tent — two slanted canvas slopes forming an A-frame + a ridge pole. Each slope is a
+/// thin box, long axis Y (len 1.18), tilted about Z so its top leans inward and the two meet at
+/// the apex (~y 0.93). `from_rotation_z(+θ)` tilts a box's top toward −X, so the LEFT slope
+/// (base at −X) uses −θ to lean its top toward centre (+X), and the right slope +θ.
+fn tent_mesh(canvas: [f32; 4]) -> Mesh {
+    let ang = 0.635; // atan2(0.7, 0.95)
+    group(vec![
+        bxr(0.05, 1.18, 1.4, v(-0.33, 0.46, 0.0), rz(-ang), canvas), // left slope
+        bxr(0.05, 1.18, 1.4, v(0.33, 0.46, 0.0), rz(ang), canvas),   // right slope
+        cyl(0.03, 1.55, v(0.0, 0.95, 0.0), rx(FRAC_PI_2), lin(POLE)), // ridge pole along Z
+    ])
+}
+
+/// Warband banner — tall pole + a faction-coloured flag.
+fn banner_mesh(f: Faction) -> Mesh {
+    group(vec![
+        cyl(0.03, 3.0, v(0.0, 1.5, -1.4), Quat::IDENTITY, lin(POLE)),
+        bx(0.8, 0.5, 0.04, v(0.45, 2.5, -1.4), lin(f.hex())),
+    ])
+}
+
+/// Two skull-topped spikes (decorative; no blocker).
+fn spikes_mesh() -> Mesh {
+    let spike = |x: f32, z: f32, rot: f32| {
+        vec![
+            cyl(0.025, 0.8, v(x, 0.4, z), ry(rot), lin(POLE)),
+            bx(0.12, 0.13, 0.13, v(x, 0.85, z), lin(SKULL)),
+        ]
+    };
+    let mut parts = spike(-0.9, 1.4, 0.4);
+    parts.extend(spike(1.6, 1.2, -0.6));
+    group(parts)
+}
+
+/// Prison cage (`CampCage.tsx`) — kept shut, with two huddled captives inside.
+fn cage_mesh() -> Mesh {
+    const W: f32 = 1.7;
+    const H: f32 = 1.5;
+    const HW: f32 = W / 2.0;
+    let wood = lin(WOOD);
+    let dark = lin(WOOD_DARK);
+    let bar = lin(BAR);
+    let mut p: Vec<Mesh> = Vec::new();
+    // Plank floor.
+    p.push(bx(W + 0.12, 0.12, W + 0.12, v(0.0, 0.06, 0.0), dark));
+    // Corner posts.
+    for (sx, sz) in [(-HW, -HW), (HW, -HW), (-HW, HW), (HW, HW)] {
+        p.push(bx(0.14, H, 0.14, v(sx, H / 2.0, sz), wood));
+    }
+    // Top rim rails (4 sides).
+    p.push(bx(W, 0.1, 0.1, v(0.0, H - 0.05, -HW), wood));
+    p.push(bx(W, 0.1, 0.1, v(0.0, H - 0.05, HW), wood));
+    p.push(bx(0.1, 0.1, W, v(-HW, H - 0.05, 0.0), wood));
+    p.push(bx(0.1, 0.1, W, v(HW, H - 0.05, 0.0), wood));
+    // Vertical bars on all four sides (a closed cage).
+    for o in [-0.45f32, 0.0, 0.45] {
+        p.push(bx(0.07, H - 0.06, 0.07, v(o, H / 2.0, -HW), bar)); // north
+        p.push(bx(0.07, H - 0.06, 0.07, v(o, H / 2.0, HW), bar)); // south
+        p.push(bx(0.07, H - 0.06, 0.07, v(-HW, H / 2.0, o), bar)); // west
+        p.push(bx(0.07, H - 0.06, 0.07, v(HW, H / 2.0, o), bar)); // east (shut door)
+    }
+    // Two captives huddled inside.
+    for (cx, cz) in [(-0.25f32, 0.15f32), (0.3, -0.2)] {
+        p.push(bx(0.32, 0.56, 0.22, v(cx, 0.32, cz), lin(CAPTIVE_BODY)));
+        p.push(bx(0.22, 0.22, 0.22, v(cx, 0.74, cz), lin(CAPTIVE_HEAD)));
+    }
+    group(p)
+}
+
+/// Campfire base — a ring of stones + two crossed logs (the solid, vertex-coloured part).
+fn fire_base_mesh() -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    for i in 0..7 {
+        let a = (i as f32 / 7.0) * TAU;
+        p.push(orb_mesh(0.13, v(a.cos() * 0.42, 0.07, a.sin() * 0.42), lin(STONE)));
+    }
+    p.push(cyl(0.045, 0.72, v(0.0, 0.08, 0.0), xyz(FRAC_PI_2, 0.0, FRAC_PI_2 / 2.0), lin(LOG_LIGHT)));
+    p.push(cyl(0.045, 0.72, v(0.0, 0.13, 0.0), xyz(FRAC_PI_2, 0.0, -FRAC_PI_2 / 2.0), lin(LOG_DARK)));
+    group(p)
+}
+
+/// Flame cones (untinted — the emissive flame material colours them). Built about y≈0 so the
+/// flicker scale grows it from the fire.
+fn flame_mesh() -> Mesh {
+    let outer = Cone { radius: 0.17, height: 0.55 }.mesh().build().translated_by(v(0.0, 0.27, 0.0));
+    let inner = Cone { radius: 0.09, height: 0.35 }.mesh().build().translated_by(v(0.0, 0.2, 0.0));
+    let mut m = outer;
+    m.merge(&inner).expect("cones share attributes");
+    m.duplicate_vertices();
+    m.compute_flat_normals();
+    m
+}
+
+// ── Mesh helpers ─────────────────────────────────────────────────────────────────
+
+fn v(x: f32, y: f32, z: f32) -> Vec3 {
+    Vec3::new(x, y, z)
+}
+fn rx(a: f32) -> Quat {
+    Quat::from_rotation_x(a)
+}
+fn ry(a: f32) -> Quat {
+    Quat::from_rotation_y(a)
+}
+fn rz(a: f32) -> Quat {
+    Quat::from_rotation_z(a)
+}
+fn xyz(x: f32, y: f32, z: f32) -> Quat {
+    Quat::from_euler(EulerRot::XYZ, x, y, z)
+}
+fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
+    let n = m.count_vertices();
+    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
+    m
+}
+fn group(parts: Vec<Mesh>) -> Mesh {
+    let mut it = parts.into_iter();
+    let mut base = it.next().expect("at least one part");
+    for p in it {
+        base.merge(&p).expect("camp parts share attributes");
+    }
+    base.duplicate_vertices();
+    base.compute_flat_normals();
+    base
+}
+fn bx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
+    tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
+}
+fn bxr(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
+    tinted(Cuboid::new(w, h, d).mesh().build().rotated_by(rot).translated_by(off), c)
+}
+fn cyl(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
+    tinted(Cylinder::new(r, h).mesh().resolution(6).build().rotated_by(rot).translated_by(off), c)
+}
+fn orb_mesh(r: f32, off: Vec3, c: [f32; 4]) -> Mesh {
+    tinted(Sphere::new(r).mesh().ico(0).unwrap().translated_by(off), c)
+}
+
+// ── Deterministic mulberry32 RNG ─────────────────────────────────────────────────────
+
+fn next_u32(s: &mut u32) -> u32 {
+    *s = s.wrapping_add(0x6d2b_79f5);
+    let mut t = *s;
+    t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+    t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
+    t ^ (t >> 14)
+}
+fn rng01(s: &mut u32) -> f32 {
+    next_u32(s) as f32 / 4_294_967_296.0
+}
+fn rng_range(s: &mut u32, lo: f32, hi: f32) -> f32 {
+    lo + rng01(s) * (hi - lo)
+}
