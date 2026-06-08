@@ -56,6 +56,7 @@ pub fn player_move(
     cam_q: Query<&Transform, (With<Camera3d>, Without<Hero>)>,
     mut state: ResMut<HeroState>,
     mut pending: ResMut<PendingHeroDamage>,
+    mut feedback: ResMut<crate::combat_fx::HitFeedback>,
     mut cues: MessageWriter<AudioCue>,
     mut poison_acc: Local<f32>,
     mut was_swamp: Local<bool>,
@@ -159,6 +160,7 @@ pub fn player_move(
             let fall = hero.air_takeoff_y - ground_y;
             if fall > FALL_SAFE {
                 pending.0 += (((fall - FALL_SAFE) * FALL_DMG_PER_UNIT).round()).min(FALL_DMG_MAX);
+                crate::combat_fx::add_fov_kick(&mut feedback, crate::combat_fx::FOV_KICK_LAND);
             }
         }
         hero.y = ground_y;

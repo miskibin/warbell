@@ -311,11 +311,27 @@ fn ork_flash(
 // ── 4. Hero hit feedback (red flash + screen shake) ─────────────────────────
 
 /// Decaying feedback state. `flash` = red-overlay alpha; `trauma` drives the
-/// camera shake (read by `player::camera`).
+/// camera shake; `fov_kick` is an additive FOV punch (degrees) — all read by `player::camera`.
 #[derive(Resource, Default)]
 pub struct HitFeedback {
     pub flash: f32,
     pub trauma: f32,
+    /// Additive camera-FOV punch in DEGREES; eased back to 0 by [`drive_hit_flash`]. The old
+    /// game's `fxStore` fovKick — a quick widen on a kill / hard landing for impact.
+    pub fov_kick: f32,
+}
+
+/// FOV-punch decay (deg/s) + cap, and the per-event punch magnitudes (old `fovTunables`,
+/// nudged up for forest's wider 50° base).
+const FOV_KICK_DECAY: f32 = 26.0;
+const FOV_KICK_MAX: f32 = 7.0;
+pub const FOV_KICK_KILL: f32 = 1.6;
+pub const FOV_KICK_HIT: f32 = 0.5;
+pub const FOV_KICK_LAND: f32 = 1.4;
+
+/// Add an FOV punch (degrees), capped — call from a hit/kill/landing site.
+pub fn add_fov_kick(fb: &mut HitFeedback, deg: f32) {
+    fb.fov_kick = (fb.fov_kick + deg).min(FOV_KICK_MAX);
 }
 
 /// Decay the hit-feedback channels. The hit *wince* is now rendered as a mature edge-vignette +
@@ -326,6 +342,7 @@ fn drive_hit_flash(time: Res<Time>, mut fb: ResMut<HitFeedback>) {
     let dt = time.delta_secs();
     fb.flash = (fb.flash - dt * 1.6).max(0.0);
     fb.trauma = (fb.trauma - dt * SHAKE_DECAY).max(0.0);
+    fb.fov_kick = (fb.fov_kick - dt * FOV_KICK_DECAY).max(0.0);
 }
 
 // ── Plugin ──────────────────────────────────────────────────────────────────

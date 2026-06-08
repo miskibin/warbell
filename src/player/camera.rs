@@ -77,9 +77,10 @@ pub fn player_camera(
     mut orbit: ResMut<OrbitCam>,
     mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
     hero_q: Query<&Hero>,
-    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>)>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Hero>)>,
     time: Res<Time>,
     feedback: Option<Res<crate::combat_fx::HitFeedback>>,
+    mut base_fov: Local<Option<f32>>,
     app: Res<State<AppState>>,
     modal: Option<Res<State<Modal>>>,
     egui_wants: Res<crate::debug_panel::EguiWantsPointer>,
@@ -88,7 +89,7 @@ pub fn player_camera(
         return;
     }
     let Ok(hero) = hero_q.single() else { return };
-    let Ok(mut cam_tf) = cam_q.single_mut() else { return };
+    let Ok((mut cam_tf, mut cam_proj)) = cam_q.single_mut() else { return };
 
     // Cursor only locks while actually playing with no panel up; a modal/menu frees it so its
     // buttons are clickable (and a button-click can't re-grab the view). The debug panel
@@ -132,13 +133,18 @@ pub fn player_camera(
         target + Vec3::new(a.sin() * p.cos() * r, p.sin() * r, a.cos() * p.cos() * r);
     cam_tf.look_at(target, Vec3::Y);
 
-    // Trauma-based screen shake layered on the settled pose (fed by combat_fx on hits).
+    // Trauma-based screen shake + FOV punch layered on the settled pose (fed by combat_fx on hits).
     if let Some(fb) = feedback {
         let s = crate::combat_fx::SHAKE_MAX * fb.trauma * fb.trauma;
         if s > 0.0 {
             let t = time.elapsed_secs();
             let jitter = Vec3::new((t * 47.0).sin(), (t * 59.0).sin(), (t * 41.0).sin());
             cam_tf.translation += jitter * s;
+        }
+        // FOV punch: widen the lens off the rest FOV (captured once) by the decaying kick.
+        if let Projection::Perspective(p) = &mut *cam_proj {
+            let base = *base_fov.get_or_insert(p.fov);
+            p.fov = base + fb.fov_kick.to_radians();
         }
     }
 }

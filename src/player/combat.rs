@@ -339,12 +339,15 @@ pub fn player_attack(
         }
     }
 
-    // Juice: a connecting blow shakes the screen + briefly freezes the sim (heavier on a kill).
+    // Juice: a connecting blow shakes the screen, punches the FOV + briefly freezes the sim
+    // (heavier on a kill).
     if killed_any {
         feedback.trauma = (feedback.trauma + SHAKE_KILL).min(1.0);
+        crate::combat_fx::add_fov_kick(&mut feedback, crate::combat_fx::FOV_KICK_KILL);
         hitstop.remaining = hitstop.remaining.max(HITSTOP_KILL);
     } else if hit_any {
         feedback.trauma = (feedback.trauma + SHAKE_HIT).min(1.0);
+        crate::combat_fx::add_fov_kick(&mut feedback, crate::combat_fx::FOV_KICK_HIT);
         hitstop.remaining = hitstop.remaining.max(HITSTOP_HIT);
     }
 
@@ -370,6 +373,34 @@ pub(crate) fn spawn_heal_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3)
             MeshMaterial3d(fx.heal.clone()),
             Transform::from_translation(at).with_scale(Vec3::splat(0.6)),
             Spark { vel, life: 0.5, life0: 0.5, scale0: 0.6 },
+            bevy::light::NotShadowCaster,
+        ));
+    }
+}
+
+/// Generic "pop" burst: fling `n` motes of an arbitrary `mesh`/`mat` out + up from `at` (they
+/// arc, fall and shrink via [`update_sparks`]). Used by the apple-tree harvest pop in `verbs.rs`
+/// so it reuses the spark physics without depending on the combat materials.
+pub(crate) fn spawn_motes(
+    commands: &mut Commands,
+    mesh: &Handle<Mesh>,
+    mat: &Handle<StandardMaterial>,
+    at: Vec3,
+    n: u32,
+    spd: f32,
+    scale0: f32,
+    life: f32,
+) {
+    for i in 0..n {
+        let a = i as f32 * 2.399_963_2; // golden angle → even spread
+        let mag = 0.6 + ((i * 41 % 10) as f32) * 0.07;
+        let up = 0.7 + (i % 3) as f32 * 0.4;
+        let vel = Vec3::new(a.cos() * spd, up * spd * 0.7, a.sin() * spd) * mag;
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(at).with_scale(Vec3::splat(scale0)),
+            Spark { vel, life, life0: life, scale0 },
             bevy::light::NotShadowCaster,
         ));
     }
