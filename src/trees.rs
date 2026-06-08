@@ -33,6 +33,7 @@ pub enum TreeKind {
     Broadleaf,
     Birch,
     Dead,
+    Pine,
 }
 
 /// Tag every vertex of `m` with a flat linear colour so it can be merged with other
@@ -76,11 +77,22 @@ fn foliage(radius: f32, detail: u8, center: Vec3) -> Mesh {
         .translated_by(center)
 }
 
+/// A conifer cone tier sitting with its base at `base_y` (cones are centre-anchored, so
+/// lift by `h/2 + base_y`). `res` = radial sides.
+fn cone_at(radius: f32, height: f32, base_y: f32, res: usize, center_xz: Vec3) -> Mesh {
+    Cone { radius, height }
+        .mesh()
+        .resolution(res as u32)
+        .build()
+        .translated_by(Vec3::new(center_xz.x, height * 0.5 + base_y, center_xz.z))
+}
+
 pub fn build_tree_mesh(kind: TreeKind) -> Mesh {
     let m = match kind {
         TreeKind::Broadleaf => build_broadleaf(),
         TreeKind::Birch => build_birch(),
         TreeKind::Dead => build_dead(),
+        TreeKind::Pine => build_pine(),
     };
     // Flat-shade so the foliage shows crisp icosphere facets (TS `flatShading: true`)
     // rather than soft smooth "blobs".
@@ -243,4 +255,34 @@ fn build_dead() -> Mesh {
     );
 
     merged(vec![trunk, b1, b2, b3, b4])
+}
+
+// ── Pine / spruce conifer — short brown trunk + 3 stacked green cone tiers + a tip ──
+//
+// The forest had no conifer (only the broadleaf/birch/dead broad-crowns), so this adds a
+// strong new pointed silhouette. Snow-FREE (unlike the snow biome's snow-laden pine): a
+// lush dark→light green spruce. Wide low tier → narrow high tier, each base overlapping
+// the one below so the boughs layer. ~1.65u tall (towers a touch over the broadleaf).
+fn build_pine() -> Mesh {
+    // Short stub trunk poking out under the lowest boughs.
+    let trunk = tinted(
+        trunk_part(0.07, 0.09, 0.40, 6, Vec3::new(0.0, 0.20, 0.0)),
+        lin(TREE_TRUNK),
+    );
+
+    // Three green cone tiers, dark (shadowed base) → mid → light (sunlit crown). 7 sides
+    // so the cones read crisply faceted once flat-shaded. (base_y, radius, height, tone).
+    let tiers = [
+        (0.30_f32, 0.52_f32, 0.62_f32, FOLIAGE_DARK),
+        (0.66, 0.40, 0.56, FOLIAGE_MID),
+        (1.02, 0.28, 0.50, FOLIAGE_LIGHT),
+    ];
+    let mut parts = vec![trunk];
+    for (base_y, r, h, c) in tiers {
+        parts.push(tinted(cone_at(r, h, base_y, 7, Vec3::ZERO), lin(c)));
+    }
+    // A small light crown tip capping the spire.
+    parts.push(tinted(cone_at(0.14, 0.28, 1.40, 7, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
+
+    merged(parts)
 }

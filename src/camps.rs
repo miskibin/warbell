@@ -46,6 +46,17 @@ struct CampSmoke {
     speed: f32,
 }
 
+/// Tags JUST the prisoner-cage prop of a camp so the rescue system can despawn it (open the
+/// cage) when the warband is cleared. `camp` = the enumerate index of `plan()` — the same index
+/// [`cage_positions`] and `villagers::camp_rescue` use.
+#[derive(Component)]
+pub struct Cage {
+    pub camp: usize,
+}
+
+/// Index of the cage within the per-camp `solids` vec in [`build`].
+const CAGE_SOLID: usize = 4;
+
 fn flicker_flames(time: Res<Time>, mut q: Query<(&Flicker, &mut Transform)>) {
     let t = time.elapsed_secs();
     for (f, mut tf) in &mut q {
@@ -206,7 +217,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
 
     let armory = orks::Armory::new(meshes, mat.clone());
 
-    for site in sites {
+    for (camp, site) in sites.iter().enumerate() {
         let rot_q = Quat::from_rotation_y(site.rot);
         let cy = worldmap::ground_at_world(site.centre.x, site.centre.y).unwrap_or(0.0);
         let centre3 = Vec3::new(site.centre.x, cy, site.centre.y);
@@ -224,16 +235,21 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
             (cage_mesh(), v(-2.2, 0.0, 2.2), 0.6, (0.95, 0.95)),
             (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.55, 0.55)),
         ];
-        for (m, local, lyaw, (hw, hd)) in solids {
+        for (idx, (m, local, lyaw, (hw, hd))) in solids.into_iter().enumerate() {
             let h = meshes.add(m);
             let world = place(local);
-            commands.spawn((
+            let mut e = commands.spawn((
                 Mesh3d(h),
                 MeshMaterial3d(mat.clone()),
                 Transform { translation: world, rotation: rot_q * ry(lyaw), scale: Vec3::ONE },
                 BiomeEntity,
             ));
-            if hw > 0.0 && hd > 0.0 {
+            if idx == CAGE_SOLID {
+                // The cage: tag it for rescue-despawn, and register NO blocker (the blocker set
+                // is append-only with no removal — one here would leave a phantom wall after the
+                // cage opens). A hollow, walkable cage is fine.
+                e.insert(Cage { camp });
+            } else if hw > 0.0 && hd > 0.0 {
                 crate::blockers::add_obb(world.x, world.z, hw, hd, site.rot + lyaw);
             }
         }
@@ -355,6 +371,47 @@ fn cage_mesh() -> Mesh {
         p.push(bx(0.22, 0.22, 0.22, v(cx, 0.74, cz), lin(CAPTIVE_HEAD)));
     }
     group(p)
+}
+
+/// The OPENED cage — same frame as `cage_mesh`, but the east-face bars are gone (door swung
+/// out) and there are no captives inside. Spawned in place of the closed cage on a rescue, so it
+/// reads as the cage *opening* rather than vanishing.
+fn cage_open_mesh() -> Mesh {
+    const W: f32 = 1.7;
+    const H: f32 = 1.5;
+    const HW: f32 = W / 2.0;
+    let wood = lin(WOOD);
+    let dark = lin(WOOD_DARK);
+    let bar = lin(BAR);
+    let mut p: Vec<Mesh> = Vec::new();
+    p.push(bx(W + 0.12, 0.12, W + 0.12, v(0.0, 0.06, 0.0), dark)); // floor
+    for (sx, sz) in [(-HW, -HW), (HW, -HW), (-HW, HW), (HW, HW)] {
+        p.push(bx(0.14, H, 0.14, v(sx, H / 2.0, sz), wood)); // corner posts
+    }
+    p.push(bx(W, 0.1, 0.1, v(0.0, H - 0.05, -HW), wood));
+    p.push(bx(W, 0.1, 0.1, v(0.0, H - 0.05, HW), wood));
+    p.push(bx(0.1, 0.1, W, v(-HW, H - 0.05, 0.0), wood));
+    p.push(bx(0.1, 0.1, W, v(HW, H - 0.05, 0.0), wood));
+    // Bars on N / S / W only — the EAST side is the door, now open.
+    for o in [-0.45f32, 0.0, 0.45] {
+        p.push(bx(0.07, H - 0.06, 0.07, v(o, H / 2.0, -HW), bar)); // north
+        p.push(bx(0.07, H - 0.06, 0.07, v(o, H / 2.0, HW), bar)); // south
+        p.push(bx(0.07, H - 0.06, 0.07, v(-HW, H / 2.0, o), bar)); // west
+    }
+    // The swung-open door panel, hinged at the SE post and flung outward.
+    p.push(bxr(0.06, H - 0.1, W - 0.12, v(HW + 0.55, H / 2.0, HW - 0.45), ry(FRAC_PI_2 * 0.85), bar));
+    group(p)
+}
+
+/// Replace a closed cage with the opened husk at the same pose (called by the rescue path).
+pub fn open_cage(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    at: Transform,
+) {
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
+    commands.spawn((Mesh3d(meshes.add(cage_open_mesh())), MeshMaterial3d(mat), at, BiomeEntity));
 }
 
 /// Campfire base — a ring of stones + two crossed logs (the solid, vertex-coloured part).

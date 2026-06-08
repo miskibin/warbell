@@ -146,6 +146,26 @@ pub fn spawn_courtyard_guard(
     spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.4, next_u32(&mut rng));
 }
 
+/// Spawn a freed captive as a **settler/militia** at `from` (the camp cage), homed to a courtyard
+/// post so it marches across to the keep and defends it at night — the visible "prisoner walks
+/// out and heads home" the rescue should read as.
+pub fn spawn_settler(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    from: Vec2,
+    seed: u32,
+) {
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    let mut rng = seed | 1;
+    let half = crate::castle::courtyard_half();
+    let post = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
+    let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
+    // home = post (the courtyard) → the Guard's post is the castle; pos = from (the cage) → it
+    // spawns at the camp and `guard_combat` walks it back to its post.
+    spawn(commands, meshes, &mat, kind, post, from, 1.6, 1.4, next_u32(&mut rng));
+}
+
 /// Each purchased District settles a new household — a guard villager joins the courtyard and
 /// the bloodline gains an heir. Driven off `EconomyState.houses` (self-correcting on reset).
 fn grow_population(
@@ -179,6 +199,7 @@ fn camp_rescue(
     mut lives: ResMut<crate::succession::Lives>,
     mut rescued: ResMut<RescuedCamps>,
     orks: Query<&crate::orks::Ork, Without<crate::orks::WaveInvader>>,
+    cages_q: Query<(Entity, &crate::camps::Cage, &Transform)>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut commands: Commands,
@@ -203,16 +224,26 @@ fn camp_rescue(
         }
         // Warband wiped → free the captives.
         rescued.done[i] = true;
-        lives.heirs += 1;
         let y = crate::worldmap::ground_at_world(cage.x, cage.y).unwrap_or(0.0);
+        // Open the cage IN PLACE: swap the closed prop for the opened husk at the same pose.
+        let mut cage_tf = Transform::from_xyz(cage.x, y, cage.y);
+        for (e, c, tf) in &cages_q {
+            if c.camp == i {
+                cage_tf = *tf;
+                commands.entity(e).try_despawn();
+            }
+        }
+        crate::camps::open_cage(&mut commands, &mut meshes, &mut materials, cage_tf);
+        // The captive walks out as a settler/militia, marching from the cage to the castle.
+        spawn_settler(&mut commands, &mut meshes, &mut materials, *cage, 0x5e5c_0000u32.wrapping_add(i as u32 * 97));
+        lives.heirs += 1;
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(cage.x, y + 1.8, cage.y),
-            text: "Captives freed!  +1 heir".into(),
+            text: "Captive freed!  +1 settler".into(),
             color: Color::srgb(0.5, 1.0, 0.6),
             scale: 1.2,
         });
         cues.write(crate::audio::AudioCue::UiSelect);
-        spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, 0x5e5c_0000u32.wrapping_add(i as u32 * 97));
     }
 }
 

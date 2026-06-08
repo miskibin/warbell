@@ -47,11 +47,12 @@ pub fn config() -> BiomeConfig {
         seed: 2027,
         tree_min_dist: 2.7,
         classes: vec![
-            // Trees: 75% broadleaf / 18% birch / 7% dead.
+            // Trees: 55% broadleaf / 16% birch / 22% pine / 7% dead.
             PropClass {
                 variants: vec![
-                    (build_tree_mesh(TreeKind::Broadleaf), 0.75),
-                    (build_tree_mesh(TreeKind::Birch), 0.18),
+                    (build_tree_mesh(TreeKind::Broadleaf), 0.55),
+                    (build_tree_mesh(TreeKind::Birch), 0.16),
+                    (build_tree_mesh(TreeKind::Pine), 0.22),
                     (build_tree_mesh(TreeKind::Dead), 0.07),
                 ],
                 chance: 0.075,

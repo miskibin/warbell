@@ -1,0 +1,80 @@
+//! **Forest nav-grid** — wires core's tested 8-direction A* (`tileworld_core::pathfinding`) to
+//! forest's world-space terrain + blockers so night-wave invaders route to the keep **through the
+//! gates** instead of smearing along the walls. Walls register collision boxes (impassable); gate
+//! gaps register none (open) → A* threads them with no explicit gate-targeting code.
+//!
+//! Coordinate frame: forest is world-space `f32` with the castle at the origin; one tile = one
+//! world unit; `tile = floor(world + G)`. We map a forest tile ↔ a core `PathPoint` (tile+0.5),
+//! and the edge-midpoint `wall_at` test (in core) is what opens gates while blocking walls.
+
+use bevy::prelude::*;
+use tileworld_core::pathfinding::{find_path, Grid, PathPoint};
+
+use crate::blockers;
+use crate::worldmap::{ground_at_world, COLS, GROUND_STEP, GX, GZ, ROWS};
+
+/// A* node budget — forest's enlarged map: a ~40-tile run from the spawn ring to the keep.
+pub const NAV_MAX_NODES: u32 = 1400;
+
+/// World centre of tile `(ix, iz)` in forest world-space (castle at origin).
+#[inline]
+fn tile_world_centre(ix: i32, iz: i32) -> (f32, f32) {
+    (ix as f32 - GX + 0.5, iz as f32 - GZ + 0.5)
+}
+
+/// Forest's terrain + blocker set, viewed as a pathfinding `Grid`.
+pub struct ForestGrid;
+
+impl Grid for ForestGrid {
+    fn cols(&self) -> i32 {
+        COLS
+    }
+    fn rows(&self) -> i32 {
+        ROWS
+    }
+    fn standable(&self, ix: i32, iz: i32) -> bool {
+        let (wx, wz) = tile_world_centre(ix, iz);
+        ground_at_world(wx, wz).is_some() // land (not water / off-map)
+    }
+    fn obstacle_tile(&self, ix: i32, iz: i32) -> bool {
+        let (wx, wz) = tile_world_centre(ix, iz);
+        blockers::is_blocked(wx, wz) // a prop / keep / wall box sits on this tile centre
+    }
+    fn wall_at(&self, px: f64, pz: f64) -> bool {
+        // Core passes continuous coords in ITS grid space (tile+0.5); convert back to forest
+        // world. This edge-midpoint test rejects steps crossing a wall while leaving gaps open.
+        blockers::is_blocked(px as f32 - GX, pz as f32 - GZ)
+    }
+    fn can_step(&self, fx: i32, fz: i32, tx: i32, tz: i32) -> bool {
+        let (fwx, fwz) = tile_world_centre(fx, fz);
+        let (twx, twz) = tile_world_centre(tx, tz);
+        match (ground_at_world(fwx, fwz), ground_at_world(twx, twz)) {
+            (Some(fy), Some(ty)) => (ty - fy).abs() <= GROUND_STEP + 0.1, // ≤1 height class
+            _ => false,
+        }
+    }
+}
+
+/// Forest world XZ → a core `PathPoint` (`find_path` floors internally).
+fn world_to_pathpoint(wx: f32, wz: f32) -> PathPoint {
+    PathPoint { x: (wx + GX) as f64, z: (wz + GZ) as f64 }
+}
+
+/// A* waypoints from `from` to `to` in forest world-space (empty if no route / already there).
+pub fn path_to(from: Vec2, to: Vec2) -> Vec<Vec2> {
+    find_path(&ForestGrid, world_to_pathpoint(from.x, from.y), world_to_pathpoint(to.x, to.y), NAV_MAX_NODES)
+        .into_iter()
+        .map(|p| Vec2::new(p.x as f32 - GX, p.z as f32 - GZ))
+        .collect()
+}
+
+/// A wave invader's cached A* route to the keep (followed + smoothed by `steer::advance`).
+#[derive(Component, Default)]
+pub struct InvaderPath {
+    pub waypoints: Vec<Vec2>,
+    pub cursor: usize,
+    /// Game-time at which to recompute (throttled + staggered per invader).
+    pub next_replan: f32,
+    /// The goal the cached path was computed for (replan if it moves).
+    pub goal_cached: Vec2,
+}

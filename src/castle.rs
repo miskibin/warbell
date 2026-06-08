@@ -21,6 +21,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::biome::BiomeEntity;
+use crate::economy::{Defenses, EconomyState};
 use crate::palette::srgb;
 
 // ── Palette (sRGB hex, from the TS materials) ────────────────────────────────────
@@ -706,10 +707,21 @@ pub fn build(
     std_mats: &mut Assets<StandardMaterial>,
 ) {
     let mats = build_mats(images, std_mats);
-    let mut spawn = |parts: Vec<(Mesh, M)>, pos: Vec3, rot: f32, scale: Vec3| {
+    // Each part is tagged with the upgrade that reveals it (`CastleKind`); gated parts start
+    // hidden so the castle BUILDS UP as you buy (a deliberate change from the old always-full
+    // render). `Always` parts (keep core, courtyard, bell, keep-door torches) show from the start.
+    let mut spawn = |parts: Vec<(Mesh, M)>, pos: Vec3, rot: f32, scale: Vec3, kind: CastleKind| {
+        let vis = if matches!(kind, CastleKind::Always) { Visibility::Inherited } else { Visibility::Hidden };
         for (m, slot) in parts {
             let mesh = meshes.add(bake(m, pos, rot, scale));
-            commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats.get(slot)), Transform::default(), BiomeEntity));
+            commands.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(mats.get(slot)),
+                Transform::default(),
+                vis,
+                CastlePart { kind },
+                BiomeEntity,
+            ));
         }
     };
 
@@ -719,35 +731,36 @@ pub fn build(
         Vec3::ZERO,
         0.0,
         Vec3::ONE,
+        CastleKind::Always,
     );
 
-    // Keep (centre).
-    spawn(keep_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88));
+    // Keep (centre) — always present.
+    spawn(keep_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88), CastleKind::Always);
     for (x, z, rot, len) in wall_segments() {
-        spawn(wall_parts(len), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.78, 1.0));
+        spawn(wall_parts(len), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.78, 1.0), CastleKind::Walls);
     }
     for (x, z) in towers() {
-        spawn(tower_parts(), Vec3::new(x, 0.0, z), 0.0, Vec3::new(0.92, 0.74, 0.92));
+        spawn(tower_parts(), Vec3::new(x, 0.0, z), 0.0, Vec3::new(0.92, 0.74, 0.92), CastleKind::Towers);
     }
     for (x, z, rot) in gates() {
-        spawn(gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.8, 1.0));
+        spawn(gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.8, 1.0), CastleKind::Gate);
     }
-    for (x, z) in houses() {
-        spawn(house_parts(), Vec3::new(x, 0.0, z), face_center(x, z), Vec3::new(0.9, 0.74, 0.9));
+    for (i, (x, z)) in houses().into_iter().enumerate() {
+        spawn(house_parts(), Vec3::new(x, 0.0, z), face_center(x, z), Vec3::new(0.9, 0.74, 0.9), CastleKind::House(i as u8));
     }
-    spawn(farm_parts(5.0, 4.0), Vec3::new(-HALF_X + 4.5, 0.0, 0.0), 0.0, Vec3::ONE);
-    spawn(bell_parts(), Vec3::new(0.0, 0.0, 6.0), 0.0, Vec3::ONE);
+    spawn(farm_parts(5.0, 4.0), Vec3::new(-HALF_X + 4.5, 0.0, 0.0), 0.0, Vec3::ONE, CastleKind::Farm);
+    spawn(bell_parts(), Vec3::new(0.0, 0.0, 6.0), 0.0, Vec3::ONE, CastleKind::Always);
 
-    // Torches: flank each gate (just inside the posts) + the keep door.
+    // Torches: gate torches reveal with the gate; the keep-door pair is always lit.
     for (x, z, rot) in gates() {
         let half = GATE_GAP / 2.0 + 0.5;
         for sx in [-half, half] {
             let local = Quat::from_rotation_y(rot) * Vec3::new(sx, 0.0, 1.0);
-            spawn(torch_parts(), Vec3::new(x + local.x, 0.0, z + local.z), 0.0, Vec3::ONE);
+            spawn(torch_parts(), Vec3::new(x + local.x, 0.0, z + local.z), 0.0, Vec3::ONE, CastleKind::Gate);
         }
     }
     for sx in [-2.3_f32, 2.3] {
-        spawn(torch_parts(), Vec3::new(sx, 0.0, 3.4), 0.0, Vec3::ONE);
+        spawn(torch_parts(), Vec3::new(sx, 0.0, 3.4), 0.0, Vec3::ONE, CastleKind::Always);
     }
 
     // Chimney smoke above each house.
@@ -758,7 +771,7 @@ pub fn build(
         ..default()
     });
     let puff = meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap());
-    for (hx, hz) in houses() {
+    for (hi, (hx, hz)) in houses().into_iter().enumerate() {
         let rot = face_center(hx, hz);
         let local = Quat::from_rotation_y(rot) * Vec3::new((HW / 2.0 - 0.4) * 0.9, 0.0, 0.25 * 0.9);
         let (cx, cz) = (hx + local.x, hz + local.z);
@@ -769,42 +782,60 @@ pub fn build(
                 MeshMaterial3d(smoke_mat.clone()),
                 Transform::from_translation(Vec3::new(cx, base_y, cz)).with_scale(Vec3::splat(0.01)),
                 Smoke { x: cx, z: cz, base_y, phase: i as f32 / 3.0, speed: 0.3 },
+                Visibility::Hidden, // follows its house's reveal
+                CastlePart { kind: CastleKind::House(hi as u8) },
                 BiomeEntity,
             ));
         }
     }
 
-    register_collision();
+    // Only the always-present keep is solid from the start; the gated structures register their
+    // blockers when their upgrade reveals them (see `sync_castle`), so the courtyard is open
+    // until you build the walls — no invisible barriers.
+    register_keep_blocker();
 }
 
-/// Register the castle's solid footprints (boxes sized to the real meshes) so the ambient
-/// animals + player route around it. A small margin is folded in for the mover's body; walls
-/// block symmetrically from BOTH sides (their box spans the full thickness, not the half-tile
-/// the old centreline mark floored into).
-fn register_collision() {
-    /// Player-body margin so you stop just shy of a face instead of clipping into it.
-    const PAD: f32 = 0.12;
-    // Walls — one box per segment, spanning the segment length × the wall thickness.
+/// Player-body margin so movers stop just shy of a face instead of clipping into it.
+const COLLISION_PAD: f32 = 0.12;
+
+/// The keep is solid from the start.
+fn register_keep_blocker() {
+    let p = COLLISION_PAD;
+    crate::blockers::add_box(0.0, 0.0, KEEP_W * 0.88 / 2.0 + p, KEEP_D * 0.88 / 2.0 + p);
+}
+
+/// Perimeter wall blockers — one box per segment (registered when Walls is built).
+fn register_walls_blockers() {
+    let p = COLLISION_PAD;
     for (x, z, rot, len) in wall_segments() {
         let along = len / 2.0;
-        let across = WALL_THICK / 2.0 + PAD;
+        let across = WALL_THICK / 2.0 + p;
         let (hw, hd) = if rot.abs() < 0.1 { (along, across) } else { (across, along) };
         crate::blockers::add_box(x, z, hw, hd);
     }
-    // Towers — battlement footprint (bx 1.8/2.1 × scale 0.92 ≈ 0.95 half).
+}
+
+/// Corner-tower blockers (registered when Towers is built).
+fn register_towers_blockers() {
+    let p = COLLISION_PAD;
     for (x, z) in towers() {
-        crate::blockers::add_box(x, z, 0.95 + PAD, 0.95 + PAD);
+        crate::blockers::add_box(x, z, 0.95 + p, 0.95 + p);
     }
-    // Houses — wall footprint (HW×HD × scale 0.9), with W/D swapped for the ±90° faces.
-    for (x, z) in houses() {
-        let (hx, hz) = (HW * 0.9 / 2.0 + PAD, HD * 0.9 / 2.0 + PAD);
-        let (hw, hd) = if (face_center(x, z).abs() - HALF_PI).abs() < 0.1 { (hz, hx) } else { (hx, hz) };
-        crate::blockers::add_box(x, z, hw, hd);
-    }
-    // Keep — main block (KEEP_W×KEEP_D × scale 0.88).
-    crate::blockers::add_box(0.0, 0.0, KEEP_W * 0.88 / 2.0 + PAD, KEEP_D * 0.88 / 2.0 + PAD);
-    // Farm — soil bed footprint (5×4).
-    crate::blockers::add_box(-HALF_X + 4.5, 0.0, 2.5 + PAD, 2.0 + PAD);
+}
+
+/// One house's blocker (registered when that district is built).
+fn register_house_blocker(i: usize) {
+    let p = COLLISION_PAD;
+    let (x, z) = houses()[i];
+    let (hx, hz) = (HW * 0.9 / 2.0 + p, HD * 0.9 / 2.0 + p);
+    let (hw, hd) = if (face_center(x, z).abs() - HALF_PI).abs() < 0.1 { (hz, hx) } else { (hx, hz) };
+    crate::blockers::add_box(x, z, hw, hd);
+}
+
+/// Farm-plot blocker (registered when the Granary/Farm is built).
+fn register_farm_blocker() {
+    let p = COLLISION_PAD;
+    crate::blockers::add_box(-HALF_X + 4.5, 0.0, 2.5 + p, 2.0 + p);
 }
 
 // ── Drifting chimney smoke ───────────────────────────────────────────────────────
@@ -817,10 +848,76 @@ struct Smoke {
     speed: f32,
 }
 
+/// Which upgrade reveals a given castle part (the castle builds up instead of starting full).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CastleKind {
+    Always,
+    Walls,
+    Gate,
+    Towers,
+    Farm,
+    House(u8),
+}
+
+#[derive(Component)]
+struct CastlePart {
+    kind: CastleKind,
+}
+
+/// Which gated groups have had their (append-only) collision blockers registered, so each is
+/// added exactly once the first time it's revealed.
+#[derive(Resource, Default)]
+struct CastleBuilt {
+    walls: bool,
+    towers: bool,
+    farm: bool,
+    houses: [bool; 8],
+}
+
+/// Reveal castle parts as their upgrades are bought, and lazily register each group's collision
+/// the first time it appears (the courtyard stays open + barrier-free until you build the walls).
+fn sync_castle(
+    def: Res<Defenses>,
+    eco: Res<EconomyState>,
+    mut built: ResMut<CastleBuilt>,
+    mut q: Query<(&CastlePart, &mut Visibility)>,
+) {
+    for (part, mut vis) in &mut q {
+        let show = match part.kind {
+            CastleKind::Always => true,
+            CastleKind::Walls => def.walls,
+            CastleKind::Gate => def.walls && def.gate, // a gate without walls would float
+            CastleKind::Towers => def.towers,
+            CastleKind::Farm => eco.farm,
+            CastleKind::House(i) => eco.houses > i as u32,
+        };
+        *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
+    }
+    // Lazy, once-only collision registration on first reveal.
+    if def.walls && !built.walls {
+        built.walls = true;
+        register_walls_blockers();
+    }
+    if def.towers && !built.towers {
+        built.towers = true;
+        register_towers_blockers();
+    }
+    if eco.farm && !built.farm {
+        built.farm = true;
+        register_farm_blocker();
+    }
+    for i in 0..8 {
+        if eco.houses > i as u32 && !built.houses[i] {
+            built.houses[i] = true;
+            register_house_blocker(i);
+        }
+    }
+}
+
 pub struct CastlePlugin;
 impl Plugin for CastlePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, drift_smoke);
+        app.init_resource::<CastleBuilt>().add_systems(Update, (drift_smoke, sync_castle));
     }
 }
 

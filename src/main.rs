@@ -29,6 +29,7 @@ mod groundcover;
 mod hud;
 mod icons;
 mod inventory;
+mod navgrid;
 mod orbs;
 mod orks;
 mod palette;

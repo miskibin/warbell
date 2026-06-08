@@ -32,8 +32,8 @@ pub const MAP_SCALE: f32 = 1.4;
 // loop samples `classify(ix / MAP_SCALE, …)`, so the island shape is identical, just
 // drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
 // `GX/GZ` are the GRID centre used for world placement + tile-cache indexing.
-const COLS: i32 = 202; // round(144 * 1.4)
-const ROWS: i32 = 151; // round(108 * 1.4)
+pub const COLS: i32 = 202; // round(144 * 1.4)
+pub const ROWS: i32 = 151; // round(108 * 1.4)
 const CX: f32 = 72.0; // base COLS/2 — generation centre
 const CZ: f32 = 54.0;
 /// Grid centre (enlarged) — world placement recentres the map onto the origin here.
@@ -43,7 +43,7 @@ const ISLAND_RX: f32 = 71.0;
 const ISLAND_RZ: f32 = 53.0;
 const ISLAND_EXP: f32 = 2.6;
 const SAFE_R: f32 = 18.0; // castle safe-zone radius (forced flat grass)
-const GROUND_STEP: f32 = 0.5; // world-Y per height class
+pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 const SEA_Y: f32 = -0.4;
 /// Colour-blend half-width (tiles) at biome edges.
 const BLEND: f32 = 4.5;

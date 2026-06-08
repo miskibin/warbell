@@ -130,6 +130,8 @@ fn setup_bolt_gfx(
 fn debug_enable_defenses(mut defenses: ResMut<Defenses>) {
     if std::env::var("FOREST_DEFEND").is_ok() {
         *defenses = Defenses {
+            walls: true, // build the perimeter + gates so A* has gates to route invaders through
+            gate: true,
             towers: true,
             tower_mastery: true,
             keep_archers: true,

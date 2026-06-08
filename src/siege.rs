@@ -390,7 +390,11 @@ fn spawn_invader(
     let p = spawn_point(ring_index, KEEP_POS, SPAWN_RING, |x, z| ground_at_world(x, z).is_some());
     let seed = ring_index.wrapping_mul(0x9e37_79b1) ^ (ring_index + 1);
     let e = armory.spawn(commands, variant, INVADER_FACTION, KEEP_POS, p, seed);
-    commands.entity(e).insert((WaveInvader { last_pos: p, idle_since: now }, Health { hp, max: hp }));
+    commands.entity(e).insert((
+        WaveInvader { last_pos: p, idle_since: now },
+        crate::navgrid::InvaderPath::default(),
+        Health { hp, max: hp },
+    ));
 }
 
 /// The assault director: counts down prep, spawns the wave on an interval, advances to the next
@@ -506,7 +510,14 @@ fn invader_brain(
     mut pending: ResMut<PendingHeroDamage>,
     mut bolts: ResMut<BoltSpawns>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut orks::Ork, &mut WaveInvader, &mut Transform, &Health)>,
+    mut q: Query<(
+        Entity,
+        &mut orks::Ork,
+        &mut WaveInvader,
+        &mut crate::navgrid::InvaderPath,
+        &mut Transform,
+        &Health,
+    )>,
 ) {
     if siege.phase != GamePhase::Wave {
         return;
@@ -514,7 +525,7 @@ fn invader_brain(
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
 
-    for (e, mut o, mut inv, mut tf, hp) in &mut q {
+    for (e, mut o, mut inv, mut path, mut tf, hp) in &mut q {
         o.atk_cd -= dt;
         // Berserker frenzy: faster march + quicker strikes under 40% HP (incl. the boss).
         let frenzied = o.variant == OrkVariant::Berserker && hp.hp < hp.max * 0.4;
@@ -557,10 +568,36 @@ fn invader_brain(
                 }
             }
         } else {
-            // March toward the target, steering around props/cliffs (faster than a patrol).
+            // Pick the immediate step target. Marching the KEEP follows an A* route through the
+            // gates (replanned on a throttle); chasing the hero stays cheap direct steering
+            // (he's close — ORK_SIGHT 9 — and moves every frame, so pathing him is churn).
+            let step_target = if see_hero {
+                target
+            } else {
+                if path.cursor >= path.waypoints.len()
+                    || now >= path.next_replan
+                    || path.goal_cached.distance(target) > 2.0
+                {
+                    path.waypoints = crate::navgrid::path_to(o.pos, target);
+                    path.cursor = 0;
+                    path.goal_cached = target;
+                    // Stagger replans across the horde so they don't all path on one frame.
+                    path.next_replan = now + 0.75 + (e.to_bits() % 16) as f32 * 0.05;
+                }
+                while path.cursor < path.waypoints.len()
+                    && o.pos.distance(path.waypoints[path.cursor]) < 1.2
+                {
+                    path.cursor += 1;
+                }
+                // Next waypoint, or the straight keep aim if there's no route (fallback to old
+                // behaviour — the stuck-net still reaps a wedged invader).
+                path.waypoints.get(path.cursor).copied().unwrap_or(target)
+            };
+
+            // March toward the step target, steering around props/cliffs (faster than a patrol).
             let cur_y = ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
             let speed = o.speed * 1.4 * if frenzied { 1.4 } else { 1.0 };
-            match steer::advance(o.pos, o.facing, target, speed * dt, o.body_r, cur_y, orks::ORK_MAX_TURN * 1.6 * dt) {
+            match steer::advance(o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, orks::ORK_MAX_TURN * 1.6 * dt) {
                 Some(s) => {
                     o.facing = s.facing;
                     o.pos = s.pos;
