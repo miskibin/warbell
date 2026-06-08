@@ -20,6 +20,7 @@ use tileworld_core::defense::{
 
 use crate::audio::AudioCue;
 use crate::economy::Defenses;
+use crate::palette::lin;
 use crate::game_state::Modal;
 use crate::orks::WaveInvader;
 use crate::player::{spawn_burst, CombatFx, Health, HeroState, PlayerRes};
@@ -392,20 +393,23 @@ pub fn populate_defenders(
     // spawn / follow-cam line — the hero spawns at the gate centre, `gate.y - 3.0`).
     let (bx, bz) = (2.6, -HALF_Z - 2.2);
     let y = crate::worldmap::ground_at_world(bx, bz).unwrap_or(0.0);
-    let mesh = meshes.add(Cuboid::new(1.3, 0.5, 1.7).mesh().build());
+    // A real low-poly ballista (vertex-coloured): wheeled sled, A-frame, stock, bow limbs +
+    // string and a loaded bolt — aimed outward (−Z) away from the gate. One white material so the
+    // mesh's vertex colours show. Yaw it slightly so it points out along its placement radius.
+    let mesh = meshes.add(ballista_mesh());
     let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.32, 0.23, 0.14),
-        perceptual_roughness: 0.85,
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.82,
         ..default()
     });
     commands.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(mat),
-        Transform::from_xyz(bx, y + 0.3, bz),
+        Transform::from_xyz(bx, y, bz).with_rotation(Quat::from_rotation_y(0.18)),
         Defender {
             kind: Kind::Ballista,
             profile: BALLISTA,
-            muzzle: Vec3::new(bx, y + 1.0, bz),
+            muzzle: Vec3::new(bx, y + 0.72, bz),
             ready_at: 0.0,
             hp: f32::INFINITY,
             max_hp: f32::INFINITY,
@@ -413,4 +417,74 @@ pub fn populate_defenders(
         },
         crate::biome::BiomeEntity,
     ));
+}
+
+// ── Ballista model (vertex-coloured, flat-shaded) ──────────────────────────────────
+// Built in local space, base resting at y=0, firing toward −Z (forward). Helpers are prefixed
+// (`bbox`…) so they don't clash with the `bx`/`bz` placement locals above.
+
+fn ballista_mesh() -> Mesh {
+    let wood = lin(0x6a4527);
+    let wood_dk = lin(0x402a17);
+    let iron = lin(0x33343c);
+    let string = lin(0xd8c7a2);
+    let bolt = lin(0x7a5a30);
+    let along_x = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    bgroup(vec![
+        // wheeled sled: two runners along Z + two cross beams
+        bbox(0.13, 0.16, 1.5, vc(-0.42, 0.20, 0.05), wood_dk),
+        bbox(0.13, 0.16, 1.5, vc(0.42, 0.20, 0.05), wood_dk),
+        bbox(1.02, 0.12, 0.16, vc(0.0, 0.22, 0.55), wood),
+        bbox(1.02, 0.12, 0.16, vc(0.0, 0.22, -0.35), wood),
+        // wheels (axle along X) at the back corners
+        bcyl(0.20, 0.10, vc(-0.5, 0.20, 0.5), along_x, wood_dk),
+        bcyl(0.20, 0.10, vc(0.5, 0.20, 0.5), along_x, wood_dk),
+        bcyl(0.06, 0.12, vc(-0.5, 0.20, 0.5), along_x, iron), // hub
+        bcyl(0.06, 0.12, vc(0.5, 0.20, 0.5), along_x, iron),
+        // A-frame supports lifting the stock
+        bboxr(0.12, 0.66, 0.14, vc(-0.2, 0.52, 0.18), Quat::from_rotation_x(0.22), wood),
+        bboxr(0.12, 0.66, 0.14, vc(0.2, 0.52, 0.18), Quat::from_rotation_x(0.22), wood),
+        // the stock / rail (slightly nose-down toward the front)
+        bboxr(0.18, 0.13, 1.4, vc(0.0, 0.74, -0.05), Quat::from_rotation_x(-0.05), wood),
+        // bow riser + the two angled limbs + iron tip caps
+        bbox(0.18, 0.16, 0.18, vc(0.0, 0.72, -0.64), wood_dk),
+        bboxr(0.62, 0.09, 0.11, vc(-0.3, 0.72, -0.68), Quat::from_rotation_y(0.55), wood_dk),
+        bboxr(0.62, 0.09, 0.11, vc(0.3, 0.72, -0.68), Quat::from_rotation_y(-0.55), wood_dk),
+        bbox(0.1, 0.13, 0.1, vc(-0.62, 0.72, -0.52), iron),
+        bbox(0.1, 0.13, 0.1, vc(0.62, 0.72, -0.52), iron),
+        // bowstring across the limb tips
+        bbox(1.3, 0.03, 0.03, vc(0.0, 0.72, -0.5), string),
+        // loaded bolt on the stock: shaft + iron head + fletching
+        bbox(0.05, 0.05, 0.9, vc(0.0, 0.84, -0.3), bolt),
+        bbox(0.09, 0.09, 0.16, vc(0.0, 0.84, -0.8), iron),
+        bbox(0.13, 0.11, 0.04, vc(0.0, 0.84, 0.12), wood_dk),
+    ])
+}
+
+fn vc(x: f32, y: f32, z: f32) -> Vec3 {
+    Vec3::new(x, y, z)
+}
+fn btint(mut m: Mesh, c: [f32; 4]) -> Mesh {
+    let n = m.count_vertices();
+    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
+    m
+}
+fn bbox(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
+    btint(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
+}
+fn bboxr(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
+    btint(Cuboid::new(w, h, d).mesh().build().rotated_by(rot).translated_by(off), c)
+}
+fn bcyl(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
+    btint(Cylinder::new(r, h).mesh().resolution(10).build().rotated_by(rot).translated_by(off), c)
+}
+fn bgroup(parts: Vec<Mesh>) -> Mesh {
+    let mut it = parts.into_iter();
+    let mut base = it.next().expect("at least one part");
+    for p in it {
+        base.merge(&p).expect("ballista parts share attributes");
+    }
+    base.duplicate_vertices();
+    base.compute_flat_normals();
+    base
 }

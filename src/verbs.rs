@@ -141,14 +141,28 @@ pub fn populate_ore(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let mesh = meshes.add(Sphere::new(0.45).mesh().ico(2).unwrap());
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.40, 0.39, 0.42),
-        perceptual_roughness: 0.96,
-        metallic: 0.12,
-        emissive: LinearRgba::rgb(0.05, 0.06, 0.09), // faint ore-vein sheen
+    // A flattened faceted rock crowned by a glowing gem cluster — reads as a deliberate mineable
+    // node, not a stray pebble. Rock is plain grey; the crystal core glows (one gem hue per ore
+    // variant) so the eye is drawn to it.
+    let rock_mesh = meshes.add(ore_rock_mesh());
+    let crystal_mesh = meshes.add(ore_crystal_mesh());
+    let rock_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE, // grey shades live in the rock mesh's vertex colours
+        perceptual_roughness: 0.95,
+        metallic: 0.1,
         ..default()
     });
+    let crystal_mats: Vec<Handle<StandardMaterial>> = [
+        (Color::srgb(0.45, 0.92, 1.0), LinearRgba::rgb(0.20, 1.5, 2.1)),  // teal
+        (Color::srgb(0.78, 0.52, 1.0), LinearRgba::rgb(1.0, 0.40, 1.8)),  // amethyst
+        (Color::srgb(1.0, 0.80, 0.42), LinearRgba::rgb(1.8, 1.0, 0.22)),  // amber
+        (Color::srgb(0.52, 1.0, 0.60), LinearRgba::rgb(0.22, 1.7, 0.50)), // emerald
+    ]
+    .into_iter()
+    .map(|(base_color, emissive)| {
+        materials.add(StandardMaterial { base_color, emissive, perceptual_roughness: 0.2, ..default() })
+    })
+    .collect();
 
     let mut rng: u32 = 0x0e6e_5eed;
     let mut placed = 0u32;
@@ -180,15 +194,23 @@ pub fn populate_ore(
             variant: ((seed * 4.0).floor() as i32).rem_euclid(4),
             stone_reward: ORE_STONE,
         };
-        // Sink the boulder slightly so it reads as embedded in the ground.
+        // Sink the rock slightly so it reads as embedded in the ground; a random yaw varies it.
         let scale = crate::wildlife::rng_range(&mut rng, 0.8, 1.25);
-        commands.spawn((
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(x, y + 0.25 * scale, z).with_scale(Vec3::splat(scale)),
-            OreNode { ore },
-            crate::biome::BiomeEntity,
-        ));
+        let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
+        let crystal_mat = crystal_mats[(ore.variant as usize) % crystal_mats.len()].clone();
+        commands
+            .spawn((
+                Transform::from_xyz(x, y + 0.10 * scale, z)
+                    .with_rotation(Quat::from_rotation_y(yaw))
+                    .with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                OreNode { ore },
+                crate::biome::BiomeEntity,
+            ))
+            .with_children(|p| {
+                p.spawn((Mesh3d(rock_mesh.clone()), MeshMaterial3d(rock_mat.clone()), Transform::default()));
+                p.spawn((Mesh3d(crystal_mesh.clone()), MeshMaterial3d(crystal_mat), Transform::default()));
+            });
         placed += 1;
     }
     if placed < ORE_COUNT {
@@ -268,16 +290,70 @@ pub fn populate_forage(
         perceptual_roughness: 0.85,
         ..default()
     });
-    let apple_mesh = meshes.add(Sphere::new(0.15).mesh().ico(2).unwrap());
+    seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 0.9, crate::biome::Biome::Swamp, 13, 0x4e_b5_1c_0d);
+
+    // Forest apples: standout apple TREES (permanent scenery) with a few fallen apples to gather
+    // at each one's base — so it reads as "go to the apple tree to pick apples".
+    let apple_mesh = meshes.add(Sphere::new(0.13).mesh().ico(2).unwrap());
     let apple_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.78, 0.17, 0.15),
-        emissive: LinearRgba::rgb(0.16, 0.02, 0.02),
+        base_color: Color::srgb(0.80, 0.16, 0.13),
+        emissive: LinearRgba::rgb(0.18, 0.02, 0.02),
         perceptual_roughness: 0.5,
         ..default()
     });
+    let tree_mesh = meshes.add(apple_tree_mesh());
+    let tree_mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    populate_apple_orchard(commands, &tree_mesh, &tree_mat, &apple_mesh, &apple_mat);
+}
 
-    seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 0.9, crate::biome::Biome::Swamp, 13, 0x4e_b5_1c_0d);
-    seed_forage(commands, &apple_mesh, &apple_mat, "apple", 1.0, crate::biome::Biome::Forest, 14, 0xa9_71_3f_55);
+/// Scatter standout apple trees across the forest. Each tree is permanent set-dressing; a few
+/// gatherable apple forage nodes ring its base (regrowing fallen fruit).
+fn populate_apple_orchard(
+    commands: &mut Commands,
+    tree_mesh: &Handle<Mesh>,
+    tree_mat: &Handle<StandardMaterial>,
+    apple_mesh: &Handle<Mesh>,
+    apple_mat: &Handle<StandardMaterial>,
+) {
+    const APPLE_TREES: u32 = 8;
+    let mut rng = 0xa9_71_3f_55u32 | 1;
+    let (mut placed, mut attempts) = (0u32, 0u32);
+    while placed < APPLE_TREES && attempts < APPLE_TREES * 400 + 800 {
+        attempts += 1;
+        let x = crate::wildlife::rng_range(&mut rng, -worldmap::GX + 5.0, worldmap::GX - 5.0);
+        let z = crate::wildlife::rng_range(&mut rng, -worldmap::GZ + 5.0, worldmap::GZ - 5.0);
+        if worldmap::biome_at_world(x, z) != Some(crate::biome::Biome::Forest)
+            || worldmap::ground_at_world(x, z).is_none()
+            || crate::blockers::is_blocked(x, z)
+            || crate::camps::in_clearing(x, z)
+            || crate::castle::in_footprint(x, z)
+        {
+            continue;
+        }
+        let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
+        let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
+        commands.spawn((
+            Mesh3d(tree_mesh.clone()),
+            MeshMaterial3d(tree_mat.clone()),
+            Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)),
+            crate::biome::BiomeEntity,
+        ));
+        for _ in 0..3 {
+            let ang = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
+            let r = crate::wildlife::rng_range(&mut rng, 0.5, 1.2);
+            let (ax, az) = (x + ang.cos() * r, z + ang.sin() * r);
+            let ay = worldmap::ground_at_world(ax, az).unwrap_or(y) + 0.13;
+            commands.spawn((
+                Mesh3d(apple_mesh.clone()),
+                MeshMaterial3d(apple_mat.clone()),
+                Transform::from_xyz(ax, ay, az),
+                Visibility::Visible,
+                Forage { item_id: "apple", harvest_r: 0.9, collected: false, collected_at: 0.0 },
+                crate::biome::BiomeEntity,
+            ));
+        }
+        placed += 1;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -565,6 +641,12 @@ fn ctint(mut m: Mesh, c: [f32; 4]) -> Mesh {
 fn cbx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
     ctint(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
 }
+fn cbxr(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
+    ctint(Cuboid::new(w, h, d).mesh().build().rotated_by(rot).translated_by(off), c)
+}
+fn ry(a: f32) -> Quat {
+    Quat::from_rotation_y(a)
+}
 fn ccyl(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
     ctint(Cylinder::new(r, h).mesh().resolution(12).build().rotated_by(rot).translated_by(off), c)
 }
@@ -572,11 +654,80 @@ fn cgroup(parts: Vec<Mesh>) -> Mesh {
     let mut it = parts.into_iter();
     let mut base = it.next().expect("at least one part");
     for p in it {
-        base.merge(&p).expect("chest parts share attributes");
+        base.merge(&p).expect("parts share attributes");
     }
     base.duplicate_vertices();
     base.compute_flat_normals();
     base
+}
+fn rx(a: f32) -> Quat {
+    Quat::from_rotation_x(a)
+}
+/// Untinted cone (used for the glowing crystal shards — they take an emissive material, so the
+/// vertex colour the others carry is unnecessary; they only merge with each other).
+fn ccone(r: f32, h: f32, off: Vec3, rot: Quat) -> Mesh {
+    Cone { radius: r, height: h }.mesh().build().rotated_by(rot).translated_by(off)
+}
+fn csph(r: f32, off: Vec3, c: [f32; 4]) -> Mesh {
+    ctint(Sphere::new(r).mesh().ico(1).unwrap().translated_by(off), c)
+}
+
+// ─── Ore + apple-tree models (vertex-coloured / emissive props) ─────────────────────
+
+/// Blocky craggy boulder — a cluster of tumbled, rotated stone blocks (low, wide footprint) so
+/// it reads as a chunky mineable rock rather than a smooth pebble; the gem cluster crowns it.
+fn ore_rock_mesh() -> Mesh {
+    let g1 = lin(0x4c4c55);
+    let g2 = lin(0x3a3a43);
+    let g3 = lin(0x5a5a64);
+    cgroup(vec![
+        cbxr(0.95, 0.46, 0.82, v(0.0, 0.20, 0.0), ry(0.35), g1),                              // main slab
+        cbxr(0.52, 0.40, 0.50, v(0.34, 0.26, 0.16), Quat::from_euler(EulerRot::XYZ, 0.22, 0.8, 0.15), g2),
+        cbxr(0.48, 0.34, 0.58, v(-0.30, 0.22, -0.16), Quat::from_euler(EulerRot::XYZ, -0.16, -0.5, 0.20), g3),
+        cbxr(0.40, 0.44, 0.40, v(0.04, 0.40, -0.04), Quat::from_euler(EulerRot::XYZ, 0.25, 0.25, -0.18), g1),
+    ])
+}
+
+/// A tight cluster of upward crystal shards (varied size + tilt) — the glowing mineable core.
+/// Raised to crown the blocky rock so the gems stay visible above the tumbled stone blocks.
+fn ore_crystal_mesh() -> Mesh {
+    cgroup(vec![
+        ccone(0.11, 0.48, v(0.0, 0.58, 0.0), Quat::IDENTITY),
+        ccone(0.08, 0.32, v(0.16, 0.50, 0.07), rz(-0.45)),
+        ccone(0.08, 0.34, v(-0.15, 0.51, -0.06), rz(0.5)),
+        ccone(0.07, 0.28, v(0.04, 0.48, 0.18), rx(0.5)),
+        ccone(0.06, 0.26, v(-0.06, 0.48, -0.17), rx(-0.5)),
+    ])
+}
+
+/// Small standout apple tree: a brown trunk, a bright orchard-green canopy (lighter than the
+/// forest's pines/broadleaf so it reads as special) studded with red apples. Trunk base at y=0.
+fn apple_tree_mesh() -> Mesh {
+    let trunk = lin(0x6b4a2a);
+    let leaf = lin(0x4f9c3a);
+    let leaf_hi = lin(0x74c64c);
+    let apple = lin(0xcf2f26);
+    let mut parts = vec![
+        ccyl(0.11, 0.74, v(0.0, 0.37, 0.0), Quat::IDENTITY, trunk),
+        csph(0.44, v(0.0, 0.98, 0.0), leaf),
+        csph(0.34, v(0.30, 0.88, 0.12), leaf_hi),
+        csph(0.32, v(-0.28, 0.90, -0.10), leaf),
+        csph(0.30, v(0.06, 1.20, -0.16), leaf_hi),
+    ];
+    for (ax, ay, az) in [
+        (0.36, 0.82, 0.30),
+        (-0.38, 0.84, 0.18),
+        (0.12, 0.74, 0.44),
+        (0.42, 1.04, -0.10),
+        (-0.22, 1.08, 0.30),
+        (0.02, 1.24, 0.06),
+        (-0.42, 1.00, -0.18),
+        (0.26, 1.14, 0.26),
+        (0.30, 0.70, -0.28),
+    ] {
+        parts.push(csph(0.075, v(ax, ay, az), apple));
+    }
+    cgroup(parts)
 }
 
 // ─── Hunting: per-species drops + ground pickups ───────────────────────────────────
