@@ -97,6 +97,9 @@ fn drive_grade(
         let base = *base_sat.get_or_insert(cg.global.post_saturation);
         cg.global.post_saturation = base * (1.0 - drain).max(0.0);
     }
+    // Debug: `FOREST_GRADETEST=1` forces a strong vignette so the harness can verify the radial
+    // shape (dark edges, clear centre — NOT a full-screen fill).
+    let darkness = if std::env::var("FOREST_GRADETEST").is_ok() { 0.6 } else { darkness };
     for mut bg in &mut overlays {
         bg.0 = vec![vignette_gradient(darkness)];
     }

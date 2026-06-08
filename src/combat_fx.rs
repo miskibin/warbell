@@ -318,36 +318,14 @@ pub struct HitFeedback {
     pub trauma: f32,
 }
 
-#[derive(Component)]
-struct RedFlash;
-
-fn setup_red_flash(mut commands: Commands) {
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            top: Val::Px(0.0),
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.7, 0.05, 0.05, 0.0)),
-        GlobalZIndex(10),
-        RedFlash,
-    ));
-}
-
-fn drive_hit_flash(
-    time: Res<Time>,
-    mut fb: ResMut<HitFeedback>,
-    mut q: Query<&mut BackgroundColor, With<RedFlash>>,
-) {
+/// Decay the hit-feedback channels. The hit *wince* is now rendered as a mature edge-vignette +
+/// desaturation by `grade.rs` (off the hero's `hurt_flash_until`), so there is no more flat
+/// full-screen red overlay — this just bleeds `flash`/`trauma` down each frame; `trauma` still
+/// drives the camera shake (read by `player::camera`).
+fn drive_hit_flash(time: Res<Time>, mut fb: ResMut<HitFeedback>) {
     let dt = time.delta_secs();
     fb.flash = (fb.flash - dt * 1.6).max(0.0);
     fb.trauma = (fb.trauma - dt * SHAKE_DECAY).max(0.0);
-    if let Ok(mut bg) = q.single_mut() {
-        bg.0 = Color::srgba(0.7, 0.05, 0.05, fb.flash);
-    }
 }
 
 // ── Plugin ──────────────────────────────────────────────────────────────────
@@ -358,7 +336,7 @@ impl Plugin for CombatFxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FloatQueue>()
             .init_resource::<HitFeedback>()
-            .add_systems(Startup, (setup_hp_bar_assets, setup_red_flash))
+            .add_systems(Startup, setup_hp_bar_assets)
             .add_systems(
                 Update,
                 (

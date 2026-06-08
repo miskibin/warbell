@@ -162,6 +162,7 @@ impl Plugin for GameAudioPlugin {
                     sfx::play_cues,
                     voice::play_voice_cues,
                     detect_player_events,
+                    synth::debug_play_stings,
                 ),
             );
     }

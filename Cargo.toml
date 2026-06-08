@@ -7,7 +7,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.18.1"
+# `wav` enables rodio's WAV decoder for the procedurally-baked SFX stings (`audio/synth.rs`);
+# without it the in-memory WAV `AudioSource`s panic on play with `UnrecognizedFormat`.
+bevy = { version = "0.18.1", features = ["wav"] }
 bevy_egui = "0.39.1" # live debug-tuning panel (egui), targets bevy 0.18
 # Pure, deterministic game logic vendored from the ditched port (zero deps, edition 2024).
 # Source of the parity-tested stores: pathfinding, waves, upgrades, inventory, animals, etc.

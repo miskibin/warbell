@@ -67,6 +67,26 @@ pub fn bake_stings(mut bank: ResMut<StingBank>, mut sources: ResMut<Assets<Audio
         Sting::ALL.iter().map(|&s| sources.add(AudioSource { bytes: wav_bytes(&synth(s)).into() })).collect();
 }
 
+/// `FOREST_AUDIOTEST=1` plays every baked sting once at boot — verifies the WAV bytes actually
+/// decode (the bake can't catch a bad format; the decode only happens on play).
+pub fn debug_play_stings(bank: Res<StingBank>, mut commands: Commands, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    *done = true;
+    if std::env::var("FOREST_AUDIOTEST").is_err() {
+        return;
+    }
+    for s in Sting::ALL {
+        if let Some(h) = bank.handle(s) {
+            commands.spawn((
+                bevy::audio::AudioPlayer(h),
+                bevy::audio::PlaybackSettings { mode: bevy::audio::PlaybackMode::Despawn, ..default() },
+            ));
+        }
+    }
+}
+
 // ── The synth (verbatim from the bevy port's audio.rs) ──────────────────────────────
 
 #[derive(Clone, Copy)]
