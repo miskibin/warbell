@@ -45,6 +45,7 @@ mod siege;
 mod steer;
 mod succession;
 mod terrain;
+mod training_dummies;
 mod trees;
 mod verbs;
 mod villagers;
@@ -116,6 +117,7 @@ fn main() {
         .add_plugins((
             icons::IconsPlugin, // procedural item icons (satchel + shop)
             grade::GradePlugin, // reactive low-HP/hit vignette
+            training_dummies::TrainingDummiesPlugin, // courtyard practice pells (hit feedback)
             dying::DyingPlugin, // shared death-fade for orks + wildlife
             visual::VisualPlugin, // volumetric god-rays region, pollen motes, prop specular + panel knobs
             outline::OutlinePlugin, // toon edge-outline post pass (crisp object silhouettes)

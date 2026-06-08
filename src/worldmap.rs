@@ -487,6 +487,9 @@ pub fn build(
     // ── Castle townsfolk: ambient villagers milling the courtyard + gates. ──
     crate::villagers::populate(commands, meshes, std_mats);
 
+    // ── Training dummies: practice pells in the keep courtyard (hit-feedback only). ──
+    crate::training_dummies::populate(commands, meshes, std_mats);
+
     // ── Ambient wildlife — biome-placed animals that wander/graze/startle ──
     crate::wildlife::populate(commands, meshes, std_mats);
 
