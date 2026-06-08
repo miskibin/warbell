@@ -37,6 +37,8 @@ const EYE: u32 = 0x141414;
 const ARMOR: u32 = 0x9aa0aa;
 const SWORD_BLADE: u32 = 0xd8dde6;
 const SWORD_GUARD: u32 = 0xcaa23a;
+/// Rich dyed robes that mark the wandering market traders apart from the drab peasants.
+const MERCHANT_ROBE: [u32; 2] = [0x2f6f6a, 0x7a2f3a];
 
 // ── Components ───────────────────────────────────────────────────────────────────
 
@@ -597,6 +599,63 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         let kind = Kind::Peasant { skin: SKIN[(i + 1) % SKIN.len()], tunic: TUNIC[(i + 2) % TUNIC.len()], hat: i % 2 == 1 };
         spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.0, next_u32(&mut rng));
     }
+
+    // A little market just outside the south gate: a striped stall + two robed traders who
+    // wander around it (the visible counterpart to the menu shop). The keep gate is -Z.
+    let south = crate::castle::gate_centers()[0];
+    let market = south + Vec2::new(2.5, -5.0);
+    let my = worldmap::ground_at_world(market.x, market.y).unwrap_or(0.0);
+    commands.spawn((
+        Mesh3d(meshes.add(market_stall_mesh())),
+        MeshMaterial3d(mat.clone()),
+        Transform::from_xyz(market.x, my, market.y),
+        BiomeEntity,
+    ));
+    for i in 0..2 {
+        let home = market + Vec2::new(if i == 0 { -1.6 } else { 1.6 }, 0.8);
+        let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: MERCHANT_ROBE[i % 2], hat: false };
+        spawn(commands, meshes, &mat, kind, home, home, 1.3, 2.4, next_u32(&mut rng));
+    }
+}
+
+/// A small market stall: four posts, a striped awning, a plank counter, and a few goods crates.
+/// One merged vertex-coloured mesh against the shared white material.
+fn market_stall_mesh() -> Mesh {
+    const WOOD: u32 = 0x6b4a2a;
+    const DARK: u32 = 0x4a3322;
+    const RED: u32 = 0xb33a32;
+    const CREAM: u32 = 0xe7d8b0;
+    let mut parts = vec![
+        // counter
+        bx(1.8, 0.5, 0.6, v(0.0, 0.25, 0.0), lin(WOOD)),
+        bx(1.8, 0.08, 0.66, v(0.0, 0.5, 0.0), lin(DARK)),
+    ];
+    // four corner posts
+    for (px, pz) in [(-0.85f32, -0.28f32), (0.85, -0.28), (-0.85, 0.28), (0.85, 0.28)] {
+        parts.push(bx(0.08, 1.3, 0.08, v(px, 0.65, pz), lin(DARK)));
+    }
+    // striped awning (alternating red/cream slats) tilted forward
+    for s in 0..5 {
+        let c = if s % 2 == 0 { RED } else { CREAM };
+        let z = -0.5 + s as f32 * 0.26;
+        parts.push(tilt_slat(z, c));
+    }
+    // a couple of goods crates on the counter
+    parts.push(bx(0.3, 0.3, 0.3, v(-0.5, 0.65, 0.0), lin(0x8a6a3a)));
+    parts.push(bx(0.26, 0.26, 0.26, v(0.45, 0.63, 0.05), lin(0x9c7a44)));
+    group(parts)
+}
+
+/// One awning slat, tilted forward over the counter at row offset `z`.
+fn tilt_slat(z: f32, c: u32) -> Mesh {
+    tinted(
+        Cuboid::new(1.9, 0.05, 0.28)
+            .mesh()
+            .build()
+            .rotated_by(Quat::from_rotation_x(-0.35))
+            .translated_by(v(0.0, 1.4 + z * 0.18, z)),
+        lin(c),
+    )
 }
 
 /// Reject-sample an open courtyard tile (inside the walls, off the keep/houses, spread out).
