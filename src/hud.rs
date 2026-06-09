@@ -29,6 +29,10 @@ struct LevelText;
 struct GoldText;
 #[derive(Component)]
 struct StoneText;
+#[derive(Component)]
+struct FoodText;
+#[derive(Component)]
+struct WoodText;
 
 /// Which derived quick-slot a node belongs to.
 #[derive(Clone, Copy, PartialEq)]
@@ -203,6 +207,8 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                 .with_children(|r| {
                     r.spawn((label(&fonts.extrabold, "Gold 30", 13.0, GOLD), GoldText));
                     r.spawn((label(&fonts.extrabold, "Stone 0", 13.0, STONE), StoneText));
+                    r.spawn((label(&fonts.extrabold, "Food 0", 13.0, rgb(150, 220, 130)), FoodText));
+                    r.spawn((label(&fonts.extrabold, "Wood 0", 13.0, rgb(190, 150, 100)), WoodText));
                 });
             col.spawn((
                 Node {
@@ -386,10 +392,12 @@ fn update_hud(
     mut hp_q: Query<&mut Node, (With<HpFill>, Without<StaminaFill>, Without<XpFill>)>,
     mut st_q: Query<&mut Node, (With<StaminaFill>, Without<HpFill>, Without<XpFill>)>,
     mut xp_q: Query<&mut Node, (With<XpFill>, Without<HpFill>, Without<StaminaFill>)>,
-    mut hp_txt: Query<&mut Text, (With<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>)>,
-    mut lvl_txt: Query<&mut Text, (With<LevelText>, Without<GoldText>, Without<StoneText>)>,
-    mut gold_txt: Query<&mut Text, (With<GoldText>, Without<StoneText>)>,
-    mut stone_txt: Query<&mut Text, With<StoneText>>,
+    mut hp_txt: Query<&mut Text, (With<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>, Without<FoodText>, Without<WoodText>)>,
+    mut lvl_txt: Query<&mut Text, (With<LevelText>, Without<HpText>, Without<GoldText>, Without<StoneText>, Without<FoodText>, Without<WoodText>)>,
+    mut gold_txt: Query<&mut Text, (With<GoldText>, Without<HpText>, Without<LevelText>, Without<StoneText>, Without<FoodText>, Without<WoodText>)>,
+    mut stone_txt: Query<&mut Text, (With<StoneText>, Without<HpText>, Without<LevelText>, Without<GoldText>, Without<FoodText>, Without<WoodText>)>,
+    mut food_txt: Query<&mut Text, (With<FoodText>, Without<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>, Without<WoodText>)>,
+    mut wood_txt: Query<&mut Text, (With<WoodText>, Without<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>, Without<FoodText>)>,
 ) {
     let Ok(hh) = hero_q.single() else { return };
     let p = &player.0;
@@ -420,5 +428,11 @@ fn update_hud(
     }
     if let Ok(mut t) = stone_txt.single_mut() {
         **t = format!("Stone {}", bank.0.stone() as i64);
+    }
+    if let Ok(mut t) = food_txt.single_mut() {
+        **t = format!("Food {}", bank.0.food() as i64);
+    }
+    if let Ok(mut t) = wood_txt.single_mut() {
+        **t = format!("Wood {}", bank.0.wood() as i64);
     }
 }

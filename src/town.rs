@@ -10,6 +10,7 @@
 use bevy::prelude::*;
 use tileworld_core::town_store::{BuildKind, Town};
 
+use crate::succession::Lives;
 use crate::villagers::{Guard, Kid, Pilgrim, Villager};
 
 use crate::economy::Bank;
@@ -82,6 +83,10 @@ impl Plugin for TownPlugin {
                 Update,
                 (auto_assign_workers, sync_staffed, release_orphan_workers)
                     .run_if(in_state(Modal::None)),
+            )
+            .add_systems(
+                Update,
+                (production_system, population_system).run_if(in_state(Modal::None)),
             );
     }
 }
@@ -139,6 +144,34 @@ fn release_orphan_workers(town: Res<TownRes>, mut commands: Commands, workers: Q
         if gone {
             commands.entity(e).try_remove::<Worker>();
         }
+    }
+}
+
+/// Staffed producers add their yield; runs only while playing (Modal::None).
+fn production_system(time: Res<Time>, mut town: ResMut<TownRes>, mut bank: ResMut<Bank>) {
+    let dt = time.delta_secs() as f64;
+    town.0.production_tick(dt, &mut bank.0);
+}
+
+/// Food upkeep + growth; on growth, spawn a WORKER-ELIGIBLE townsperson and grow the
+/// bloodline (keeps the existing house→heir tie). The new body is a plain villager
+/// (no Guard), so `auto_assign_workers` can post it to a producer — that's the
+/// food→population→workforce loop.
+#[allow(clippy::too_many_arguments)]
+fn population_system(
+    time: Res<Time>,
+    mut town: ResMut<TownRes>,
+    mut bank: ResMut<Bank>,
+    mut lives: ResMut<Lives>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let dt = time.delta_secs() as f64;
+    if town.0.population_tick(dt, &mut bank.0) {
+        lives.heirs += 1;
+        let seed = 0x70b1_0000u32.wrapping_add(town.0.population.wrapping_mul(101));
+        crate::villagers::spawn_townsperson(&mut commands, &mut meshes, &mut materials, seed);
     }
 }
 

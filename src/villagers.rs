@@ -231,6 +231,25 @@ pub fn spawn_courtyard_guard(
     spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.4, SCALE, next_u32(&mut rng));
 }
 
+/// Spawn a fresh plain **peasant** at a courtyard spot — worker-eligible (no `Guard`/`Pilgrim`/`Kid`),
+/// so `auto_assign_workers` can post it to a producer building once the population grows.
+pub fn spawn_townsperson(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    seed: u32,
+) {
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    let mut rng = seed | 1;
+    let half = crate::castle::courtyard_half();
+    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
+    let skin_idx = (seed as usize) % SKIN.len();
+    let tunic_idx = (seed as usize).wrapping_add(1) % TUNIC.len();
+    let hat = (seed % 3) == 0;
+    let kind = Kind::Peasant { skin: SKIN[skin_idx], tunic: TUNIC[tunic_idx], hat };
+    spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.0, SCALE, next_u32(&mut rng));
+}
+
 /// Spawn a freed captive as a **settler/militia** at `from` (the camp cage), homed to a courtyard
 /// post so it marches across to the keep and defends it at night — the visible "prisoner walks
 /// out and heads home" the rescue should read as.
