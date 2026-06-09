@@ -8,9 +8,11 @@
 //! playable and legible; it just sheds the expensive eye-candy.
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
-use bevy::light::{DirectionalLightShadowMap, VolumetricFog};
+use bevy::light::{DirectionalLightShadowMap, VolumetricFog, VolumetricLight};
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::prelude::*;
+
+use crate::scene::Sun;
 
 /// The active preset. `High` matches the scene's authored defaults.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -49,35 +51,33 @@ impl Plugin for QualityPlugin {
 fn apply_quality(
     quality: Res<GraphicsQuality>,
     mut commands: Commands,
-    mut cam: Query<(Entity, Option<&mut VolumetricFog>), With<Camera3d>>,
+    sun: Query<Entity, With<Sun>>,
+    mut cam_fog: Query<&mut VolumetricFog>,
     mut ssao: Query<&mut ScreenSpaceAmbientOcclusion>,
     mut smaa: Query<&mut Smaa>,
     mut shadowmap: ResMut<DirectionalLightShadowMap>,
 ) {
     use ScreenSpaceAmbientOcclusionQualityLevel as Q;
-    // (volumetric step_count or None = off, SSAO quality, SMAA preset, shadow-map size)
-    let (vol_steps, ao, smaa_preset, shadow_size) = match *quality {
-        GraphicsQuality::High => (Some(32u32), Q::Medium, SmaaPreset::High, 2048usize),
-        GraphicsQuality::Low => (None, Q::Low, SmaaPreset::Low, 1024),
+    // (god-rays on?, volumetric step_count, SSAO quality, SMAA preset, shadow-map size)
+    let (god_rays, vol_steps, ao, smaa_preset, shadow_size) = match *quality {
+        GraphicsQuality::High => (true, 32u32, Q::Medium, SmaaPreset::High, 2048usize),
+        GraphicsQuality::Low => (false, 32, Q::Low, SmaaPreset::Low, 1024),
     };
 
-    // Volumetric fog: the big lever. Add/remove the component so the whole GPU pass appears or
-    // disappears, rather than just running it cheaply.
-    if let Ok((entity, vfog)) = cam.single_mut() {
-        match (vol_steps, vfog) {
-            (Some(n), Some(mut v)) => v.step_count = n,
-            (Some(n), None) => {
-                commands.entity(entity).insert(VolumetricFog {
-                    ambient_intensity: 0.0,
-                    jitter: 0.0,
-                    step_count: n,
-                    ..default()
-                });
-            }
-            (None, Some(_)) => {
-                commands.entity(entity).remove::<VolumetricFog>();
-            }
-            (None, None) => {}
+    // Volumetric god-rays: the big lever. The reliable on/off is the *sun's* `VolumetricLight`,
+    // NOT the camera's `VolumetricFog` — Bevy's retained render world only drops the volumetric
+    // pass when no `VolumetricLight` exists (its extractor never removes a stale `VolumetricFog`
+    // from a view), so removing the camera component at runtime would leave the pass running.
+    if let Ok(sun) = sun.single() {
+        if god_rays {
+            commands.entity(sun).insert(VolumetricLight);
+        } else {
+            commands.entity(sun).remove::<VolumetricLight>();
+        }
+    }
+    if god_rays {
+        for mut f in cam_fog.iter_mut() {
+            f.step_count = vol_steps;
         }
     }
     for mut s in ssao.iter_mut() {

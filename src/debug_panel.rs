@@ -13,7 +13,7 @@
 
 use bevy::audio::{GlobalVolume, Volume};
 use bevy::camera::Exposure;
-use bevy::light::VolumetricFog;
+use bevy::light::{FogVolume, VolumetricFog};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
 
@@ -101,6 +101,7 @@ fn panel_ui(
     mut global_vol: ResMut<GlobalVolume>,
     mut light_override: ResMut<LightOverride>,
     mut sun: Query<&mut DirectionalLight, With<Sun>>,
+    mut fog_volume: Query<&mut FogVolume>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut egui_wants: ResMut<EguiWantsPointer>,
 ) -> Result {
@@ -158,6 +159,16 @@ fn panel_ui(
                         }
                     } else {
                         ui.weak("god-rays off (Low graphics preset)");
+                    }
+                    // FogVolume density drives how much sun-shaft in-scattering is visible. The
+                    // scene default (0.012) is so thin the shafts are imperceptible — crank this
+                    // to actually SEE the god-rays and judge whether they earn their GPU cost.
+                    if let Ok(mut fv) = fog_volume.single_mut() {
+                        ui.add(
+                            egui::Slider::new(&mut fv.density_factor, 0.0..=0.3)
+                                .text("god-ray density (visibility)"),
+                        );
+                        ui.add(egui::Slider::new(&mut fv.scattering, 0.0..=1.0).text("god-ray scattering"));
                     }
                 });
 
