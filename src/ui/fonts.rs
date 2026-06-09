@@ -35,13 +35,3 @@ pub fn label(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color)
         TextColor(color),
     )
 }
-
-/// Same as [`label`] but for a text node nested in a layout where it must not stretch.
-pub fn label_node(
-    font: &Handle<Font>,
-    s: impl Into<String>,
-    size: f32,
-    color: Color,
-) -> impl Bundle {
-    (label(font, s, size, color), Node { ..default() })
-}

@@ -24,6 +24,11 @@
 //! `Mesh::merge` then `flat_shaded` for crisp low-poly facets. The scatter draws them all
 //! against the shared white vertex-colour material, so colour lives in `ATTRIBUTE_COLOR`.
 
+// The `landmarks()` GLOWMUSH/will-o'-wisp set-piece + its helpers/consts below are authored biome
+// content the world map doesn't place yet (it uses `ruins` landmarks instead). Kept per design;
+// allow the resulting dead code until it's wired into a per-region pass.
+#![allow(dead_code)]
+
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 

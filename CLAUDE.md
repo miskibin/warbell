@@ -35,6 +35,18 @@ ONE module in parallel against a *shared* `target/` and must **not** run `cargo 
 (a concurrent build corrupts the shared dir; the integrator builds once at the end). That rule is
 **only** for parallel-dispatch sessions. A normal single Claude session should build and verify.
 
+### Git / agent workflow rules (non-negotiable)
+
+- **NEVER `git reset --hard`** (or any destructive history/working-tree reset: `git clean -fd`,
+  force-checkout over dirty files, `git checkout -- <path>` that discards work) **without explicit
+  per-instance permission.** Blanket prior approval does not carry over — ask each time, naming what
+  would be lost.
+- **Push your code after you finish a feature.** Once the feature is complete and verified, commit
+  and `git push` — don't leave finished work sitting only in the local working tree.
+- **Other agents may be working in parallel.** If your changes overlap with another agent's
+  in-flight work, you can simply **wait for them to finish** rather than racing or stomping their
+  edits.
+
 ### Cloud / remote-container setup (Claude Code on the web, fresh containers)
 
 A fresh Linux cloud container has the Rust toolchain but **not** the system libraries Bevy links

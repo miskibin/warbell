@@ -14,6 +14,11 @@
 //! Palette (muted arid stone, lifted from the TS rock-highland feel — grey-browns with
 //! warm sand undertones and pale sun-bleached caps; banded ochre/rust for the hoodoos).
 
+// The `landmarks()` ROCK ARCH set-piece + its `arch_pillar` helper below are authored biome
+// content the world map doesn't place yet (it uses `ruins` landmarks instead). Kept per design;
+// allow the resulting dead code until it's wired into a per-region pass.
+#![allow(dead_code)]
+
 use bevy::prelude::*;
 
 use crate::biome::{Backdrop, Biome, BiomeConfig, BiomeEntity, GroundDetail, ParticleKind, PropClass};

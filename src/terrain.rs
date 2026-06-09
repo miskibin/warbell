@@ -13,15 +13,14 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 
-use crate::biome::{BiomeConfig, BiomeEntity, GroundDetail};
-use crate::palette::lin;
+use crate::biome::GroundDetail;
 
-/// Side length of the populated patch (tiles == world units). The scene is centred on
-/// the origin, so the patch spans `[-HALF, HALF]`.
+/// Side length of the populated patch (tiles == world units), centred on the origin so it
+/// spans `[-HALF, HALF]`. Used by the (kept, unwired) `decor` charm's standalone placement.
+#[allow(dead_code)] // referenced only by `decor`, which is authored but not wired into the map
 pub const FOREST: f32 = 32.0;
+#[allow(dead_code)] // ditto
 pub const HALF: f32 = FOREST / 2.0;
-/// Ground plane reaches far past the patch so its edge is lost in fog/atmosphere.
-const GROUND_EXTENT: f32 = 600.0;
 
 const TERRAIN_SHADER: &str = "shaders/terrain.wgsl";
 
@@ -82,32 +81,6 @@ pub fn make_material(
     })
 }
 
-/// Build the ground plane for `cfg`: flat plane at y=0, base colour + detail-ramp +
-/// vision-shader params all from the biome. Tagged [`BiomeEntity`] so a switch wipes it.
-pub fn spawn_ground(
-    cfg: &BiomeConfig,
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    images: &mut Assets<Image>,
-    mats: &mut Assets<TerrainMaterial>,
-) {
-    let mut mesh = Plane3d::default()
-        .mesh()
-        .size(GROUND_EXTENT, GROUND_EXTENT)
-        .subdivisions(64)
-        .build();
-    let n = mesh.count_vertices();
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![lin(cfg.ground_color); n]);
-
-    let material = make_material(&cfg.detail, cfg.ground_roughness, images, mats);
-
-    commands.spawn((
-        Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(material),
-        Transform::default(),
-        BiomeEntity,
-    ));
-}
 
 // ── Detail texture (port of terrainDetail.ts; parameterised per biome) ───────────
 

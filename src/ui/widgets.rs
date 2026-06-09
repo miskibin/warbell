@@ -37,29 +37,6 @@ pub fn card_paint() -> impl Bundle {
     (BackgroundColor(PANEL), BorderColor::all(BORDER_SOFT), shadow_card())
 }
 
-/// Persistent-HUD chrome paint.
-pub fn hud_paint() -> impl Bundle {
-    (BackgroundColor(PANEL_HUD), BorderColor::all(BORDER_SOFT), shadow_hud())
-}
-
-/// Standard clickable button paint (translucent fill, hover-lightens).
-pub fn btn_paint() -> impl Bundle {
-    (
-        Button,
-        Interaction::default(),
-        BackgroundColor(BTN_BG),
-        BorderColor::all(BORDER_SOFT),
-        UiTransform::IDENTITY,
-        Hoverable {
-            rest_bg: BTN_BG,
-            hover_bg: BTN_BG_HOVER,
-            rest_border: BORDER_SOFT,
-            hover_border: BORDER_HOVER,
-            lift: 1.0,
-        },
-    )
-}
-
 /// Primary action button paint (solid blue — Play / Resume / Again).
 pub fn btn_primary_paint() -> impl Bundle {
     (
@@ -94,11 +71,6 @@ pub fn slot_paint() -> impl Bundle {
             lift: 2.0,
         },
     )
-}
-
-/// Static (non-interactive) cell paint.
-pub fn cell_paint() -> impl Bundle {
-    (BackgroundColor(BTN_BG), BorderColor::all(BORDER_SOFT))
 }
 
 /// Keycap (kbd) paint — a small raised key.

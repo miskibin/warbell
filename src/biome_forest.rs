@@ -6,6 +6,11 @@
 //! Land/ocean split: hills + treeline fill the `z < 0` half (`land_dir = -π/2`,
 //! `land_arc = π/2`); the `z > 0` half is open sea.
 
+// The `landmarks()` set-piece + the `decor` charm it spawns are authored biome content that
+// the world map doesn't place yet (it uses `ruins` landmarks instead). Kept per design; allow
+// the resulting dead code until it's wired into a per-region pass.
+#![allow(dead_code)]
+
 use bevy::prelude::*;
 
 use crate::biome::{Backdrop, Biome, BiomeConfig, BiomeEntity, GroundDetail, ParticleKind, PropClass};
