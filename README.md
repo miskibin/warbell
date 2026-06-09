@@ -1,19 +1,70 @@
-# Tileworld Forest — Bevy
+# D: Tileworld — Bevy
 
-A single **static** 3D scene that recreates the TS tileworld game's **forest biome**
-(32×32) in **Bevy 0.18**, with the same ground, models and post-processing — or better.
-No player, no day/night, no gameplay: just the scene.
+A **Bevy 0.18** port of the TypeScript/three.js game **"D: Tileworld"**. A knight defends a
+central castle against night-wave ork sieges across a five-biome island: real-time combat,
+an economy, an upgrade tree, inventory, villagers, a bloodline succession loop, and wildlife —
+at near-parity with the original game, wrapped in forest's own (better) lighting and
+post-processing.
+
+> This started as a static forest-scene viewer and grew into the full game. If you find a doc
+> claiming "no player, no gameplay, just the scene", it predates the port — trust the code and
+> `docs/superpowers/specs/`.
 
 ## Run
 
 ```bash
-cargo run                      # opens the scene in a window
+cargo run        # build + open the game window
+cargo test       # run the crates/core parity tests (the validation spec)
+cargo check      # type-check without the (slow) link
 ```
 
-**Fly camera:** **WASD** move · **Space / Left-Ctrl** up·down · **Left-Shift** sprint ·
-**hold Right-Mouse** to look (cursor locks while held).
+On a fresh Linux box you need Bevy's system libraries once before the first build:
 
-Screenshot harness (renders a few frames, saves a PNG, exits):
+```bash
+sudo apt-get update && sudo apt-get install -y \
+  libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev
+```
+
+(macOS / Windows need none of this.) The first build is slow — `bevy` compiles at
+`opt-level = 3` even in dev so the scene isn't single-digit FPS — but incremental rebuilds of
+`src/` are fast.
+
+## Controls
+
+- **WASD / arrows** move · **Space** jump · **Shift** sprint · **LMB** attack · **RMB** block
+- **E** contextual interact — walk up to the keep (upgrades), a merchant stall (shop), or the
+  war bell (ring in the night) and a prompt names it
+- **I** satchel · **Q/Z/X/C** quick-bar items · **F** open chest / forage / rescue · **R** recruit
+- **` (backquote)** toggle free-roam fly-cam ↔ follow-cam · **P / Esc** pause
+- **F1** debug egui tuning panel · **F2** perf/state stats overlay · **1–5** swap biome patch
+- Fly-cam: **Space / Ctrl** up·down, **Shift** sprint, hold **Right-Mouse** to look
+
+## Architecture
+
+Two crates:
+
+- **`crates/core` (`tileworld_core`)** — pure, deterministic, zero-dependency game logic
+  (`f64` throughout to match JS `number` semantics). Pathfinding (A*), the wave director,
+  upgrade / buff / resource / inventory stores, ork & animal config, factions, RNG, the shop
+  catalog. This is the unit-tested validation spec — `cargo test` runs it. No Bevy, no I/O,
+  no rendering.
+- **`tileworld_bevy_forest` (root `src/`)** — the Bevy app: rendering, ECS systems, input, the
+  scene. It imports `tileworld_core` for all the numbers/logic that must stay parity-correct,
+  wrapping core's stores as Resources (`PlayerRes`, `Bank`, `Inventory`, …).
+
+Each `src/<feature>.rs` is a self-contained `Plugin`; **`main.rs` is the assembly list** — read
+it as the table of contents (every plugin line has a one-line description of what it owns). The
+whole world-sim is gated behind a freeze-gate state machine (`game_state.rs`): opening any
+panel or leaving `Playing` freezes the sim but keeps rendering.
+
+See **`CLAUDE.md`** for the full conventions (coordinate frame, despawn-race rules, mesh-building
+contract, combat-number parity) and **`docs/superpowers/specs/`** for the per-subsystem roadmap
+and design docs.
+
+## Screenshot harness
+
+The Bevy window can't be captured externally, so visuals are verified via a render-and-exit
+harness:
 
 ```bash
 # PowerShell
@@ -22,52 +73,9 @@ $env:FOREST_SHOT="shot.png"; cargo run
 FOREST_SHOT=shot.png cargo run
 ```
 
-`BEVY_ASSET_ROOT` can point at this dir if you run the binary from elsewhere (the
-terrain WGSL is loaded from `assets/shaders/`).
-
-## What's ported (1:1 from the TS game) + what's better
-
-**Ground** (`terrain.rs` + `assets/shaders/terrain.wgsl`)
-- The `vision.ts` terrain shader as an `ExtendedMaterial<StandardMaterial, _>`: a fine
-  3-octave world-space value mottle, a large-scale analytic hue/value drift, and a
-  procedural **grass detail texture** (port of `terrainDetail.ts` grass spec) imprinted
-  on up-facing fragments. Same constants as the forest biome (detailScale 0.18,
-  strength 0.65, variation 0.6, grass green `#6cb14a`).
-
-**Models** (`trees.rs`, `props.rs`, `groundcover.rs`, `ruins.rs`)
-- Built from the exact TS geometry specs: broadleaf (6 layered icosphere foliage tiers),
-  birch (pale trunk + bark marks), dead tree (angled branch stubs); mossy faceted rocks;
-  layered-green bushes; and a dense ground carpet of grass tufts, ferns, red-cap
-  mushrooms, flowers and clover. Plus a standing-stone trilithon + giant dead tree as
-  background landmarks. Every model is one merged, vertex-coloured mesh; instances share
-  handles so the renderer auto-batches the thousands of props.
-
-**Placement** (`scatter.rs`)
-- Deterministic (mulberry32) scatter over the 32×32 patch — per-tile tree/bush/rock rolls
-  plus a 4-per-tile ground-cover pass, with position jitter, scale + rotation variation.
-
-**Post-processing** (`scene.rs`) — at least as good as the game:
-- **AgX** tonemapping + exposure + a saturation `ColorGrading` (recovers the TS richness)
-- **Bloom**, **Bokeh depth-of-field** (background blur), **distance fog** to the horizon
-- **SSAO** + **SMAA**, gradient-cubemap **IBL**, a shadowed warm directional sun
-- **Atmosphere** — Bevy 0.18's procedural sky: real blue sky, sun disk and horizon glow
-  (this is the bit that's *better* than the original's flat sky dome).
-
-## Layout
-
-```
-src/
-  main.rs         plugin wiring
-  scene.rs        camera + lights + post-processing + procedural sky
-  terrain.rs      forest ground mesh + vision-shader material + grass detail texture
-  trees.rs        broadleaf / birch / dead tree meshes
-  props.rs        rocks + bushes
-  groundcover.rs  grass tufts / ferns / mushrooms / flowers / clover
-  ruins.rs        standing-stone trilithon + giant dead tree
-  scatter.rs      deterministic placement over the 32×32 patch
-  capture.rs      FOREST_SHOT screenshot harness
-  palette.rs      colour helpers + the forest palette
-assets/shaders/terrain.wgsl   the vision shader (WGSL)
-docs/specs/                    the extracted TS visual + Bevy-API specs
-CONTRACT.md                    the model-builder contract
-```
+It renders ~90 frames so lighting/IBL settle, saves the PNG, and exits. Stage the shot with
+env vars read at startup: `FOREST_CAM` / `FOREST_TIME` (camera pose / time-of-day),
+`FOREST_BIOME` (boot into a biome), `FOREST_WAVE` / `FOREST_DEFEND=1` (stage a night siege),
+`FOREST_MENU=1` (start screen), `FOREST_PANEL=tree|inv|shop` (open a UI panel),
+`FOREST_EQUIP="sword_gold,gold_armor"` (equip items on the hero). `BEVY_ASSET_ROOT` points at
+this dir if you run the binary from elsewhere (WGSL loads from `assets/shaders/`).

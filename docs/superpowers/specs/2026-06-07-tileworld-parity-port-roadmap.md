@@ -336,3 +336,34 @@ A pass through most of the deferred depth (training dummies excluded per user).
 ### Progress summary (2026-06-08)
 **Done + green (268 tests):** P0 spine · P1 combat economy · P2 resources/verbs · P3 upgrade tree + shop · P4 defenses · P5 succession (heir loop) · P6 hazards (fall/swamp) · **D1–D8 deferred-depth pass**. The original game's **core arc is ported end-to-end** — fight (crit/cleave/lifesteal/knockback/hit-stop) → mine/forage/hunt/loot into a real bag → spend gold/stone on the War Table + Merchant → survive upgrade-gated night sieges where the castle fights back → fall and pass the blade to an heir until the bloodline ends.
 **Remaining = the depth long-tail (all explicitly deferred above):** A* pursuit, villager guard-combat/rescue/dummies/population, wildlife food-chain depth, multi-track audio + VO, icon atlas, FixedUpdate hardening, tower destructibility. None block the playable core loop.
+
+### Deferred long-tail CLOSED — port complete (2026-06-09)
+A code audit re-checked the "STILL DEFERRED" list above against the actual `src/` and found it
+**stale** — almost everything had since landed (in the late-June-8 commits and after). Verified
+in-code:
+- **D9 A\* pursuit — DONE.** `navgrid.rs::path_to` wraps core `pathfinding::find_path` over a
+  `ForestGrid` (terrain walkability + blocker obstacles + wall edge-midpoint + height-step).
+  Camp orks hunting the hero (`orks.rs:403`) and wave invaders marching the keep (`siege.rs:702`)
+  both compute A* waypoints (re-pathed ~0.6s, staggered) and feed them to `steer::advance`.
+  Short/cheap chases (hero, guards, brawls) stay direct steering by design.
+- **Ork death-fade — DONE.** `dying.rs` (1.4s sink/shrink/tip); `begin_dying()` from every ork
+  death path (combat, cleave, siege-stuck, brawl, defender bolt).
+- **Wildlife death-fade — DONE.** same `begin_dying()` path (`combat.rs:380`).
+- **Wildlife respawn — DONE.** `wildlife.rs` `enqueue_respawn`/`drain_respawns`, 35s herbivore /
+  50s predator, near the death spot. (The module-top comment still says "no respawn" — stale.)
+- **Wildlife struck-enrage — DONE.** `Struck` component → 6s aggro latch onto the hero
+  (`wildlife.rs:147`, inserted at `combat.rs:405`). Applies to all predators.
+- **Audio SFX synth — DONE.** `audio/synth.rs` bakes 9 in-memory WAV stings (ore/chest/forage/
+  level-up/gold/shop/bell/rescue/low-hp).
+- **Audio multi-track music — DONE.** `audio/music.rs` rides 4 phase-driven loops
+  (bed/combat/night-dread/boss-march) with crossfades.
+- **Audio event VO — DONE.** `audio/voice.rs` fires hero lines on first-stone/chest/rescue/
+  night-warning/low-hp/home + per-biome musings, with one-mouth + 14s-gap gating.
+
+**Only genuinely-unbuilt item: D10 FixedUpdate 60 Hz + input-intent layer — DROPPED as obsolete.**
+The bar is "feels-the-same" (not byte-determinism), the freeze gate already works in `Update`,
+and the sim runs fine on clamped wall-clock dt. No functional payoff; removed from the backlog.
+
+**Status: the parity port is COMPLETE.** There is nothing left to *port*. Further work is
+beyond-parity (balance/feel tuning, new content, presentation/perf — the god-rays/graphics-preset
+thread in the latest commits is the start of that phase).
