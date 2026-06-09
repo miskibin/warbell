@@ -189,9 +189,20 @@ fn population_system(
 }
 
 /// New run: clear the town and seed starting wood. Mirrors `economy::reset_economy`.
-fn reset_town(mut town: ResMut<TownRes>, mut bank: ResMut<Bank>) {
+fn reset_town(
+    mut town: ResMut<TownRes>,
+    mut bank: ResMut<Bank>,
+    mut commands: Commands,
+    stale: Query<Entity, Or<(With<BuildingMesh>, With<Flame>)>>,
+) {
     town.0.reset(0);
     bank.0.add_wood(START_WOOD);
+    // The world map isn't rebuilt on restart, so reap last run's building meshes +
+    // flames here (the empty plot pads persist; TownRes is now all-Empty, so the
+    // scene must match). Mirrors how succession_fx reaps graves on a new run.
+    for e in &stale {
+        commands.entity(e).try_despawn();
+    }
 }
 
 /// Stores the world-XZ centre of every seeded plot (index = plot idx).
