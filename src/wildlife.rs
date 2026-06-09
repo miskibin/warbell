@@ -731,6 +731,31 @@ pub fn populate(
         }
         templates.push((plan.species, tmpl));
     }
+    // A few dogs & cats living in the castle suburbs, so the town has life underfoot. Homed near
+    // the origin (the castle safe-zone is grass) so they mill around the houses, not the wilds.
+    for (species, n) in [(Species::Dog, 3u32), (Species::Cat, 3u32)] {
+        let (Some(plan), Some((_, tmpl))) = (
+            PLANS.iter().find(|p| p.species == species),
+            templates.iter().find(|(s, _)| *s == species),
+        ) else {
+            continue;
+        };
+        let mut placed = 0;
+        let mut tries = 0;
+        while placed < n && tries < 400 {
+            tries += 1;
+            let ax = rng_range(&mut rng, -16.0, 16.0);
+            let az = rng_range(&mut rng, -16.0, 16.0);
+            let p = Vec2::new(ax, az);
+            // Open grass, outside the keep core, off any wall/house/prop blocker.
+            if p.length() < 6.0 || !worldmap::is_grass_world(ax, az) || crate::blockers::is_blocked(ax, az) {
+                continue;
+            }
+            spawn_one(commands, &mat, tmpl, plan, ax, az, p, next_u32(&mut rng));
+            placed += 1;
+        }
+    }
+
     // Retain the templates + material so slain animals can be respawned.
     commands.insert_resource(WildlifeAssets { mat, templates });
 }

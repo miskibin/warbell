@@ -25,7 +25,9 @@ use crate::worldmap;
 
 /// Townsfolk turn at a relaxed rate. rad/s.
 const VIL_MAX_TURN: f32 = 3.0;
-const SCALE: f32 = 0.55; // the TS villager group scale
+const SCALE: f32 = 0.63; // the TS villager group scale, ×1.15 (townsfolk read a bit bigger now)
+/// Child villagers — the same rig scaled right down, so the suburbs have kids underfoot.
+const KID_SCALE: f32 = SCALE * 0.6;
 
 // Palette (sRGB hex, from Villager.tsx).
 const SKIN: [u32; 3] = [0xdca78a, 0xc08866, 0xa36b4a];
@@ -67,12 +69,26 @@ pub struct Villager {
     mode: Mode,
     timer: f32,
     rng: u32,
+    /// True while walking to a gathering spot (so the brain lingers longer on arrival).
+    gathering: bool,
 }
 
 #[derive(Component)]
 struct VilPart {
     kind: PartKind,
 }
+
+/// A child villager — wanders fast in short bursts around a small play patch (and skips the
+/// adults' gathering/chore behaviour). Otherwise a normal villager (same rig, smaller scale),
+/// so the night curfew and [`villager_brain`] handle it for free.
+#[derive(Component)]
+struct Kid;
+
+/// Town "gathering spots" — the well, woodpile, market, keep steps. Idle adults occasionally
+/// drift to one and linger, so the suburbs cluster into little knots instead of all wandering
+/// solo. Filled by [`populate`]; empty before then (init'd so [`villager_brain`] never misses it).
+#[derive(Resource, Default)]
+struct TownSpots(Vec<Vec2>);
 
 /// A wandering **pilgrim** — a villager whose brain ([`pilgrim_brain`]) walks it between the
 /// island's landmarks (and back to town) instead of milling the courtyard. Hail it with **F**
@@ -146,6 +162,7 @@ impl Plugin for VillagersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RescuedCamps>()
             .init_resource::<GuardDamage>()
+            .init_resource::<TownSpots>()
             .add_systems(Update, villager_limbs) // limb anim keeps running while frozen
             .add_systems(Update, townsfolk_curfew) // ungated: peasants clear the streets at night
             .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rescues)
@@ -210,7 +227,7 @@ pub fn spawn_courtyard_guard(
     let half = crate::castle::courtyard_half();
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
-    spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.4, next_u32(&mut rng));
+    spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.4, SCALE, next_u32(&mut rng));
 }
 
 /// Spawn a freed captive as a **settler/militia** at `from` (the camp cage), homed to a courtyard
@@ -230,7 +247,7 @@ pub fn spawn_settler(
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
     // home = post (the courtyard) → the Guard's post is the castle; pos = from (the cage) → it
     // spawns at the camp and `guard_combat` walks it back to its post.
-    spawn(commands, meshes, &mat, kind, post, from, 1.6, 1.4, next_u32(&mut rng));
+    spawn(commands, meshes, &mat, kind, post, from, 1.6, 1.4, SCALE, next_u32(&mut rng));
 }
 
 /// Each purchased District settles a new household — a guard villager joins the courtyard and
@@ -340,25 +357,31 @@ fn recruit(
 /// [`pilgrim_brain`]) are excluded.
 fn villager_brain(
     time: Res<Time>,
-    mut q: Query<(&mut Villager, &mut Transform), (Without<Guard>, Without<Pilgrim>)>,
+    spots: Res<TownSpots>,
+    mut q: Query<(&mut Villager, &mut Transform, Has<Kid>), (Without<Guard>, Without<Pilgrim>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
 
-    for (mut v, mut tf) in &mut q {
+    for (mut v, mut tf, is_kid) in &mut q {
         v.timer -= dt;
         match v.mode {
             Mode::Idle => {
                 v.moving = false;
                 if v.timer <= 0.0 {
-                    pick_walk(&mut v);
+                    pick_walk(&mut v, &spots.0, is_kid);
                 }
             }
             Mode::Walk => {
                 let dist = (v.target - v.pos).length();
                 if dist < 0.3 || v.timer <= 0.0 {
                     v.mode = Mode::Idle;
-                    v.timer = rng_range(&mut v.rng, 1.5, 4.5);
+                    // Linger at a gathering spot (a chat or a chore); else just a short pause.
+                    v.timer = if v.gathering {
+                        rng_range(&mut v.rng, 6.0, 14.0)
+                    } else {
+                        rng_range(&mut v.rng, 1.5, 4.5)
+                    };
                     v.moving = false;
                 } else {
                     let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
@@ -698,10 +721,22 @@ fn villager_limbs(
     }
 }
 
-fn pick_walk(v: &mut Villager) {
-    let ang = rng01(&mut v.rng) * TAU;
-    let r = rng_range(&mut v.rng, v.wander_r * 0.3, v.wander_r);
-    v.target = v.home + Vec2::new(ang.cos() * r, ang.sin() * r);
+fn pick_walk(v: &mut Villager, spots: &[Vec2], is_kid: bool) {
+    // Adults sometimes drift to a shared gathering spot (well / woodpile / market / keep steps)
+    // and linger there, so the town clusters into little knots instead of all wandering solo.
+    // Kids skip it — they just scamper around their own small play patch.
+    if !is_kid && !spots.is_empty() && rng01(&mut v.rng) < 0.42 {
+        let s = spots[(rng01(&mut v.rng) * spots.len() as f32) as usize % spots.len()];
+        let ang = rng01(&mut v.rng) * TAU;
+        let r = rng_range(&mut v.rng, 0.9, 1.7); // ring just outside the prop's blocker
+        v.target = s + Vec2::new(ang.cos() * r, ang.sin() * r);
+        v.gathering = true;
+    } else {
+        let ang = rng01(&mut v.rng) * TAU;
+        let r = rng_range(&mut v.rng, v.wander_r * 0.3, v.wander_r);
+        v.target = v.home + Vec2::new(ang.cos() * r, ang.sin() * r);
+        v.gathering = false;
+    }
     v.mode = Mode::Walk;
     v.timer = rng_range(&mut v.rng, 3.0, 7.0);
 }
@@ -803,7 +838,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     for (i, (gx, gz)) in [(-2.3f32, 3.8f32), (2.3, 3.8)].into_iter().enumerate() {
         let kind = Kind::Guard { skin: SKIN[i % SKIN.len()], tunic: TUNIC[1] };
         let home = Vec2::new(gx, gz);
-        spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.1, next_u32(&mut rng));
+        spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.1, SCALE, next_u32(&mut rng));
         placed.push(home);
     }
 
@@ -811,7 +846,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     for (i, g) in crate::castle::gate_centers().into_iter().enumerate() {
         let home = g + (-g).normalize_or_zero() * 1.5;
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: TUNIC[i % TUNIC.len()], hat: i % 2 == 0 };
-        spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.6, next_u32(&mut rng));
+        spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.6, SCALE, next_u32(&mut rng));
         placed.push(home);
     }
 
@@ -821,7 +856,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         let Some(home) = courtyard_spot(&mut rng, half, &placed) else { continue };
         placed.push(home);
         let kind = Kind::Peasant { skin: SKIN[(i + 1) % SKIN.len()], tunic: TUNIC[(i + 2) % TUNIC.len()], hat: i % 2 == 1 };
-        spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.0, next_u32(&mut rng));
+        spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.0, SCALE, next_u32(&mut rng));
     }
 
     // A little market just outside the south gate: a striped stall + two robed traders who
@@ -840,7 +875,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     for i in 0..2 {
         let home = market + Vec2::new(if i == 0 { -1.6 } else { 1.6 }, 0.8);
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: MERCHANT_ROBE[i % 2], hat: false };
-        spawn(commands, meshes, &mat, kind, home, home, 1.3, 2.4, next_u32(&mut rng));
+        spawn(commands, meshes, &mat, kind, home, home, 1.3, 2.4, SCALE, next_u32(&mut rng));
     }
 
     // Two wandering pilgrims who trek between the island's landmarks, hinting the way (see
@@ -850,13 +885,54 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         let g = gates[i % gates.len()];
         let home = g + (-g).normalize_or_zero() * 2.0;
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: PILGRIM_ROBE, hat: true };
-        let e = spawn(commands, meshes, &mat, kind, home, home, 1.5, 2.0, next_u32(&mut rng));
+        let e = spawn(commands, meshes, &mat, kind, home, home, 1.5, 2.0, SCALE, next_u32(&mut rng));
         commands.entity(e).insert(Pilgrim {
             target: home,
             pause: 0.0,
             hint_cd: 0.0,
             rng: next_u32(&mut rng) | 1,
         });
+    }
+
+    // ── Gathering stations: a well + a woodpile the townsfolk cluster around for a chat or a
+    // chore. The market and the keep steps round out the gather spots. Props are solid (small
+    // blockers); the gather ring in `pick_walk` sits just outside them so nobody gets stuck. ──
+    let mut spots: Vec<Vec2> = vec![market, Vec2::new(0.0, 3.4)]; // market stall + keep steps
+    if let Some(well) = courtyard_spot(&mut rng, half, &placed) {
+        let wy = worldmap::ground_at_world(well.x, well.y).unwrap_or(0.0);
+        commands.spawn((
+            Mesh3d(meshes.add(well_mesh())),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_xyz(well.x, wy, well.y),
+            BiomeEntity,
+        ));
+        crate::blockers::add_box(well.x, well.y, 0.5, 0.5);
+        placed.push(well);
+        spots.push(well);
+    }
+    if let Some(pile) = courtyard_spot(&mut rng, half, &placed) {
+        let py = worldmap::ground_at_world(pile.x, pile.y).unwrap_or(0.0);
+        commands.spawn((
+            Mesh3d(meshes.add(woodpile_mesh())),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_xyz(pile.x, py, pile.y),
+            BiomeEntity,
+        ));
+        crate::blockers::add_box(pile.x, pile.y, 0.6, 0.5);
+        placed.push(pile);
+        spots.push(pile);
+    }
+    commands.insert_resource(TownSpots(spots));
+
+    // ── Kids: a few small villagers scampering around a play patch just outside the south gate.
+    // High speed + tiny wander radius + the `Kid` marker → short darting bursts that read as play
+    // (they skip the adults' gathering behaviour). Curfew hides them at night like any townsfolk. ──
+    let play = gates[0] + (-gates[0]).normalize_or_zero() * 3.0;
+    for i in 0..4 {
+        let home = play + Vec2::new(rng_range(&mut rng, -1.6, 1.6), rng_range(&mut rng, -1.6, 1.6));
+        let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: TUNIC[(i + 1) % TUNIC.len()], hat: i % 2 == 0 };
+        let e = spawn(commands, meshes, &mat, kind, home, home, 2.8, 1.7, KID_SCALE, next_u32(&mut rng));
+        commands.entity(e).insert(Kid);
     }
 }
 
@@ -885,6 +961,38 @@ fn market_stall_mesh() -> Mesh {
     // a couple of goods crates on the counter
     parts.push(bx(0.3, 0.3, 0.3, v(-0.5, 0.65, 0.0), lin(0x8a6a3a)));
     parts.push(bx(0.26, 0.26, 0.26, v(0.45, 0.63, 0.05), lin(0x9c7a44)));
+    group(parts)
+}
+
+/// A stone well: a squat curb with a dark water hole, two posts, a crossbar, and a bucket.
+fn well_mesh() -> Mesh {
+    const STONE: u32 = 0x8a8f96;
+    const DARKW: u32 = 0x2a3338; // water in the shaft
+    const WOOD: u32 = 0x6b4a2a;
+    const DARK: u32 = 0x4a3322;
+    let parts = vec![
+        bx(0.9, 0.5, 0.9, v(0.0, 0.25, 0.0), lin(STONE)),  // curb
+        bx(0.6, 0.46, 0.6, v(0.0, 0.29, 0.0), lin(DARKW)), // water hole (sits proud of the curb top)
+        bx(0.1, 1.05, 0.1, v(-0.38, 1.0, 0.0), lin(WOOD)), // post
+        bx(0.1, 1.05, 0.1, v(0.38, 1.0, 0.0), lin(WOOD)),  // post
+        bx(0.92, 0.1, 0.12, v(0.0, 1.5, 0.0), lin(DARK)),  // crossbar
+        bx(0.22, 0.24, 0.22, v(0.0, 1.06, 0.0), lin(WOOD)), // hanging bucket
+    ];
+    group(parts)
+}
+
+/// A woodpile: stacked logs (boxes lying along Z), a pyramid 3-2-1.
+fn woodpile_mesh() -> Mesh {
+    const LOG: u32 = 0x7a5a32;
+    const LOG2: u32 = 0x6b4a2a;
+    let mut parts = Vec::new();
+    let rows: [(f32, &[f32]); 3] = [(0.15, &[-0.5, 0.0, 0.5]), (0.42, &[-0.25, 0.25]), (0.69, &[0.0])];
+    for (y, xs) in rows {
+        for (i, x) in xs.iter().enumerate() {
+            let c = if i % 2 == 0 { LOG } else { LOG2 };
+            parts.push(bx(0.24, 0.24, 1.0, v(*x, y, 0.0), lin(c)));
+        }
+    }
     group(parts)
 }
 
@@ -927,6 +1035,7 @@ fn spawn(
     pos: Vec2,
     speed: f32,
     wander_r: f32,
+    scale: f32,
     seed: u32,
 ) -> Entity {
     let s = spec(kind);
@@ -955,11 +1064,12 @@ fn spawn(
         mode: Mode::Idle,
         timer: rng_range(&mut r, 0.5, 4.0),
         rng: r,
+        gathering: false,
     };
 
     let root = commands
         .spawn((
-            Transform { translation: Vec3::new(pos.x, y, pos.y), rotation: Quat::from_rotation_y(facing), scale: Vec3::splat(SCALE) },
+            Transform { translation: Vec3::new(pos.x, y, pos.y), rotation: Quat::from_rotation_y(facing), scale: Vec3::splat(scale) },
             Visibility::Visible,
             vil,
             BiomeEntity,

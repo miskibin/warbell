@@ -18,8 +18,8 @@ use super::{frand, AudioConfig, AudioCue};
 /// than once per 10 minutes" floor).
 const LINE_FLOOR: f32 = 600.0;
 /// Minimum gap between ANY two ambient (proximity) villager lines, so the town isn't a babble.
-/// (Lowered from 150 → the town should feel a bit chattier, but never wall-to-wall.)
-const AMBIENT_GAP: f32 = 80.0;
+/// (Lowered 150 → 80 → 55: a chattier town, but the per-line 10-min floor still prevents repeats.)
+const AMBIENT_GAP: f32 = 55.0;
 /// Hero must be this close (world units) to a villager to trigger a proximity greeting/musing.
 const NEAR_DIST: f32 = 7.0;
 /// For an event line, the nearest villager must be within this of the hero to voice it.
