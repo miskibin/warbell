@@ -312,6 +312,7 @@ fn shrine_heal(
     hero: Res<HeroState>,
     mut player: ResMut<PlayerRes>,
     mut acc: Local<f64>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
 ) {
     if !defenses.shrine || !hero.alive || !crate::castle::in_footprint(hero.pos.x, hero.pos.y) {
         return;
@@ -324,6 +325,8 @@ fn shrine_heal(
     *acc = new_acc;
     if whole > 0 {
         p.heal(whole as f64);
+        // The hero's reverent line — voice caps it to once per 10 min, so it's an occasional grace.
+        cues.write(crate::audio::AudioCue::HeroEvent(crate::audio::HeroEvent::ShrineHeal));
     }
 }
 

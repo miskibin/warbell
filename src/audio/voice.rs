@@ -24,6 +24,9 @@ const LINE_GUARD: f32 = 4.0;
 /// emitter re-sends the cue every frame the hero is inside a biome, a musing the gap suppresses
 /// isn't lost: it fires the moment the gap clears while he's still there (mark-spoken-on-fire).
 const GLOBAL_LINE_GAP: f32 = 14.0;
+/// Per-line floor for the "throttled" flavour reactions (see [`HeroEvent::throttled`]) — a given
+/// line plays at most once per this window, so they stay an occasional spice rather than chatter.
+const EVENT_REPLAY_GAP: f32 = 600.0;
 
 #[derive(Component)]
 pub(crate) struct HeroVoiceTag;
@@ -47,11 +50,19 @@ pub(crate) struct HeroMouth {
     last_grunt: f32,
     line_until: f32,
     last_line: f32,
+    /// Last time each [`HeroEvent`] played (indexed by `HeroEvent::key`) — drives the per-line
+    /// [`EVENT_REPLAY_GAP`] floor on throttled reactions.
+    event_last: [f32; HeroEvent::COUNT],
 }
 
 impl Default for HeroMouth {
     fn default() -> Self {
-        Self { last_grunt: -100.0, line_until: 0.0, last_line: -100.0 }
+        Self {
+            last_grunt: -100.0,
+            line_until: 0.0,
+            last_line: -100.0,
+            event_last: [-1000.0; HeroEvent::COUNT],
+        }
     }
 }
 
@@ -70,6 +81,14 @@ pub(crate) fn setup_voice(asset: Res<AssetServer>, mut commands: Commands) {
         (HeroEvent::NightWarning, asset.load("audio/vo/night.ogg")),
         (HeroEvent::LowHp, asset.load("audio/vo/hurt.ogg")),
         (HeroEvent::Home, asset.load("audio/vo/home.ogg")),
+        (HeroEvent::Equip, asset.load("audio/vo/equip.ogg")),
+        (HeroEvent::LevelUp, asset.load("audio/vo/levelup.ogg")),
+        (HeroEvent::WaveSurvived, asset.load("audio/vo/wave_survived.ogg")),
+        (HeroEvent::FirstKill, asset.load("audio/vo/first_kill.ogg")),
+        (HeroEvent::GoldRich, asset.load("audio/vo/gold_rich.ogg")),
+        (HeroEvent::Broke, asset.load("audio/vo/broke.ogg")),
+        (HeroEvent::KeepHurt, asset.load("audio/vo/keep_hurt.ogg")),
+        (HeroEvent::ShrineHeal, asset.load("audio/vo/shrine_heal.ogg")),
     ];
     commands.insert_resource(VoiceBank {
         swings: ["audio/player-swing-1.ogg", "audio/player-swing-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
@@ -150,6 +169,8 @@ pub(crate) fn play_voice_cues(
                     HeroEvent::FirstStone if gates.first_stone => true,
                     HeroEvent::FirstRescue if gates.first_rescue => true,
                     HeroEvent::Home if gates.home => true,
+                    // Flavour reactions obey a 10-minute per-line floor so they stay occasional.
+                    e if e.throttled() && now - mouth.event_last[e.key()] < EVENT_REPLAY_GAP => true,
                     _ => false,
                 };
                 if !blocked {
@@ -160,6 +181,7 @@ pub(crate) fn play_voice_cues(
                             HeroEvent::Home => gates.home = true,
                             _ => {}
                         }
+                        mouth.event_last[ev.key()] = now;
                         mouth.line_until = now + LINE_GUARD;
                         // Count event hints toward the musing gap so a biome line doesn't
                         // immediately follow a hint — but don't gate the hint itself (one-shot,
