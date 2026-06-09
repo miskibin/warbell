@@ -15,6 +15,7 @@
 mod ambience;
 mod animals;
 mod footsteps;
+mod hero_remarks;
 mod music;
 mod npc;
 mod ork;
@@ -257,6 +258,7 @@ impl Plugin for GameAudioPlugin {
                     voice::setup_voice,
                     npc::setup_npc_voice,
                     ork::setup_ork_voice,
+                    hero_remarks::setup,
                 ),
             )
             .add_systems(
@@ -277,18 +279,22 @@ impl Plugin for GameAudioPlugin {
                     synth::debug_play_stings,
                 ),
             )
-            // Villager + ork voices only while actually playing (no chatter in menus / panels).
+            // Villager + ork + hero-remark voices only while actually playing (no chatter in
+            // menus / panels).
             .add_systems(
                 Update,
-                (npc::npc_ambient, npc::npc_events, ork::ork_voices)
+                (npc::npc_ambient, npc::npc_events, ork::ork_voices, hero_remarks::tick)
                     .run_if(in_state(crate::game_state::AppState::Playing)),
             )
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                reset_hero_line_gates,
+                (reset_hero_line_gates, hero_remarks::reset),
             )
-            .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_hero_line_gates);
+            .add_systems(
+                OnExit(crate::game_state::AppState::GameOver),
+                (reset_hero_line_gates, hero_remarks::reset),
+            );
     }
 }
 

@@ -82,7 +82,7 @@ struct VilPart {
 /// adults' gathering/chore behaviour). Otherwise a normal villager (same rig, smaller scale),
 /// so the night curfew and [`villager_brain`] handle it for free.
 #[derive(Component)]
-struct Kid;
+pub(crate) struct Kid;
 
 /// Town "gathering spots" — the well, woodpile, market, keep steps. Idle adults occasionally
 /// drift to one and linger, so the suburbs cluster into little knots instead of all wandering
