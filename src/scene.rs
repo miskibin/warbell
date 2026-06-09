@@ -390,13 +390,18 @@ fn setup_sun(mut commands: Commands) {
     ));
 
     // A single big fog box enclosing the island + the air above it; the sun's shafts only
-    // render inside this volume. Low `density_factor` keeps it subtle (gentle haze + shafts,
-    // not pea-soup); raised toward the canopy height so beams read between the trees.
+    // render inside this volume. The trick for *visible* god-rays that don't murk the scene:
+    // strong `scattering` + high forward `scattering_asymmetry` concentrate the effect into beams
+    // aimed at the sun (instead of uniform haze), `light_intensity` brightens them past physical,
+    // and `absorption` stays low so the volume doesn't darken what's seen through it. All tunable
+    // live in F1 → Fog.
     commands.spawn((
         FogVolume {
-            density_factor: 0.012, // very thin — just enough to catch shafts, not murk the view
-            absorption: 0.05,      // low: don't darken what's seen through the volume
-            scattering: 0.5,
+            density_factor: 0.15,        // visible amount of fog to scatter the shafts
+            absorption: 0.1,             // low: don't darken what's seen through the volume
+            scattering: 0.85,            // high: lots of light scattered toward the viewer
+            scattering_asymmetry: 0.85,  // strong forward scatter → crisp shafts toward the sun
+            light_intensity: 1.6,        // nonphysical boost so the beams really pop
             ..default()
         },
         Transform::from_xyz(0.0, 18.0, 0.0).with_scale(Vec3::new(320.0, 50.0, 320.0)),
