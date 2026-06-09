@@ -466,13 +466,12 @@ pub fn build(
         crate::biome::BiomeEntity,
     ));
 
-    // ── Background sailboats (near water) + an unreachable forest far-shore (far) ──
+    // ── Background sailboats on the open water around the island ──
     // Island shape is authored in BASE space (CX/CZ, ISLAND_R*); convert to world:
     // world = base*MAP_SCALE - G. Centre ≈ origin; radii scale by MAP_SCALE.
     let isle_c = Vec2::new(CX * MAP_SCALE - GX, CZ * MAP_SCALE - GZ);
     let isle_r = Vec2::new(ISLAND_RX * MAP_SCALE, ISLAND_RZ * MAP_SCALE);
     crate::boats::spawn_boats_island(commands, meshes, std_mats, isle_c, isle_r, SEA_Y);
-    crate::distant::spawn_forest_edge(commands, meshes, std_mats, SEA_Y);
 
     // ── Plan the ork camps BEFORE scatter so their clearings can be reserved. ──
     crate::camps::plan();

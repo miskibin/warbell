@@ -31,7 +31,6 @@ mod decor;
 mod defenses;
 mod dof;
 mod dying;
-mod distant;
 mod economy;
 mod footstep_fx;
 mod game_state;
@@ -116,7 +115,6 @@ fn main() {
             particles::ParticlePlugin,
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
-            distant::DistantPlugin,
         ))
         .add_plugins((
             wind::WindPlugin,
