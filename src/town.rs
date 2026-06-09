@@ -44,9 +44,12 @@ impl Default for TownRes {
     }
 }
 
-/// Tags a build-plot (foundation pad) entity. Plots are indexed via the `PlotSpots` resource.
+/// Tags a build-plot (the construction-site placeholder) entity, carrying its plot index so it can
+/// be hidden once something is built there (and shown again on an empty/rubble plot).
 #[derive(Component)]
-pub struct BuildPlot;
+pub struct BuildPlot {
+    pub idx: usize,
+}
 
 /// The building mesh sitting on a plot (despawned on collapse/rebuild).
 #[derive(Component)]
@@ -95,7 +98,7 @@ impl Plugin for TownPlugin {
             .add_systems(Update, build_interact.run_if(in_state(Modal::Build)))
             .add_systems(
                 Update,
-                (auto_assign_workers, sync_staffed, release_orphan_workers)
+                (auto_assign_workers, sync_staffed, release_orphan_workers, sync_plot_visibility)
                     .run_if(in_state(Modal::None)),
             )
             .add_systems(
@@ -317,11 +320,20 @@ const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
 /// after the castle so the safe-zone ground is final.
 pub fn populate_plots(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     let mut spots = Vec::with_capacity(PLOT_COUNT);
-    for off in PLOT_OFFSETS.iter() {
+    for (idx, off) in PLOT_OFFSETS.iter().enumerate() {
         spots.push(*off);
-        spawn_textured(commands, meshes, mats, BuildPlot, crate::town_meshes::plot_parts(), *off);
+        spawn_textured(commands, meshes, mats, BuildPlot { idx }, crate::town_meshes::plot_parts(), *off);
     }
     commands.insert_resource(PlotSpots(spots));
+}
+
+/// Hide a plot's construction-site placeholder once a building stands on it (and show it again on
+/// an empty/rubble plot) — so you never see the timber frame poking through a finished building.
+fn sync_plot_visibility(town: Res<TownRes>, mut q: Query<(&BuildPlot, &mut Visibility)>) {
+    for (plot, mut vis) in &mut q {
+        let built = town.0.plots.get(plot.idx).is_some_and(|p| p.is_built());
+        *vis = if built { Visibility::Hidden } else { Visibility::Visible };
+    }
 }
 
 /// Spawn a textured multi-material structure (one child mesh per `(Mesh, M)` part, sharing the
@@ -705,6 +717,9 @@ fn spawn_building(
 ) {
     let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
     spawn_textured(commands, meshes, mats, BuildingMesh { idx }, building_parts(kind), pos);
+    // Solid cottage: register a collision box over the dwelling (the −X side of the plot) so the
+    // hero + orks route around it. (The crop field / log yard on the +X side stays walkable.)
+    crate::blockers::add_box(pos.x - 0.95, pos.y, 1.05, 0.95);
 }
 
 /// The textured parts for a producer — both are a shared plaster cottage (matching the keep's
