@@ -1434,8 +1434,9 @@ Add a tuning const near the other ork combat consts:
 ```rust
 /// How close an invader must be to batter a building.
 const BUILDING_ATTACK_RANGE: f32 = 1.8;
-/// Building damage per invader per second.
-const BUILDING_DPS: f32 = 9.0;
+/// Building damage per invader per second. FORGIVING slice tuning: a farm (60 HP)
+/// survives ~12s of one undefended arsonist, so you can usually reach it in time.
+const BUILDING_DPS: f32 = 5.0;
 ```
 
 - [ ] **Step 2: Insert the building-diversion branch**
@@ -1443,9 +1444,12 @@ const BUILDING_DPS: f32 = 9.0;
 In `invader_brain`, the target decision is around line 663 (`let target = if let Some((_, gp)) = guard_tgt { ... } else { KEEP_POS }`). A fraction of invaders prefer a building when the hero/guards aren't the priority. Replace the final `else { KEEP_POS }` branch with a building check:
 
 ```rust
-    // Roughly half the warband (by id parity) are arsonists: they make for the
-    // nearest standing building instead of the keep.
-    let arsonist = (e.to_bits() & 1) == 0;
+    // FORGIVING slice tuning: only ~1/3 of the warband (by id) are arsonists; the
+    // rest still rush the keep. They make for the nearest standing building.
+    // The keep's existing defenses (towers/archers/ballista in `defenses.rs`)
+    // already auto-target ANY WaveInvader, so arsonists get shot on approach —
+    // no extra wiring needed for defenses to help save the town.
+    let arsonist = (e.to_bits() % 3) == 0;
     let building_goal: Option<(usize, Vec2)> = if arsonist {
         let mut best: Option<(usize, f32)> = None;
         for (idx, spot) in plot_spots.0.iter().enumerate() {
@@ -1739,4 +1743,5 @@ Invoke the `superpowers:finishing-a-development-branch` skill to choose merge/PR
 - **Spec coverage:** every spec section maps to a task — data model (Tasks 1–2), plots & build (Tasks 5–7), workers & production (Tasks 8–9), population loop (Task 9), night burn & repair (Tasks 10–11), HUD (Task 9), capture hook (Task 12). Building catalog beyond Farm+House is explicitly **pass 2** (out of this slice, per the spec).
 - **Type consistency:** core method names used downstream — `Town::build`, `production_tick`, `population_tick`, `damage`, `repair`, `pop_cap`, `is_buildable`, `is_built`; resource accessors `food()/wood()/add_food/spend_food/...`; Bevy types `TownRes`, `PlotSpots`, `BuildPlot`, `BuildingMesh`, `Worker{idx,at_post}`, `PendingBuildingDamage`, `BuildTarget`. These names are used identically across tasks.
 - **Open questions resolved in-plan:** starting plots = 8, all pre-unlocked (slice); upkeep = flat `UPKEEP_PER_POP`; producers do **not** register collision (off-lane in safe-zone); auto-repair is free-over-time during Prep. Revisit in pass 2 if balance needs it.
+- **Burn feel = FORGIVING (decided):** slow burn (`BUILDING_DPS = 5.0`), only ~1/3 arsonists, and the keep's existing defenses already shoot arsonists for free. You can save most buildings; a loss reads as a mistake, not bad luck. This is the slice's most important tuning — the whole "is it fun?" verdict rides on the town-burns-while-you-fight moment not feeling unfair. Dial tension UP (more arsonists / higher DPS) only after the loop proves fun. Numbers sit in `town.rs`/`town_store` consts + the F1 panel for fast iteration.
 - **API caveats flagged inline** (confirm against the verified Bevy doc / real source): the mesh tint helper name (`props::tinted`), `Mesh::merge` return shape, `Sphere/Cuboid …mesh().build()` forms, and the HUD query disjointness (`Without<...>` filters). These are the spots most likely to differ from the guessed form — check `src/villagers.rs`/`src/castle.rs`/`src/props.rs` and `docs/specs/bevy-0-18-1-polished-static-3d-scene-verified-apis.md`.
