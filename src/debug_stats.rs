@@ -11,6 +11,7 @@ use bevy::diagnostic::{
     DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin,
 };
 use bevy::prelude::*;
+use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 use crate::economy::Bank;
@@ -35,6 +36,9 @@ impl Plugin for DebugStatsPlugin {
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin::default(),
+            // Per-render-pass GPU timings (shadow / prepass / main / bloom / SSAO / SMAA / …).
+            // Needs the GPU's TIMESTAMP_QUERY feature; falls back to CPU span times without it.
+            RenderDiagnosticsPlugin,
         ))
         .init_resource::<StatsPanel>()
         .add_systems(Update, toggle_panel)
@@ -131,6 +135,16 @@ fn stats_ui(
 
             ui.separator();
 
+            // ── GPU passes ───────────────────────────────────────────────────────────
+            // The bottleneck-finder: which render pass actually eats the frame. Reads the
+            // `render/<pass>/elapsed_gpu` diagnostics (ms). On a GPU without TIMESTAMP_QUERY
+            // these are empty and we fall back to the CPU span times.
+            egui::CollapsingHeader::new("GPU passes (ms)").default_open(true).show(ui, |ui| {
+                gpu_passes(ui, &diags);
+            });
+
+            ui.separator();
+
             // ── State machine ────────────────────────────────────────────────────────
             egui::Grid::new("state").num_columns(2).striped(true).show(ui, |ui| {
                 ui.label("app");
@@ -190,6 +204,52 @@ fn stats_ui(
         });
 
     Ok(())
+}
+
+/// The per-render-pass timing table — the heart of GPU debugging. Pulls every
+/// `render/<pass>/elapsed_gpu` diagnostic (falling back to `/elapsed_cpu` if the GPU can't do
+/// timestamp queries), sorts worst-first, and draws each as a labelled bar relative to the
+/// heaviest pass so the bottleneck pass is obvious at a glance. Total of the listed passes is
+/// shown at the bottom.
+fn gpu_passes(ui: &mut egui::Ui, diags: &DiagnosticsStore) {
+    let collect = |field: &str| -> Vec<(String, f64)> {
+        let mut v: Vec<(String, f64)> = diags
+            .iter()
+            .filter_map(|d| {
+                let p = d.path().as_str();
+                let name = p.strip_prefix("render/")?.strip_suffix(field)?;
+                let ms = d.smoothed().filter(|m| *m > 0.0)?;
+                Some((name.trim_end_matches('/').replace('/', " › "), ms))
+            })
+            .collect();
+        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        v
+    };
+
+    // Prefer GPU timings; fall back to CPU spans on backends without TIMESTAMP_QUERY.
+    let (mut rows, cpu_only) = match collect("/elapsed_gpu") {
+        v if !v.is_empty() => (v, false),
+        _ => (collect("/elapsed_cpu"), true),
+    };
+    if rows.is_empty() {
+        ui.weak("no render-pass timings yet…");
+        return;
+    }
+    if cpu_only {
+        ui.weak("GPU timestamps unavailable — showing CPU span times");
+    }
+
+    let max = rows.iter().map(|r| r.1).fold(0.0_f64, f64::max).max(0.01);
+    let total: f64 = rows.iter().map(|r| r.1).sum();
+    rows.truncate(14); // keep the panel compact — the long tail is sub-0.1 ms anyway
+    for (name, ms) in &rows {
+        let frac = (ms / max) as f32;
+        let bar = egui::ProgressBar::new(frac)
+            .desired_width(ui.available_width())
+            .text(format!("{name}  {ms:.2}"));
+        ui.add(bar);
+    }
+    ui.weak(format!("Σ listed passes: {total:.2} ms"));
 }
 
 /// A compact frame-time sparkline. Draws the rolling history (ms per frame) as a polyline scaled
