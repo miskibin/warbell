@@ -170,6 +170,14 @@ fn play_line(
     if voice.spatial {
         ent.insert(Transform::from_translation(pos.unwrap_or(Vec3::ZERO)));
     }
+    // Place-bound hero lines (proximity remarks / biome musings) carry a walk-away anchor so they
+    // fade the moment he leaves what prompted them (see `stop_displaced_hero_lines`). Event
+    // reactions and the night/quiet/kill musings aren't tied to a spot → no anchor, they play out.
+    if line.speaker == Speaker::Hero {
+        if let Some(anchor) = anchor_for(line.concept, pos) {
+            ent.insert(anchor);
+        }
+    }
     mgr.active.insert(
         line.speaker,
         Active {
@@ -195,6 +203,20 @@ fn play_line(
         cd.priority = line.priority;
     }
     subs.say_as(now, voice.name, line.text, dur);
+}
+
+/// The walk-away anchor for a hero line, derived from its concept (ported from the old
+/// `hero_remarks` anchor table): proximity remarks bind to where he stood — cut if he wanders more
+/// than ~10 units off (the old `NEAR + 3`); a biome musing binds to the biome — cut if he steps
+/// out of it. Event reactions and the night/quiet/kill musings aren't place-bound → `None`.
+fn anchor_for(concept: Concept, pos: Option<Vec3>) -> Option<super::HeroLineAnchor> {
+    use super::HeroLineAnchor;
+    match concept {
+        Concept::NearTown | Concept::NearKids | Concept::NearPet | Concept::NearGuard
+        | Concept::InKeep => pos.map(|p| HeroLineAnchor::Near { pos: Vec2::new(p.x, p.z), r: 10.0 }),
+        Concept::BiomeEntered(b) => Some(HeroLineAnchor::Biome(b)),
+        _ => None,
+    }
 }
 
 /// When a line with a `then` chain finishes, dispatch the follow-up concept to its target speaker.

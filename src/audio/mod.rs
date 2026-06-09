@@ -451,7 +451,9 @@ fn detect_hero_remarks(
         None
     };
 
-    // TODO(D2): re-add walk-away anchor for proximity remarks (NearTown/NearKids/NearPet/NearGuard/InKeep).
+    // Walk-away anchoring for these proximity remarks is handled in the director: `play_line`
+    // attaches a `HeroLineAnchor` (via `anchor_for`) and `stop_displaced_hero_lines` fades the line
+    // if he leaves. The trigger just decides what to say.
 
     let Some(concept) = concept else { return };
     speak.write(Speak::new(concept));
@@ -465,12 +467,16 @@ fn detect_hero_remarks(
 fn stop_displaced_hero_lines(
     mut commands: Commands,
     time: Res<Time>,
-    speaking: Res<HeroSpeaking>,
+    mgr: Res<director::VoiceManager>,
     hero: Query<&crate::player::Hero>,
-    lines: Query<(Entity, &HeroLineAnchor), (With<HeroMouthTag>, Without<HeroLineFadeOut>)>,
+    // Anchors are attached only to catalog hero lines (`VoiceSink(Hero)`), so `&HeroLineAnchor`
+    // already restricts the query to them; no speaker filter needed.
+    lines: Query<(Entity, &HeroLineAnchor), Without<HeroLineFadeOut>>,
 ) {
     let Ok(hero) = hero.single() else { return };
     let now = time.elapsed_secs();
+    // The hero line's estimated end, from the director (replaces the old `HeroSpeaking.until`).
+    let ends_at = mgr.active.get(&Speaker::Hero).map(|a| a.ends_at);
     for (e, anchor) in &lines {
         let left = match anchor {
             HeroLineAnchor::Near { pos, r } => hero.pos.distance(*pos) > *r,
@@ -479,7 +485,7 @@ fn stop_displaced_hero_lines(
             }
         };
         if left {
-            if speaking.until - now <= FINISH_GRACE {
+            if ends_at.is_some_and(|end| end - now <= FINISH_GRACE) {
                 continue; // almost done → let him finish the thought
             }
             commands.entity(e).insert(HeroLineFadeOut);
