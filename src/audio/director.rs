@@ -140,6 +140,14 @@ fn play_line(
     if sources.get(&clip).is_none() {
         return;
     }
+    // Roll a per-utterance playback speed (pitch shift) from the speaker's configured range.
+    // For Hero and Villager the range is (1.0, 1.0) → speed = 1.0 (no shift). For Ork the range
+    // is (0.82, 1.18) → the "different ork every time" effect that ork.rs used to apply directly.
+    let speed = if voice.pitch.0 < voice.pitch.1 {
+        voice.pitch.0 + super::frand(&mut mgr.rng) * (voice.pitch.1 - voice.pitch.0)
+    } else {
+        1.0
+    };
     // One mouth per speaker: stop whatever this speaker had going.
     for (e, s) in sinks {
         if s.0 == line.speaker {
@@ -153,6 +161,7 @@ fn play_line(
         PlaybackSettings {
             mode: PlaybackMode::Despawn,
             volume: Volume::Linear(vol),
+            speed,
             spatial: voice.spatial,
             ..default()
         },

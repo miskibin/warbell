@@ -244,6 +244,7 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<director::VoiceManager>()
             .init_resource::<RemarkTrigger>()
             .init_resource::<npc::VillagerTrigger>()
+            .init_resource::<ork::OrkTrigger>()
             .add_message::<AudioCue>()
             .add_message::<director::Speak>()
             .add_systems(
@@ -256,7 +257,6 @@ impl Plugin for GameAudioPlugin {
                     synth::bake_stings,
                     voice::setup_voice,
                     npc::setup_villager_trigger,
-                    ork::setup_ork_voice,
                     director::setup_voice_manager,
                     director::preload_voice_lines,
                 ),
@@ -286,7 +286,7 @@ impl Plugin for GameAudioPlugin {
             // `HeroLineCooldown` first — event/biome lines win, observational remarks defer.
             .add_systems(
                 Update,
-                (npc::detect_villager_ambient, npc::detect_villager_events, ork::ork_voices, detect_hero_remarks)
+                (npc::detect_villager_ambient, npc::detect_villager_events, ork::detect_ork_voices, detect_hero_remarks)
                     .after(voice::play_voice_cues)
                     .run_if(in_state(crate::game_state::AppState::Playing)),
             )
@@ -302,11 +302,11 @@ impl Plugin for GameAudioPlugin {
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger),
             )
             .add_systems(
                 OnExit(crate::game_state::AppState::GameOver),
-                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger),
             );
     }
 }

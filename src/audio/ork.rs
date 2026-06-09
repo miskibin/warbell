@@ -1,17 +1,23 @@
-//! Ork voices — the horde's battle barks + dying snarls. One deep "cave monster" take, but each
-//! utterance is **pitch-shifted by a random amount** (via [`PlaybackSettings::speed`]) so the
-//! warband doesn't all sound like the same throat. Deliberately RARE: a single global cooldown
-//! ([`OrkVoiceState::next_bark`]) gates ALL ork speech, so you hear the odd taunt over the din
-//! rather than a constant chorus. Clips live in `assets/audio/vo/ork/`.
+//! Ork voices — **trigger only**. This module DETECTS ork-speech opportunities and emits
+//! [`super::Speak`] requests; the catalog (`lines.rs`) owns the line data + pitch config, and the
+//! director (`director.rs`) owns playback + subtitle. The old bespoke `OrkVoiceBank` /
+//! `setup_ork_voice` / `ork_voices` driver has been replaced by the catalog path (Task C4).
+//!
+//! Architecture:
+//! - [`OrkTrigger`] is the one global throttle (replaces `OrkVoiceState`).
+//! - [`detect_ork_voices`] fires `Speak::at(OrkSpot/OrkDeath, pos)`.
+//! - Pitch-shift per utterance is now DATA on `SpeakerVoice::pitch` for `Speaker::Ork` (0.82–1.18)
+//!   applied by the director's `play_line` path — no explicit `speed` param needed here.
+//! - The old `ORK_LINE_GUARD` / `OthersSpeaking` stamp is gone: the director tracks the ork's
+//!   active line via `VoiceManager.active` and the hero defers via `mgr.others_speaking` already.
 
-use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
 use crate::dying::Dying;
 use crate::orks::Ork;
 use crate::player::Hero;
 
-use super::{frand, AudioConfig, HeroSpeaking, OthersSpeaking};
+use super::frand;
 
 /// Shortest gap between ANY two ork utterances; a random slice up to [`BARK_GAP_JITTER`] is added
 /// on top so the cadence is irregular.
@@ -22,118 +28,67 @@ const EARSHOT: f32 = 32.0;
 /// When an ork falls while the cooldown is clear, the chance we play its death snarl (vs. letting
 /// a living ork bark a battle line instead) — keeps frequent deaths from drowning out taunts.
 const DEATH_CHANCE: f32 = 0.4;
-/// Pitch (and tempo) spread per utterance — the "different ork every time" knob.
-const PITCH_LO: f32 = 0.82;
-const PITCH_HI: f32 = 1.18;
-/// Ork voice gain (spatial).
-const ORK_GAIN: f32 = 0.85;
-/// Conservative mouth-busy window an ork bark/snarl occupies (clips aren't transcribed, ~2–4 s) —
-/// the hero defers his commentary this long after the horde speaks (mirrors voice.rs `LINE_GUARD`).
-const ORK_LINE_GUARD: f32 = 3.5;
 
-/// The general battle-cry pool (aligned with [`OrkVoiceBank::battle`]). One deep "cave monster"
-/// take, randomly pitch-shifted per utterance.
-///
-/// **Spoken text of each line** (keep in sync with the clips — our record of what the orks say):
-/// - `spot`   — "Little knight. Little bones."
-/// - `charge` — "Smash the stone. Burn the nest."
-/// - `blood`  — "Blood. Blood."                       (the berserker frenzy cry)
-/// - `taunt`  — "Run, runt. We eat slow ones first."
-/// - `where`  — "Where? Where you hide, worm?"         (lost the target)
-/// - `feast`  — "Tonight we feast."
-/// - `shaman` — "Spirits take him. Saka."              (the shaman's incantation)
-/// And the separate death snarl `death` — "Not done." (choked, fading; plays on a kill).
-const BATTLE_KEYS: [&str; 7] = ["spot", "charge", "blood", "taunt", "where", "feast", "shaman"];
-
+/// Per-run ork bark trigger state. Replaces `OrkVoiceState` — this is now purely the throttle
+/// and jitter RNG; the director handles everything else.
 #[derive(Resource)]
-pub(crate) struct OrkVoiceBank {
-    battle: Vec<Handle<AudioSource>>,
-    death: Handle<AudioSource>,
-}
-
-#[derive(Resource)]
-pub(crate) struct OrkVoiceState {
-    /// Earliest time the next ork utterance may play (the one global throttle).
+pub(crate) struct OrkTrigger {
+    /// Earliest time the next ork utterance may be emitted — the one global throttle.
     next_bark: f32,
     rng: u32,
 }
 
-impl Default for OrkVoiceState {
+impl Default for OrkTrigger {
     fn default() -> Self {
         Self { next_bark: 20.0, rng: 0x51ed_270b }
     }
 }
 
-pub(crate) fn setup_ork_voice(asset: Res<AssetServer>, mut commands: Commands) {
-    let battle = BATTLE_KEYS.iter().map(|k| asset.load(format!("audio/vo/ork/{k}.ogg"))).collect();
-    commands.insert_resource(OrkVoiceBank { battle, death: asset.load("audio/vo/ork/death.ogg") });
-    commands.init_resource::<OrkVoiceState>();
+pub(crate) fn reset_ork_trigger(mut t: ResMut<OrkTrigger>) {
+    *t = OrkTrigger::default();
 }
 
-/// Spawn a clip as a standalone spatial sink at a world point (not a child — so a dying ork's
-/// snarl outlives its 1.4 s fade), pitch-shifted by `speed`.
-fn say_at(commands: &mut Commands, pos: Vec3, clip: Handle<AudioSource>, vol: f32, speed: f32) {
-    commands.spawn((
-        AudioPlayer(clip),
-        PlaybackSettings {
-            mode: PlaybackMode::Despawn,
-            volume: Volume::Linear(vol),
-            speed,
-            spatial: true,
-            ..default()
-        },
-        Transform::from_translation(pos),
-    ));
-}
-
-/// The single ork-voice driver: occasionally (global cooldown) either a freshly-fallen ork's
-/// death snarl or a living ork's battle bark, from the nearest ork in earshot, randomly pitched.
-pub(crate) fn ork_voices(
+/// The ork-voice trigger: occasionally (global cooldown) emits a [`super::Speak`] for either a
+/// newly-fallen ork's death snarl or a living ork's battle bark. The director picks the specific
+/// line, applies the speaker's pitch range, plays it, and shows a subtitle.
+pub(crate) fn detect_ork_voices(
     time: Res<Time>,
-    cfg: Res<AudioConfig>,
-    mut commands: Commands,
-    bank: Res<OrkVoiceBank>,
-    mut st: ResMut<OrkVoiceState>,
-    speaking: Res<HeroSpeaking>,
-    mut others: ResMut<OthersSpeaking>,
+    mut t: ResMut<OrkTrigger>,
+    mgr: Res<super::director::VoiceManager>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     hero: Query<&Hero>,
     dying: Query<&GlobalTransform, (Added<Dying>, With<Ork>)>,
     alive: Query<&GlobalTransform, (With<Ork>, Without<Dying>)>,
 ) {
     let now = time.elapsed_secs();
-    if now < st.next_bark {
+    if now < t.next_bark {
         return;
     }
-    // Hold the horde's barks while the hero is mid-sentence — no talking over him.
-    if now < speaking.until {
+    // Defer to the hero — no talking over him.
+    if mgr.hero_speaking(now) {
         return;
     }
     let Ok(hero) = hero.single() else { return };
-    let vol = ORK_GAIN * cfg.voice_vol;
-    let pitch = PITCH_LO + frand(&mut st.rng) * (PITCH_HI - PITCH_LO);
 
-    // A newly-fallen ork's dying snarl (only some of the time, so battle cries get a turn too).
+    // A newly-fallen ork's dying snarl (only sometimes, so battle cries get a turn too).
     if let Some(gt) = dying.iter().next() {
-        if frand(&mut st.rng) < DEATH_CHANCE {
-            say_at(&mut commands, gt.translation(), bank.death.clone(), vol, pitch);
-            st.next_bark = now + BARK_GAP + frand(&mut st.rng) * BARK_GAP_JITTER;
-            others.until = now + ORK_LINE_GUARD; // hero holds his commentary while the horde speaks
+        if frand(&mut t.rng) < DEATH_CHANCE {
+            speak.write(crate::audio::Speak::at(super::Concept::OrkDeath, gt.translation()));
+            t.next_bark = now + BARK_GAP + frand(&mut t.rng) * BARK_GAP_JITTER;
             return;
         }
     }
 
-    // Otherwise the nearest living ork in earshot barks a random battle line.
+    // Otherwise the nearest living ork in earshot barks a battle line.
     let mut best: Option<(Vec3, f32)> = None;
     for gt in &alive {
-        let t = gt.translation();
-        let d = Vec2::new(t.x, t.z).distance(hero.pos);
+        let p = gt.translation();
+        let d = Vec2::new(p.x, p.z).distance(hero.pos);
         if d <= EARSHOT && best.is_none_or(|(_, bd)| d < bd) {
-            best = Some((t, d));
+            best = Some((p, d));
         }
     }
-    let Some((pos, _)) = best else { return }; // no ork near → stay quiet, retry next frame
-    let i = (frand(&mut st.rng) * BATTLE_KEYS.len() as f32) as usize % BATTLE_KEYS.len();
-    say_at(&mut commands, pos, bank.battle[i].clone(), vol, pitch);
-    st.next_bark = now + BARK_GAP + frand(&mut st.rng) * BARK_GAP_JITTER;
-    others.until = now + ORK_LINE_GUARD; // hero holds his commentary while the horde speaks
+    let Some((pos, _)) = best else { return };
+    speak.write(crate::audio::Speak::at(super::Concept::OrkSpot, pos));
+    t.next_bark = now + BARK_GAP + frand(&mut t.rng) * BARK_GAP_JITTER;
 }
