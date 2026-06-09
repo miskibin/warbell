@@ -100,7 +100,9 @@ impl Plugin for TownPlugin {
                 (apply_building_damage, repair_system).run_if(in_state(Modal::None)),
             )
             // VFX (ungated): flames flicker even when frozen.
-            .add_systems(Update, flame_flicker);
+            .add_systems(Update, flame_flicker)
+            // Screenshot staging (ungated): no-ops unless FOREST_TOWN is set.
+            .add_systems(Update, stage_town_for_shot);
     }
 }
 
@@ -364,6 +366,39 @@ fn repair_system(
         if !burning {
             commands.entity(e).try_despawn();
         }
+    }
+}
+
+/// Screenshot-staging hook: pre-builds plots 0/1/2 and optionally ignites plot 0.
+/// Runs once per launch when `FOREST_TOWN` is set (any value builds; `"burn"` also ignites).
+/// Waits until `PlotSpots` is populated (post worldmap build) via the early-return guard.
+fn stage_town_for_shot(
+    mut done: Local<bool>,
+    spots: Res<PlotSpots>,
+    mut town: ResMut<TownRes>,
+    mut bank: ResMut<Bank>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if *done || spots.0.is_empty() {
+        return;
+    }
+    let Ok(mode) = std::env::var("FOREST_TOWN") else { *done = true; return };
+    *done = true;
+    bank.0.add_wood(100.0);
+    bank.0.add_stone(100.0);
+    town.0.build(0, BuildKind::Farm, &mut bank.0);
+    town.0.build(1, BuildKind::House, &mut bank.0);
+    town.0.build(2, BuildKind::Farm, &mut bank.0);
+    for idx in [0usize, 1, 2] {
+        if let Some(kind) = town.0.plots[idx].kind {
+            spawn_building_mesh(&mut commands, &mut meshes, &mut materials, idx, kind, &spots);
+        }
+    }
+    if mode == "burn" {
+        town.0.damage(0, 20.0);
+        spawn_flame(&mut commands, &mut meshes, &mut materials, 0, &spots);
     }
 }
 
