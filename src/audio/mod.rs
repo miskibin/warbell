@@ -25,7 +25,7 @@ mod sfx;
 pub(crate) mod synth;
 mod voice;
 
-pub(crate) use lines::{Concept, Line, Speaker};
+pub(crate) use lines::{Concept, Speaker};
 pub(crate) use director::Speak;
 
 use bevy::audio::Volume;
@@ -111,8 +111,6 @@ pub enum AudioCue {
 /// roamed past [`AWAY_RADIUS`] from the castle.
 #[derive(Resource, Default)]
 pub(crate) struct HeroLineGates {
-    pub first_stone: bool,
-    pub first_rescue: bool,
     pub home: bool,
     pub been_away: bool,
     /// Once-per-run gates for the new spoken reactions (the rest are repeatable / floor-capped).
@@ -358,8 +356,9 @@ fn fade_out_hero_lines(
 }
 
 /// Emit the home-return line: once the hero has roamed past [`AWAY_RADIUS`] from the castle
-/// (origin) and comes back inside [`HOME_RADIUS`] during prep. Fires at most once per run
-/// (gated by [`HeroLineGates::home`], which `voice` sets when the clip actually plays).
+/// (origin) and comes back inside [`HOME_RADIUS`] during prep. Fires at most once per run:
+/// `detect_home_return` sets `gates.home` on emit, and the catalog `once` flag on the `home`
+/// line is the backstop in the director.
 fn detect_home_return(
     hero: Query<&crate::player::Hero>,
     siege: Option<Res<crate::siege::Siege>>,
@@ -376,6 +375,7 @@ fn detect_home_return(
             siege.map(|s| matches!(s.phase, crate::siege::GamePhase::Prep)).unwrap_or(true);
         if in_prep {
             speak.write(Speak::new(Concept::Home));
+            gates.home = true;
         }
     }
 }

@@ -465,7 +465,6 @@ impl Plugin for SiegePlugin {
 /// prep day by the *next* wave index so each night gets exactly one warning.
 fn night_warning(
     siege: Res<Siege>,
-    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
     mut warned_wave: Local<i32>,
 ) {

@@ -312,7 +312,6 @@ fn shrine_heal(
     hero: Res<HeroState>,
     mut player: ResMut<PlayerRes>,
     mut acc: Local<f64>,
-    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
 ) {
     if !defenses.shrine || !hero.alive || !crate::castle::in_footprint(hero.pos.x, hero.pos.y) {
