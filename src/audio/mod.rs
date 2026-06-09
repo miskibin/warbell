@@ -16,12 +16,15 @@ mod ambience;
 mod animals;
 mod footsteps;
 mod hero_remarks;
+pub(crate) mod lines;
 mod music;
 mod npc;
 mod ork;
 mod sfx;
 pub(crate) mod synth;
 mod voice;
+
+pub(crate) use lines::{Concept, Line, Speaker};
 
 use bevy::audio::Volume;
 use bevy::prelude::*;
