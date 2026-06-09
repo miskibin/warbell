@@ -61,7 +61,8 @@ fn town_round_trips_with_built_and_rubble_plots() {
     bank.add_wood(50.0);
     bank.add_stone(50.0);
     t.build(0, BuildKind::Farm, &mut bank);
-    t.build(1, BuildKind::House, &mut bank);
+    t.build(1, BuildKind::Lumber, &mut bank);
+    t.build_house(&mut bank); // exercise the houses count too
     t.damage(0, 5.0); // ignite plot 0 (Built { burning: true })
     t.damage(2, 1.0); // plot 2 was empty → no-op, stays Empty
     assert_eq!(round_trip(&t), t);

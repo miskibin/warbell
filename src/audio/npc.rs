@@ -205,10 +205,11 @@ fn say_from(commands: &mut Commands, who: Entity, clip: Handle<AudioSource>, vol
 }
 
 /// The villager nearest the hero within `max` (XZ distance), if any — with its world XZ position
-/// (used for the no-overlap-when-close guard).
-fn nearest_villager(
+/// (used for the no-overlap-when-close guard). Generic over the query filter so callers can narrow
+/// it (e.g. only *workers* voice the idle chatter).
+fn nearest_villager<F: bevy::ecs::query::QueryFilter>(
     hero: Vec2,
-    villagers: &Query<(Entity, &GlobalTransform), With<Villager>>,
+    villagers: &Query<(Entity, &GlobalTransform), F>,
     max: f32,
 ) -> Option<(Entity, Vec2)> {
     let mut best: Option<(Entity, Vec2, f32)> = None;
@@ -223,8 +224,11 @@ fn nearest_villager(
     best.map(|(e, p, _)| (e, p))
 }
 
-/// Occasional proximity chatter: when the hero lingers near a townsperson and the throttle has
-/// cleared, the nearest one offers a greeting or an idle musing (each capped to once / 10 min).
+/// Occasional proximity chatter: when the hero lingers near a **working** townsperson and the
+/// throttle has cleared, that worker offers a greeting or an idle musing (each capped to once /
+/// 10 min). Only workers chatter — guards on the wall, scampering kids and passing pilgrims don't —
+/// so the lines come from the folk actually working the town (and the town is quiet until you give
+/// people jobs).
 pub(crate) fn npc_ambient(
     time: Res<Time>,
     cfg: Res<AudioConfig>,
@@ -236,7 +240,7 @@ pub(crate) fn npc_ambient(
     mut subs: ResMut<crate::subtitles::Subtitles>,
     inv: Res<crate::inventory::Inventory>,
     hero: Query<&Hero>,
-    villagers: Query<(Entity, &GlobalTransform), With<Villager>>,
+    workers: Query<(Entity, &GlobalTransform), (With<Villager>, With<crate::town::Worker>)>,
 ) {
     let now = time.elapsed_secs();
     if now < st.next_ambient {
@@ -247,7 +251,7 @@ pub(crate) fn npc_ambient(
         return;
     }
     let Ok(hero) = hero.single() else { return };
-    let Some((who, who_pos)) = nearest_villager(hero.pos, &villagers, NEAR_DIST) else { return };
+    let Some((who, who_pos)) = nearest_villager(hero.pos, &workers, NEAR_DIST) else { return };
     // Don't talk over a nearby villager who's still mid-line — retry next frame once they finish.
     if now < st.voice_until && who_pos.distance(st.voice_pos) < CLOSE_SPEAKER_DIST {
         return;

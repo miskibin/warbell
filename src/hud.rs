@@ -35,6 +35,15 @@ struct FoodText;
 struct WoodText;
 #[derive(Component)]
 struct PopText;
+/// Net daily food balance line in the town panel.
+#[derive(Component)]
+struct PopNetText;
+/// The settle/starve meter fill (green toward a new peasant, red toward losing one).
+#[derive(Component)]
+struct PopBar;
+/// One-line "what's happening" under the town panel bar.
+#[derive(Component)]
+struct PopHintText;
 
 /// Which derived quick-slot a node belongs to.
 #[derive(Clone, Copy, PartialEq)]
@@ -74,7 +83,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup_hud, setup_inv_hud))
-            .add_systems(Update, (update_hud, update_inv_hud, update_town_pop));
+            .add_systems(Update, (update_hud, update_inv_hud, update_town_panel));
     }
 }
 
@@ -193,6 +202,49 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         bevy::ui::FocusPolicy::Pass,
         BuffRoot,
     ));
+    // Top-right TOWN panel: headcount, daily food balance, and a settle/starve meter — so the
+    // food→population loop is legible at a glance (why peasants arrive or leave, and what to do).
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(18.0),
+                right: Val::Px(18.0),
+                width: Val::Px(186.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(5.0),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(9.0)),
+                border: border(2.0),
+                border_radius: radius(R_BTN),
+                ..default()
+            },
+            BackgroundColor(rgba(20, 22, 28, 0.72)),
+            BorderColor::all(rgba(0, 0, 0, 0.5)),
+            bevy::ui::FocusPolicy::Pass,
+        ))
+        .with_children(|col| {
+            col.spawn((label(&fonts.extrabold, "\u{1f465} Town  4 / 4", 15.0, rgb(235, 224, 180)), PopText));
+            col.spawn((label(&fonts.semibold, "Food balanced", 12.0, rgb(170, 178, 190)), PopNetText));
+            // Settle/starve meter: a dark track with a fill that grows green toward the next
+            // peasant, or red toward losing one.
+            col.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(7.0),
+                    border_radius: radius(4.0),
+                    ..default()
+                },
+                BackgroundColor(rgba(0, 0, 0, 0.45)),
+            ))
+            .with_children(|track| {
+                track.spawn((
+                    Node { width: Val::Percent(0.0), height: Val::Percent(100.0), border_radius: radius(4.0), ..default() },
+                    BackgroundColor(GREEN),
+                    PopBar,
+                ));
+            });
+            col.spawn((label(&fonts.regular, "", 11.0, rgb(150, 158, 170)), PopHintText));
+        });
     // Bottom-centre quick-bar: gold/stone tally over a row of four slots.
     commands
         .spawn(Node {
@@ -209,9 +261,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                 .with_children(|r| {
                     r.spawn((label(&fonts.extrabold, "Gold 30", 13.0, GOLD), GoldText));
                     r.spawn((label(&fonts.extrabold, "Stone 0", 13.0, STONE), StoneText));
-                    r.spawn((label(&fonts.extrabold, "Food 0", 13.0, rgb(150, 220, 130)), FoodText));
                     r.spawn((label(&fonts.extrabold, "Wood 0", 13.0, rgb(190, 150, 100)), WoodText));
-                    r.spawn((label(&fonts.extrabold, "Pop 0/0", 13.0, rgb(230, 210, 150)), PopText));
                 });
             col.spawn((
                 Node {
@@ -388,11 +438,57 @@ fn update_inv_hud(
 }
 
 #[allow(clippy::type_complexity)]
-/// Population readout — `Pop <current>/<cap>`. Its own system so it needs no `&mut Text`
-/// disjointness juggling; makes the food→population growth visible as a climbing number.
-fn update_town_pop(town: Res<crate::town::TownRes>, mut q: Query<&mut Text, With<PopText>>) {
-    if let Ok(mut t) = q.single_mut() {
-        **t = format!("Pop {}/{}", town.0.population, town.0.pop_cap());
+/// Drive the top-right TOWN panel: headcount vs cap, the daily food balance (production − upkeep),
+/// the settle/starve meter, and a one-line hint on what's happening / what to do. Makes the
+/// food→population loop legible so the player understands why peasants arrive or leave.
+fn update_town_panel(
+    town: Res<crate::town::TownRes>,
+    mut q_pop: Query<&mut Text, (With<PopText>, Without<PopNetText>, Without<PopHintText>)>,
+    mut q_net: Query<(&mut Text, &mut TextColor), (With<PopNetText>, Without<PopText>, Without<PopHintText>)>,
+    mut q_hint: Query<(&mut Text, &mut TextColor), (With<PopHintText>, Without<PopText>, Without<PopNetText>)>,
+    mut q_bar: Query<(&mut Node, &mut BackgroundColor), With<PopBar>>,
+) {
+    let t = &town.0;
+    let (pop, cap) = (t.population, t.pop_cap());
+    let net = t.net_food();
+    let frac = t.growth_fraction();
+
+    let green = Color::srgb(0.45, 0.92, 0.5);
+    let red = Color::srgb(1.0, 0.46, 0.38);
+    let grey = Color::srgb(0.66, 0.70, 0.75);
+    let amber = Color::srgb(1.0, 0.80, 0.36);
+
+    if let Ok(mut text) = q_pop.single_mut() {
+        **text = format!("\u{1f465} Town  {pop} / {cap}");
+    }
+    if let Ok((mut text, mut col)) = q_net.single_mut() {
+        if net.abs() < 0.01 {
+            **text = "Food: balanced".into();
+            col.0 = grey;
+        } else if net > 0.0 {
+            **text = format!("Food: +{:.2}/s surplus", net);
+            col.0 = green;
+        } else {
+            **text = format!("Food: {:.2}/s short", net);
+            col.0 = red;
+        }
+    }
+    if let Ok((mut node, mut col)) = q_bar.single_mut() {
+        node.width = Val::Percent((frac.abs() * 100.0).clamp(0.0, 100.0) as f32);
+        col.0 = if frac >= 0.0 { green } else { red };
+    }
+    if let Ok((mut text, mut col)) = q_hint.single_mut() {
+        let (msg, c) = if net < -0.001 {
+            ("\u{2193} losing a peasant \u{2014} build & staff a Farm", red)
+        } else if pop >= cap && net > 0.001 {
+            ("full \u{2014} build a House for room", amber)
+        } else if net > 0.001 && pop < cap {
+            ("\u{2191} a peasant is settling in", green)
+        } else {
+            ("steady", grey)
+        };
+        **text = msg.into();
+        col.0 = c;
     }
 }
 
