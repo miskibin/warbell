@@ -17,7 +17,7 @@ use crate::resource_store::ResourceState;
 /// Villagers a single House adds to the population cap.
 pub const POP_PER_HOUSE: u32 = 2;
 /// House build-slots inside the walls (the castle's interior dwellings).
-pub const MAX_HOUSES: u32 = 8;
+pub const MAX_HOUSES: u32 = 12;
 /// Houses a fresh town starts with (→ `START_POP` peasants at cap).
 pub const START_HOUSES: u32 = 2;
 /// Peasants a fresh town starts with (= `START_HOUSES * POP_PER_HOUSE`).
