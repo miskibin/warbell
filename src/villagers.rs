@@ -39,8 +39,6 @@ const EYE: u32 = 0x141414;
 const ARMOR: u32 = 0x9aa0aa;
 const SWORD_BLADE: u32 = 0xd8dde6;
 const SWORD_GUARD: u32 = 0xcaa23a;
-/// Rich dyed robes that mark the wandering market traders apart from the drab peasants.
-const MERCHANT_ROBE: [u32; 2] = [0x2f6f6a, 0x7a2f3a];
 /// Dusky cloak of the wandering pilgrims who trek between the island's old landmarks.
 const PILGRIM_ROBE: u32 = 0x6a5a8a;
 
@@ -202,6 +200,7 @@ impl Plugin for VillagersPlugin {
                     pilgrim_hint,
                     guard_combat,
                     rearm_townsfolk,
+                    reskin_townsfolk,
                     camp_rescue,
                     recruit,
                 )
@@ -291,32 +290,13 @@ pub fn spawn_courtyard_guard(
     spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.4, SCALE, next_u32(&mut rng));
 }
 
-/// Spawn a freed captive as a **settler/militia** at `from` (the camp cage), homed to a courtyard
-/// post so it marches across to the keep and defends it at night — the visible "prisoner walks
-/// out and heads home" the rescue should read as.
-pub fn spawn_settler(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    from: Vec2,
-    seed: u32,
-) {
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
-    let mut rng = seed | 1;
-    let half = crate::castle::courtyard_half();
-    let post = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
-    let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
-    // home = post (the courtyard) → the Guard's post is the castle; pos = from (the cage) → it
-    // spawns at the camp and `guard_combat` walks it back to its post.
-    spawn(commands, meshes, &mat, kind, post, from, 1.6, 1.4, SCALE, next_u32(&mut rng));
-}
-
 /// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): one
 /// joins the castle as militia (a new guard) and grows the bloodline, with a float over the cage
 /// so you see it happen. `seen` gates against freeing a camp before its orks have even spawned.
 #[allow(clippy::too_many_arguments)]
 fn camp_rescue(
     mut lives: ResMut<crate::succession::Lives>,
+    mut town: ResMut<crate::town::TownRes>,
     mut rescued: ResMut<RescuedCamps>,
     orks: Query<&crate::orks::Ork, Without<crate::orks::WaveInvader>>,
     cages_q: Query<(Entity, &crate::camps::Cage, &Transform)>,
@@ -354,12 +334,13 @@ fn camp_rescue(
             }
         }
         crate::camps::open_cage(&mut commands, &mut meshes, &mut materials, cage_tf);
-        // The captive walks out as a settler/militia, marching from the cage to the castle.
-        spawn_settler(&mut commands, &mut meshes, &mut materials, *cage, 0x5e5c_0000u32.wrapping_add(i as u32 * 97));
+        // The freed captive joins the town's population (a guard appears in the courtyard via
+        // `sync_population_bodies`) and grows the bloodline.
+        town.0.population += 1;
         lives.heirs += 1;
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(cage.x, y + 1.8, cage.y),
-            text: "Captive freed!  +1 settler".into(),
+            text: "Captive freed!  +1 townsperson".into(),
             color: Color::srgb(0.5, 1.0, 0.6),
             scale: 1.2,
         });
@@ -369,15 +350,13 @@ fn camp_rescue(
 }
 
 /// **R** inside the castle spends a Mercenary Contract (from chests) to hire a sellsword — a new
-/// guard + an heir.
+/// townsperson (a guard appears via `sync_population_bodies`) + an heir.
 fn recruit(
     keys: Res<ButtonInput<KeyCode>>,
     hero: Res<crate::player::HeroState>,
     mut inv: ResMut<crate::inventory::Inventory>,
     mut lives: ResMut<crate::succession::Lives>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut town: ResMut<crate::town::TownRes>,
 ) {
     if keys.just_pressed(KeyCode::KeyR)
         && hero.alive
@@ -385,7 +364,7 @@ fn recruit(
         && inv.0.consume_item("mercenary_contract", 1)
     {
         lives.heirs += 1;
-        spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, 0x4ec5_0000);
+        town.0.population += 1;
     }
 }
 
@@ -772,22 +751,27 @@ const LIMB_CULL2: f32 = 70.0 * 70.0;
 fn villager_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
-    vils: Query<(&Villager, &Children, &GlobalTransform, Option<&crate::town::Worker>)>,
+    vils: Query<(&Villager, &Children, &GlobalTransform, Option<&crate::town::Worker>, Option<&Role>)>,
     mut parts: Query<(&VilPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();
     let cam_p = cam.single().ok().map(|g| g.translation());
-    for (v, children, gt, worker) in &vils {
+    for (v, children, gt, worker, role) in &vils {
         if let Some(cp) = cam_p {
             if gt.translation().distance_squared(cp) > LIMB_CULL2 {
                 continue;
             }
         }
         let t = tw + v.phase;
-        // A posted worker hoes the field: both arms swing forward-down together on a
-        // ~1.4s cycle (legs planted, a small synced head-nod). `hoe` ∈ ~[-0.2, 1.2] rad.
+        // A posted worker plies their trade: a farmer makes quick forward-down HOE strokes; a
+        // woodcutter makes slower, bigger overhead CHOPS. Both arms swing together, legs planted.
         let working = worker.is_some_and(|w| w.at_post);
-        let hoe = 0.5 + 0.7 * (t * 4.5).sin();
+        let chopping = matches!(role, Some(Role::Working(Trade::Woodcutter)));
+        let (arm_work, nod_rate) = if chopping {
+            (-0.4 + 1.3 * (0.5 - 0.5 * (t * 3.0).cos()), 3.0) // overhead → down, ~2.1s
+        } else {
+            (0.5 + 0.7 * (t * 4.5).sin(), 4.5) // quick hoe, ~1.4s
+        };
         for &child in children {
             let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
             tf.rotation = match part.kind {
@@ -797,8 +781,8 @@ fn villager_limbs(
                 }
                 PartKind::Arm(sign) => {
                     if working {
-                        // Both arms together (ignore the L/R sign) — a two-handed hoe stroke.
-                        Quat::from_rotation_x(hoe)
+                        // Both arms together (ignore the L/R sign) — a two-handed work stroke.
+                        Quat::from_rotation_x(arm_work)
                     } else {
                         let s = if v.moving { -(t * v.gait).sin() * 0.5 } else { (t * 1.2).sin() * 0.06 };
                         Quat::from_rotation_x(sign * s)
@@ -806,7 +790,7 @@ fn villager_limbs(
                 }
                 PartKind::Head => {
                     if working {
-                        Quat::from_rotation_x((t * 4.5).sin() * 0.06) // small nod toward the work
+                        Quat::from_rotation_x((t * nod_rate).sin() * 0.06) // small nod toward the work
                     } else {
                         let scan = if v.moving { 0.0 } else { (t * 0.7).sin() * 0.18 };
                         Quat::from_rotation_y(scan)
@@ -844,7 +828,59 @@ fn pick_walk(v: &mut Villager, spots: &[Vec2], is_kid: bool) {
 enum Kind {
     Peasant { skin: u32, tunic: u32, hat: bool },
     Guard { skin: u32, tunic: u32 },
+    /// A townsperson posted to a producer — distinct work clothes + a held tool (hoe / axe).
+    Worker { trade: Trade, skin: u32, tunic: u32 },
 }
+
+/// Which trade a working townsperson plies — drives their outfit, tool and work animation.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Trade {
+    Farmer,
+    Woodcutter,
+}
+
+/// What the right hand carries (baked into the arm so it swings with the limb).
+#[derive(Clone, Copy)]
+enum Held {
+    None,
+    Sword,
+    Hoe,
+    Axe,
+}
+
+/// The look a townsperson is currently rendered as (idle guard vs a trade), so `reskin_townsfolk`
+/// only rebuilds the body when the role actually changes.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Guard,
+    Working(Trade),
+}
+
+/// A townsperson's fixed identity colours (skin + tunic), kept so a re-skin redresses the SAME
+/// person in new work clothes rather than spawning a stranger.
+#[derive(Component, Clone, Copy)]
+pub struct Folk {
+    skin: u32,
+    tunic: u32,
+}
+
+/// Marks a body sub-mesh (torso / limb / head) under a villager root, so a re-skin can despawn
+/// exactly the body and rebuild it without touching other children (e.g. spatial voice clips).
+#[derive(Component)]
+struct VilBodyPart;
+
+/// The villager's body material, kept on the root so a re-skin redresses it with the same handle
+/// (no material churn).
+#[derive(Component)]
+struct BodyMat(Handle<StandardMaterial>);
+
+// Work-clothes palette.
+const STRAW_HAT: u32 = 0xc9a85a;
+const APRON: u32 = 0x9a7b4a;
+const VEST: u32 = 0x53412a;
+const CAP: u32 = 0x4a3a28;
+const TOOL_WOOD: u32 = 0x8a6a40;
+const TOOL_METAL: u32 = 0x9aa0aa;
 
 struct PartDef {
     kind: PartKind,
@@ -860,42 +896,67 @@ fn spec(kind: Kind) -> VSpec {
     let (skin_hex, tunic_hex) = match kind {
         Kind::Peasant { skin, tunic, .. } => (skin, tunic),
         Kind::Guard { skin, tunic } => (skin, tunic),
+        Kind::Worker { skin, tunic, .. } => (skin, tunic),
     };
     let guard = matches!(kind, Kind::Guard { .. });
-    let hat = matches!(kind, Kind::Peasant { hat: true, .. });
+    let peasant_hat = matches!(kind, Kind::Peasant { hat: true, .. });
+    let trade = match kind {
+        Kind::Worker { trade, .. } => Some(trade),
+        _ => None,
+    };
+    // The right hand carries the role's tool.
+    let held = match kind {
+        Kind::Guard { .. } => Held::Sword,
+        Kind::Worker { trade: Trade::Farmer, .. } => Held::Hoe,
+        Kind::Worker { trade: Trade::Woodcutter, .. } => Held::Axe,
+        _ => Held::None,
+    };
     let skin = lin(skin_hex);
     let tunic = lin(tunic_hex);
     let pant = lin(PANT);
     let hair = lin(HAIR);
     let armor = lin(ARMOR);
 
-    // Static torso: tunic + (guard) chestplate.
+    // Static torso: tunic + a role overlay (guard chestplate / farmer apron / woodcutter vest).
     let mut torso_parts = vec![bx(0.42, 0.48, 0.26, v(0.0, 0.7, 0.0), tunic)];
-    if guard {
-        torso_parts.push(bx(0.46, 0.4, 0.3, v(0.0, 0.7, 0.0), armor));
+    match (guard, trade) {
+        (true, _) => torso_parts.push(bx(0.46, 0.4, 0.3, v(0.0, 0.7, 0.0), armor)),
+        (_, Some(Trade::Farmer)) => torso_parts.push(bx(0.4, 0.4, 0.28, v(0.0, 0.62, 0.04), lin(APRON))),
+        (_, Some(Trade::Woodcutter)) => torso_parts.push(bx(0.44, 0.42, 0.29, v(0.0, 0.72, 0.0), lin(VEST))),
+        _ => {}
     }
     let torso = group(torso_parts);
 
-    // Head: skull + hair + eyes + (guard helmet / peasant hat).
+    // Head: skull + hair + eyes + headgear (helmet / straw hat / flat cap / peasant hat).
     let mut head_parts = vec![
         bx(0.3, 0.3, 0.3, Vec3::ZERO, skin),
         bx(0.31, 0.08, 0.31, v(0.0, 0.13, 0.0), hair),
         bx(0.04, 0.04, 0.02, v(-0.07, 0.03, 0.16), lin(EYE)),
         bx(0.04, 0.04, 0.02, v(0.07, 0.03, 0.16), lin(EYE)),
     ];
-    if guard {
-        head_parts.push(bx(0.34, 0.16, 0.34, v(0.0, 0.16, 0.0), armor)); // helmet
-        head_parts.push(cone(0.1, 0.16, v(0.0, 0.3, 0.0), Quat::IDENTITY, armor)); // crest spike
-    } else if hat {
-        head_parts.push(cone(0.22, 0.2, v(0.0, 0.22, 0.0), Quat::IDENTITY, lin(HAT)));
+    match (guard, trade, peasant_hat) {
+        (true, _, _) => {
+            head_parts.push(bx(0.34, 0.16, 0.34, v(0.0, 0.16, 0.0), armor)); // helmet
+            head_parts.push(cone(0.1, 0.16, v(0.0, 0.3, 0.0), Quat::IDENTITY, armor)); // crest spike
+        }
+        (_, Some(Trade::Farmer), _) => {
+            head_parts.push(bx(0.5, 0.04, 0.5, v(0.0, 0.18, 0.0), lin(STRAW_HAT))); // wide straw brim
+            head_parts.push(cone(0.18, 0.14, v(0.0, 0.2, 0.0), Quat::IDENTITY, lin(STRAW_HAT))); // crown
+        }
+        (_, Some(Trade::Woodcutter), _) => {
+            head_parts.push(bx(0.34, 0.1, 0.34, v(0.0, 0.18, 0.0), lin(CAP))); // flat cap
+            head_parts.push(bx(0.34, 0.05, 0.14, v(0.0, 0.16, 0.2), lin(CAP))); // peak
+        }
+        (_, _, true) => head_parts.push(cone(0.22, 0.2, v(0.0, 0.22, 0.0), Quat::IDENTITY, lin(HAT))),
+        _ => {}
     }
     let head = group(head_parts);
 
     // Legs (top at the hip pivot).
     let leg = || group(vec![bx(0.16, 0.36, 0.18, v(0.0, -0.18, 0.0), pant)]);
 
-    // Arms — the right arm carries a sword for guards.
-    let arm = |with_sword: bool| {
+    // Arms — the right arm carries the role's held item (sword / hoe / axe).
+    let arm = |held: Held| {
         let mut p = vec![
             bx(0.13, 0.36, 0.22, v(0.0, -0.18, 0.0), tunic), // sleeve
             bx(0.12, 0.1, 0.2, v(0.0, -0.42, 0.0), skin),    // hand
@@ -903,10 +964,23 @@ fn spec(kind: Kind) -> VSpec {
         if guard {
             p.push(bx(0.18, 0.16, 0.26, v(0.0, 0.02, 0.0), armor)); // pauldron
         }
-        if with_sword {
-            let so = v(0.0, -0.46, 0.1);
-            p.push(bx(0.18, 0.06, 0.05, so, lin(SWORD_GUARD)));
-            p.push(bx(0.05, 0.06, 0.5, so + v(0.0, 0.0, 0.32), lin(SWORD_BLADE)));
+        let hand = v(0.0, -0.46, 0.1);
+        match held {
+            Held::None => {}
+            Held::Sword => {
+                p.push(bx(0.18, 0.06, 0.05, hand, lin(SWORD_GUARD)));
+                p.push(bx(0.05, 0.06, 0.5, hand + v(0.0, 0.0, 0.32), lin(SWORD_BLADE)));
+            }
+            Held::Hoe => {
+                // A long shaft forward-down + a small blade at the tip.
+                p.push(bx(0.05, 0.05, 0.66, hand + v(0.0, -0.06, 0.28), lin(TOOL_WOOD)));
+                p.push(bx(0.16, 0.04, 0.1, hand + v(0.0, -0.12, 0.6), lin(TOOL_METAL)));
+            }
+            Held::Axe => {
+                // A shaft + a wedge head near the tip.
+                p.push(bx(0.05, 0.05, 0.56, hand + v(0.0, -0.04, 0.24), lin(TOOL_WOOD)));
+                p.push(bx(0.16, 0.18, 0.06, hand + v(0.0, 0.0, 0.5), lin(TOOL_METAL)));
+            }
         }
         group(p)
     };
@@ -914,8 +988,8 @@ fn spec(kind: Kind) -> VSpec {
     let parts = vec![
         PartDef { kind: PartKind::Leg(1.0), pivot: v(-0.11, 0.34, 0.0), mesh: leg() },
         PartDef { kind: PartKind::Leg(-1.0), pivot: v(0.11, 0.34, 0.0), mesh: leg() },
-        PartDef { kind: PartKind::Arm(1.0), pivot: v(0.27, 0.92, 0.0), mesh: arm(guard) }, // right (+sword)
-        PartDef { kind: PartKind::Arm(-1.0), pivot: v(-0.27, 0.92, 0.0), mesh: arm(false) },
+        PartDef { kind: PartKind::Arm(1.0), pivot: v(0.27, 0.92, 0.0), mesh: arm(held) }, // right (+tool)
+        PartDef { kind: PartKind::Arm(-1.0), pivot: v(-0.27, 0.92, 0.0), mesh: arm(Held::None) },
         PartDef { kind: PartKind::Head, pivot: v(0.0, 1.12, 0.0), mesh: head },
     ];
     VSpec { torso, parts }
@@ -923,41 +997,19 @@ fn spec(kind: Kind) -> VSpec {
 
 // ── Placement ────────────────────────────────────────────────────────────────────
 
-/// Spawn the castle town's villagers. Called from `worldmap::build` after the castle (so its
-/// wall/keep/house blockers are registered). ~10 total: 2 guards by the keep, 4 spilling out
-/// the gates, the rest milling the courtyard.
+/// Spawn the castle town's **ambient** props + flavour NPCs: the market stall, well, woodpile,
+/// gather spots, two travelling pilgrims and a few scampering kids. Called from `worldmap::build`
+/// after the castle. The town's actual **population** (the 4 starting peasants, and any grown or
+/// rescued since) are NOT spawned here — `town::sync_population_bodies` reconciles those bodies to
+/// `town.population`, so the headcount you see always equals the headcount the HUD reports.
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
     let mut rng: u32 = 0x5117_aced;
     let mut placed: Vec<Vec2> = Vec::new();
-
-    // Two guards posted in front of the keep door (+Z side).
-    for (i, (gx, gz)) in [(-2.3f32, 3.8f32), (2.3, 3.8)].into_iter().enumerate() {
-        let kind = Kind::Guard { skin: SKIN[i % SKIN.len()], tunic: TUNIC[1] };
-        let home = Vec2::new(gx, gz);
-        spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.1, SCALE, next_u32(&mut rng));
-        placed.push(home);
-    }
-
-    // One peasant by each gate, homed just inside so they wander in and out through the gap.
-    for (i, g) in crate::castle::gate_centers().into_iter().enumerate() {
-        let home = g + (-g).normalize_or_zero() * 1.5;
-        let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: TUNIC[i % TUNIC.len()], hat: i % 2 == 0 };
-        spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.6, SCALE, next_u32(&mut rng));
-        placed.push(home);
-    }
-
-    // The rest mill around the open courtyard.
     let half = crate::castle::courtyard_half();
-    for i in 0..4 {
-        let Some(home) = courtyard_spot(&mut rng, half, &placed) else { continue };
-        placed.push(home);
-        let kind = Kind::Peasant { skin: SKIN[(i + 1) % SKIN.len()], tunic: TUNIC[(i + 2) % TUNIC.len()], hat: i % 2 == 1 };
-        spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.0, SCALE, next_u32(&mut rng));
-    }
 
-    // A little market just outside the south gate: a striped stall + two robed traders who
-    // wander around it (the visible counterpart to the menu shop). The keep gate is -Z.
+    // A little market just outside the south gate: a striped stall (the visible counterpart to the
+    // menu shop). The keep gate is -Z. (No idle trader bodies — only real population walks the town.)
     let south = crate::castle::gate_centers()[0];
     let market = south + Vec2::new(2.5, -5.0);
     let my = worldmap::ground_at_world(market.x, market.y).unwrap_or(0.0);
@@ -967,13 +1019,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         Transform::from_xyz(market.x, my, market.y),
         BiomeEntity,
     ));
-    // Solid stall — the 1.8-wide counter + posts block; traders/hero walk around it.
+    // Solid stall — the 1.8-wide counter + posts block; the hero walks around it.
     crate::blockers::add_box(market.x, market.y, 0.95, 0.4);
-    for i in 0..2 {
-        let home = market + Vec2::new(if i == 0 { -1.6 } else { 1.6 }, 0.8);
-        let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: MERCHANT_ROBE[i % 2], hat: false };
-        spawn(commands, meshes, &mat, kind, home, home, 1.3, 2.4, SCALE, next_u32(&mut rng));
-    }
 
     // Two wandering pilgrims who trek between the island's landmarks, hinting the way (see
     // `pilgrim_brain` / `pilgrim_hint`). They start just outside a gate and head off.
@@ -1135,11 +1182,6 @@ fn spawn(
     scale: f32,
     seed: u32,
 ) -> Entity {
-    let s = spec(kind);
-    let torso = meshes.add(s.torso);
-    let parts: Vec<(PartKind, Vec3, Handle<Mesh>)> =
-        s.parts.into_iter().map(|p| (p.kind, p.pivot, meshes.add(p.mesh))).collect();
-
     let mut r = seed | 1;
     let phase = rng01(&mut r) * TAU;
     let facing = rng01(&mut r) * TAU;
@@ -1172,24 +1214,79 @@ fn spawn(
             BiomeEntity,
         ))
         .id();
-    commands.entity(root).with_children(|p| {
-        p.spawn((Mesh3d(torso), MeshMaterial3d(mat.clone()), Transform::default()));
-        for (kind, pivot, mesh) in parts {
-            p.spawn((Mesh3d(mesh), MeshMaterial3d(mat.clone()), Transform::from_translation(pivot), VilPart { kind }));
-        }
-    });
+    build_body(&mut commands.entity(root), spec(kind), mat, meshes);
 
     // Armoured townsfolk double as town guards — they fight invaders at night and can be pulled to
-    // staff a producer by day (the `Townsfolk` pool). The NavPath caches an A* route home for a
-    // freed captive marching in from a far camp (see `guard_combat`).
-    if matches!(kind, Kind::Guard { .. }) {
+    // staff a producer by day (the `Townsfolk` pool). They carry their identity colours [`Folk`] +
+    // current [`Role`] + body material so `reskin_townsfolk` can redress them as a farmer/woodcutter
+    // when they take a job. The NavPath caches an A* route home for a freed captive (see `guard_combat`).
+    if let Kind::Guard { skin, tunic } = kind {
         commands.entity(root).insert((
             Guard { hp: GUARD_MAX_HP, max: GUARD_MAX_HP, atk_cd: 0.0, downed: false, post: home },
             crate::navgrid::NavPath::default(),
             Townsfolk,
+            Folk { skin, tunic },
+            Role::Guard,
+            BodyMat(mat.clone()),
         ));
     }
     root
+}
+
+/// Spawn a villager's body (torso + limbs + head) as children of `root`, each tagged
+/// [`VilBodyPart`] so a re-skin can despawn exactly the body. Shared by [`spawn`] + [`reskin_townsfolk`].
+fn build_body(root: &mut bevy::ecs::system::EntityCommands, s: VSpec, mat: &Handle<StandardMaterial>, meshes: &mut Assets<Mesh>) {
+    let torso = meshes.add(s.torso);
+    let parts: Vec<(PartKind, Vec3, Handle<Mesh>)> =
+        s.parts.into_iter().map(|p| (p.kind, p.pivot, meshes.add(p.mesh))).collect();
+    root.with_children(|p| {
+        p.spawn((Mesh3d(torso), MeshMaterial3d(mat.clone()), Transform::default(), VilBodyPart));
+        for (kind, pivot, mesh) in parts {
+            p.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_translation(pivot),
+                VilPart { kind },
+                VilBodyPart,
+            ));
+        }
+    });
+}
+
+/// Redress a townsperson when their role changes: a farmer when posted to a Farm, a woodcutter on a
+/// Woodcutter, an armed guard otherwise. Rebuilds only the body (despawns the [`VilBodyPart`]
+/// children, respawns from the new outfit), reusing the same identity + material — so it's the same
+/// person in new work clothes. Cheap (rebuilds only on a role change, a few times a day per worker).
+#[allow(clippy::type_complexity)]
+fn reskin_townsfolk(
+    town: Res<crate::town::TownRes>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    body_parts: Query<(), With<VilBodyPart>>,
+    mut folk: Query<(Entity, &Folk, &mut Role, &BodyMat, &Children, Option<&crate::town::Worker>), With<Townsfolk>>,
+) {
+    use tileworld_core::town_store::BuildKind;
+    for (e, f, mut role, body_mat, children, worker) in &mut folk {
+        let desired = match worker.and_then(|w| town.0.plots.get(w.idx)).and_then(|p| p.kind) {
+            Some(BuildKind::Farm) => Role::Working(Trade::Farmer),
+            Some(BuildKind::Lumber) => Role::Working(Trade::Woodcutter),
+            _ => Role::Guard,
+        };
+        if *role == desired {
+            continue;
+        }
+        for &c in children {
+            if body_parts.get(c).is_ok() {
+                commands.entity(c).try_despawn();
+            }
+        }
+        let kind = match desired {
+            Role::Guard => Kind::Guard { skin: f.skin, tunic: f.tunic },
+            Role::Working(trade) => Kind::Worker { trade, skin: f.skin, tunic: f.tunic },
+        };
+        build_body(&mut commands.entity(e), spec(kind), &body_mat.0, &mut meshes);
+        *role = desired;
+    }
 }
 
 // ── Mesh helpers ─────────────────────────────────────────────────────────────────

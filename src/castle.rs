@@ -55,8 +55,10 @@ const HALF_Z: f32 = 12.0;
 const GATE_GAP: f32 = 4.0;
 
 // ── Material slots ───────────────────────────────────────────────────────────────
+// `pub(crate)` so the town's producer buildings (`town_meshes`) render with the SAME
+// textured materials as the keep, via the shared [`VillageMats`] resource.
 #[derive(Clone, Copy)]
-enum M {
+pub(crate) enum M {
     Stone,
     DarkStone,
     LightStone,
@@ -78,14 +80,21 @@ enum M {
     Flame,
 }
 
-struct Mats {
+#[derive(Clone)]
+pub(crate) struct Mats {
     h: std::collections::HashMap<u8, Handle<StandardMaterial>>,
 }
 impl Mats {
-    fn get(&self, m: M) -> Handle<StandardMaterial> {
+    pub(crate) fn get(&self, m: M) -> Handle<StandardMaterial> {
         self.h[&(m as u8)].clone()
     }
 }
+
+/// The shared, procedurally-textured village material set (plaster, shingle, timber, stone, soil,
+/// cobble, glowing window, …). Built once with the keep and held as a resource so the town's
+/// producer buildings + build plots render in the same textured aesthetic as the castle.
+#[derive(Resource, Clone)]
+pub(crate) struct VillageMats(pub(crate) Mats);
 
 // ── Procedural textures (ported from textures.ts) ────────────────────────────────
 struct Rng(u32);
@@ -370,7 +379,7 @@ fn scale_uv(mut m: Mesh, su: f32, sv: f32) -> Mesh {
 }
 
 /// A textured box centred at (x,y,z), UVs scaled so the texture tiles at ~`TILE` units.
-fn bx(w: f32, h: f32, d: f32, x: f32, y: f32, z: f32) -> Mesh {
+pub(crate) fn bx(w: f32, h: f32, d: f32, x: f32, y: f32, z: f32) -> Mesh {
     let horiz = ((w + d) * 0.5 / TILE).max(0.6);
     let vert = (h / TILE).max(0.6);
     scale_uv(Mesh::from(Cuboid::new(w, h, d)), horiz, vert).translated_by(Vec3::new(x, y, z))
@@ -423,7 +432,7 @@ fn taper(rt: f32, rb: f32, h: f32, y: f32) -> Mesh {
 }
 
 /// Gable (triangular-prism) roof — ridge along X, slopes facing ±Z, gable triangles ±X.
-fn gable(span_x: f32, span_z: f32, rise: f32, base_y: f32) -> Mesh {
+pub(crate) fn gable(span_x: f32, span_z: f32, rise: f32, base_y: f32) -> Mesh {
     let hx = span_x / 2.0;
     let hz = span_z / 2.0;
     let (y0, y1) = (base_y, base_y + rise);
@@ -466,7 +475,7 @@ fn slab(w: f32, d: f32, y: f32) -> Mesh {
     m
 }
 
-fn bake(m: Mesh, pos: Vec3, rot: f32, scale: Vec3) -> Mesh {
+pub(crate) fn bake(m: Mesh, pos: Vec3, rot: f32, scale: Vec3) -> Mesh {
     m.scaled_by(scale).rotated_by(Quat::from_rotation_y(rot)).translated_by(pos)
 }
 
@@ -582,7 +591,10 @@ const HH: f32 = 1.15;
 const HD: f32 = 2.0;
 const H_FOUND: f32 = 0.18;
 
-fn house_parts() -> Vec<(Mesh, M)> {
+/// The textured village house (plaster walls, half-timbered posts, shingle gable, glowing window,
+/// stone chimney). Shared by the castle's dwellings AND the town's producer buildings, so a Farm
+/// or Woodcutter reads as the same kind of cottage as the keep's houses.
+pub(crate) fn house_parts() -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
     let wall_top = H_FOUND + HH;
     v.push((bx(HW + 0.2, H_FOUND, HD + 0.2, 0.0, H_FOUND / 2.0, 0.0), M::HouseStone));
@@ -691,8 +703,12 @@ pub fn build(
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     std_mats: &mut Assets<StandardMaterial>,
-) {
+) -> Mats {
     let mats = build_mats(images, std_mats);
+    // Share the textured material set with the town (producer buildings + plots render textured).
+    // Returned to the caller too, so plot seeding in the same build pass (before this deferred
+    // `insert_resource` lands) can use it directly.
+    commands.insert_resource(VillageMats(mats.clone()));
     // Each part is tagged with the upgrade that reveals it (`CastleKind`); gated parts start
     // hidden so the castle BUILDS UP as you buy (a deliberate change from the old always-full
     // render). `Always` parts (keep core, courtyard, bell, keep-door torches) show from the start.
@@ -778,6 +794,7 @@ pub fn build(
     // blockers when their upgrade reveals them (see `sync_castle`), so the courtyard is open
     // until you build the walls — no invisible barriers.
     register_keep_blocker();
+    mats
 }
 
 /// Player-body margin so movers stop just shy of a face instead of clipping into it.
@@ -848,25 +865,28 @@ struct CastlePart {
 struct CastleBuilt {
     walls: bool,
     towers: bool,
-    houses: bool,
+    houses: [bool; 8],
 }
 
 /// Reveal castle parts and lazily register each group's collision the first time it appears.
-/// Walls/towers/gate gate on the Defense-branch upgrades (the keep fortifies as you invest);
-/// the houses are always-on set-dressing — the keep's own dwellings, registered once at startup.
-/// (Food/population now belong to the town city-building layer, so there's no upgrade-gated
-/// castle farm or houses any more.)
+/// Walls/towers/gate gate on the Defense-branch upgrades (the keep fortifies as you invest); the
+/// 8 interior **houses** are the town's dwellings — the first `town.houses` of them show, so the
+/// settlement visibly grows as you build homes (start 2 → 4 peasants). The farm is gone (food is a
+/// flow now; producers live out on the town plots).
 fn sync_castle(
     def: Res<Defenses>,
+    town: Res<crate::town::TownRes>,
     mut built: ResMut<CastleBuilt>,
     mut q: Query<(&CastlePart, &mut Visibility)>,
 ) {
+    let houses = town.0.houses;
     for (part, mut vis) in &mut q {
         let show = match part.kind {
-            CastleKind::Always | CastleKind::House(_) => true,
+            CastleKind::Always => true,
             CastleKind::Walls => def.walls,
             CastleKind::Gate => def.walls && def.gate, // a gate without walls would float
             CastleKind::Towers => def.towers,
+            CastleKind::House(i) => (i as u32) < houses,
         };
         *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
     }
@@ -879,9 +899,9 @@ fn sync_castle(
         built.towers = true;
         register_towers_blockers();
     }
-    if !built.houses {
-        built.houses = true;
-        for i in 0..8 {
+    for i in 0..8 {
+        if (i as u32) < houses && !built.houses[i] {
+            built.houses[i] = true;
             register_house_blocker(i);
         }
     }

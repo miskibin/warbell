@@ -8,14 +8,14 @@
 //! stay ungated. Numbers live in `town_store` (test-gated).
 
 use bevy::prelude::*;
-use tileworld_core::town_store::{BuildKind, Town};
+use tileworld_core::town_store::{BuildKind, Cost, PopEvent, Town, HOUSE_COST};
 
+use crate::castle::{Mats, VillageMats, M};
 use crate::succession::Lives;
 use crate::villagers::{Guard, Townsfolk};
 
 use crate::economy::Bank;
 use crate::game_state::{AppState, Modal};
-use crate::palette::lin;
 use crate::ui::anim::{anim, AnimKind};
 use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
@@ -38,7 +38,9 @@ pub struct TownRes(pub Town);
 
 impl Default for TownRes {
     fn default() -> Self {
-        Self(Town::new(PLOT_COUNT, 0))
+        let mut t = Town::new(PLOT_COUNT, 0);
+        t.reset(); // start with the founding houses + peasants (4 in 2 houses)
+        Self(t)
     }
 }
 
@@ -98,7 +100,8 @@ impl Plugin for TownPlugin {
             )
             .add_systems(
                 Update,
-                (production_system, population_system).run_if(in_state(Modal::None)),
+                (production_system, population_system, sync_population_bodies)
+                    .run_if(in_state(Modal::None)),
             )
             // Sim (gated): apply damage + repair only while playing.
             .add_systems(
@@ -185,33 +188,65 @@ fn production_system(time: Res<Time>, mut town: ResMut<TownRes>, mut bank: ResMu
     town.0.production_tick(dt, &mut bank.0);
 }
 
-/// Food upkeep + growth; on growth, add one townsperson to the `Townsfolk` pool and grow the
-/// bloodline (keeps the house→heir tie). The new body joins as a standing guard (the idle reserve),
-/// so it defends at night and `auto_assign_workers` can post it to a producer by day — the
-/// food→population→workforce-and-militia loop.
-#[allow(clippy::too_many_arguments)]
+/// Advance the food→population flow. A surplus settles a new peasant (grow the bloodline +
+/// a green float); a sustained deficit starves one away (a red float). Bodies aren't touched
+/// here — [`sync_population_bodies`] reconciles them to `town.population` next frame.
 fn population_system(
     time: Res<Time>,
     mut town: ResMut<TownRes>,
-    mut bank: ResMut<Bank>,
     mut lives: ResMut<Lives>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
 ) {
     let dt = time.delta_secs() as f64;
-    if town.0.population_tick(dt, &mut bank.0) {
-        lives.heirs += 1;
-        let seed = 0x70b1_0000u32.wrapping_add(town.0.population.wrapping_mul(101));
+    match town.0.population_tick(dt) {
+        PopEvent::Grew => {
+            lives.heirs += 1; // a new household → a new heir (keeps the population→bloodline tie)
+            floats.0.push(crate::combat_fx::FloatReq {
+                world: Vec3::new(0.0, 6.5, 5.0),
+                text: "\u{1f331} A peasant settles in your town!".into(),
+                color: Color::srgb(0.55, 1.0, 0.6),
+                scale: 1.25,
+            });
+        }
+        PopEvent::Starved => {
+            floats.0.push(crate::combat_fx::FloatReq {
+                world: Vec3::new(0.0, 6.5, 5.0),
+                text: "\u{1f342} A peasant left \u{2014} not enough food".into(),
+                color: Color::srgb(1.0, 0.5, 0.4),
+                scale: 1.25,
+            });
+        }
+        PopEvent::None => {}
+    }
+}
+
+/// Keep the visible `Townsfolk` bodies matched to `town.population` — the single source of truth
+/// for the town's headcount (grown by food, lost to starvation, added by rescue/recruit). Moves at
+/// most one body per frame toward the target, so growth, starvation, a fresh run (jump to 4), and a
+/// loaded save all converge without racing the deferred-command flush. Despawns prefer an idle
+/// guard over a posted worker. Pilgrims and kids aren't `Townsfolk`, so they're never touched.
+#[allow(clippy::type_complexity)]
+fn sync_population_bodies(
+    town: Res<TownRes>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    folk: Query<Entity, With<Townsfolk>>,
+    idle_guards: Query<Entity, (With<Townsfolk>, With<Guard>, Without<Worker>)>,
+    mut next_seed: Local<u32>,
+) {
+    let want = town.0.population as i64;
+    let have = folk.iter().count() as i64;
+    if have < want {
+        *next_seed = next_seed.wrapping_add(1);
+        let seed = 0xb0d1_0000u32.wrapping_add(next_seed.wrapping_mul(2654435761));
         crate::villagers::spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, seed);
-        // Make the food→population link visible: a float over the town when a villager is born.
-        floats.0.push(crate::combat_fx::FloatReq {
-            world: Vec3::new(0.0, 6.5, 5.0),
-            text: "\u{1f331} A villager joins your town!".into(),
-            color: Color::srgb(0.55, 1.0, 0.6),
-            scale: 1.25,
-        });
+    } else if have > want {
+        // Prefer culling a standing guard; fall back to any townsperson.
+        let victim = idle_guards.iter().next().or_else(|| folk.iter().next());
+        if let Some(e) = victim {
+            commands.entity(e).try_despawn();
+        }
     }
 }
 
@@ -222,7 +257,7 @@ fn reset_town(
     mut commands: Commands,
     stale: Query<Entity, Or<(With<BuildingMesh>, With<Flame>)>>,
 ) {
-    town.0.reset(0);
+    town.0.reset();
     bank.0.add_wood(START_WOOD);
     // The world map isn't rebuilt on restart, so reap last run's building meshes +
     // flames here (the empty plot pads persist; TownRes is now all-Empty, so the
@@ -240,20 +275,21 @@ fn restore_buildings(
     mut ev: MessageReader<crate::savegame::GameLoaded>,
     town: Res<TownRes>,
     spots: Res<PlotSpots>,
+    mats: Option<Res<VillageMats>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     stale: Query<Entity, Or<(With<BuildingMesh>, With<Flame>)>>,
 ) {
     if ev.read().count() == 0 {
         return;
     }
+    let Some(mats) = mats else { return };
     for e in &stale {
         commands.entity(e).try_despawn();
     }
     for (idx, plot) in town.0.plots.iter().enumerate() {
         if let (true, Some(kind)) = (plot.is_built(), plot.kind) {
-            spawn_building_mesh(&mut commands, &mut meshes, &mut materials, idx, kind, &spots);
+            spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
         }
     }
 }
@@ -279,45 +315,36 @@ const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
 
 /// Seed the build-plot entities + their foundation pads. Called from `worldmap::build`
 /// after the castle so the safe-zone ground is final.
-pub fn populate_plots(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) {
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.95,
-        ..default()
-    });
-    let pad = meshes.add(plot_pad_mesh());
+pub fn populate_plots(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     let mut spots = Vec::with_capacity(PLOT_COUNT);
     for off in PLOT_OFFSETS.iter() {
-        let y = crate::worldmap::ground_at_world(off.x, off.y).unwrap_or(0.0);
         spots.push(*off);
-        commands.spawn((
-            Mesh3d(pad.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(off.x, y + 0.02, off.y),
-            crate::biome::BiomeEntity,
-            BuildPlot,
-        ));
+        spawn_textured(commands, meshes, mats, BuildPlot, crate::town_meshes::plot_parts(), *off);
     }
     commands.insert_resource(PlotSpots(spots));
 }
 
-/// A low foundation pad (flat-shaded, vertex-coloured per the mesh contract).
-fn plot_pad_mesh() -> Mesh {
-    let mut m = tinted(Cuboid::new(3.4, 0.12, 3.4).mesh().build(), lin(0x6b5a44));
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
-}
-
-/// Tag every vertex with a uniform linear RGBA colour (mesh-contract helper, mirrors props.rs).
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
+/// Spawn a textured multi-material structure (one child mesh per `(Mesh, M)` part, sharing the
+/// keep's [`VillageMats`]) under a parent carrying `tag` + a ground-snapped transform at `pos`.
+/// `despawn`ing the parent reaps every part. Returns the parent entity.
+fn spawn_textured(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mats: &Mats,
+    tag: impl Bundle,
+    parts: Vec<(Mesh, M)>,
+    pos: Vec2,
+) -> Entity {
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    let parent = commands
+        .spawn((Transform::from_xyz(pos.x, y, pos.y), Visibility::Visible, crate::biome::BiomeEntity, tag))
+        .id();
+    commands.entity(parent).with_children(|p| {
+        for (mesh, m) in parts {
+            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(m)), Transform::default()));
+        }
+    });
+    parent
 }
 
 // ── Damage, fire VFX, and repair ─────────────────────────────────────────────────────────
@@ -453,6 +480,7 @@ fn open_build_for_shot(
 fn stage_town_for_shot(
     mut done: Local<bool>,
     spots: Res<PlotSpots>,
+    mats: Option<Res<VillageMats>>,
     mut town: ResMut<TownRes>,
     mut bank: ResMut<Bank>,
     mut commands: Commands,
@@ -462,17 +490,18 @@ fn stage_town_for_shot(
     if *done || spots.0.is_empty() {
         return;
     }
+    let Some(mats) = mats else { return };
     let Ok(mode) = std::env::var("FOREST_TOWN") else { *done = true; return };
     *done = true;
     bank.0.add_wood(100.0);
     bank.0.add_stone(100.0);
     town.0.build(0, BuildKind::Farm, &mut bank.0);
-    town.0.build(1, BuildKind::House, &mut bank.0);
     town.0.build(2, BuildKind::Farm, &mut bank.0);
     town.0.build(3, BuildKind::Lumber, &mut bank.0);
-    for idx in [0usize, 1, 2, 3] {
+    town.0.build_house(&mut bank.0); // raise one extra dwelling (castle reveals it)
+    for idx in [0usize, 2, 3] {
         if let Some(kind) = town.0.plots[idx].kind {
-            spawn_building_mesh(&mut commands, &mut meshes, &mut materials, idx, kind, &spots);
+            spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
         }
     }
     if mode == "burn" {
@@ -486,18 +515,52 @@ fn stage_town_for_shot(
 #[derive(Component)]
 struct BuildUi;
 
+/// A row in the Build menu. Producers go on the outer plot you're standing on; a House is
+/// raised inside the walls (a protected dwelling that lifts the population cap) and needs no plot.
+#[derive(Clone, Copy)]
+enum BuildItem {
+    Producer(BuildKind),
+    House,
+}
+
 #[derive(Component)]
-struct BuildOption(BuildKind);
+struct BuildOption(BuildItem);
 
-const MENU: [BuildKind; 3] = [BuildKind::Farm, BuildKind::House, BuildKind::Lumber];
+const MENU: [BuildItem; 3] =
+    [BuildItem::Producer(BuildKind::Farm), BuildItem::House, BuildItem::Producer(BuildKind::Lumber)];
 
-/// One-line "what it does" shown under each building in the Build menu — so players see that
-/// a Farm *feeds the town and grows population*, not just that it "needs a worker".
-fn build_desc(kind: BuildKind) -> &'static str {
-    match kind {
-        BuildKind::Farm => "Grows food \u{2192} new villagers join your town",
-        BuildKind::House => "Housing \u{2192} +2 population your town can hold",
-        BuildKind::Lumber => "Woodcutter \u{2192} produces wood (needs a worker)",
+impl BuildItem {
+    fn label(self) -> &'static str {
+        match self {
+            BuildItem::Producer(k) => k.label(),
+            BuildItem::House => "House",
+        }
+    }
+
+    fn cost(self) -> Cost {
+        match self {
+            BuildItem::Producer(k) => k.cost(),
+            BuildItem::House => HOUSE_COST,
+        }
+    }
+
+    /// One-line "what it does", so players see that a Farm *feeds the town and grows population*
+    /// and a House *makes room for more people*, not just abstract stats.
+    fn desc(self) -> &'static str {
+        match self {
+            BuildItem::Producer(BuildKind::Farm) => "Grows food \u{2192} feeds the town so peasants settle in",
+            BuildItem::Producer(BuildKind::Lumber) => "Woodcutter \u{2192} produces wood (needs a worker)",
+            BuildItem::House => "Home in the walls \u{2192} +2 people your town can hold",
+        }
+    }
+
+    /// Whether this item can be built right now. Producers need an empty plot under the hero;
+    /// a House just needs the resources and a free slot inside the walls.
+    fn affordable(self, town: &Town, bank: &tileworld_core::resource_store::ResourceState, on_plot: bool) -> bool {
+        match self {
+            BuildItem::Producer(k) => on_plot && town.can_afford(k, bank),
+            BuildItem::House => town.can_build_house(bank),
+        }
     }
 }
 
@@ -530,13 +593,13 @@ fn spawn_build(
         ))
         .with_children(|root| {
             root.spawn(label(&fonts.extrabold, "BUILD", 20.0, GOLD));
-            let buildable = target.0.is_some();
-            if !buildable {
-                root.spawn(label(&fonts.regular, "Stand on an empty plot to build.", 13.0, GREY));
+            let on_plot = target.0.is_some();
+            if !on_plot {
+                root.spawn(label(&fonts.regular, "Stand on an empty plot to build a producer.", 13.0, GREY));
             }
-            for kind in MENU {
-                let c = kind.cost();
-                let afford = town.0.can_afford(kind, &bank.0) && buildable;
+            for item in MENU {
+                let c = item.cost();
+                let afford = item.affordable(&town.0, &bank.0, on_plot);
                 let col = if afford { Color::WHITE } else { TEXT_FAINT };
                 root.spawn((
                     Button,
@@ -550,7 +613,7 @@ fn spawn_build(
                         ..default()
                     },
                     BorderColor::all(if afford { GOLD_DEEP } else { BORDER_SOFT }),
-                    BuildOption(kind),
+                    BuildOption(item),
                 ))
                 .with_children(|b| {
                     // Left column: name + a plain-language line on what the building does.
@@ -561,8 +624,8 @@ fn spawn_build(
                         ..default()
                     })
                     .with_children(|l| {
-                        l.spawn(label(&fonts.semibold, kind.label(), 14.0, col));
-                        l.spawn(label(&fonts.regular, build_desc(kind), 11.0, desc_col));
+                        l.spawn(label(&fonts.semibold, item.label(), 14.0, col));
+                        l.spawn(label(&fonts.regular, item.desc(), 11.0, desc_col));
                     });
                     // Right: cost (only the resources actually needed).
                     let mut cost = String::new();
@@ -594,62 +657,61 @@ fn build_interact(
     mut town: ResMut<TownRes>,
     mut bank: ResMut<Bank>,
     target: Res<BuildTarget>,
+    mats: Option<Res<VillageMats>>,
     mut next_modal: ResMut<NextState<Modal>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     spots: Res<PlotSpots>,
     existing: Query<(Entity, &BuildingMesh)>,
 ) {
+    let Some(mats) = mats else { return };
     for (interaction, opt) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
-        let Some(idx) = target.0 else { continue };
-        let kind = opt.0;
-        if town.0.build(idx, kind, &mut bank.0) {
-            // Rebuild-on-rubble: clear any stale mesh first.
-            for (e, bm) in &existing {
-                if bm.idx == idx {
-                    commands.entity(e).try_despawn();
+        match opt.0 {
+            // A House goes up inside the walls (no plot): the castle reveals the next dwelling
+            // and the population cap lifts. `sync_castle` shows the mesh from `town.houses`.
+            BuildItem::House => {
+                if town.0.build_house(&mut bank.0) {
+                    next_modal.set(Modal::None);
                 }
             }
-            spawn_building_mesh(&mut commands, &mut meshes, &mut materials, idx, kind, &spots);
-            next_modal.set(Modal::None); // close after a successful build
+            // A producer goes on the empty plot the hero is standing on.
+            BuildItem::Producer(kind) => {
+                let Some(idx) = target.0 else { continue };
+                if town.0.build(idx, kind, &mut bank.0) {
+                    // Rebuild-on-rubble: clear any stale mesh first.
+                    for (e, bm) in &existing {
+                        if bm.idx == idx {
+                            commands.entity(e).try_despawn();
+                        }
+                    }
+                    spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
+                    next_modal.set(Modal::None); // close after a successful build
+                }
+            }
         }
     }
 }
 
-fn spawn_building_mesh(
+fn spawn_building(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    mats: &Mats,
     idx: usize,
     kind: BuildKind,
     spots: &PlotSpots,
 ) {
     let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
-    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.9,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(meshes.add(building_mesh(kind))),
-        MeshMaterial3d(mat),
-        Transform::from_xyz(pos.x, y, pos.y),
-        crate::biome::BiomeEntity,
-        BuildingMesh { idx },
-    ));
+    spawn_textured(commands, meshes, mats, BuildingMesh { idx }, building_parts(kind), pos);
 }
 
-fn building_mesh(kind: BuildKind) -> Mesh {
-    // Proper low-poly models (foundation/walls/gable-roof/door/window for the house, a
-    // thatched hut + tilled field for the farm) live in `town_meshes`.
+/// The textured parts for a producer — both are a shared plaster cottage (matching the keep's
+/// houses) plus the trade's own yard. Live in `town_meshes`.
+fn building_parts(kind: BuildKind) -> Vec<(Mesh, M)> {
     match kind {
-        BuildKind::Farm => crate::town_meshes::farm(),
-        BuildKind::House => crate::town_meshes::house(),
-        BuildKind::Lumber => crate::town_meshes::woodcutter(),
+        BuildKind::Farm => crate::town_meshes::farm_parts(),
+        BuildKind::Lumber => crate::town_meshes::woodcutter_parts(),
     }
 }

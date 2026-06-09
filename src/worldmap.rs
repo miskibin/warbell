@@ -525,7 +525,8 @@ pub fn build(
     );
 
     // ── Central castle (fully built) on the flat grass centre ──
-    crate::castle::build(commands, meshes, images, std_mats);
+    // Returns the shared textured material set so the town plots/buildings match the keep.
+    let village_mats = crate::castle::build(commands, meshes, images, std_mats);
 
     // ── Ork camps: tents/fire/banner/cage + a patrolling warband (registers blockers). ──
     crate::camps::build(commands, meshes, std_mats);
@@ -541,7 +542,7 @@ pub fn build(
 
     // ── Biome verbs: mineable ore (rock), forage (swamp herbs / forest apples), chests ──
     crate::verbs::populate_ore(commands, meshes, std_mats);
-    crate::town::populate_plots(commands, meshes, std_mats);
+    crate::town::populate_plots(commands, meshes, &village_mats);
     crate::verbs::populate_forage(commands, meshes, std_mats);
     crate::verbs::populate_chests(commands, meshes, std_mats);
 
