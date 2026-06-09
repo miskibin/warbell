@@ -21,6 +21,12 @@ use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 
+/// A flame entity tied to a burning plot (despawned when extinguished/collapsed).
+#[derive(Component)]
+struct Flame {
+    idx: usize,
+}
+
 /// Number of build plots seeded around the castle.
 pub const PLOT_COUNT: usize = 8;
 /// Starting wood so the player can build on day one.
@@ -87,7 +93,14 @@ impl Plugin for TownPlugin {
             .add_systems(
                 Update,
                 (production_system, population_system).run_if(in_state(Modal::None)),
-            );
+            )
+            // Sim (gated): apply damage + repair only while playing.
+            .add_systems(
+                Update,
+                (apply_building_damage, repair_system).run_if(in_state(Modal::None)),
+            )
+            // VFX (ungated): flames flicker even when frozen.
+            .add_systems(Update, flame_flicker);
     }
 }
 
@@ -246,6 +259,112 @@ fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
     let n = m.count_vertices();
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
     m
+}
+
+// ── Damage, fire VFX, and repair ─────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+fn apply_building_damage(
+    mut town: ResMut<TownRes>,
+    mut pending: ResMut<PendingBuildingDamage>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    spots: Res<PlotSpots>,
+    buildings: Query<(Entity, &BuildingMesh)>,
+    flames: Query<(Entity, &Flame)>,
+) {
+    for (idx, dmg) in pending.0.drain(..) {
+        let was_built = town.0.plots.get(idx).map_or(false, |p| p.is_built());
+        town.0.damage(idx, dmg as f64);
+        if !was_built {
+            continue;
+        }
+        let now_rubble = town.0.plots.get(idx).map_or(false, |p| {
+            matches!(p.state, tileworld_core::town_store::PlotState::Rubble)
+        });
+        if now_rubble {
+            // Collapse: drop the building mesh + its flames, leave the bare plot (rubble).
+            for (e, bm) in &buildings {
+                if bm.idx == idx {
+                    commands.entity(e).try_despawn();
+                }
+            }
+            for (e, f) in &flames {
+                if f.idx == idx {
+                    commands.entity(e).try_despawn();
+                }
+            }
+        } else {
+            // Still standing + burning: ensure a flame is showing.
+            let has_flame = flames.iter().any(|(_, f)| f.idx == idx);
+            if !has_flame {
+                spawn_flame(&mut commands, &mut meshes, &mut materials, idx, &spots);
+            }
+        }
+    }
+}
+
+fn spawn_flame(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    idx: usize,
+    spots: &PlotSpots,
+) {
+    let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    let mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.45, 0.1),
+        emissive: LinearRgba::rgb(6.0, 2.0, 0.3),
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(0.6).mesh().ico(1).unwrap())),
+        MeshMaterial3d(mat),
+        Transform::from_xyz(pos.x, y + 1.6, pos.y),
+        crate::biome::BiomeEntity,
+        Flame { idx },
+        PointLight {
+            color: Color::srgb(1.0, 0.5, 0.2),
+            intensity: 60_000.0,
+            range: 10.0,
+            ..default()
+        },
+    ));
+}
+
+/// Bob/scale the flames so they read as fire (ungated — VFX runs while frozen).
+fn flame_flicker(time: Res<Time>, mut q: Query<(&mut Transform, &Flame)>) {
+    let t = time.elapsed_secs_wrapped();
+    for (mut tf, f) in &mut q {
+        let s = 0.8 + (t * 9.0 + f.idx as f32).sin() * 0.18;
+        tf.scale = Vec3::splat(s);
+    }
+}
+
+/// Repair damaged survivors during Prep; extinguish flames once a plot is full HP.
+fn repair_system(
+    time: Res<Time>,
+    siege: Option<Res<crate::siege::Siege>>,
+    mut town: ResMut<TownRes>,
+    mut commands: Commands,
+    flames: Query<(Entity, &Flame)>,
+) {
+    let prep = siege.map_or(false, |s| s.phase == crate::siege::GamePhase::Prep);
+    if !prep {
+        return;
+    }
+    town.0.repair(time.delta_secs() as f64);
+    // Despawn flames whose plot is no longer burning.
+    for (e, f) in &flames {
+        let burning = town.0.plots.get(f.idx).map_or(false, |p| {
+            matches!(p.state, tileworld_core::town_store::PlotState::Built { burning: true, .. })
+        });
+        if !burning {
+            commands.entity(e).try_despawn();
+        }
+    }
 }
 
 // ── Modal::Build panel ────────────────────────────────────────────────────────────────────
