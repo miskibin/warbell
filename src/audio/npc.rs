@@ -54,6 +54,10 @@ const AMBIENT_KEYS: [&str; 21] = [
     "screaming",
 ];
 
+/// Lines that only make sense when the hero is visibly armed — held out of the rotation until a
+/// weapon is equipped, so the "look at the size of that sword" jab lands when there's a sword.
+const NEEDS_WEAPON: [&str; 1] = ["pa_sword"];
+
 #[derive(Resource)]
 pub(crate) struct NpcVoiceBank {
     /// Proximity lines, aligned with [`AMBIENT_KEYS`].
@@ -132,6 +136,7 @@ pub(crate) fn npc_ambient(
     mut commands: Commands,
     bank: Res<NpcVoiceBank>,
     mut st: ResMut<NpcVoiceState>,
+    inv: Res<crate::inventory::Inventory>,
     hero: Query<&Hero>,
     villagers: Query<(Entity, &GlobalTransform), With<Villager>>,
 ) {
@@ -141,10 +146,15 @@ pub(crate) fn npc_ambient(
     }
     let Ok(hero) = hero.single() else { return };
     let Some(who) = nearest_villager(hero.pos, &villagers, NEAR_DIST) else { return };
+    let armed = inv.0.weapon_bonus() > 0.0;
     // Try a few random picks; play the first line that's off its 10-min floor, else stay quiet.
     for _ in 0..10 {
         let i = (frand(&mut st.rng) * AMBIENT_KEYS.len() as f32) as usize % AMBIENT_KEYS.len();
         let key = AMBIENT_KEYS[i];
+        // Hold the sword jab until there's actually a weapon to mock.
+        if !armed && NEEDS_WEAPON.contains(&key) {
+            continue;
+        }
         if now - *st.last.get(key).unwrap_or(&-1000.0) >= LINE_FLOOR {
             st.last.insert(key, now);
             st.next_ambient = now + AMBIENT_GAP;
