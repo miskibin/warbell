@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use crate::audio::AudioCue;
 use crate::combat_fx::HitFeedback;
-use crate::game_state::{AppState, Modal};
+use crate::game_state::Modal;
 use crate::player::HeroState;
 use crate::siege::{GamePhase, Siege};
 use crate::ui::fonts::{label, UiFonts};
@@ -22,12 +22,14 @@ use crate::ui::widgets::border;
 const KEEP_DIST: f32 = 4.2;
 const BELL_DIST: f32 = 4.2;
 const SHOP_DIST: f32 = 3.5;
+const BUILD_DIST: f32 = 3.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InteractKind {
     Upgrades,
     Shop,
     WarBell,
+    Build,
 }
 impl InteractKind {
     fn prompt(self) -> &'static str {
@@ -35,6 +37,7 @@ impl InteractKind {
             InteractKind::Upgrades => "Upgrades",
             InteractKind::Shop => "Shop",
             InteractKind::WarBell => "Ring the bell",
+            InteractKind::Build => "Build",
         }
     }
 }
@@ -74,14 +77,34 @@ fn drive_interaction(
     mut next_modal: ResMut<NextState<Modal>>,
     mut cues: MessageWriter<AudioCue>,
     mut feedback: ResMut<HitFeedback>,
+    plot_spots: Res<crate::town::PlotSpots>,
+    town: Res<crate::town::TownRes>,
+    mut build_target: ResMut<crate::town::BuildTarget>,
 ) {
     let p = hero.pos;
+
+    // Nearest buildable (Empty/Rubble) plot the hero is standing on.
+    let mut nearest_plot: Option<(usize, f32)> = None;
+    for (idx, spot) in plot_spots.0.iter().enumerate() {
+        if town.0.plots.get(idx).map_or(false, |pl| pl.is_buildable()) {
+            let d = p.distance(*spot);
+            if d < BUILD_DIST && nearest_plot.map_or(true, |(_, bd)| d < bd) {
+                nearest_plot = Some((idx, d));
+            }
+        }
+    }
+    build_target.0 = nearest_plot.map(|(i, _)| i);
+
     // (kind, position, radius, available?)
-    let candidates = [
+    let mut candidates: Vec<(InteractKind, Vec2, f32, bool)> = vec![
         (InteractKind::Upgrades, Vec2::ZERO, KEEP_DIST, true),
         (InteractKind::Shop, shop_anchor(), SHOP_DIST, true),
         (InteractKind::WarBell, Vec2::new(0.0, 6.0), BELL_DIST, siege.phase == GamePhase::Prep),
     ];
+    if let Some((idx, _)) = nearest_plot {
+        candidates.push((InteractKind::Build, plot_spots.0[idx], BUILD_DIST, true));
+    }
+
     // Pick the nearest in-range, available interactable.
     let mut best: Option<(InteractKind, f32)> = None;
     for (kind, pos, radius, ok) in candidates {
@@ -104,6 +127,7 @@ fn drive_interaction(
                 cues.write(AudioCue::WarBell);
                 feedback.trauma = (feedback.trauma + 0.3).min(1.0);
             }
+            InteractKind::Build => next_modal.set(Modal::Build),
         }
     }
 }
