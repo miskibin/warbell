@@ -59,6 +59,7 @@ fn stats_ui(
     diags: Res<DiagnosticsStore>,
     app_state: Res<State<AppState>>,
     modal: Option<Res<State<Modal>>>,
+    quality: Option<Res<crate::quality::GraphicsQuality>>,
     siege: Option<Res<Siege>>,
     keep: Option<Res<KeepHp>>,
     player: Option<Res<PlayerRes>>,
@@ -153,6 +154,11 @@ fn stats_ui(
                 ui.label("modal");
                 ui.label(modal.map_or("—".to_string(), |m| format!("{:?}", m.get())));
                 ui.end_row();
+                if let Some(q) = quality.as_ref() {
+                    ui.label("graphics");
+                    ui.label(q.label());
+                    ui.end_row();
+                }
                 if let Some(s) = siege.as_ref() {
                     ui.label("phase");
                     let phase_txt = match s.phase {

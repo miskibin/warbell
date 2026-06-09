@@ -43,6 +43,7 @@ mod particles;
 mod player;
 mod projectile;
 mod props;
+mod quality;
 mod roads;
 mod ruins;
 mod scene;
@@ -135,6 +136,7 @@ fn main() {
             footstep_fx::FootstepFxPlugin, // dust puffs / water ripples under the hero's feet
             interaction::InteractionPlugin, // contextual E (keep→upgrades, merchant→shop, bell→night)
             debug_stats::DebugStatsPlugin, // read-only perf/state telemetry overlay (toggle: F2)
+            quality::QualityPlugin, // explicit Low/High graphics presets (set in Settings)
         ))
         .run();
 }

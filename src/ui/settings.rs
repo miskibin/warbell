@@ -3,11 +3,13 @@
 //! **fullscreen** flips the primary window's [`WindowMode`]. Each is also reachable from the keyboard
 //! (M / F11) and a [`Notice`] confirms the change.
 
-use bevy::audio::{GlobalVolume, Volume};
+use bevy::audio::{AudioSink, AudioSinkPlayback, SpatialAudioSink};
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 
-use super::fonts::UiFonts;
+use crate::quality::GraphicsQuality;
+
+use super::fonts::{label, UiFonts};
 use super::icons::IconAtlas;
 use super::notice::Notice;
 use super::theme::*;
@@ -26,17 +28,25 @@ struct AudioIcon;
 struct FullscreenToggle;
 #[derive(Component)]
 struct FsIcon;
+/// The Low/High graphics-preset button, and the text label inside it.
+#[derive(Component)]
+struct QualityToggle;
+#[derive(Component)]
+struct QualityLabel;
 
 pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AudioSettings>()
             .add_systems(Startup, setup_settings)
-            .add_systems(Update, (settings_click, keys, sync_audio_icon));
+            .add_systems(
+                Update,
+                (settings_click, keys, sync_audio_icon, sync_mute, sync_quality_label),
+            );
     }
 }
 
-fn setup_settings(mut commands: Commands, _fonts: Res<UiFonts>) {
+fn setup_settings(mut commands: Commands, fonts: Res<UiFonts>) {
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
@@ -47,6 +57,27 @@ fn setup_settings(mut commands: Commands, _fonts: Res<UiFonts>) {
             ..default()
         })
         .with_children(|row| {
+            // Graphics-quality toggle: a text button ("High"/"Low") so the choice is explicit and
+            // legible without depending on an icon asset. Click or press F10 to flip.
+            row.spawn((
+                Node {
+                    height: Val::Px(34.0),
+                    padding: UiRect::horizontal(Val::Px(10.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: border(1.0),
+                    border_radius: radius(R_BTN),
+                    ..default()
+                },
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(BORDER_SOFT),
+                Button,
+                Interaction::default(),
+                QualityToggle,
+            ))
+            .with_children(|b| {
+                b.spawn((label(&fonts.bold, "High", 13.0, TEXT), QualityLabel));
+            });
             for marker in [0u8, 1] {
                 let mut e = row.spawn((
                     Node {
@@ -99,54 +130,107 @@ fn sync_audio_icon(
 
 #[allow(clippy::type_complexity)]
 fn settings_click(
-    q: Query<(&Interaction, Option<&AudioToggle>, Option<&FullscreenToggle>), Changed<Interaction>>,
+    q: Query<
+        (&Interaction, Option<&AudioToggle>, Option<&FullscreenToggle>, Option<&QualityToggle>),
+        Changed<Interaction>,
+    >,
     mut settings: ResMut<AudioSettings>,
-    mut volume: ResMut<GlobalVolume>,
+    mut quality: ResMut<GraphicsQuality>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
-    for (interaction, audio, fs) in &q {
+    for (interaction, audio, fs, qual) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
         if audio.is_some() {
-            toggle_mute(&mut settings, &mut volume, &mut notice, now);
+            toggle_mute(&mut settings, &mut notice, now);
         }
         if fs.is_some() {
             toggle_fullscreen(&mut windows, &mut notice, now);
         }
+        if qual.is_some() {
+            toggle_quality(&mut quality, &mut notice, now);
+        }
     }
 }
 
-/// M = mute, F11 = fullscreen.
+/// M = mute, F11 = fullscreen, F10 = graphics preset.
 fn keys(
     input: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<AudioSettings>,
-    mut volume: ResMut<GlobalVolume>,
+    mut quality: ResMut<GraphicsQuality>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
     if input.just_pressed(KeyCode::KeyM) {
-        toggle_mute(&mut settings, &mut volume, &mut notice, now);
+        toggle_mute(&mut settings, &mut notice, now);
     }
     if input.just_pressed(KeyCode::F11) {
         toggle_fullscreen(&mut windows, &mut notice, now);
     }
+    if input.just_pressed(KeyCode::F10) {
+        toggle_quality(&mut quality, &mut notice, now);
+    }
 }
 
-fn toggle_mute(
-    settings: &mut AudioSettings,
-    volume: &mut GlobalVolume,
-    notice: &mut Notice,
-    now: f64,
-) {
+fn toggle_mute(settings: &mut AudioSettings, notice: &mut Notice, now: f64) {
     settings.muted = !settings.muted;
-    volume.volume = Volume::Linear(if settings.muted { 0.0 } else { 1.0 });
+    // The actual silencing happens in `sync_mute` (live `AudioSink`s) — GlobalVolume alone is
+    // only sampled when a sink *starts*, so it never touches already-playing music/ambience.
     notice.push(if settings.muted { "Audio muted" } else { "Audio on" }, now);
+}
+
+fn toggle_quality(quality: &mut GraphicsQuality, notice: &mut Notice, now: f64) {
+    *quality = quality.toggled();
+    notice.push(format!("Graphics: {}", quality.label()), now);
+}
+
+/// Keep every live audio sink's mute state matching the setting. Bevy's `GlobalVolume` is only
+/// read when a sink is created, so muting must be pushed onto the playing sinks here — this also
+/// catches sinks that start while muted (they get muted within a frame). `mute()`/`unmute()`
+/// remember each sink's real volume, so unmuting restores it exactly.
+fn sync_mute(
+    settings: Res<AudioSettings>,
+    mut sinks: Query<&mut AudioSink>,
+    mut spatial: Query<&mut SpatialAudioSink>,
+) {
+    let want = settings.muted;
+    for mut s in &mut sinks {
+        if s.is_muted() != want {
+            if want {
+                s.mute();
+            } else {
+                s.unmute();
+            }
+        }
+    }
+    for mut s in &mut spatial {
+        if s.is_muted() != want {
+            if want {
+                s.mute();
+            } else {
+                s.unmute();
+            }
+        }
+    }
+}
+
+/// Reflect the active graphics preset on the toggle button's label.
+fn sync_quality_label(
+    quality: Res<GraphicsQuality>,
+    mut q: Query<&mut Text, With<QualityLabel>>,
+) {
+    if !quality.is_changed() {
+        return;
+    }
+    if let Ok(mut t) = q.single_mut() {
+        **t = quality.label().to_string();
+    }
 }
 
 fn toggle_fullscreen(

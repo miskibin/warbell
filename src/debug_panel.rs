@@ -89,7 +89,9 @@ fn panel_ui(
             &mut ColorGrading,
             &mut Exposure,
             &mut Outline,
-            &mut VolumetricFog,
+            // Optional: the Low graphics preset removes the volumetric-fog pass entirely, so this
+            // component may be absent — don't let that drop the whole camera row from the panel.
+            Option<&mut VolumetricFog>,
         ),
         With<Camera3d>,
     >,
@@ -139,11 +141,24 @@ fn panel_ui(
                     // VolumetricFog is a SEPARATE component from DistanceFog above. Its high
                     // `ambient_intensity` is what reads as bright white sky-haze over distant
                     // geometry — drop this toward 0 to kill the white wash (sun shafts stay).
+                    // `step_count` is the god-ray GPU cost knob: by far the heaviest pass in the
+                    // frame (F2 profiler), so drag it down to judge how much the shafts are worth.
                     ui.separator();
-                    ui.add(
-                        egui::Slider::new(&mut volfog.ambient_intensity, 0.0..=1.0)
-                            .text("volumetric haze (white wash)"),
-                    );
+                    if let Some(volfog) = volfog.as_mut() {
+                        ui.add(
+                            egui::Slider::new(&mut volfog.ambient_intensity, 0.0..=1.0)
+                                .text("volumetric haze (white wash)"),
+                        );
+                        let mut steps = volfog.step_count;
+                        if ui
+                            .add(egui::Slider::new(&mut steps, 1..=64).text("god-ray steps (GPU cost)"))
+                            .changed()
+                        {
+                            volfog.step_count = steps;
+                        }
+                    } else {
+                        ui.weak("god-rays off (Low graphics preset)");
+                    }
                 });
 
                 egui::CollapsingHeader::new("Bokeh DoF + Bloom").show(ui, |ui| {
