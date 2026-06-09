@@ -1,12 +1,14 @@
 //! Graphics quality presets — an **explicit** switch (set from Settings, top-right, or the
 //! keyboard), cycling **High → Low → God Rays**. No automatic scaling: the player picks, we apply.
 //!
-//! - **High**: the hand-tuned default look (volumetric pass on at the scene's subtle settings).
-//! - **Low**: drops the volumetric god-ray pass entirely (the F2 profiler's biggest GPU cost,
-//!   ~13 ms) and eases SSAO / SMAA / shadow-map resolution. Stays fully playable and legible.
-//! - **God Rays**: a showcase mode that makes the light shafts *unmistakable* — it kills the
-//!   depth-of-field blur that smears them and cranks the volumetric scattering, so the beams read
-//!   crisply toward the sun.
+//! - **High**: the hand-tuned default look. The volumetric god-ray pass is **off** — at the
+//!   scene's subtle fog settings the shafts are imperceptible yet still the frame's biggest GPU
+//!   cost (~13 ms, per the F2 profiler), so neither High nor Low pays for it.
+//! - **Low**: same (no god-rays) plus eased SSAO / SMAA / shadow-map resolution for weak GPUs.
+//!   Stays fully playable and legible.
+//! - **God Rays**: a showcase mode — the only preset that runs the volumetric pass — and it makes
+//!   the shafts *unmistakable*: it kills the depth-of-field blur that smears them and cranks the
+//!   volumetric scattering, so the beams read crisply toward the sun.
 //!
 //! The reliable on/off for the volumetric pass is the **sun's `VolumetricLight`** (Bevy's retained
 //! render world only tears the pass down when no `VolumetricLight` exists — its extractor never
@@ -109,7 +111,7 @@ fn apply_quality(
 
     // (god-rays on?, step_count, SSAO, SMAA, shadow size, showcase god-rays?)
     let (god_rays, steps, ao, smaa_preset, shadow_size, showcase) = match *quality {
-        GraphicsQuality::High => (true, 32u32, Q::Medium, SmaaPreset::High, 2048usize, false),
+        GraphicsQuality::High => (false, 32u32, Q::Medium, SmaaPreset::High, 2048usize, false),
         GraphicsQuality::Low => (false, 32, Q::Low, SmaaPreset::Low, 1024, false),
         GraphicsQuality::GodRays => (true, 48, Q::Medium, SmaaPreset::High, 2048, true),
     };
