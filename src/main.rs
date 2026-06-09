@@ -1,6 +1,13 @@
-//! Tileworld Biomes — a Bevy 0.18 scene of one combined island WORLD MAP: five biome
-//! regions on a single landmass, open ocean (with drifting boats) on three sides, and an
-//! unreachable forest + river edge on the north. The world map is the only view.
+//! D: Tileworld — a Bevy 0.18 port of the TS/three.js game. A knight defends a central
+//! castle against night-wave ork sieges across a five-biome island: real-time combat,
+//! economy, an upgrade tree, inventory, villagers, bloodline succession, and wildlife, on
+//! one enlarged landmass ringed by open ocean (with drifting boats).
+//!
+//! Each `mod` below is a self-contained `Plugin` that does its own `Startup` spawn +
+//! `Update`/`FixedUpdate` systems; the `add_plugins` calls in `main` are the assembly list
+//! (split into tuples because the `Plugins` trait maxes out at arity 15). The world-sim is
+//! gated behind the freeze-gate state machine in `game_state` — see `CLAUDE.md` for the
+//! conventions and `docs/superpowers/specs/` for the parity roadmap.
 
 mod audio;
 mod biome;

@@ -2,9 +2,10 @@
 //! (`critters::Species`) wander, graze and startle from the camera, with their limbs
 //! swung procedurally (the `wind.rs` `Sway` trick, applied to legs/head/tail).
 //!
-//! This is a VIEWER, so there's no combat: no HP, damage, death or respawn. Animals are
-//! placed once (biome-matched, walkable, deterministic) inside `worldmap::build`, tagged
-//! [`crate::biome::BiomeEntity`] so the biome-switch despawn/rebuild handles them.
+//! Animals are full combat actors: per-species HP, a predator/prey food-chain, struck-enrage,
+//! death-fade (`crate::dying`), loot drops, and respawn (35s herbivore / 50s predator, near the
+//! death spot). They're placed biome-matched + walkable + deterministic inside `worldmap::build`,
+//! tagged [`crate::biome::BiomeEntity`] so the biome-switch despawn/rebuild handles them.
 //!
 //! Two `Update` systems:
 //!   * [`animal_brain`] — wander ↔ graze state machine + camera startle; integrates the
