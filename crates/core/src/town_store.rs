@@ -179,6 +179,11 @@ impl Town {
 
     /// Drain upkeep, then grow population by one if food + a free house slot allow.
     /// Returns `true` when a villager was added (the Bevy layer then spawns a body).
+    ///
+    /// Upkeep uses all-or-nothing `spend_food`, so when the bank can't cover the
+    /// full upkeep it is silently skipped — there is deliberately NO starvation
+    /// consequence in this slice (no attrition / building shutdown). If starvation
+    /// feedback is added later, this returns a shortfall signal instead.
     pub fn population_tick(&mut self, dt: f64, bank: &mut ResourceState) -> bool {
         let upkeep = self.population as f64 * UPKEEP_PER_POP * dt;
         bank.spend_food(upkeep); // spend_food no-ops when short (all-or-nothing)
