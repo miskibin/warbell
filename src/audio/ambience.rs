@@ -50,6 +50,8 @@ pub(crate) fn setup_ambience(asset: Res<AssetServer>, mut commands: Commands) {
     let beds = [
         (AmbienceKind::Biome(Biome::Snow), "audio/wind.ogg"),
         (AmbienceKind::Biome(Biome::Forest), "audio/forest-ambient.ogg"),
+        (AmbienceKind::Biome(Biome::Desert), "audio/desert-wind.ogg"),
+        (AmbienceKind::Biome(Biome::Swamp), "audio/swamp-ambient.ogg"),
         (AmbienceKind::Water, "audio/water.ogg"),
     ];
     for (kind, file) in beds {
