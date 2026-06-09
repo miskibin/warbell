@@ -19,6 +19,7 @@ mod combat_fx;
 mod controls;
 mod critters;
 mod debug_panel;
+mod debug_stats;
 mod decor;
 mod defenses;
 mod dof;
@@ -133,6 +134,7 @@ fn main() {
             landmarks::LandmarksPlugin, // landmark POIs: discovery caches + shrine buffs + beacons
             footstep_fx::FootstepFxPlugin, // dust puffs / water ripples under the hero's feet
             interaction::InteractionPlugin, // contextual E (keep→upgrades, merchant→shop, bell→night)
+            debug_stats::DebugStatsPlugin, // read-only perf/state telemetry overlay (toggle: F2)
         ))
         .run();
 }

@@ -160,7 +160,7 @@ explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints
 ## Controls (gameplay)
 
 ` (backquote) toggle free-roam fly-cam ↔ follow-cam · WASD move · LMB attack · RMB block ·
-F1 debug egui panel · **E** contextual interact — walk up to a thing and a screen prompt names it:
+F1 debug egui tuning panel · F2 perf/state stats overlay · **E** contextual interact — walk up to a thing and a screen prompt names it:
 near the **keep** → War Table (upgrades), near the **merchant stall** → shop, near the **war bell**
 (prep only) → ring in the night (the unified resolver lives in `interaction.rs`; nearest in-range
 wins, proximity-only/no-facing, ported from the 3js single-`E` scheme) · **I** Satchel ·
