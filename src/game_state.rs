@@ -263,6 +263,15 @@ fn spawn_start_screen(
                     }
                 });
                 m.spawn((label(&fonts.regular, "A knight's last stand.", 17.0, TEXT_DIM), anim(AnimKind::Rise, 0.2, 0.7)));
+                // Quick "how to play" — the whole loop in two lines, so a new player isn't lost.
+                m.spawn((
+                    label(&fonts.semibold, "DAY  —  loot chests, gather gold & stone, buy upgrades", 13.5, rgb(214, 224, 240)),
+                    anim(AnimKind::Rise, 0.24, 0.7),
+                ));
+                m.spawn((
+                    label(&fonts.semibold, "NIGHT  —  orks besiege the keep; hold the walls", 13.5, rgb(214, 224, 240)),
+                    anim(AnimKind::Rise, 0.27, 0.7),
+                ));
                 // Divider.
                 m.spawn((
                     Node { width: Val::Px(220.0), height: Val::Px(1.0), margin: UiRect::vertical(Val::Px(6.0)), ..default() },
