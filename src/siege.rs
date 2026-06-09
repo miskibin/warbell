@@ -348,6 +348,11 @@ pub const KEEP_MAX_HP: f32 = 1000.0;
 const KEEP_REPAIR_RATE: f32 = 12.0;
 /// The night horde's warband tint (camps use both; invaders are uniformly this).
 const INVADER_FACTION: orks::Faction = orks::Faction::Red;
+/// How close an arsonist invader must be to batter a building.
+const BUILDING_ATTACK_RANGE: f32 = 1.8;
+/// Building damage per invader per second. FORGIVING slice tuning: a farm (60 HP)
+/// survives ~12s of one undefended arsonist, so you can usually reach it in time.
+const BUILDING_DPS: f32 = 5.0;
 
 /// The keep's vitals. Razed (hp ≤ 0) during a wave → defeat.
 #[derive(Resource)]
@@ -611,6 +616,9 @@ fn invader_brain(
     mut guard_dmg: ResMut<crate::villagers::GuardDamage>,
     mut bolts: ResMut<BoltSpawns>,
     mut commands: Commands,
+    town: Res<crate::town::TownRes>,
+    plot_spots: Res<crate::town::PlotSpots>,
+    mut building_dmg: ResMut<crate::town::PendingBuildingDamage>,
     guards: Query<
         (Entity, &Transform, &crate::villagers::Guard),
         (Without<WaveInvader>, Without<crate::dying::Dying>),
@@ -660,10 +668,35 @@ fn invader_brain(
             None
         };
         let chase_hero = see_hero && guard_tgt.is_none();
+        // FORGIVING slice tuning: only ~1/3 of the warband (by id) are arsonists; the
+        // rest still rush the keep. They make for the nearest standing building. The
+        // keep's existing defenses (towers/archers/ballista) already auto-target ANY
+        // WaveInvader, so arsonists get shot on approach — no extra wiring needed.
+        let arsonist = (e.to_bits() % 3) == 0;
+        let building_goal: Option<(usize, Vec2)> = if arsonist {
+            let mut best: Option<(usize, f32)> = None;
+            for (idx, spot) in plot_spots.0.iter().enumerate() {
+                if town.0.plots.get(idx).map_or(false, |p| p.is_built()) {
+                    let d = o.pos.distance(*spot);
+                    if best.map_or(true, |(_, bd)| d < bd) {
+                        best = Some((idx, d));
+                    }
+                }
+            }
+            best.map(|(i, _)| (i, plot_spots.0[i]))
+        } else {
+            None
+        };
         let target = if let Some((_, gp)) = guard_tgt {
             gp
         } else if chase_hero {
             hero.pos
+        } else if let Some((bidx, bpos)) = building_goal {
+            // Batter the building when in range; else march toward it.
+            if o.pos.distance(bpos) < BUILDING_ATTACK_RANGE {
+                building_dmg.0.push((bidx, BUILDING_DPS * dt));
+            }
+            bpos
         } else {
             KEEP_POS
         };
