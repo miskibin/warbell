@@ -56,6 +56,9 @@ pub const ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
 
 // ── Biome palette (sRGB hex) for the blended ground colour ──────────────────────
 const COL_GRASS: u32 = 0x6fb24c;
+/// Meadow macro-patch tones mottled into the grass base (see `ground_color`).
+const COL_GRASS_DARK: u32 = 0x4f8c38; // lush shaded patches
+const COL_GRASS_DRY: u32 = 0x8fa953; // dry, sun-bleached patches
 const COL_SAND: u32 = 0xcdb079;
 const COL_FOREST: u32 = 0x5d9e44;
 const COL_ROCK: u32 = 0x8d847a;
@@ -387,6 +390,14 @@ fn biome_col(b: TB) -> [f32; 3] {
 /// over a soft `BLEND` band at its edge, plus a sandy coast fade.
 fn ground_color(x: f32, z: f32) -> [f32; 4] {
     let mut col = lin3(COL_GRASS);
+    // Meadow macro-patches on the grass base (before the biome-region blends, so biome
+    // interiors keep their own colour): two noise octaves mottle the green between a
+    // darker lush tone and a drier warm one. Open grass stops being one flat neon sheet —
+    // the patchiness is what makes the ground read as a living meadow at camera distance.
+    let p1 = noise_a(x * 4.0 + 31.0, z * 4.0 - 17.0); // ~12-world-tile patches
+    let p2 = noise_b(x * 9.0 - 11.0, z * 9.0 + 23.0); // ~4-tile speckle
+    col = mix3(col, lin3(COL_GRASS_DARK), smoothstep(0.1, 1.3, p1) * 0.55);
+    col = mix3(col, lin3(COL_GRASS_DRY), smoothstep(0.25, 1.4, p2) * 0.40);
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     for reg in &REGIONS {
         let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };

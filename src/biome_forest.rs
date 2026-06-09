@@ -52,14 +52,25 @@ pub fn config() -> BiomeConfig {
         seed: 2027,
         tree_min_dist: 2.7,
         classes: vec![
-            // Trees: 55% broadleaf / 16% birch / 22% pine / 7% dead.
+            // Trees: 55% broadleaf / 16% birch / 22% pine / 7% dead — each living kind
+            // expanded into the TREE_TINTS hue spread (neutral / warm-dry / deep-cool) so
+            // neighbouring trees stop being the one identical green repeated forever.
             PropClass {
-                variants: vec![
-                    (build_tree_mesh(TreeKind::Broadleaf), 0.55),
-                    (build_tree_mesh(TreeKind::Birch), 0.16),
-                    (build_tree_mesh(TreeKind::Pine), 0.22),
-                    (build_tree_mesh(TreeKind::Dead), 0.07),
-                ],
+                variants: {
+                    let mut v: Vec<(Mesh, f32)> = Vec::new();
+                    let n = crate::trees::TREE_TINTS.len() as f32;
+                    for (kind, w) in [
+                        (TreeKind::Broadleaf, 0.55),
+                        (TreeKind::Birch, 0.16),
+                        (TreeKind::Pine, 0.22),
+                    ] {
+                        for t in crate::trees::TREE_TINTS {
+                            v.push((crate::trees::tint_mesh(build_tree_mesh(kind), t), w / n));
+                        }
+                    }
+                    v.push((build_tree_mesh(TreeKind::Dead), 0.07));
+                    v
+                },
                 chance: 0.075,
                 scale: (0.85 * TREE_SCALE, 1.3 * TREE_SCALE),
                 tree: true,

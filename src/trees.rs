@@ -95,8 +95,8 @@ pub fn build_tree_mesh(kind: TreeKind) -> Mesh {
         TreeKind::Pine => build_pine(),
     };
     // Flat-shade so the foliage shows crisp icosphere facets (TS `flatShading: true`)
-    // rather than soft smooth "blobs".
-    flat_shaded(m)
+    // rather than soft smooth "blobs"), then bake the painterly per-facet shading.
+    bake_facet_shading(flat_shaded(m))
 }
 
 /// Un-index + recompute per-face normals → hard flat-shaded facets.
@@ -105,6 +105,60 @@ fn flat_shaded(mut m: Mesh) -> Mesh {
     m.compute_flat_normals();
     m
 }
+
+/// Bake painterly shading into the vertex colours (call AFTER `flat_shaded`, so the
+/// per-face normals exist and every facet shades uniformly): facets angled up toward the
+/// sky lighten, facets angled down darken (canopy undersides read self-shadowed), plus a
+/// vertical gradient from a dark grounded skirt to a lit crown. This is what gives each
+/// low-poly facet its own distinct value — realtime lighting alone can't produce it,
+/// since a constant ambient/IBL fill lights the whole blob evenly and washes it flat.
+fn bake_facet_shading(mut m: Mesh) -> Mesh {
+    use bevy::mesh::VertexAttributeValues as V;
+    let Some(V::Float32x3(pos)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { return m };
+    let (mut y_min, mut y_max) = (f32::MAX, f32::MIN);
+    for p in pos {
+        y_min = y_min.min(p[1]);
+        y_max = y_max.max(p[1]);
+    }
+    let span = (y_max - y_min).max(1e-4);
+    let ys: Vec<f32> = pos.iter().map(|p| p[1]).collect();
+    let Some(V::Float32x3(ns)) = m.attribute(Mesh::ATTRIBUTE_NORMAL) else { return m };
+    let nys: Vec<f32> = ns.iter().map(|n| n[1]).collect();
+    if let Some(V::Float32x4(cols)) = m.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+        for (c, (ny, y)) in cols.iter_mut().zip(nys.iter().zip(&ys)) {
+            let up = ny * 0.5 + 0.5; // 0 facing down … 1 facing up
+            let h = (y - y_min) / span; // 0 base … 1 crown
+            let f = (0.74 + 0.42 * up) * (0.86 + 0.26 * h);
+            c[0] *= f;
+            c[1] *= f;
+            c[2] *= f;
+        }
+    }
+    m
+}
+
+/// Multiply every vertex colour by an rgb tint — per-variant tree variety. Each tinted
+/// copy is its own mesh asset (instances of it still batch), so a forest stops being one
+/// identical green repeated thousands of times.
+pub fn tint_mesh(mut m: Mesh, tint: [f32; 3]) -> Mesh {
+    use bevy::mesh::VertexAttributeValues as V;
+    if let Some(V::Float32x4(cols)) = m.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+        for c in cols.iter_mut() {
+            c[0] *= tint[0];
+            c[1] *= tint[1];
+            c[2] *= tint[2];
+        }
+    }
+    m
+}
+
+/// The foliage tint spread: neutral / warm sun-dried / deep cool green. Hue+value jitter
+/// wide enough to read at gameplay distance but stay one family.
+pub const TREE_TINTS: [[f32; 3]; 3] = [
+    [1.0, 1.0, 1.0],
+    [1.08, 1.04, 0.82],
+    [0.80, 0.92, 0.86],
+];
 
 // ── Broadleaf "tree" — tapered trunk + 6 icosphere foliage layers (ico detail 1) ──
 //
