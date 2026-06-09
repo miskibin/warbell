@@ -297,9 +297,17 @@ fn reskin_hero(
 /// (leaving the start screen / game-over), never on un-pause.
 fn reset_player(
     mut player: ResMut<PlayerRes>,
+    siege: Option<Res<crate::siege::Siege>>,
     mut hero_q: Query<(&mut Hero, &mut Transform, &mut HeroHealth)>,
 ) {
     player.0.reset();
+    // Difficulty handicap: Easy gives the hero a bigger HP pool so a beginner survives early mistakes.
+    let diff = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
+    let m = crate::siege::mods_for(diff).player_hp_mul as f64;
+    if m != 1.0 {
+        player.0.max_hp *= m;
+        player.0.hp = player.0.max_hp;
+    }
     let Ok((mut hero, mut tf, mut hh)) = hero_q.single_mut() else { return };
     let gate = crate::castle::gate_centers()[0];
     let pos = Vec2::new(gate.x, gate.y - 3.0);

@@ -39,8 +39,11 @@ impl Plugin for SuccessionPlugin {
     }
 }
 
-fn reset_lives(mut lives: ResMut<Lives>) {
+fn reset_lives(mut lives: ResMut<Lives>, siege: Option<Res<crate::siege::Siege>>) {
     *lives = Lives::default();
+    // Difficulty handicap: Easy grants spare heirs so a beginner's run survives a few falls.
+    let diff = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
+    lives.heirs += crate::siege::mods_for(diff).heirs_bonus;
 }
 
 /// End the run once the bloodline is spent (hand off to the GameOver screen).

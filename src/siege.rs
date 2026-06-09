@@ -76,20 +76,47 @@ pub enum Difficulty {
     Hard,
 }
 
-/// Multipliers applied to wave count / ork HP / prep duration.
+/// Per-difficulty handicaps. `count/hp/prep` scale the orks + day; `player_hp/keep_hp` scale the
+/// hero's and castle's max HP at run start; `heirs_bonus` adds extra lives. Easy is tuned to be
+/// genuinely beginner-friendly (fewer/softer orks, a much tougher keep + hero, spare heirs).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DiffMods {
     pub count_mul: f32,
     pub hp_mul: f32,
     pub prep_mul: f32,
+    pub player_hp_mul: f32,
+    pub keep_hp_mul: f32,
+    pub heirs_bonus: u32,
 }
 
-/// easy = fewer/softer orks + a longer day · normal = the tuned baseline · hard = the reverse.
+/// easy = fewer/softer orks, a long day, a beefy keep + hero and spare heirs · normal = the tuned
+/// baseline · hard = more/tougher orks, a shorter day and a frailer keep.
 pub fn mods_for(d: Difficulty) -> DiffMods {
     match d {
-        Difficulty::Easy => DiffMods { count_mul: 0.8, hp_mul: 0.85, prep_mul: 1.25 },
-        Difficulty::Normal => DiffMods { count_mul: 1.0, hp_mul: 1.0, prep_mul: 1.0 },
-        Difficulty::Hard => DiffMods { count_mul: 1.25, hp_mul: 1.2, prep_mul: 0.8 },
+        Difficulty::Easy => DiffMods {
+            count_mul: 0.7,
+            hp_mul: 0.75,
+            prep_mul: 1.4,
+            player_hp_mul: 1.6,
+            keep_hp_mul: 2.0,
+            heirs_bonus: 2,
+        },
+        Difficulty::Normal => DiffMods {
+            count_mul: 1.0,
+            hp_mul: 1.0,
+            prep_mul: 1.0,
+            player_hp_mul: 1.0,
+            keep_hp_mul: 1.0,
+            heirs_bonus: 0,
+        },
+        Difficulty::Hard => DiffMods {
+            count_mul: 1.25,
+            hp_mul: 1.2,
+            prep_mul: 0.8,
+            player_hp_mul: 1.0,
+            keep_hp_mul: 0.9,
+            heirs_bonus: 0,
+        },
     }
 }
 
@@ -429,6 +456,9 @@ fn reset_siege(
     }
     let diff = siege.difficulty;
     *siege = Siege { difficulty: diff, ..Siege::default() };
+    // Re-derive the keep's max from base × the difficulty handicap (so switching difficulty between
+    // runs takes effect, and the Easy keep is genuinely tougher).
+    keep.max = KEEP_MAX_HP * mods_for(diff).keep_hp_mul;
     keep.hp = keep.max;
 }
 
@@ -939,10 +969,20 @@ mod tests {
     }
 
     #[test]
-    fn difficulty_presets_match_original() {
-        assert_eq!(mods_for(Difficulty::Easy), DiffMods { count_mul: 0.8, hp_mul: 0.85, prep_mul: 1.25 });
-        assert_eq!(mods_for(Difficulty::Normal), DiffMods { count_mul: 1.0, hp_mul: 1.0, prep_mul: 1.0 });
-        assert_eq!(mods_for(Difficulty::Hard), DiffMods { count_mul: 1.25, hp_mul: 1.2, prep_mul: 0.8 });
+    fn difficulty_presets() {
+        // Normal is the unscaled baseline (every multiplier 1.0, no spare heirs).
+        let n = mods_for(Difficulty::Normal);
+        assert_eq!(
+            n,
+            DiffMods { count_mul: 1.0, hp_mul: 1.0, prep_mul: 1.0, player_hp_mul: 1.0, keep_hp_mul: 1.0, heirs_bonus: 0 }
+        );
+        // Easy softens the orks AND buffs the hero/keep/heirs so a beginner can survive.
+        let e = mods_for(Difficulty::Easy);
+        assert!(e.count_mul < 1.0 && e.hp_mul < 1.0 && e.prep_mul > 1.0);
+        assert!(e.player_hp_mul > 1.0 && e.keep_hp_mul > 1.0 && e.heirs_bonus > 0);
+        // Hard does the reverse (more/tougher orks, shorter day, frailer keep).
+        let h = mods_for(Difficulty::Hard);
+        assert!(h.count_mul > 1.0 && h.hp_mul > 1.0 && h.prep_mul < 1.0 && h.keep_hp_mul < 1.0);
     }
 
     #[test]
