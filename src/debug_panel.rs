@@ -174,7 +174,7 @@ fn panel_ui(
                     ui.add(egui::Slider::new(&mut dof.far_ramp, 10.0..=250.0).text("far falloff (big=gradual)"));
                     ui.add(egui::Slider::new(&mut dof.max_radius, 0.0..=60.0).text("blur radius px"));
                     let mut coc_debug = dof.debug_view > 0.5;
-                    ui.checkbox(&mut coc_debug, "show CoC (white=blurred background, black=sharp)");
+                    ui.checkbox(&mut coc_debug, "show CoC (white=blurred, black=sharp)");
                     dof.debug_view = if coc_debug { 1.0 } else { 0.0 };
                     ui.add(egui::Slider::new(&mut bloom.intensity, 0.0..=1.0).text("bloom"));
                 });

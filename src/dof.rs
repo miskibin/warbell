@@ -1,12 +1,8 @@
-//! Custom **CoC bokeh depth-of-field** post pass — the player-focused, cinematic DoF the old
-//! game had. Bevy 0.18 ships **no** built-in DoF (the old `bevy_core_pipeline::dof` module is
-//! gone; only a dangling `Node3d::DepthOfField` graph label remains), so this fullscreen pass is
-//! the whole effect: it reads the prepass depth and does real scatter-as-gather bokeh around a
-//! focal plane driven onto the player by `scene::drive_dof_focus` — the subject and everything
-//! in FRONT of it stay sharp, only the distant background melts into soft bokeh (far-only; a
-//! near-field foreground blur just smears the ground at the camera in this top-down view). See
-//! `assets/shaders/dof.wgsl` for the algorithm. Same RenderStartup/ViewNode pattern as the
-//! other post passes.
+//! Custom **CoC bokeh depth-of-field** post pass — the player-focused DoF the old game had.
+//! Bevy's built-in `DepthOfField` silently no-ops in this pipeline (verified: even f/1.0 with
+//! SSAO removed produces no blur), so this is a fullscreen pass that reads the prepass depth
+//! and blurs by a circle-of-confusion around a focal plane (driven onto the player by
+//! `scene::drive_dof_focus`). Same RenderStartup/ViewNode pattern as the other post passes.
 
 use bevy::{
     core_pipeline::{
@@ -59,7 +55,7 @@ pub struct Dof {
 
 /// A tasteful default; tunable live in the Debug panel.
 pub fn default_dof() -> Dof {
-    Dof { focal: 28.0, range: 14.0, far_ramp: 55.0, max_radius: 22.0, near: NEAR, debug_view: 0.0 }
+    Dof { focal: 28.0, range: 16.0, far_ramp: 120.0, max_radius: 18.0, near: NEAR, debug_view: 0.0 }
 }
 
 pub struct DofPlugin;
