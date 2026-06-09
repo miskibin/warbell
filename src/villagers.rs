@@ -171,6 +171,7 @@ impl Plugin for VillagersPlugin {
                 Update,
                 (
                     villager_brain,
+                    worker_steer,
                     pilgrim_brain,
                     pilgrim_hint,
                     guard_combat,
@@ -358,7 +359,7 @@ fn recruit(
 fn villager_brain(
     time: Res<Time>,
     spots: Res<TownSpots>,
-    mut q: Query<(&mut Villager, &mut Transform, Has<Kid>), (Without<Guard>, Without<Pilgrim>)>,
+    mut q: Query<(&mut Villager, &mut Transform, Has<Kid>), (Without<Guard>, Without<Pilgrim>, Without<crate::town::Worker>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
@@ -401,6 +402,40 @@ fn villager_brain(
             }
         }
 
+        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+/// Steer assigned workers to their building, then hold post (sets `at_post`).
+/// Lives here because it pokes the private `Villager` fields. Workers inherit
+/// `townsfolk_curfew` (no `Guard`), so they flee at night automatically.
+fn worker_steer(
+    time: Res<Time>,
+    spots: Res<crate::town::PlotSpots>,
+    mut q: Query<(&mut crate::town::Worker, &mut Villager, &mut Transform)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let tw = time.elapsed_secs_wrapped();
+    for (mut worker, mut v, mut tf) in &mut q {
+        let Some(post) = spots.0.get(worker.idx).copied() else { continue };
+        let to = post - v.pos;
+        let dist = to.length();
+        if dist < 1.6 {
+            worker.at_post = true;
+            v.moving = false;
+        } else {
+            worker.at_post = false;
+            v.target = post;
+            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            if let Some(s) = steer::advance(v.pos, v.facing, v.target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
+                v.facing = s.facing;
+                v.pos = s.pos;
+                v.moving = s.moving;
+            }
+        }
         let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);

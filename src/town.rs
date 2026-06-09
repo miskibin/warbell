@@ -10,6 +10,8 @@
 use bevy::prelude::*;
 use tileworld_core::town_store::{BuildKind, Town};
 
+use crate::villagers::{Guard, Kid, Pilgrim, Villager};
+
 use crate::economy::Bank;
 use crate::game_state::{AppState, Modal};
 use crate::palette::lin;
@@ -75,7 +77,68 @@ impl Plugin for TownPlugin {
             .add_systems(OnExit(AppState::GameOver), reset_town)
             .add_systems(OnEnter(Modal::Build), spawn_build)
             .add_systems(OnExit(Modal::Build), despawn_build)
-            .add_systems(Update, build_interact.run_if(in_state(Modal::Build)));
+            .add_systems(Update, build_interact.run_if(in_state(Modal::Build)))
+            .add_systems(
+                Update,
+                (auto_assign_workers, sync_staffed, release_orphan_workers)
+                    .run_if(in_state(Modal::None)),
+            );
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn auto_assign_workers(
+    town: Res<TownRes>,
+    spots: Res<PlotSpots>,
+    mut commands: Commands,
+    workers: Query<&Worker>,
+    idle: Query<(Entity, &Transform), (With<Villager>, Without<Guard>, Without<Worker>, Without<Pilgrim>, Without<Kid>)>,
+) {
+    for (idx, plot) in town.0.plots.iter().enumerate() {
+        let Some(kind) = plot.kind else { continue };
+        if !plot.is_built() || !kind.needs_worker() {
+            continue;
+        }
+        if workers.iter().any(|w| w.idx == idx) {
+            continue; // already has a worker assigned
+        }
+        let Some(spot) = spots.0.get(idx).copied() else { continue };
+        // Nearest unassigned villager.
+        let mut best: Option<(Entity, f32)> = None;
+        for (e, tf) in &idle {
+            let d = Vec2::new(tf.translation.x, tf.translation.z).distance(spot);
+            if best.map_or(true, |(_, bd)| d < bd) {
+                best = Some((e, d));
+            }
+        }
+        if let Some((e, _)) = best {
+            commands.entity(e).try_insert(Worker { idx, at_post: false });
+        }
+    }
+}
+
+/// Each frame, mark a plot `staffed` iff a posted, visible worker is on it.
+fn sync_staffed(mut town: ResMut<TownRes>, workers: Query<(&Worker, &Visibility)>) {
+    let n = town.0.plots.len();
+    let mut staffed = vec![false; n];
+    for (w, vis) in &workers {
+        if w.at_post && *vis != Visibility::Hidden && w.idx < n {
+            staffed[w.idx] = true;
+        }
+    }
+    for (i, plot) in town.0.plots.iter_mut().enumerate() {
+        plot.staffed = staffed[i];
+    }
+}
+
+/// Drop the `Worker` tag when its plot is gone (collapsed to rubble), so the
+/// villager rejoins the idle pool and auto-assign re-staffs survivors.
+fn release_orphan_workers(town: Res<TownRes>, mut commands: Commands, workers: Query<(Entity, &Worker)>) {
+    for (e, w) in &workers {
+        let gone = town.0.plots.get(w.idx).map_or(true, |p| !p.is_built());
+        if gone {
+            commands.entity(e).try_remove::<Worker>();
+        }
     }
 }
 
