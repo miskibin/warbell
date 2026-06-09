@@ -42,6 +42,8 @@ pub enum Modal {
     Shop,
     UpgradeTree,
     Inventory,
+    Tutorial,
+    Build,
 }
 
 pub struct GameStatePlugin;
@@ -356,6 +358,7 @@ fn spawn_start_screen(
                     (&["F"], "Loot"),
                     (&["I"], "Satchel"),
                     (&["R"], "Recruit"),
+                    (&["H"], "Help"),
                     (&["Esc"], "Pause"),
                 ];
                 for (keys, desc) in rows {
