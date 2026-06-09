@@ -60,8 +60,10 @@ mod subtitles;
 mod succession;
 mod succession_fx;
 mod terrain;
+mod town;
 mod training_dummies;
 mod trees;
+mod tutorial;
 mod ui;
 mod verbs;
 mod villagers;
@@ -146,6 +148,10 @@ fn main() {
             debug_stats::DebugStatsPlugin, // read-only perf/state telemetry overlay (toggle: F2)
             quality::QualityPlugin, // explicit Low/High graphics presets (set in Settings)
             subtitles::SubtitlePlugin, // bottom-centre captions for spoken villager lines
+            tutorial::TutorialPlugin, // tabbed "How to Play" help panel (toggle: H)
+        ))
+        .add_plugins((
+            town::TownPlugin, // city-building: plots, build menu, economy, burn/repair
         ))
         .run();
 }
