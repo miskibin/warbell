@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use tileworld_core::town_store::{BuildKind, Town};
 
 use crate::succession::Lives;
-use crate::villagers::{Guard, Kid, Pilgrim, Villager};
+use crate::villagers::{Guard, Townsfolk};
 
 use crate::economy::Bank;
 use crate::game_state::{AppState, Modal};
@@ -114,14 +114,22 @@ impl Plugin for TownPlugin {
     }
 }
 
+/// By day, staff each producer from the idle townsfolk reserve: pick the nearest standing guard
+/// (an unemployed `Townsfolk`) and swap its `Guard` role for a `Worker` job — it downs its weapon
+/// and walks to the field. Skipped during a wave: nobody gets pulled off the wall mid-assault, and
+/// `muster_townsfolk` has already fired everyone back to guard duty at dusk.
 #[allow(clippy::type_complexity)]
 fn auto_assign_workers(
     town: Res<TownRes>,
     spots: Res<PlotSpots>,
+    siege: Option<Res<crate::siege::Siege>>,
     mut commands: Commands,
     workers: Query<&Worker>,
-    idle: Query<(Entity, &Transform), (With<Villager>, Without<Guard>, Without<Worker>, Without<Pilgrim>, Without<Kid>)>,
+    idle: Query<(Entity, &Transform), (With<Townsfolk>, With<Guard>, Without<Worker>)>,
 ) {
+    if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
+        return; // night: defenders stay on the wall
+    }
     for (idx, plot) in town.0.plots.iter().enumerate() {
         let Some(kind) = plot.kind else { continue };
         if !plot.is_built() || !kind.needs_worker() {
@@ -131,7 +139,7 @@ fn auto_assign_workers(
             continue; // already has a worker assigned
         }
         let Some(spot) = spots.0.get(idx).copied() else { continue };
-        // Nearest unassigned villager.
+        // Nearest idle townsperson.
         let mut best: Option<(Entity, f32)> = None;
         for (e, tf) in &idle {
             let d = Vec2::new(tf.translation.x, tf.translation.z).distance(spot);
@@ -140,7 +148,8 @@ fn auto_assign_workers(
             }
         }
         if let Some((e, _)) = best {
-            commands.entity(e).try_insert(Worker { idx, at_post: false });
+            // Off guard duty, onto the job (Guard → Worker; the two roles are exclusive).
+            commands.entity(e).try_remove::<Guard>().try_insert(Worker { idx, at_post: false });
         }
     }
 }
@@ -176,10 +185,10 @@ fn production_system(time: Res<Time>, mut town: ResMut<TownRes>, mut bank: ResMu
     town.0.production_tick(dt, &mut bank.0);
 }
 
-/// Food upkeep + growth; on growth, spawn a WORKER-ELIGIBLE townsperson and grow the
-/// bloodline (keeps the existing house→heir tie). The new body is a plain villager
-/// (no Guard), so `auto_assign_workers` can post it to a producer — that's the
-/// food→population→workforce loop.
+/// Food upkeep + growth; on growth, add one townsperson to the `Townsfolk` pool and grow the
+/// bloodline (keeps the house→heir tie). The new body joins as a standing guard (the idle reserve),
+/// so it defends at night and `auto_assign_workers` can post it to a producer by day — the
+/// food→population→workforce-and-militia loop.
 #[allow(clippy::too_many_arguments)]
 fn population_system(
     time: Res<Time>,
@@ -195,7 +204,7 @@ fn population_system(
     if town.0.population_tick(dt, &mut bank.0) {
         lives.heirs += 1;
         let seed = 0x70b1_0000u32.wrapping_add(town.0.population.wrapping_mul(101));
-        crate::villagers::spawn_townsperson(&mut commands, &mut meshes, &mut materials, seed);
+        crate::villagers::spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, seed);
         // Make the food→population link visible: a float over the town when a villager is born.
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(0.0, 6.5, 5.0),

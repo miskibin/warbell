@@ -1,7 +1,7 @@
 //! The central **castle** — a faithful, textured Bevy port of the TS game's fully-upgraded
 //! city (`cityModels.tsx` + `House.tsx` + `WarBell.tsx`, layout from `cityPlan.ts`). Built
 //! complete: keep, perimeter walls split around four gates, four corner towers, eight
-//! houses, a farm, a cobbled courtyard, the war bell, banners, torches and chimney smoke.
+//! houses, a cobbled courtyard, the war bell, banners, torches and chimney smoke.
 //!
 //! Static — no gameplay. At the island centre (world origin, flat grass safe-zone, y=0).
 //! Kept at TS *absolute* size (NOT ×1.4) but the PERIMETER is widened (`HALF_X/HALF_Z`) for
@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::biome::BiomeEntity;
-use crate::economy::{Defenses, EconomyState};
+use crate::economy::Defenses;
 use crate::palette::srgb;
 
 // ── Palette (sRGB hex, from the TS materials) ────────────────────────────────────
@@ -608,20 +608,6 @@ fn house_parts() -> Vec<(Mesh, M)> {
     v
 }
 
-fn farm_parts(w: f32, d: f32) -> Vec<(Mesh, M)> {
-    let mut v: Vec<(Mesh, M)> = Vec::new();
-    v.push((bx(w, 0.12, d, 0.0, 0.06, 0.0), M::Soil));
-    let mut x = -w / 2.0 + 0.5;
-    while x <= w / 2.0 - 0.5 + 1e-3 {
-        v.push((bx(0.28, 0.24, d - 0.6, x, 0.22, 0.0), M::Crop));
-        x += 0.8;
-    }
-    for (px, pz) in [(-w / 2.0, -d / 2.0), (w / 2.0, -d / 2.0), (-w / 2.0, d / 2.0), (w / 2.0, d / 2.0)] {
-        v.push((bx(0.12, 0.6, 0.12, px, 0.3, pz), M::Beam));
-    }
-    v
-}
-
 const BELL_POST_H: f32 = 1.6;
 
 fn bell_parts() -> Vec<(Mesh, M)> {
@@ -671,7 +657,7 @@ fn gates() -> [(f32, f32, f32); 4] {
 fn towers() -> [(f32, f32); 4] {
     [(-HALF_X, -HALF_Z), (HALF_X, -HALF_Z), (HALF_X, HALF_Z), (-HALF_X, HALF_Z)]
 }
-/// Eight houses in two interior rows, flanking the N/S gates, clear of keep + farm.
+/// Eight houses in two interior rows, flanking the N/S gates, clear of the keep.
 fn houses() -> [(f32, f32); 8] {
     let hz = HALF_Z - 3.0;
     [(-13.0, -hz), (-7.0, -hz), (7.0, -hz), (13.0, -hz), (-13.0, hz), (-7.0, hz), (7.0, hz), (13.0, hz)]
@@ -748,7 +734,6 @@ pub fn build(
     for (i, (x, z)) in houses().into_iter().enumerate() {
         spawn(house_parts(), Vec3::new(x, 0.0, z), face_center(x, z), Vec3::new(0.9, 0.74, 0.9), CastleKind::House(i as u8));
     }
-    spawn(farm_parts(5.0, 4.0), Vec3::new(-HALF_X + 4.5, 0.0, 0.0), 0.0, Vec3::ONE, CastleKind::Farm);
     spawn(bell_parts(), Vec3::new(0.0, 0.0, 6.0), 0.0, Vec3::ONE, CastleKind::Always);
 
     // Torches: gate torches reveal with the gate; the keep-door pair is always lit.
@@ -832,12 +817,6 @@ fn register_house_blocker(i: usize) {
     crate::blockers::add_box(x, z, hw, hd);
 }
 
-/// Farm-plot blocker (registered when the Granary/Farm is built).
-fn register_farm_blocker() {
-    let p = COLLISION_PAD;
-    crate::blockers::add_box(-HALF_X + 4.5, 0.0, 2.5 + p, 2.0 + p);
-}
-
 // ── Drifting chimney smoke ───────────────────────────────────────────────────────
 #[derive(Component)]
 struct Smoke {
@@ -855,7 +834,6 @@ pub enum CastleKind {
     Walls,
     Gate,
     Towers,
-    Farm,
     House(u8),
 }
 
@@ -870,26 +848,25 @@ struct CastlePart {
 struct CastleBuilt {
     walls: bool,
     towers: bool,
-    farm: bool,
-    houses: [bool; 8],
+    houses: bool,
 }
 
-/// Reveal castle parts as their upgrades are bought, and lazily register each group's collision
-/// the first time it appears (the courtyard stays open + barrier-free until you build the walls).
+/// Reveal castle parts and lazily register each group's collision the first time it appears.
+/// Walls/towers/gate gate on the Defense-branch upgrades (the keep fortifies as you invest);
+/// the houses are always-on set-dressing — the keep's own dwellings, registered once at startup.
+/// (Food/population now belong to the town city-building layer, so there's no upgrade-gated
+/// castle farm or houses any more.)
 fn sync_castle(
     def: Res<Defenses>,
-    eco: Res<EconomyState>,
     mut built: ResMut<CastleBuilt>,
     mut q: Query<(&CastlePart, &mut Visibility)>,
 ) {
     for (part, mut vis) in &mut q {
         let show = match part.kind {
-            CastleKind::Always => true,
+            CastleKind::Always | CastleKind::House(_) => true,
             CastleKind::Walls => def.walls,
             CastleKind::Gate => def.walls && def.gate, // a gate without walls would float
             CastleKind::Towers => def.towers,
-            CastleKind::Farm => eco.farm,
-            CastleKind::House(i) => eco.houses > i as u32,
         };
         *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
     }
@@ -902,13 +879,9 @@ fn sync_castle(
         built.towers = true;
         register_towers_blockers();
     }
-    if eco.farm && !built.farm {
-        built.farm = true;
-        register_farm_blocker();
-    }
-    for i in 0..8 {
-        if eco.houses > i as u32 && !built.houses[i] {
-            built.houses[i] = true;
+    if !built.houses {
+        built.houses = true;
+        for i in 0..8 {
             register_house_blocker(i);
         }
     }

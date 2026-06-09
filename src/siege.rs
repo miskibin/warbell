@@ -409,18 +409,35 @@ impl Siege {
 #[derive(Resource)]
 struct InvaderArmory(orks::Armory);
 
+/// Pause-aware siege clock. Accumulates frame time ONLY while the world runs (its advancing
+/// system is gated on `Modal::None`), so it does **not** tick during a pause or an open panel.
+/// The director's prep countdown + wave spawn timers are absolute stamps against THIS clock —
+/// not `time.elapsed_secs()`, which keeps running through a pause and made the "night in 0:45"
+/// countdown jump when you resumed (time passing during pauses).
+#[derive(Resource, Default)]
+pub struct GameTime(pub f32);
+
+/// Advance the pause-aware [`GameTime`] (gated, so it freezes with the rest of the world).
+fn advance_game_clock(time: Res<Time>, mut clock: ResMut<GameTime>) {
+    clock.0 += time.delta_secs();
+}
+
 pub struct SiegePlugin;
 
 impl Plugin for SiegePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KeepHp>()
             .init_resource::<Siege>()
+            .init_resource::<GameTime>()
             .add_systems(Startup, (setup_invader_armory, setup_siege_hud))
             .add_systems(PostStartup, seed_demo_wave) // FOREST_WAVE screenshot hook only
+            // Pause-aware clock — advances before the sim, frozen behind any panel / outside Playing.
+            .add_systems(Update, advance_game_clock.run_if(in_state(Modal::None)))
             // Sim — frozen behind any panel / outside Playing.
             .add_systems(
                 Update,
                 (run_director, invader_brain, siege_controls, night_warning)
+                    .after(advance_game_clock)
                     .run_if(in_state(Modal::None)),
             )
             // HUD keeps drawing while frozen.
@@ -510,19 +527,18 @@ fn spawn_invader(
 #[allow(clippy::too_many_arguments)]
 fn run_director(
     time: Res<Time>,
+    game: Res<GameTime>,
     mut siege: ResMut<Siege>,
     mut keep: ResMut<KeepHp>,
     mut player: ResMut<crate::player::PlayerRes>,
     eco: Res<crate::economy::EconomyState>,
-    mut inv: ResMut<crate::inventory::Inventory>,
-    mut toasts: ResMut<crate::inventory::Toasts>,
     mut lives: ResMut<crate::succession::Lives>,
     armory: Option<Res<InvaderArmory>>,
     invaders: Query<Entity, With<WaveInvader>>,
     alive_invaders: Query<(), (With<WaveInvader>, Without<crate::dying::Dying>)>,
     mut commands: Commands,
 ) {
-    let now = time.elapsed_secs();
+    let now = game.0; // pause-aware clock (NOT elapsed_secs, which ticks through pauses)
     let dt = time.delta_secs();
 
     // Slow keep self-repair across the prep breather.
@@ -566,23 +582,13 @@ fn run_director(
             }
             WaveAction::SetPhase(p) => {
                 siege.phase = p;
-                // Wave→Prep is a clear: shore up the keep, pay the Tax Office stipend + harvest
-                // the Granary's bread.
+                // Wave→Prep is a clear: shore up the keep + pay the Tax Office stipend.
                 if p == GamePhase::Prep {
                     // Dawn repair: +20% of max HP, guaranteed each new day (on top of the slow
                     // continuous prep repair above).
                     keep.hp = (keep.hp + keep.max * KEEP_DAWN_REPAIR_FRAC).min(keep.max);
                     if eco.tax_office {
                         player.0.add_gold(crate::economy::TAX_STIPEND);
-                    }
-                    if eco.farm {
-                        crate::inventory::try_grant(
-                            &mut inv.0,
-                            &mut toasts.0,
-                            "bread",
-                            crate::economy::FARM_HARVEST,
-                            now as f64,
-                        );
                     }
                     lives.heirs += 1; // dawn: a new heir comes of age
                 }
@@ -616,6 +622,7 @@ fn run_director(
 #[allow(clippy::too_many_arguments)]
 fn invader_brain(
     time: Res<Time>,
+    game: Res<GameTime>,
     hero: Res<HeroState>,
     siege: Res<Siege>,
     mut keep: ResMut<KeepHp>,
@@ -646,7 +653,8 @@ fn invader_brain(
         return;
     }
     let dt = time.delta_secs().min(0.05);
-    let now = time.elapsed_secs();
+    let now = game.0; // pause-aware clock for logic (replan throttle, stuck-net)
+    let rnow = time.elapsed_secs(); // raw clock for visuals/corpse-fade (matches ork_limbs & dying.rs)
 
     // Living guards this frame (downed ones aren't worth diverting onto).
     let live_guards: Vec<(Entity, Vec2)> = guards
@@ -728,7 +736,7 @@ fn invader_brain(
             }
             if o.atk_cd <= 0.0 {
                 let frenzy_cd = if frenzied { 0.6 } else { 1.0 };
-                o.atk_anim = now; // play the club-chop / staff-jab (keep, guard, or hero)
+                o.atk_anim = rnow; // play the club-chop / staff-jab (keep, guard, or hero)
                 if at_hero {
                     if o.shaman {
                         o.atk_cd = orks::SHAMAN_CAST_CD;
@@ -813,7 +821,7 @@ fn invader_brain(
         inv.closest = closest;
         inv.progress_at = progress_at;
         if reap {
-            crate::dying::begin_dying(&mut commands, e, now); // a wedged invader fades out
+            crate::dying::begin_dying(&mut commands, e, rnow); // a wedged invader fades out
             continue;
         }
 
@@ -822,7 +830,7 @@ fn invader_brain(
         let gy = ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
         tf.translation = Vec3::new(o.pos.x, gy, o.pos.y);
         // Springy recoil-wobble on a blow taken — same as the camp orks.
-        tf.rotation = Quat::from_rotation_y(o.facing) * Quat::from_rotation_x(orks::recoil_tilt(o.hit_recoil, now));
+        tf.rotation = Quat::from_rotation_y(o.facing) * Quat::from_rotation_x(orks::recoil_tilt(o.hit_recoil, rnow));
     }
 }
 

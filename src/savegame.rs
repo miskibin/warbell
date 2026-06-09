@@ -62,8 +62,6 @@ pub struct SaveData {
     // ── economy / defense (unlocked weapons re-derived from `upgrades` on load) ──
     pub upgrades: Vec<String>,
     pub defenses: Defenses,
-    pub houses: u32,
-    pub farm: bool,
     pub tax_office: bool,
     pub shop_discount: f32,
     // ── world flags ──
@@ -206,8 +204,6 @@ fn autosave_on_dawn(
         town: town.0.clone(),
         upgrades: up.0.purchased().iter().map(|s| s.to_string()).collect(),
         defenses: def.clone(),
-        houses: eco.houses,
-        farm: eco.farm,
         tax_office: eco.tax_office,
         shop_discount: eco.shop_discount,
         rescued_camps: camps.done.clone(),
@@ -273,8 +269,6 @@ fn apply_pending_load(
     // Economy / defense. Upgrade ids re-interned; unlocked weapons re-derived from them.
     up.0 = UpgradeState::restore(&data.upgrades);
     *def = data.defenses.clone();
-    eco.houses = data.houses;
-    eco.farm = data.farm;
     eco.tax_office = data.tax_office;
     eco.shop_discount = data.shop_discount;
     eco.unlocked_weapons.clear();
@@ -363,8 +357,6 @@ mod tests {
             town,
             upgrades: vec!["def_walls".into(), "hero_hp_1".into()],
             defenses: Defenses { walls: true, ..Defenses::default() },
-            houses: 2,
-            farm: true,
             tax_office: false,
             shop_discount: 0.8,
             rescued_camps: vec![true, false, true],

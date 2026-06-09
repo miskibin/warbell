@@ -122,6 +122,27 @@ impl Guard {
     }
 }
 
+/// Marks the **town's working-and-fighting population** (the labour/militia pool), as opposed to
+/// the purely-ambient set-dressing NPCs (gate-folk, market traders, pilgrims, kids). A townsperson
+/// is, at any instant, either a [`Guard`] (idle reserve standing post / fighting at night) **or** a
+/// [`crate::town::Worker`] (staffing a producer by day) — never both. The town auto-assign swaps
+/// `Guard → Worker` to employ one by day; [`muster_townsfolk`] strips `Worker` at dusk and
+/// [`rearm_townsfolk`] re-arms any pool member that has neither role, so the whole town defends at
+/// night and goes back to work at dawn. This is what makes "grow population via farms" matter:
+/// more townsfolk = more day-workforce AND more night-defenders.
+#[derive(Component)]
+pub struct Townsfolk;
+
+/// (Re)arm a town pool member `e` as a [`Guard`] posted at `post` — the bundle the spawn helper and
+/// [`rearm_townsfolk`] use so the militia construction lives in one place (Guard's fields are
+/// module-private). `try_insert` per the despawn-race convention.
+fn arm_as_guard(commands: &mut Commands, e: Entity, post: Vec2) {
+    commands.entity(e).try_insert((
+        Guard { hp: GUARD_MAX_HP, max: GUARD_MAX_HP, atk_cd: 0.0, downed: false, post },
+        crate::navgrid::NavPath::default(),
+    ));
+}
+
 // Guard combat tuning. Guards now take damage ONLY from invaders that actually strike them
 // (via [`GuardDamage`]) — no more self-inflicted melt — so they're beefier + hit harder and a
 // pair can win a 1v1 but a wave still overwhelms them.
@@ -168,7 +189,8 @@ impl Plugin for VillagersPlugin {
             .init_resource::<GuardDamage>()
             .init_resource::<TownSpots>()
             .add_systems(Update, villager_limbs) // limb anim keeps running while frozen
-            .add_systems(Update, townsfolk_curfew) // ungated: peasants clear the streets at night
+            // Ungated so they fire on the day↔night edge even if the world is frozen (panel open):
+            .add_systems(Update, (townsfolk_curfew, muster_townsfolk))
             .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rescues)
             .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_rescues)
             .add_systems(
@@ -179,7 +201,7 @@ impl Plugin for VillagersPlugin {
                     pilgrim_brain,
                     pilgrim_hint,
                     guard_combat,
-                    grow_population,
+                    rearm_townsfolk,
                     camp_rescue,
                     recruit,
                 )
@@ -188,16 +210,15 @@ impl Plugin for VillagersPlugin {
     }
 }
 
-/// Night curfew: while a wave is on, the unarmed townsfolk — every non-guard villager: gate-folk,
-/// courtyard peasants, market traders and pilgrims — clear off the streets, leaving only the armed
-/// guards to meet the assault. They reappear at dawn (prep). Only the root visibility flips, on the
-/// phase edge; their wander brains idle on, invisibly, until morning. Guards keep their own
-/// visibility (`Without<Guard>`), so the defenders stay on post. Ungated so it also holds while the
-/// world is frozen (paused / a panel open) mid-wave.
+/// Night curfew: while a wave is on, the pure **non-combatant** ambient NPCs — gate-folk, market
+/// traders, courtyard peasants, pilgrims, kids — clear off the streets and reappear at dawn. The
+/// `Townsfolk` pool is exempt (`Without<Townsfolk>`): they muster and fight instead of fleeing.
+/// Only the root visibility flips, on the phase edge; their wander brains idle on, invisibly, until
+/// morning. Ungated so it also holds while the world is frozen (paused / a panel open) mid-wave.
 fn townsfolk_curfew(
     siege: Option<Res<crate::siege::Siege>>,
     mut last: Local<Option<bool>>,
-    mut q: Query<&mut Visibility, (With<Villager>, Without<Guard>)>,
+    mut q: Query<&mut Visibility, (With<Villager>, Without<Guard>, Without<Townsfolk>)>,
 ) {
     let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
     if *last == Some(wave) {
@@ -207,6 +228,41 @@ fn townsfolk_curfew(
     let vis = if wave { Visibility::Hidden } else { Visibility::Visible };
     for mut v in &mut q {
         *v = vis;
+    }
+}
+
+/// Dusk muster: when the wave begins, every employed townsperson downs tools and takes up arms —
+/// strip its [`crate::town::Worker`] (its plot goes unstaffed → production halts) so
+/// [`rearm_townsfolk`] re-arms it as a [`Guard`] next frame and it joins the wall. At dawn the town
+/// auto-assign re-employs the idle reserve. Edge-triggered on the day↔night flip, like the curfew.
+fn muster_townsfolk(
+    siege: Option<Res<crate::siege::Siege>>,
+    mut last: Local<Option<bool>>,
+    mut commands: Commands,
+    workers: Query<Entity, With<crate::town::Worker>>,
+) {
+    let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
+    if *last == Some(wave) {
+        return;
+    }
+    *last = Some(wave);
+    if wave {
+        for e in &workers {
+            commands.entity(e).try_remove::<crate::town::Worker>();
+        }
+    }
+}
+
+/// Keep every idle pool member armed: any `Townsfolk` with neither a [`Guard`] role nor a
+/// [`crate::town::Worker`] job (a fresh recruit, a just-mustered worker, or one whose plot collapsed)
+/// is (re)posted as a guard where it stands. The standing reserve thus always defends by day and
+/// fights by night; employment is the only thing that pulls one off guard duty.
+fn rearm_townsfolk(
+    mut commands: Commands,
+    idle: Query<(Entity, &Villager), (With<Townsfolk>, Without<Guard>, Without<crate::town::Worker>)>,
+) {
+    for (e, v) in &idle {
+        arm_as_guard(&mut commands, e, v.pos);
     }
 }
 
@@ -235,25 +291,6 @@ pub fn spawn_courtyard_guard(
     spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.4, SCALE, next_u32(&mut rng));
 }
 
-/// Spawn a fresh plain **peasant** at a courtyard spot — worker-eligible (no `Guard`/`Pilgrim`/`Kid`),
-/// so `auto_assign_workers` can post it to a producer building once the population grows.
-pub fn spawn_townsperson(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    seed: u32,
-) {
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
-    let mut rng = seed | 1;
-    let half = crate::castle::courtyard_half();
-    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
-    let skin_idx = (seed as usize) % SKIN.len();
-    let tunic_idx = (seed as usize).wrapping_add(1) % TUNIC.len();
-    let hat = (seed % 3) == 0;
-    let kind = Kind::Peasant { skin: SKIN[skin_idx], tunic: TUNIC[tunic_idx], hat };
-    spawn(commands, meshes, &mat, kind, home, home, 1.6, 3.0, SCALE, next_u32(&mut rng));
-}
-
 /// Spawn a freed captive as a **settler/militia** at `from` (the camp cage), homed to a courtyard
 /// post so it marches across to the keep and defends it at night — the visible "prisoner walks
 /// out and heads home" the rescue should read as.
@@ -272,31 +309,6 @@ pub fn spawn_settler(
     // home = post (the courtyard) → the Guard's post is the castle; pos = from (the cage) → it
     // spawns at the camp and `guard_combat` walks it back to its post.
     spawn(commands, meshes, &mat, kind, post, from, 1.6, 1.4, SCALE, next_u32(&mut rng));
-}
-
-/// Each purchased District settles a new household — a guard villager joins the courtyard and
-/// the bloodline gains an heir. Driven off `EconomyState.houses` (self-correcting on reset).
-fn grow_population(
-    eco: Res<crate::economy::EconomyState>,
-    mut lives: ResMut<crate::succession::Lives>,
-    mut last: Local<u32>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    if eco.houses < *last {
-        *last = eco.houses; // a fresh run wiped the economy
-        return;
-    }
-    if eco.houses > *last {
-        let added = eco.houses - *last;
-        *last = eco.houses;
-        lives.heirs += added;
-        for i in 0..added {
-            let seed = 0x9171_0000u32.wrapping_add(eco.houses.wrapping_mul(31)).wrapping_add(i);
-            spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, seed);
-        }
-    }
 }
 
 /// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): one
@@ -1167,12 +1179,14 @@ fn spawn(
         }
     });
 
-    // Armoured townsfolk double as town guards — they fight invaders at night. The NavPath caches
-    // an A* route home for a freed captive marching in from a far camp (see `guard_combat`).
+    // Armoured townsfolk double as town guards — they fight invaders at night and can be pulled to
+    // staff a producer by day (the `Townsfolk` pool). The NavPath caches an A* route home for a
+    // freed captive marching in from a far camp (see `guard_combat`).
     if matches!(kind, Kind::Guard { .. }) {
         commands.entity(root).insert((
             Guard { hp: GUARD_MAX_HP, max: GUARD_MAX_HP, atk_cd: 0.0, downed: false, post: home },
             crate::navgrid::NavPath::default(),
+            Townsfolk,
         ));
     }
     root

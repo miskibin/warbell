@@ -8,7 +8,7 @@
 //!   the canopy). Small clutter (bushes, small rocks, barrel cacti, ground cover) registers
 //!   nothing, so you walk through it freely.
 //! * **Oriented boxes** (`add_box` axis-aligned, `add_obb` rotated) for rectangular structures
-//!   — towers, houses, the keep, farm, walls, and the camp tents/cage/fire/banner — each sized
+//!   — towers, houses, the keep, walls, and the camp tents/cage/fire/banner — each sized
 //!   to its ACTUAL footprint and (for camp props) its real rotation, so a long thin tilted tent
 //!   gets a thin tilted box, not a fat square. (Filling a rectangle with floor-snapped circles,
 //!   the old approach, ballooned a ~1.9-wide tower into a ~4.5-wide collision.)

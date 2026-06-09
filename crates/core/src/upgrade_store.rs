@@ -32,10 +32,9 @@ pub enum UpgradeBranch {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UpgradeEffect {
     // ── Economy ───────────────────────────────────────────────────────────────
-    /// Build `n` city houses (a "district"): each adds a townsfolk guard + heir.
-    BuildHouses(u32),
-    /// Granary farm: +3 bread after each survived wave (one-shot flag).
-    Farm,
+    // Food + population are owned by the town city-building layer (`town_store` /
+    // `src/town.rs`) — build Farm/House plots there. The old `BuildHouses`/`Farm`
+    // tree nodes that duplicated that have been removed.
     /// Bounty: ork-kill gold ×`mult` (sets `Player.bounty_mult`).
     Bounty(f64),
     /// Tax office: collect a flat gold sum each cleared night (one-shot flag).
@@ -133,22 +132,9 @@ use UpgradeEffect::*;
 /// The full upgrade tree (port of `UPGRADE_NODES`, same order). Base costs are the
 /// pre-scale TS literals; stone costs match the TS `stoneCost`.
 pub static UPGRADE_NODES: &[UpgradeNode] = &[
-    // ── Economy: grow the population ──────────────────────────────────────────
-    node("eco_district_1", Economy, "Settlers' District",
-        "A cottage and townsfolk: a town guard who fights orks, and one more life for your bloodline.",
-        "🏠", 20, 0, None, BuildHouses(1)),
-    node("eco_district_2", Economy, "Market Row",
-        "Another townsfolk: another guard at the walls, and another life in reserve.",
-        "🏠", 45, 0, Some("eco_district_1"), BuildHouses(1)),
-    node("eco_district_3", Economy, "Craftsmen Quarter",
-        "Another townsfolk guard and life — your line endures one ork longer.",
-        "🏡", 80, 0, Some("eco_district_2"), BuildHouses(1)),
-    node("eco_district_4", Economy, "Thriving Town",
-        "The last cottage: a final guard, and a final life for the bloodline.",
-        "🏘️", 120, 0, Some("eco_district_3"), BuildHouses(1)),
-    node("eco_farm", Economy, "Granary Farm",
-        "Villagers work the fields: +3 bread to your bag after every wave you survive.",
-        "🌾", 35, 0, None, Farm),
+    // ── Economy: gold & trade ─────────────────────────────────────────────────
+    // (Food/population growth lives in the town city-building layer — build Farm
+    // and House plots in the suburb; the tree no longer duplicates them.)
     node("eco_bounty", Economy, "Bounty",
         "+50% gold from every ork you slay — reach the costly upgrades sooner.",
         "💰", 60, 0, None, Bounty(1.5)),
@@ -347,14 +333,14 @@ mod tests {
 
     #[test]
     fn cost_applies_the_ts_scale_and_rounds_to_five() {
-        // round(20 * 1.6 / 5) * 5 = round(6.4) * 5 = 6 * 5 = 30.
-        assert_eq!(node_by_id("eco_district_1").unwrap().cost(), 30);
+        // round(75 * 1.6 / 5) * 5 = round(24) * 5 = 24 * 5 = 120.
+        assert_eq!(node_by_id("eco_tax_office").unwrap().cost(), 120);
         // round(50 * 1.6 / 5) * 5 = round(16) * 5 = 80.
         assert_eq!(node_by_id("def_walls").unwrap().cost(), 80);
         // round(130 * 1.6 / 5) * 5 = round(41.6) * 5 = 42 * 5 = 210.
         assert_eq!(node_by_id("def_reinforce").unwrap().cost(), 210);
-        // round(35 * 1.6 / 5) * 5 = round(11.2) * 5 = 11 * 5 = 55.
-        assert_eq!(node_by_id("eco_farm").unwrap().cost(), 55);
+        // round(60 * 1.6 / 5) * 5 = round(19.2) * 5 = 19 * 5 = 95.
+        assert_eq!(node_by_id("eco_bounty").unwrap().cost(), 95);
     }
 
     #[test]

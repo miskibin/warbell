@@ -143,6 +143,12 @@ pub(crate) struct NpcVoiceState {
     voice_until: f32,
     voice_pos: Vec2,
     rng: u32,
+    /// Shuffle-bag of ambient line indices: drawn down to empty, then reshuffled, so EVERY line
+    /// is heard once before any repeats. Replaces the old random-pick-with-floor, which re-rolled
+    /// the same handful (and went silent once the 10-min floor had locked everything).
+    bag: Vec<usize>,
+    /// Last index drawn — used to avoid an immediate repeat across a reshuffle.
+    bag_last: Option<usize>,
 }
 
 impl Default for NpcVoiceState {
@@ -154,6 +160,8 @@ impl Default for NpcVoiceState {
             voice_until: 0.0,
             voice_pos: Vec2::ZERO,
             rng: 0x1234_5678,
+            bag: Vec::new(),
+            bag_last: None,
         }
     }
 }
@@ -169,7 +177,14 @@ pub(crate) fn setup_npc_voice(asset: Res<AssetServer>, mut commands: Commands) {
         // "You came for me? Gods bless you. I'll take up a spear, I swear it."  (on a camp rescue)
         rescued: asset.load("audio/vo/npc/rescued.ogg"),
     });
-    commands.init_resource::<NpcVoiceState>();
+    // Seed the chatter RNG from wall-clock entropy so the line order differs every run — a fixed
+    // seed made each session replay the same opening handful ("the same 6 again and again").
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0x1234_5678)
+        | 1;
+    commands.insert_resource(NpcVoiceState { rng: seed, ..default() });
 }
 
 /// Spawn a spoken line as a spatial child of a villager, so it sounds from where they stand and
@@ -243,25 +258,45 @@ pub(crate) fn npc_ambient(
         return;
     }
     let armed = inv.0.weapon_bonus() > 0.0;
-    // Try a few random picks; play the first line that's off its 10-min floor, else stay quiet.
-    for _ in 0..10 {
-        let i = (frand(&mut st.rng) * AMBIENT_KEYS.len() as f32) as usize % AMBIENT_KEYS.len();
-        let key = AMBIENT_KEYS[i];
-        // Hold the sword jab until there's actually a weapon to mock.
-        if !armed && NEEDS_WEAPON.contains(&key) {
-            continue;
+    // Draw the next line from the shuffle-bag: every line plays once before any repeat, in a fresh
+    // random order each cycle. The sword jab is held back (skipped this cycle) until a weapon's on.
+    let mut chosen = None;
+    for _ in 0..=AMBIENT_KEYS.len() {
+        if st.bag.is_empty() {
+            refill_bag(&mut st);
         }
-        if now - *st.last.get(key).unwrap_or(&-1000.0) >= LINE_FLOOR {
-            let dur = crate::subtitles::read_secs(AMBIENT_TEXT[i]);
-            st.last.insert(key, now);
-            st.next_ambient = now + AMBIENT_GAP;
-            st.voice_until = now + dur;
-            st.voice_pos = who_pos;
-            others.until = now + dur; // hero holds his commentary while this villager speaks
-            say_from(&mut commands, who, bank.ambient[i].clone(), NPC_GAIN * cfg.voice_vol);
-            subs.say(now, AMBIENT_TEXT[i], dur);
-            return;
+        let i = st.bag.pop().unwrap();
+        if !armed && NEEDS_WEAPON.contains(&AMBIENT_KEYS[i]) {
+            continue; // returns to the rotation on the next reshuffle, once there's a sword to mock
         }
+        chosen = Some(i);
+        break;
+    }
+    let Some(i) = chosen else { return };
+    let dur = crate::subtitles::read_secs(AMBIENT_TEXT[i]);
+    st.bag_last = Some(i);
+    st.last.insert(AMBIENT_KEYS[i], now);
+    st.next_ambient = now + AMBIENT_GAP;
+    st.voice_until = now + dur;
+    st.voice_pos = who_pos;
+    others.until = now + dur; // hero holds his commentary while this villager speaks
+    say_from(&mut commands, who, bank.ambient[i].clone(), NPC_GAIN * cfg.voice_vol);
+    subs.say(now, AMBIENT_TEXT[i], dur);
+}
+
+/// Refill the ambient shuffle-bag with every line index in a fresh random order (Fisher–Yates via
+/// the voice RNG), avoiding an immediate repeat of the last line played across the reshuffle.
+fn refill_bag(st: &mut NpcVoiceState) {
+    let last = st.bag_last;
+    st.bag = (0..AMBIENT_KEYS.len()).collect();
+    for i in (1..st.bag.len()).rev() {
+        let j = (frand(&mut st.rng) * (i as f32 + 1.0)) as usize % (i + 1);
+        st.bag.swap(i, j);
+    }
+    // The bag is drawn from the END; if that next pick equals the last line played, swap it deeper.
+    if st.bag.len() > 1 && st.bag.last().copied() == last {
+        let n = st.bag.len();
+        st.bag.swap(n - 1, 0);
     }
 }
 

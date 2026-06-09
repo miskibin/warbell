@@ -136,7 +136,8 @@ fn mine_ore(
                 cues.write(AudioCue::OreChip); // metallic crack on the breaking blow…
                 cues.write(AudioCue::OreShatter); // …layered under the synth shatter sting
                 cues.write(AudioCue::HeroEvent(crate::audio::HeroEvent::FirstStone));
-                commands.entity(e).despawn();
+                crate::blockers::remove_at(p.x, p.z); // clear the boulder blocker — no ghost collision
+                commands.entity(e).try_despawn();
             } else {
                 // Metallic chip + a small grey rock-chip spray each pick-swing (was a flesh hit).
                 if let Some(fx) = &fx {
@@ -234,17 +235,20 @@ pub fn populate_ore(
         metallic: 0.1,
         ..default()
     });
-    let crystal_mats: Vec<Handle<StandardMaterial>> = [
+    // One gem hue per ore variant: the crystal material (base + emissive for the bloom glow) and a
+    // matching point-light colour, so each boulder casts a soft coloured glow on its rock + ground.
+    let gem: [(Color, LinearRgba); 4] = [
         (Color::srgb(0.45, 0.92, 1.0), LinearRgba::rgb(0.20, 1.5, 2.1)),  // teal
         (Color::srgb(0.78, 0.52, 1.0), LinearRgba::rgb(1.0, 0.40, 1.8)),  // amethyst
         (Color::srgb(1.0, 0.80, 0.42), LinearRgba::rgb(1.8, 1.0, 0.22)),  // amber
         (Color::srgb(0.52, 1.0, 0.60), LinearRgba::rgb(0.22, 1.7, 0.50)), // emerald
-    ]
-    .into_iter()
-    .map(|(base_color, emissive)| {
-        materials.add(StandardMaterial { base_color, emissive, perceptual_roughness: 0.2, ..default() })
-    })
-    .collect();
+    ];
+    let crystal_mats: Vec<Handle<StandardMaterial>> = gem
+        .iter()
+        .map(|&(base_color, emissive)| {
+            materials.add(StandardMaterial { base_color, emissive, perceptual_roughness: 0.2, ..default() })
+        })
+        .collect();
 
     let mut rng: u32 = 0x0e6e_5eed;
     let mut placed = 0u32;
@@ -279,7 +283,13 @@ pub fn populate_ore(
         // Sink the rock slightly so it reads as embedded in the ground; a random yaw varies it.
         let scale = crate::wildlife::rng_range(&mut rng, 0.8, 1.25);
         let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
-        let crystal_mat = crystal_mats[(ore.variant as usize) % crystal_mats.len()].clone();
+        let vi = (ore.variant as usize) % crystal_mats.len();
+        let crystal_mat = crystal_mats[vi].clone();
+        let glow = gem[vi].0;
+        // Block the boulder's footprint so the hero (and every mover) bumps it instead of walking
+        // through it — scaled with the rock, kept ≤1.0 for the neighbour-only blocker scan. Cleared
+        // in `mine_ore` on shatter so no invisible nub lingers where the boulder stood.
+        crate::blockers::add(x, z, (0.55 * scale).min(0.95));
         commands
             .spawn((
                 Transform::from_xyz(x, y + 0.10 * scale, z)
@@ -292,6 +302,18 @@ pub fn populate_ore(
             .with_children(|p| {
                 p.spawn((Mesh3d(rock_mesh.clone()), MeshMaterial3d(rock_mat.clone()), Transform::default()));
                 p.spawn((Mesh3d(crystal_mesh.clone()), MeshMaterial3d(crystal_mat), Transform::default()));
+                // Soft coloured glow from the gem core — no shadows (cheap; ~18 of these on the map).
+                p.spawn((
+                    PointLight {
+                        color: glow,
+                        intensity: 12_000.0,
+                        range: 4.5,
+                        radius: 0.15,
+                        shadows_enabled: false,
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 0.7, 0.0),
+                ));
             });
         placed += 1;
     }

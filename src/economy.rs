@@ -46,19 +46,18 @@ pub struct Defenses {
     pub villager_arms_tier: u32,
 }
 
-/// Town/economy flags. `houses` drives population growth (P5); `farm`/`tax_office` are read by
-/// the siege wave-clear payout; `shop_discount`/`unlocked_weapons` feed the merchant (P3 shop).
+/// Town/economy flags. `tax_office` is read by the siege wave-clear payout;
+/// `shop_discount`/`unlocked_weapons` feed the merchant (P3 shop). (Food + population
+/// now belong to the town city-building layer — `town_store` / `src/town.rs`.)
 #[derive(Resource)]
 pub struct EconomyState {
-    pub houses: u32,
-    pub farm: bool,
     pub tax_office: bool,
     pub shop_discount: f32,
     pub unlocked_weapons: Vec<&'static str>,
 }
 impl Default for EconomyState {
     fn default() -> Self {
-        Self { houses: 0, farm: false, tax_office: false, shop_discount: 1.0, unlocked_weapons: Vec::new() }
+        Self { tax_office: false, shop_discount: 1.0, unlocked_weapons: Vec::new() }
     }
 }
 
@@ -66,8 +65,6 @@ impl Default for EconomyState {
 const REINFORCE_BONUS: f32 = 400.0;
 /// Tax Office payout per cleared night.
 pub const TAX_STIPEND: i64 = 25;
-/// Granary bread harvested per cleared night.
-pub const FARM_HARVEST: i64 = 3;
 
 pub struct EconomyPlugin;
 
@@ -119,8 +116,6 @@ fn apply_effect(
 ) {
     use UpgradeEffect::*;
     match effect {
-        BuildHouses(n) => eco.houses += n,
-        Farm => eco.farm = true,
         Bounty(m) => player.bounty_mult = m,
         TaxOffice => eco.tax_office = true,
         MerchantGuild(m) => eco.shop_discount = m as f32,
