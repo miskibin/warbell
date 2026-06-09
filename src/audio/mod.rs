@@ -14,6 +14,7 @@
 
 mod ambience;
 mod animals;
+pub(crate) mod director;
 mod footsteps;
 mod hero_remarks;
 pub(crate) mod lines;
@@ -318,7 +319,9 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<HeroLineCooldown>()
             .init_resource::<HeroSpeaking>()
             .init_resource::<OthersSpeaking>()
+            .init_resource::<director::VoiceManager>()
             .add_message::<AudioCue>()
+            .add_message::<director::Speak>()
             .add_systems(
                 Startup,
                 (
@@ -360,6 +363,11 @@ impl Plugin for GameAudioPlugin {
                 Update,
                 (npc::npc_ambient, npc::npc_events, ork::ork_voices, hero_remarks::tick)
                     .after(voice::play_voice_cues)
+                    .run_if(in_state(crate::game_state::AppState::Playing)),
+            )
+            .add_systems(
+                Update,
+                (director::speak_director, director::tick_chains)
                     .run_if(in_state(crate::game_state::AppState::Playing)),
             )
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
