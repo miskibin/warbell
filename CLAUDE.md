@@ -66,6 +66,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT`), all read a
 |---|---|
 | `FOREST_SHOT=path.png` | capture-and-exit harness (`capture.rs`) |
 | `FOREST_CAM`, `FOREST_TIME`/`FOREST_DAY`/`FOREST_NIGHT` | camera pose / time-of-day for the shot |
+| `FOREST_HERO="x,z"` | drop the hero at a world XZ (e.g. deep in a biome region) to stage its reactive atmosphere/weather |
 | `FOREST_BIOME` | boot straight into a given biome |
 | `FOREST_WAVE` / `FOREST_DEFEND=1` | stage a night siege / arm all defenses + walls |
 | `FOREST_MENU=1` | shoot the start screen |

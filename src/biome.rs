@@ -65,6 +65,70 @@ pub enum Biome {
 #[derive(Component)]
 pub struct BiomeEntity;
 
+// ── Per-region ambience (atmosphere + weather), reactive to the hero's biome ──────
+
+/// One biome's atmosphere, pre-converted to renderer types. Captured ONCE from each
+/// biome's [`config()`] at world build (see [`crate::worldmap::build`]) so the per-region
+/// transition system can lerp toward it every frame WITHOUT rebuilding configs (which bake
+/// meshes). Reading the config here is what keeps those `BiomeConfig` atmosphere fields live.
+#[derive(Clone, Copy)]
+pub struct AtmoSample {
+    pub sky: Color,
+    pub sun_color: Color,
+    pub sun_illuminance: f32,
+    pub ambient_color: Color,
+    pub ambient_brightness: f32,
+}
+
+impl AtmoSample {
+    /// Pull the atmosphere out of a biome's full config (reads the atmosphere fields). The
+    /// sun *position* isn't sampled — `scene`'s day/night clock owns the sun direction.
+    pub fn from_config(c: &BiomeConfig) -> Self {
+        Self {
+            sky: srgb(c.sky),
+            sun_color: srgb(c.sun_color),
+            sun_illuminance: c.sun_illuminance,
+            ambient_color: srgb(c.ambient_color),
+            ambient_brightness: c.ambient_brightness,
+        }
+    }
+    /// Build from the island-wide [`crate::worldmap::ATMOSPHERE`] tuple (the grass/ocean base).
+    pub fn from_raw(sky: u32, sun_color: u32, sun_illuminance: f32, ambient_color: u32, ambient_brightness: f32) -> Self {
+        Self {
+            sky: srgb(sky),
+            sun_color: srgb(sun_color),
+            sun_illuminance,
+            ambient_color: srgb(ambient_color),
+            ambient_brightness,
+        }
+    }
+}
+
+/// A biome's full ambience: atmosphere + which weather particle drifts over it.
+#[derive(Clone, Copy)]
+pub struct BiomeAmbience {
+    pub atmo: AtmoSample,
+    pub particle: ParticleKind,
+}
+
+/// Captured at world build: the island base (grass/ocean) ambience + one per biome. The
+/// atmosphere system and the weather system both read this to know the hero region's target.
+#[derive(Resource)]
+pub struct BiomeAmbiences {
+    pub base: BiomeAmbience,
+    pub list: Vec<(Biome, BiomeAmbience)>,
+}
+
+impl BiomeAmbiences {
+    /// The ambience for the biome the hero is over (`None` = grass/sand/water → base).
+    pub fn sample(&self, b: Option<Biome>) -> BiomeAmbience {
+        match b {
+            Some(b) => self.list.iter().find(|(k, _)| *k == b).map(|(_, a)| *a).unwrap_or(self.base),
+            None => self.base,
+        }
+    }
+}
+
 // ── Declarative biome description ───────────────────────────────────────────────
 
 /// Detail-texture spec → fed to `terrain::detail_image` to bake a seamless ground
@@ -108,7 +172,11 @@ pub struct PropClass {
 /// Horizon backdrop: a land arc of hills/mountains (+ optional treeline) facing one way,
 /// with the opposite arc optionally filled by open ocean — "land on one side, sea on the
 /// other". Angles are radians about +X (atan2(z,x) convention).
+///
+/// Authored per biome but **not yet wired into the world map** (which uses open ocean + fog
+/// instead of horizon hills) — kept for a future per-region backdrop renderer.
 #[derive(Clone, Copy)]
+#[allow(dead_code)] // reserved: no horizon-backdrop renderer on the world map yet
 pub struct Backdrop {
     /// Centre direction of the land arc (radians). Hills/treeline cluster around this.
     pub land_dir: f32,
@@ -141,7 +209,12 @@ pub enum ParticleKind {
     Mist,
 }
 
-/// Everything the runner needs to build a biome. Authored declaratively per biome.
+/// Everything that describes a biome. The world map consumes the **scatter** fields (per-tile
+/// props), the **atmosphere** fields (sampled into [`AtmoSample`] for the per-region light
+/// tint in `scene::advance_sky`) and **particle** (per-region weather). The rest —
+/// `biome`/`name`, `ground_*`/`detail`, `fog_density`, `sun_pos`, `river*`/`backdrop` — are
+/// authored but not yet wired into the world map; kept for future per-region work.
+#[allow(dead_code)] // some fields are authored-but-not-yet-wired biome data (see doc above)
 pub struct BiomeConfig {
     pub biome: Biome,
     pub name: &'static str,

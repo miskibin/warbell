@@ -21,6 +21,9 @@ pub(crate) struct SfxBank {
     chips: Vec<Handle<AudioSource>>,
     block: Handle<AudioSource>,
     ui: Handle<AudioSource>,
+    /// Sampled orchestral level-up fanfare (the old game's `playLevelUpFanfare`) — replaces the
+    /// synth arpeggio on `AudioCue::LevelUp` (hero level-up + the big landmark/shrine rewards).
+    level_up: Handle<AudioSource>,
     /// Dirt footstep variants (the old `footstep-dirt-var-{1,2,3}`); snow/stone are single clips.
     foot_dirt: Vec<Handle<AudioSource>>,
     foot_snow: Handle<AudioSource>,
@@ -43,6 +46,7 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .collect(),
         block: asset.load("audio/block.ogg"),
         ui: asset.load("audio/menu-select.ogg"),
+        level_up: asset.load("audio/level-up-orchestra.ogg"),
         foot_dirt: ["audio/footstep-dirt-1.ogg", "audio/footstep-dirt-2.ogg", "audio/footstep-dirt-3.ogg"]
             .iter()
             .map(|f| asset.load(*f))
@@ -130,6 +134,9 @@ pub(crate) fn play_cues(
                 one_shot(&mut commands, clip, v, jitter(&mut seed, 0.12));
             }
             AudioCue::UiSelect => one_shot(&mut commands, bank.ui.clone(), 0.22 * sfx, jitter(&mut seed, 0.06)),
+            // Triumph fanfare — old game's sampled orchestral level-up sting (`playLevelUpFanfare`,
+            // vol 0.38). Replaces the synth arpeggio for the hero level-up + landmark/shrine rewards.
+            AudioCue::LevelUp => one_shot(&mut commands, bank.level_up.clone(), 0.38 * sfx, jitter(&mut seed, 0.04)),
             AudioCue::OrkGrunt(pos) => {
                 let clip = pick(&bank.ork_grunts, &mut seed);
                 spatial_shot(&mut commands, clip, 0.55 * voice, jitter(&mut seed, 0.14), pos);
@@ -148,11 +155,17 @@ pub(crate) fn play_cues(
                 };
                 spatial_shot(&mut commands, pick(set, &mut seed), vol * voice, pitch, at);
             }
+            // A town-guard's blow lands on an invader — a quick spatial swing+flesh thud, kept
+            // well under the hero's own hit (≈⅓) so nearby militia skirmishes are heard as
+            // background clash, not foreground combat. Earshot is gated by the emitter.
+            AudioCue::GuardStrike(at) => {
+                spatial_shot(&mut commands, bank.swing.clone(), 0.16 * sfx, jitter(&mut seed, 0.14), at);
+                spatial_shot(&mut commands, bank.flesh.clone(), 0.26 * sfx, jitter(&mut seed, 0.10), at);
+            }
             // Procedural synth stings (no clip on disk — baked by `synth.rs`).
             AudioCue::OreShatter
             | AudioCue::ChestOpen
             | AudioCue::Forage
-            | AudioCue::LevelUp
             | AudioCue::Gold
             | AudioCue::ShopBuy
             | AudioCue::WarBell
@@ -162,7 +175,6 @@ pub(crate) fn play_cues(
                     AudioCue::OreShatter => Sting::OreShatter,
                     AudioCue::ChestOpen => Sting::ChestOpen,
                     AudioCue::Forage => Sting::Forage,
-                    AudioCue::LevelUp => Sting::LevelUp,
                     AudioCue::Gold => Sting::Gold,
                     AudioCue::ShopBuy => Sting::ShopBuy,
                     AudioCue::WarBell => Sting::WarBell,

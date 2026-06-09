@@ -17,7 +17,6 @@ pub mod widgets;
 
 pub use fonts::{label, UiFonts};
 pub use icons::IconAtlas;
-pub use notice::Notice;
 
 pub struct UiKitPlugin;
 

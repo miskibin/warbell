@@ -11,7 +11,7 @@ use crate::dying::Dying;
 use crate::orks::Ork;
 use crate::player::Hero;
 
-use super::{frand, AudioConfig};
+use super::{frand, AudioConfig, HeroSpeaking};
 
 /// Shortest gap between ANY two ork utterances; a random slice up to [`BARK_GAP_JITTER`] is added
 /// on top so the cadence is irregular.
@@ -91,12 +91,17 @@ pub(crate) fn ork_voices(
     mut commands: Commands,
     bank: Res<OrkVoiceBank>,
     mut st: ResMut<OrkVoiceState>,
+    speaking: Res<HeroSpeaking>,
     hero: Query<&Hero>,
     dying: Query<&GlobalTransform, (Added<Dying>, With<Ork>)>,
     alive: Query<&GlobalTransform, (With<Ork>, Without<Dying>)>,
 ) {
     let now = time.elapsed_secs();
     if now < st.next_bark {
+        return;
+    }
+    // Hold the horde's barks while the hero is mid-sentence — no talking over him.
+    if now < speaking.until {
         return;
     }
     let Ok(hero) = hero.single() else { return };

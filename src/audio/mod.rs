@@ -23,6 +23,7 @@ mod sfx;
 pub(crate) mod synth;
 mod voice;
 
+use bevy::audio::Volume;
 use bevy::prelude::*;
 
 use crate::biome::Biome;
@@ -102,6 +103,9 @@ impl HeroEvent {
                 | HeroEvent::Broke
                 | HeroEvent::KeepHurt
                 | HeroEvent::ShrineHeal
+                // HP bounces around the danger threshold in a hard fight, which used to re-fire
+                // "I'm hurt…" constantly — floor it like the rest.
+                | HeroEvent::LowHp
         )
     }
 }
@@ -141,6 +145,10 @@ pub enum AudioCue {
     /// A wild predator's snarl as it bites the hero, at a world position. `big` = a heavy beast
     /// (bear/croc/golem) → a deeper, louder roar. Pitch-jittered so a flurry never repeats.
     CreatureBite { at: Vec3, big: bool },
+    /// A town-guard's melee strike on an invader, at a world position — a quiet spatial swing+thud
+    /// so the player *hears* the militia fighting nearby. Emitted only for skirmishes close to the
+    /// hero (a small earshot) so the whole battlefield doesn't clatter at once.
+    GuardStrike(Vec3),
     /// One metallic chip on a pick-swing against an ore boulder (sampled `var-1`/`var-3`
     /// clips, pitch-jittered). Distinct from the `OreShatter` synth sting on the breaking blow.
     OreChip,
@@ -198,6 +206,51 @@ pub struct MusicState {
     pub fighting: bool,
 }
 
+/// Shared **one-line-at-a-time cooldown** for the hero's spoken voice. EVERY spoken hero LINE —
+/// `voice.rs`'s biome musings + event reactions AND `hero_remarks.rs`'s observations — sets
+/// `until = now + HERO_LINE_CD` when it starts, and refuses to begin if `now < until`. So only one
+/// line plays per window, nothing interrupts/trims a line already playing, and a line that *wanted*
+/// to fire inside the window is simply dropped (never queued — "consider it played"). Short combat
+/// exertions (swing/jump/hurt grunts, the death cry) are exempt.
+#[derive(Resource, Default)]
+pub(crate) struct HeroLineCooldown {
+    pub until: f32,
+}
+/// Length of [`HeroLineCooldown`] (seconds) — per user: ~20 s between hero lines.
+pub(crate) const HERO_LINE_CD: f32 = 20.0;
+
+/// Estimated end time of the hero's CURRENTLY-PLAYING line (≈ clip length). Distinct from the 20 s
+/// [`HeroLineCooldown`]: this tracks only the few seconds a clip actually sounds, so villagers +
+/// orks (and the finish-grace check) know when he's mid-sentence and stay off him.
+#[derive(Resource, Default)]
+pub(crate) struct HeroSpeaking {
+    pub until: f32,
+}
+
+/// Tags every hero-mouth sink — a `voice` line OR a `hero_remarks` remark — so the place/biome
+/// auto-stop can find whichever one is playing and fade it.
+#[derive(Component)]
+pub(crate) struct HeroMouthTag;
+
+/// A **place-bound** hero line cut short if he wanders off from what prompted it: a proximity
+/// remark anchors to where he stood; a biome musing anchors to the biome. Lines without it play out.
+#[derive(Component, Clone, Copy)]
+pub(crate) enum HeroLineAnchor {
+    /// Cut once the hero is more than `r` (world units, xz) from `pos`.
+    Near { pos: Vec2, r: f32 },
+    /// Cut once the hero is no longer standing in this biome.
+    Biome(Biome),
+}
+
+/// Marks a displaced hero line so it **fades** out over a few frames instead of clicking off
+/// mid-word — a trailing-off, not a hard cut.
+#[derive(Component)]
+pub(crate) struct HeroLineFadeOut;
+
+/// When a displaced line is within this much of its estimated end, let him finish the sentence
+/// rather than cutting it — a near-over line isn't worth interrupting.
+const FINISH_GRACE: f32 = 1.2;
+
 /// Live-tunable mix (F1 debug panel). The wildlife knobs are unchanged from the original
 /// `audio.rs`; the rest scale their category at the point of playback.
 #[derive(Resource)]
@@ -246,6 +299,8 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<MusicState>()
             .init_resource::<synth::StingBank>()
             .init_resource::<HeroLineGates>()
+            .init_resource::<HeroLineCooldown>()
+            .init_resource::<HeroSpeaking>()
             .add_message::<AudioCue>()
             .add_systems(
                 Startup,
@@ -277,13 +332,17 @@ impl Plugin for GameAudioPlugin {
                     detect_siege_voice,
                     detect_equip,
                     synth::debug_play_stings,
+                    stop_displaced_hero_lines,
+                    fade_out_hero_lines,
                 ),
             )
             // Villager + ork + hero-remark voices only while actually playing (no chatter in
-            // menus / panels).
+            // menus / panels). Ordered AFTER the hero's own voice so it sets this frame's
+            // `HeroLineCooldown` first — event/biome lines win, observational remarks defer.
             .add_systems(
                 Update,
                 (npc::npc_ambient, npc::npc_events, ork::ork_voices, hero_remarks::tick)
+                    .after(voice::play_voice_cues)
                     .run_if(in_state(crate::game_state::AppState::Playing)),
             )
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
@@ -300,6 +359,51 @@ impl Plugin for GameAudioPlugin {
 
 fn reset_hero_line_gates(mut gates: ResMut<HeroLineGates>) {
     *gates = HeroLineGates::default();
+}
+
+/// Cut a place-bound hero line the moment he leaves what prompted it — walks off from the guards
+/// he was addressing, or steps out of the biome he was musing on (see [`HeroLineAnchor`]). If it's
+/// almost over (within [`FINISH_GRACE`] of its estimated end) let him finish; otherwise start a
+/// quick fade. Sinks self-despawn when the clip ends, so this only ever acts on one still playing.
+fn stop_displaced_hero_lines(
+    mut commands: Commands,
+    time: Res<Time>,
+    speaking: Res<HeroSpeaking>,
+    hero: Query<&crate::player::Hero>,
+    lines: Query<(Entity, &HeroLineAnchor), (With<HeroMouthTag>, Without<HeroLineFadeOut>)>,
+) {
+    let Ok(hero) = hero.single() else { return };
+    let now = time.elapsed_secs();
+    for (e, anchor) in &lines {
+        let left = match anchor {
+            HeroLineAnchor::Near { pos, r } => hero.pos.distance(*pos) > *r,
+            HeroLineAnchor::Biome(b) => {
+                crate::worldmap::biome_at_world(hero.pos.x, hero.pos.y) != Some(*b)
+            }
+        };
+        if left {
+            if speaking.until - now <= FINISH_GRACE {
+                continue; // almost done → let him finish the thought
+            }
+            commands.entity(e).insert(HeroLineFadeOut);
+        }
+    }
+}
+
+/// Ramp a cut-short hero line's volume down to silence over a few frames (~0.3 s), then despawn —
+/// the graceful trail-off for [`stop_displaced_hero_lines`].
+fn fade_out_hero_lines(
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut AudioSink), With<HeroLineFadeOut>>,
+) {
+    for (e, mut sink) in &mut q {
+        let v = sink.volume().to_linear() * 0.82; // ~0.3 s to inaudible at 60 fps
+        if v <= 0.02 {
+            commands.entity(e).try_despawn();
+        } else {
+            sink.set_volume(Volume::Linear(v));
+        }
+    }
 }
 
 /// Emit the home-return line: once the hero has roamed past [`AWAY_RADIUS`] from the castle

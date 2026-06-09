@@ -23,12 +23,23 @@ use bevy::render::render_resource::{
 };
 use bevy::render::view::{ColorGrading, Hdr};
 
+use crate::biome::{AtmoSample, BiomeAmbiences};
+use crate::game_state::{AppState, Modal};
+use crate::player::HeroState;
 use crate::siege::{GamePhase, Siege};
 
 /// Sky / fog horizon colour — bright pale daytime blue.
 const SKY: Color = Color::srgb(0.70, 0.82, 0.93);
 const FOG_DENSITY: f32 = 0.009;
 const IBL_INTENSITY: f32 = 620.0;
+
+/// How strongly the hero's current biome tints the DAYTIME light's mood (0 = none, 1 = the
+/// biome's authored colour fully). Scaled by `day`, so night stays the tuned moonlit look.
+const BIOME_TINT_W: f32 = 0.7;
+/// How fast the biome tint eases as you cross a region boundary (exponential, per second).
+const BIOME_ATMO_LERP: f32 = 0.9;
+/// Island-wide reference sun lux the per-biome illuminance nudge is measured against.
+const BASE_SUN_LUX: f32 = 11_000.0;
 
 pub struct ScenePlugin;
 
@@ -50,8 +61,9 @@ impl Plugin for ScenePlugin {
                 paused: std::env::var("FOREST_SHOT").is_ok(),
                 day_secs: day_seconds(),
             })
+            .init_resource::<SmoothBiomeAtmo>()
             .add_systems(Startup, (setup_camera, setup_sun))
-            .add_systems(Update, (advance_sky, drive_dof_focus));
+            .add_systems(Update, ((track_biome_atmo, advance_sky).chain(), drive_dof_focus));
     }
 }
 
@@ -125,11 +137,46 @@ fn lerp_col(a: Color, b: Color, t: f32) -> Color {
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+// ── Per-biome atmosphere tint ─────────────────────────────────────────────────────
+//
+// `advance_sky` owns the day/night light. To make each biome region *feel* distinct, we
+// ease a tint toward the biome the hero stands in (captured into `BiomeAmbiences` at world
+// build) and blend it into the day/night sun/ambient/fog by `day` — so the desert reads
+// warm + bright, the snowfield cool, the swamp dim + green, and grass/coast the island base.
+
+/// The smoothed biome atmosphere the hero is currently in (eased so crossing a region edge
+/// fades the mood instead of popping). `None` until the world + `BiomeAmbiences` exist.
+#[derive(Resource, Default)]
+struct SmoothBiomeAtmo(Option<AtmoSample>);
+
+/// Ease [`SmoothBiomeAtmo`] toward the biome under the hero each frame.
+fn track_biome_atmo(
+    time: Res<Time>,
+    hero: Option<Res<HeroState>>,
+    ambiences: Option<Res<BiomeAmbiences>>,
+    mut state: ResMut<SmoothBiomeAtmo>,
+) {
+    let (Some(hero), Some(ambiences)) = (hero, ambiences) else { return };
+    let target = ambiences.sample(crate::worldmap::biome_at_world(hero.pos.x, hero.pos.y)).atmo;
+    let k = 1.0 - (-time.delta_secs() * BIOME_ATMO_LERP).exp();
+    match &mut state.0 {
+        None => state.0 = Some(target), // snap on the first frame the world exists
+        Some(cur) => {
+            cur.sun_color = lerp_col(cur.sun_color, target.sun_color, k);
+            cur.ambient_color = lerp_col(cur.ambient_color, target.ambient_color, k);
+            cur.sky = lerp_col(cur.sky, target.sky, k);
+            cur.sun_illuminance += (target.sun_illuminance - cur.sun_illuminance) * k;
+            cur.ambient_brightness += (target.ambient_brightness - cur.ambient_brightness) * k;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn advance_sky(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    app: Res<State<AppState>>,
+    modal: Option<Res<State<Modal>>>,
     siege: Option<Res<Siege>>,
     mut clock: ResMut<SkyClock>,
     mut ambient: ResMut<GlobalAmbientLight>,
@@ -137,12 +184,17 @@ fn advance_sky(
     mut fog_q: Query<&mut DistanceFog>,
     mut env_q: Query<&mut GeneratedEnvironmentMapLight>,
     mut grade_q: Query<&mut ColorGrading>,
+    biome: Option<Res<SmoothBiomeAtmo>>,
 ) {
     let dt = time.delta_secs();
     if keys.just_pressed(KeyCode::KeyP) {
         clock.paused = !clock.paused;
     }
-    if !clock.paused {
+    // A paused game (or an open shop/tree/satchel panel) freezes the world — so time-of-day must
+    // hold too, not drift on. Mirrors the sim freeze gate. The sun's transform/colour below still
+    // applies every frame, so the frozen scene keeps drawing.
+    let frozen = *app.get() == AppState::Paused || modal.is_some_and(|m| *m.get() != Modal::None);
+    if !clock.paused && !frozen {
         match siege.as_deref() {
             // Phase-driven: the prep day is a sky-as-countdown, night holds through the wave.
             Some(s) => {
@@ -189,6 +241,10 @@ fn advance_sky(
     // bright, then ramps the world into a dark moonlit night.
     let night = 1.0 - smoothstep(-0.22, 0.08, elev);
 
+    // Per-biome mood tint, only in daylight (night stays the tuned moonlit look).
+    let tint = biome.and_then(|b| b.0);
+    let bw = day * BIOME_TINT_W;
+
     for (mut light, mut tf) in &mut sun_q {
         *tf = Transform::from_translation(sun_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
         // A modest moonlight floor (≈300 lux): enough for soft directional moonlight, but
@@ -199,6 +255,12 @@ fn advance_sky(
         // the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
         let warm = lerp_col(Color::srgb(1.0, 0.45, 0.22), Color::srgb(1.0, 0.95, 0.85), high);
         light.color = lerp_col(warm, Color::srgb(0.55, 0.66, 1.0), night * 0.8);
+        // Biome tint: warm the desert sun, cool the snow, etc., and nudge brightness toward
+        // the biome's authored sun lux (desert brighter, swamp dimmer) — daytime only.
+        if let Some(t) = tint {
+            light.color = lerp_col(light.color, t.sun_color, bw);
+            light.illuminance *= 1.0 + (t.sun_illuminance / BASE_SUN_LUX - 1.0) * bw;
+        }
     }
 
     // Ambient: brightness rides the sun; tint cools to moonlit blue after dark. The night
@@ -208,6 +270,10 @@ fn advance_sky(
     // below. (Computed from `day`, never read-back, so it can't compound frame-to-frame.)
     ambient.brightness = 215.0 + 54.0 * day;
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(0.90, 0.93, 1.0), day);
+    // Biome tint on the ambient fill colour (brightness stays on the scene's tuned curve).
+    if let Some(t) = tint {
+        ambient.color = lerp_col(ambient.color, t.ambient_color, bw);
+    }
 
     // IBL (baked daytime) dimmed at night, but kept a strong floor (≈160) so surfaces still
     // catch skylight after dark — the other half of the after-dark ground light.
@@ -231,6 +297,10 @@ fn advance_sky(
     // lifted off near-black so the world isn't swallowed by black fog after dark.
     let mut fog_col = lerp_col(Color::srgb(0.06, 0.08, 0.15), SKY, day);
     fog_col = lerp_col(fog_col, Color::srgb(1.0, 0.5, 0.3), horizon * 0.6);
+    // Biome tint on the daytime fog/haze colour (snow pale-cool, desert warm).
+    if let Some(t) = tint {
+        fog_col = lerp_col(fog_col, t.sky, bw);
+    }
     for mut fog in &mut fog_q {
         fog.color = fog_col;
         // Sun-toward-camera in-scatter glow — warm by day, but faded out into the plain fog

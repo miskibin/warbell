@@ -16,12 +16,11 @@ use bevy::prelude::*;
 
 use crate::critters::Species;
 
-use super::{frand, AudioConfig, AudioCue};
+use super::{
+    frand, AudioConfig, AudioCue, HeroLineAnchor, HeroLineCooldown, HeroMouthTag, HeroSpeaking,
+    HERO_LINE_CD,
+};
 
-/// Shortest gap between ANY two remarks; a random slice up to [`REMARK_JITTER`] is added so the
-/// cadence is irregular.
-const REMARK_GAP: f32 = 34.0;
-const REMARK_JITTER: f32 = 16.0;
 /// A given remark plays at most once per this window (variety without repetition).
 const LINE_FLOOR: f32 = 300.0;
 /// Hero must be within this (world units) of a thing for its proximity remark to fire.
@@ -107,8 +106,6 @@ pub(crate) struct RemarkBank(HashMap<&'static str, Handle<AudioSource>>);
 
 #[derive(Resource)]
 pub(crate) struct RemarkState {
-    /// Earliest time the next remark may play (global throttle).
-    next: f32,
     /// Per-line last-played time (the [`LINE_FLOOR`]).
     last: HashMap<&'static str, f32>,
     rng: u32,
@@ -119,7 +116,7 @@ pub(crate) struct RemarkState {
 
 impl Default for RemarkState {
     fn default() -> Self {
-        Self { next: 0.0, last: HashMap::new(), rng: 0x6d2b_79f5, intro_at: None, intro_done: false }
+        Self { last: HashMap::new(), rng: 0x6d2b_79f5, intro_at: None, intro_done: false }
     }
 }
 
@@ -145,20 +142,22 @@ pub(crate) fn reset(mut st: ResMut<RemarkState>) {
 /// files are dropped in.
 fn play(
     commands: &mut Commands,
-    existing: &Query<Entity, With<HeroRemarkTag>>,
+    existing: &Query<Entity, With<HeroMouthTag>>,
     bank: &RemarkBank,
     sources: &Assets<AudioSource>,
     key: &str,
     vol: f32,
+    anchor: Option<HeroLineAnchor>,
 ) -> bool {
     let Some(clip) = bank.0.get(key) else { return false };
     if sources.get(clip).is_none() {
         return false; // not loaded (no audio dropped in yet) → stay silent
     }
+    // One mouth: stop any prior remark OR voice line (both carry `HeroMouthTag`).
     for e in existing {
-        commands.entity(e).try_despawn(); // one mouth: stop any prior remark
+        commands.entity(e).try_despawn();
     }
-    commands.spawn((
+    let mut sink = commands.spawn((
         AudioPlayer(clip.clone()),
         PlaybackSettings {
             mode: PlaybackMode::Despawn,
@@ -167,7 +166,12 @@ fn play(
             ..default()
         },
         HeroRemarkTag,
+        HeroMouthTag,
     ));
+    // A place-bound remark cuts off if he walks away from what prompted it.
+    if let Some(a) = anchor {
+        sink.insert(a);
+    }
     true
 }
 
@@ -179,9 +183,11 @@ pub(crate) fn tick(
     mut commands: Commands,
     bank: Res<RemarkBank>,
     mut st: ResMut<RemarkState>,
+    mut cd: ResMut<HeroLineCooldown>,
+    mut speaking: ResMut<HeroSpeaking>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     mut cues: MessageReader<AudioCue>,
-    existing: Query<Entity, With<HeroRemarkTag>>,
+    existing: Query<Entity, With<HeroMouthTag>>,
     hero: Query<&crate::player::Hero>,
     siege: Option<Res<crate::siege::Siege>>,
     townsfolk: Query<
@@ -215,10 +221,12 @@ pub(crate) fn tick(
             Some(t) => {
                 let i = (frand(&mut st.rng) * INTRO.len() as f32) as usize % INTRO.len();
                 let (key, text) = INTRO[i];
-                if play(&mut commands, &existing, &bank, &sources, key, vol) {
-                    subs.say(now, text, crate::subtitles::read_secs(text));
+                if play(&mut commands, &existing, &bank, &sources, key, vol, None) {
+                    let dur = crate::subtitles::read_secs(text);
+                    subs.say(now, text, dur);
+                    speaking.until = now + dur;
                     st.intro_done = true;
-                    st.next = now + REMARK_GAP + frand(&mut st.rng) * REMARK_JITTER;
+                    cd.until = now + HERO_LINE_CD;
                 } else if now >= t + INTRO_GRACE {
                     st.intro_done = true; // no intro audio → don't gag the rest of the remarks
                 }
@@ -227,7 +235,9 @@ pub(crate) fn tick(
         }
     }
 
-    if now < st.next {
+    // Shared one-line cooldown: while it's ticking, the hero says nothing more — and a remark that
+    // wanted to fire inside it is just dropped (no queue), so he never talks over himself.
+    if now < cd.until {
         return;
     }
 
@@ -278,6 +288,16 @@ pub(crate) fn tick(
     };
     let Some(trig) = trig else { return };
 
+    // Proximity remarks are place-bound: anchor to where he stands so the line is cut if he walks
+    // off from the townsfolk/kids/pet/guards/keep he was addressing. The night/quiet/kill musings
+    // aren't tied to a spot, so they play out.
+    let anchor = match trig {
+        Trig::Town | Trig::Kids | Trig::Pet | Trig::Guard | Trig::Keep => {
+            Some(HeroLineAnchor::Near { pos: hp, r: NEAR + 3.0 })
+        }
+        Trig::Night | Trig::Quiet | Trig::Kill => None,
+    };
+
     // Pick an off-cooldown, loaded line from this trigger's pool.
     let pool: Vec<(&'static str, &'static str)> =
         REMARKS.iter().filter(|(t, _, _)| *t == trig).map(|(_, k, x)| (*k, *x)).collect();
@@ -289,10 +309,12 @@ pub(crate) fn tick(
         if now - *st.last.get(key).unwrap_or(&-1000.0) < LINE_FLOOR {
             continue;
         }
-        if play(&mut commands, &existing, &bank, &sources, key, vol) {
+        if play(&mut commands, &existing, &bank, &sources, key, vol, anchor) {
+            let dur = crate::subtitles::read_secs(text);
             st.last.insert(key, now);
-            st.next = now + REMARK_GAP + frand(&mut st.rng) * REMARK_JITTER;
-            subs.say(now, text, crate::subtitles::read_secs(text));
+            cd.until = now + HERO_LINE_CD;
+            speaking.until = now + dur;
+            subs.say(now, text, dur);
             return;
         }
     }

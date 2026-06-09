@@ -13,7 +13,7 @@ use super::fonts::{label, UiFonts};
 use super::icons::IconAtlas;
 use super::notice::Notice;
 use super::theme::*;
-use super::widgets::{self, border};
+use super::widgets::border;
 
 #[derive(Resource, Default)]
 pub struct AudioSettings {

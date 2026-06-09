@@ -715,7 +715,9 @@ pub fn config() -> BiomeConfig {
             treeline_mid: 0x2e4530,
             hill_h: (26.0, 58.0),
         },
-        particle: ParticleKind::Mist,
+        // No weather: the flat-disc Mist read as hard-edged translucent shards from a low
+        // camera. Left as `None` until a soft volumetric-ish swamp haze exists.
+        particle: ParticleKind::None,
     }
 }
 
