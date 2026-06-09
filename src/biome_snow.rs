@@ -17,6 +17,11 @@
 //! scatter draws them against one shared white material), then flat-shaded for crisp
 //! low-poly facets. Two public fns with the exact framework signatures.
 
+// The `landmarks()` FROZEN POND set-piece + its helpers/consts below are authored biome content
+// the world map doesn't place yet (it uses `ruins` landmarks instead). Kept per design; allow
+// the resulting dead code until it's wired into a per-region pass.
+#![allow(dead_code)]
+
 use bevy::prelude::*;
 
 use crate::biome::{Backdrop, Biome, BiomeConfig, BiomeEntity, GroundDetail, ParticleKind, PropClass};

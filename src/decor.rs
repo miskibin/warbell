@@ -21,6 +21,12 @@
 //! float lily pads on the surface). It therefore MUST be added to `main.rs` AFTER
 //! `WaterPlugin` so the `water` module exists.
 
+// The whole `decor` charm (logs, berry bushes, reeds, lily pads, mushroom rings, fireflies) is
+// authored but not wired into the world map yet — kept for future per-region dressing. Only the
+// firefly bob system is live (it just has nothing to bob until `build` is called). Allow the
+// resulting dead code in the meantime.
+#![allow(dead_code)]
+
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 

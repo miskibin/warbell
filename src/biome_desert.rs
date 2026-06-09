@@ -15,6 +15,11 @@
 //! Land/dune split: low rolling dunes fill the `z < 0` half (`land_dir = -π/2`),
 //! no ocean (a desert reaching to the hazy horizon), no treeline.
 
+// The `landmarks()` OASIS set-piece + its mesh helpers/palette consts below are authored biome
+// content the world map doesn't place yet (it uses `ruins` landmarks instead). Kept per design;
+// allow the resulting dead code until it's wired into a per-region pass.
+#![allow(dead_code)]
+
 use bevy::prelude::*;
 
 use crate::biome::{Backdrop, Biome, BiomeConfig, BiomeEntity, GroundDetail, ParticleKind, PropClass};
