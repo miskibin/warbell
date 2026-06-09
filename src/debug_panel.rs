@@ -139,36 +139,30 @@ fn panel_ui(
                     if changed {
                         fog.falloff = FogFalloff::Linear { start, end: end.max(start + 1.0) };
                     }
-                    // VolumetricFog is a SEPARATE component from DistanceFog above. Its high
-                    // `ambient_intensity` is what reads as bright white sky-haze over distant
-                    // geometry — drop this toward 0 to kill the white wash (sun shafts stay).
-                    // `step_count` is the god-ray GPU cost knob: by far the heaviest pass in the
-                    // frame (F2 profiler), so drag it down to judge how much the shafts are worth.
+                    // ── God-rays (volumetric light shafts) ──
+                    // `step_count` is the GPU cost; the FogVolume knobs below are what make the
+                    // shafts actually VISIBLE: density = how much fog there is to scatter, scatter
+                    // = how much light bends toward the eye, forward = concentrate it into beams
+                    // aimed at the sun, brightness = nonphysical pop.
                     ui.separator();
+                    ui.label("God-rays (volumetric)");
                     if let Some(volfog) = volfog.as_mut() {
-                        ui.add(
-                            egui::Slider::new(&mut volfog.ambient_intensity, 0.0..=1.0)
-                                .text("volumetric haze (white wash)"),
-                        );
                         let mut steps = volfog.step_count;
                         if ui
-                            .add(egui::Slider::new(&mut steps, 1..=64).text("god-ray steps (GPU cost)"))
+                            .add(egui::Slider::new(&mut steps, 1..=64).text("steps (GPU cost)"))
                             .changed()
                         {
                             volfog.step_count = steps;
                         }
                     } else {
-                        ui.weak("god-rays off (Low graphics preset)");
+                        ui.weak("pass off (Low graphics preset)");
                     }
-                    // FogVolume density drives how much sun-shaft in-scattering is visible. The
-                    // scene default (0.012) is so thin the shafts are imperceptible — crank this
-                    // to actually SEE the god-rays and judge whether they earn their GPU cost.
                     if let Ok(mut fv) = fog_volume.single_mut() {
-                        ui.add(
-                            egui::Slider::new(&mut fv.density_factor, 0.0..=0.3)
-                                .text("god-ray density (visibility)"),
-                        );
-                        ui.add(egui::Slider::new(&mut fv.scattering, 0.0..=1.0).text("god-ray scattering"));
+                        ui.add(egui::Slider::new(&mut fv.density_factor, 0.0..=0.5).text("density (amount)"));
+                        ui.add(egui::Slider::new(&mut fv.scattering, 0.0..=1.0).text("scattering (toward eye)"));
+                        ui.add(egui::Slider::new(&mut fv.scattering_asymmetry, 0.0..=0.99).text("forward (toward sun)"));
+                        ui.add(egui::Slider::new(&mut fv.light_intensity, 0.0..=4.0).text("brightness"));
+                        ui.add(egui::Slider::new(&mut fv.absorption, 0.0..=1.0).text("absorption (darkening)"));
                     }
                 });
 
