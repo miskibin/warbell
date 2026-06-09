@@ -27,13 +27,15 @@ pub struct SpeakerVoice {
     pub gain: f32,
     /// Display name shown in the subtitle (`None` = no prefix, e.g. the hero's own musings).
     pub name: Option<&'static str>,
+    /// Random playback-speed (pitch) range rolled per utterance — `(1.0, 1.0)` = no shift.
+    pub pitch: (f32, f32),
 }
 
 /// The voice registry: one entry per [`Speaker`]. Linear-scanned (3 entries).
 pub const SPEAKERS: &[(Speaker, SpeakerVoice)] = &[
-    (Speaker::Hero, SpeakerVoice { spatial: false, gain: 1.0, name: None }),
-    (Speaker::Villager, SpeakerVoice { spatial: true, gain: 1.4, name: Some("Townsfolk") }),
-    (Speaker::Ork, SpeakerVoice { spatial: true, gain: 0.85, name: None }),
+    (Speaker::Hero,     SpeakerVoice { spatial: false, gain: 1.0,  name: None,              pitch: (1.0,  1.0)  }),
+    (Speaker::Villager, SpeakerVoice { spatial: true,  gain: 1.4,  name: Some("Townsfolk"), pitch: (1.0,  1.0)  }),
+    (Speaker::Ork,      SpeakerVoice { spatial: true,  gain: 0.85, name: None,              pitch: (0.82, 1.18) }),
 ];
 
 pub fn speaker_voice(s: Speaker) -> SpeakerVoice {
@@ -223,6 +225,16 @@ pub const LINES: &[Line] = &[
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("siege_fear",  Speaker::Villager, Concept::SiegeFalls, "They're coming. Inside, inside. Lock the door.") },
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("dawn_relief", Speaker::Villager, Concept::Dawn,       "Made it to morning. Knew you'd see us through.") },
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("rescued",     Speaker::Villager, Concept::Rescued,    "You came for me? Gods bless you. I'll take up a spear, I swear it.") },
+    // ── Ork battle barks (nearest ork in earshot; pitch-shifted per utterance) ──
+    Line { ..line("spot",   Speaker::Ork, Concept::OrkSpot,  "Little knight. Little bones.") },
+    Line { ..line("charge", Speaker::Ork, Concept::OrkSpot,  "Smash the stone. Burn the nest.") },
+    Line { ..line("blood",  Speaker::Ork, Concept::OrkSpot,  "Blood. Blood.") },
+    Line { ..line("taunt",  Speaker::Ork, Concept::OrkSpot,  "Run, runt. We eat slow ones first.") },
+    Line { ..line("where",  Speaker::Ork, Concept::OrkSpot,  "Where? Where you hide, worm?") },
+    Line { ..line("feast",  Speaker::Ork, Concept::OrkSpot,  "Tonight we feast.") },
+    Line { ..line("shaman", Speaker::Ork, Concept::OrkSpot,  "Spirits take him. Saka.") },
+    // ── Ork death snarl (on a kill) ──
+    Line { ..line("death",  Speaker::Ork, Concept::OrkDeath, "Not done.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.
@@ -319,8 +331,8 @@ mod tests {
     fn pick_line_none_when_no_candidates() {
         let (last, once) = (HashMap::new(), HashSet::new());
         let mut rng = 1;
-        // OrkSpot has no catalog entry yet
-        assert!(pick_line(Concept::OrkSpot, &last, &once, 100.0, &mut rng).is_none());
+        // ReplyToVillagerJab has no catalog entry yet (chain reply added in a later task)
+        assert!(pick_line(Concept::ReplyToVillagerJab, &last, &once, 100.0, &mut rng).is_none());
     }
 
     #[test]
