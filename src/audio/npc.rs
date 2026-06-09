@@ -26,9 +26,33 @@ const EVENT_NEAR: f32 = 55.0;
 /// Spoken-line gain (spatial — the world→audio scale handles distance falloff).
 const NPC_GAIN: f32 = 0.9;
 
-/// The five proximity lines, by key (the key drives the per-line [`LINE_FLOOR`]). Aligned with
-/// [`NpcVoiceBank::ambient`].
-const AMBIENT_KEYS: [&str; 5] = ["greet", "greet_2", "idle_hens", "idle_cousin", "merchant"];
+/// The proximity lines, by key (the key drives the per-line [`LINE_FLOOR`]). Aligned with
+/// [`NpcVoiceBank::ambient`]. The first five are the original townsfolk greetings/musings; the
+/// rest are the funny / passive-aggressive comments + short town stories (a different speaker),
+/// so the city feels like a crowd of people, not one greeter.
+const AMBIENT_KEYS: [&str; 21] = [
+    "greet",
+    "greet_2",
+    "idle_hens",
+    "idle_cousin",
+    "merchant",
+    "pa_sword",
+    "pa_hero",
+    "pa_chosen",
+    "pa_slept",
+    "pa_fence",
+    "story_barn",
+    "story_miller",
+    "story_witch",
+    "story_gran",
+    "story_baker",
+    "day_dream",
+    "chicken",
+    "taxes",
+    "trade",
+    "grateful",
+    "screaming",
+];
 
 #[derive(Resource)]
 pub(crate) struct NpcVoiceBank {
@@ -118,7 +142,7 @@ pub(crate) fn npc_ambient(
     let Ok(hero) = hero.single() else { return };
     let Some(who) = nearest_villager(hero.pos, &villagers, NEAR_DIST) else { return };
     // Try a few random picks; play the first line that's off its 10-min floor, else stay quiet.
-    for _ in 0..6 {
+    for _ in 0..10 {
         let i = (frand(&mut st.rng) * AMBIENT_KEYS.len() as f32) as usize % AMBIENT_KEYS.len();
         let key = AMBIENT_KEYS[i];
         if now - *st.last.get(key).unwrap_or(&-1000.0) >= LINE_FLOOR {
