@@ -254,6 +254,7 @@ impl Plugin for GameAudioPlugin {
                     ork::setup_ork_voice,
                     hero_remarks::setup,
                     director::setup_voice_manager,
+                    director::preload_voice_lines,
                 ),
             )
             .add_systems(

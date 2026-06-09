@@ -46,6 +46,8 @@ pub struct VoiceManager {
     pub rng: u32,
     /// Pending chain dispatches: (fire_at, chain, position) queued when a line with `then` starts.
     pub pending_chains: Vec<(f32, Chain, Option<Vec3>)>,
+    /// Preloaded clip handles keyed by line id. Populated once at startup; persists across runs.
+    pub clips: HashMap<&'static str, Handle<AudioSource>>,
 }
 
 impl Default for VoiceManager {
@@ -56,6 +58,7 @@ impl Default for VoiceManager {
             played_once: HashSet::new(),
             rng: 0x1234_5678,
             pending_chains: Vec::new(),
+            clips: HashMap::new(),
         }
     }
 }
@@ -84,12 +87,13 @@ impl VoiceManager {
 pub fn speak_director(
     time: Res<Time>,
     cfg: Res<AudioConfig>,
-    asset: Res<AssetServer>,
     mut commands: Commands,
     mut mgr: ResMut<VoiceManager>,
     mut reqs: MessageReader<Speak>,
     sinks: Query<(Entity, &VoiceSink)>,
     hero: Query<&crate::player::Hero>,
+    mut subs: ResMut<crate::subtitles::Subtitles>,
+    sources: Res<Assets<AudioSource>>,
 ) {
     let now = time.elapsed_secs();
     let hero_pos = hero.single().ok().map(|h| Vec3::new(h.pos.x, 1.6, h.pos.y));
@@ -104,7 +108,7 @@ pub fn speak_director(
         if !can_play(mgr.active.get(&line.speaker), now, line.priority) {
             continue;
         }
-        play_line(&mut commands, &asset, &cfg, &mut mgr, &sinks, now, &line, req.at.or(hero_pos));
+        play_line(&mut commands, &cfg, &mut mgr, &sinks, &mut subs, &sources, now, &line, req.at.or(hero_pos));
     }
 }
 
@@ -112,30 +116,30 @@ pub fn speak_director(
 #[allow(clippy::too_many_arguments)]
 fn play_line(
     commands: &mut Commands,
-    asset: &AssetServer,
     cfg: &AudioConfig,
     mgr: &mut VoiceManager,
     sinks: &Query<(Entity, &VoiceSink)>,
+    subs: &mut crate::subtitles::Subtitles,
+    sources: &Assets<AudioSource>,
     now: f32,
     line: &Line,
     pos: Option<Vec3>,
 ) {
     let voice = speaker_voice(line.speaker);
+    // Look up the preloaded handle; bail if the line has no clip registered.
+    let Some(clip) = mgr.clips.get(line.id).cloned() else { return };
+    // Not loaded yet OR the .ogg doesn't exist → no-op: don't block the mouth, don't caption.
+    if sources.get(&clip).is_none() {
+        return;
+    }
     // One mouth per speaker: stop whatever this speaker had going.
     for (e, s) in sinks {
         if s.0 == line.speaker {
             commands.entity(e).try_despawn();
         }
     }
-    let dir = match line.speaker {
-        Speaker::Hero => "hero",
-        Speaker::Villager => "npc",
-        Speaker::Ork => "ork",
-    };
-    let clip: Handle<AudioSource> = asset.load(format!("audio/vo/{dir}/{}.ogg", line.id));
     let dur = crate::subtitles::read_secs(line.text);
     let vol = voice.gain * cfg.voice_vol;
-
     let mut ent = commands.spawn((
         AudioPlayer(clip),
         PlaybackSettings {
@@ -149,7 +153,6 @@ fn play_line(
     if voice.spatial {
         ent.insert(Transform::from_translation(pos.unwrap_or(Vec3::ZERO)));
     }
-
     mgr.active.insert(
         line.speaker,
         Active {
@@ -167,9 +170,7 @@ fn play_line(
     if let Some(chain) = line.then {
         mgr.pending_chains.push((now + dur, chain, pos));
     }
-
-    // Subtitle with speaker attribution is wired in Task D1 (needs Subtitles + a loaded-clip guard).
-    // subs.say_as(now, voice.name, line.text, dur);
+    subs.say_as(now, voice.name, line.text, dur);
 }
 
 /// When a line with a `then` chain finishes, dispatch the follow-up concept to its target speaker.
@@ -178,10 +179,11 @@ fn play_line(
 pub fn tick_chains(
     time: Res<Time>,
     cfg: Res<AudioConfig>,
-    asset: Res<AssetServer>,
     mut commands: Commands,
     mut mgr: ResMut<VoiceManager>,
     sinks: Query<(Entity, &VoiceSink)>,
+    mut subs: ResMut<crate::subtitles::Subtitles>,
+    sources: Res<Assets<AudioSource>>,
 ) {
     let now = time.elapsed_secs();
     // Take the chains whose time has come.
@@ -203,8 +205,23 @@ pub fn tick_chains(
             .copied();
         let Some(reply) = pick else { continue };
         if can_play(mgr.active.get(&reply.speaker), now, reply.priority) {
-            play_line(&mut commands, &asset, &cfg, &mut mgr, &sinks, now, &reply, pos);
+            play_line(&mut commands, &cfg, &mut mgr, &sinks, &mut subs, &sources, now, &reply, pos);
         }
+    }
+}
+
+/// Preload every catalog line's clip at startup so handles are warm by the time a line fires
+/// (one-shot events won't get rejected by the not-yet-loaded guard) and a missing file is
+/// detectable (its handle's asset stays absent forever).
+pub fn preload_voice_lines(asset: Res<AssetServer>, mut mgr: ResMut<VoiceManager>) {
+    for line in super::lines::LINES {
+        let dir = match line.speaker {
+            Speaker::Hero => "hero",
+            Speaker::Villager => "npc",
+            Speaker::Ork => "ork",
+        };
+        let handle = asset.load(format!("audio/vo/{dir}/{}.ogg", line.id));
+        mgr.clips.insert(line.id, handle);
     }
 }
 
