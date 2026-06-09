@@ -44,6 +44,12 @@ pub fn emoji_to_codepoint(emoji: &str) -> Option<String> {
 const SYMBOLS: &[(&str, &str)] = &[
     ("sym:gold", "⭐"),
     ("sym:stone", "🪨"),
+    // Top-left stat-bar icons (all shipped as Twemoji PNGs).
+    ("stat:gold", "💰"),
+    ("stat:stone", "🪨"),
+    ("stat:wood", "🪓"),
+    ("stat:pop", "🏠"),
+    ("stat:food", "🌾"),
     ("sym:lock", "🔒"),
     ("sym:warn", "⚠"),
     ("sym:sun", "☀"),

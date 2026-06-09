@@ -35,15 +35,6 @@ struct FoodText;
 struct WoodText;
 #[derive(Component)]
 struct PopText;
-/// Net daily food balance line in the town panel.
-#[derive(Component)]
-struct PopNetText;
-/// The settle/starve meter fill (green toward a new peasant, red toward losing one).
-#[derive(Component)]
-struct PopBar;
-/// One-line "what's happening" under the town panel bar.
-#[derive(Component)]
-struct PopHintText;
 
 /// Which derived quick-slot a node belongs to.
 #[derive(Clone, Copy, PartialEq)]
@@ -83,7 +74,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup_hud, setup_inv_hud))
-            .add_systems(Update, (update_hud, update_inv_hud, update_town_panel));
+            .add_systems(Update, (setup_stat_bar, update_hud, update_inv_hud, update_town_stats));
     }
 }
 
@@ -175,13 +166,77 @@ fn setup_hud(mut commands: Commands, fonts: Res<UiFonts>) {
 }
 
 /// Pickup toasts (top-left) + the quick-bar (bottom-centre) + the buff pips (bottom-left).
+/// Build the single top-left **stat bar** once the icon atlas is ready: one opaque row of
+/// icon + number — money/resources (gold, stone, wood) then the town's people + daily food balance.
+/// Replaces the old bottom resource labels and the top-right town panel.
+fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFonts>, mut commands: Commands) {
+    if *done || atlas.get("stat:gold").is_none() {
+        return; // wait until the Twemoji atlas has loaded the stat icons
+    }
+    *done = true;
+    let food_grey = rgb(170, 178, 190);
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(14.0),
+                left: Val::Px(14.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(16.0),
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)),
+                border: border(2.0),
+                border_radius: radius(R_BTN),
+                ..default()
+            },
+            BackgroundColor(rgb(22, 24, 30)), // 100% opacity
+            BorderColor::all(rgba(0, 0, 0, 0.6)),
+            bevy::ui::FocusPolicy::Pass,
+        ))
+        .with_children(|row| {
+            // Money + resources first, then the town's people + daily food balance. Each stat is an
+            // icon + its number; the number labels carry the markers the update system writes into.
+            let cell = |gap| Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(gap),
+                ..default()
+            };
+            let g = atlas.get("stat:gold");
+            row.spawn(cell(5.0)).with_children(|c| {
+                if let Some(h) = g { c.spawn(widgets::icon(h, 19.0)); }
+                c.spawn((label(&fonts.extrabold, "30", 14.0, GOLD), GoldText));
+            });
+            let s = atlas.get("stat:stone");
+            row.spawn(cell(5.0)).with_children(|c| {
+                if let Some(h) = s { c.spawn(widgets::icon(h, 19.0)); }
+                c.spawn((label(&fonts.extrabold, "0", 14.0, STONE), StoneText));
+            });
+            let w = atlas.get("stat:wood");
+            row.spawn(cell(5.0)).with_children(|c| {
+                if let Some(h) = w { c.spawn(widgets::icon(h, 19.0)); }
+                c.spawn((label(&fonts.extrabold, "0", 14.0, rgb(190, 150, 100)), WoodText));
+            });
+            let p = atlas.get("stat:pop");
+            row.spawn(cell(5.0)).with_children(|c| {
+                if let Some(h) = p { c.spawn(widgets::icon(h, 19.0)); }
+                c.spawn((label(&fonts.extrabold, "4/4", 14.0, rgb(235, 224, 180)), PopText));
+            });
+            let f = atlas.get("stat:food");
+            row.spawn(cell(5.0)).with_children(|c| {
+                if let Some(h) = f { c.spawn(widgets::icon(h, 19.0)); }
+                c.spawn((label(&fonts.extrabold, "0", 14.0, food_grey), FoodText));
+            });
+        });
+}
+
 fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
-    // Top-left pickup-toast column.
+    // Top-left pickup-toast column (sits below the stat bar).
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(18.0),
-            top: Val::Px(18.0),
+            top: Val::Px(58.0),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(8.0),
             ..default()
@@ -202,50 +257,9 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         bevy::ui::FocusPolicy::Pass,
         BuffRoot,
     ));
-    // Top-right TOWN panel: headcount, daily food balance, and a settle/starve meter — so the
-    // food→population loop is legible at a glance (why peasants arrive or leave, and what to do).
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(18.0),
-                right: Val::Px(18.0),
-                width: Val::Px(186.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(5.0),
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(9.0)),
-                border: border(2.0),
-                border_radius: radius(R_BTN),
-                ..default()
-            },
-            BackgroundColor(rgba(20, 22, 28, 0.72)),
-            BorderColor::all(rgba(0, 0, 0, 0.5)),
-            bevy::ui::FocusPolicy::Pass,
-        ))
-        .with_children(|col| {
-            col.spawn((label(&fonts.extrabold, "\u{1f465} Town  4 / 4", 15.0, rgb(235, 224, 180)), PopText));
-            col.spawn((label(&fonts.semibold, "Food balanced", 12.0, rgb(170, 178, 190)), PopNetText));
-            // Settle/starve meter: a dark track with a fill that grows green toward the next
-            // peasant, or red toward losing one.
-            col.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(7.0),
-                    border_radius: radius(4.0),
-                    ..default()
-                },
-                BackgroundColor(rgba(0, 0, 0, 0.45)),
-            ))
-            .with_children(|track| {
-                track.spawn((
-                    Node { width: Val::Percent(0.0), height: Val::Percent(100.0), border_radius: radius(4.0), ..default() },
-                    BackgroundColor(GREEN),
-                    PopBar,
-                ));
-            });
-            col.spawn((label(&fonts.regular, "", 11.0, rgb(150, 158, 170)), PopHintText));
-        });
-    // Bottom-centre quick-bar: gold/stone tally over a row of four slots.
+    // (The single top-left stat bar — gold/stone/wood/pop/food as icon+number — is built in
+    // `setup_stat_bar` once the icon atlas is ready.)
+    // Bottom-centre quick-bar: four quick-use slots.
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
@@ -257,12 +271,6 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
             ..default()
         })
         .with_children(|col| {
-            col.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(14.0), ..default() })
-                .with_children(|r| {
-                    r.spawn((label(&fonts.extrabold, "Gold 30", 13.0, GOLD), GoldText));
-                    r.spawn((label(&fonts.extrabold, "Stone 0", 13.0, STONE), StoneText));
-                    r.spawn((label(&fonts.extrabold, "Wood 0", 13.0, rgb(190, 150, 100)), WoodText));
-                });
             col.spawn((
                 Node {
                     flex_direction: FlexDirection::Row,
@@ -438,57 +446,30 @@ fn update_inv_hud(
 }
 
 #[allow(clippy::type_complexity)]
-/// Drive the top-right TOWN panel: headcount vs cap, the daily food balance (production − upkeep),
-/// the settle/starve meter, and a one-line hint on what's happening / what to do. Makes the
-/// food→population loop legible so the player understands why peasants arrive or leave.
-fn update_town_panel(
+/// Drive the town half of the stat bar: the headcount (`pop/cap`) and the daily food balance
+/// (production − upkeep), colour-coded green surplus / red deficit so it's clear at a glance why
+/// peasants arrive or leave. (More detail could live in a hover tooltip later.)
+fn update_town_stats(
     town: Res<crate::town::TownRes>,
-    mut q_pop: Query<&mut Text, (With<PopText>, Without<PopNetText>, Without<PopHintText>)>,
-    mut q_net: Query<(&mut Text, &mut TextColor), (With<PopNetText>, Without<PopText>, Without<PopHintText>)>,
-    mut q_hint: Query<(&mut Text, &mut TextColor), (With<PopHintText>, Without<PopText>, Without<PopNetText>)>,
-    mut q_bar: Query<(&mut Node, &mut BackgroundColor), With<PopBar>>,
+    mut q_pop: Query<&mut Text, (With<PopText>, Without<FoodText>)>,
+    mut q_food: Query<(&mut Text, &mut TextColor), (With<FoodText>, Without<PopText>)>,
 ) {
     let t = &town.0;
-    let (pop, cap) = (t.population, t.pop_cap());
-    let net = t.net_food();
-    let frac = t.growth_fraction();
-
-    let green = Color::srgb(0.45, 0.92, 0.5);
-    let red = Color::srgb(1.0, 0.46, 0.38);
-    let grey = Color::srgb(0.66, 0.70, 0.75);
-    let amber = Color::srgb(1.0, 0.80, 0.36);
-
     if let Ok(mut text) = q_pop.single_mut() {
-        **text = format!("\u{1f465} Town  {pop} / {cap}");
+        **text = format!("{}/{}", t.population, t.pop_cap());
     }
-    if let Ok((mut text, mut col)) = q_net.single_mut() {
+    if let Ok((mut text, mut col)) = q_food.single_mut() {
+        let net = t.net_food();
         if net.abs() < 0.01 {
-            **text = "Food: balanced".into();
-            col.0 = grey;
+            **text = "0/s".into();
+            col.0 = Color::srgb(0.66, 0.70, 0.75);
         } else if net > 0.0 {
-            **text = format!("Food: +{:.2}/s surplus", net);
-            col.0 = green;
+            **text = format!("+{:.2}/s", net);
+            col.0 = Color::srgb(0.45, 0.92, 0.5);
         } else {
-            **text = format!("Food: {:.2}/s short", net);
-            col.0 = red;
+            **text = format!("{:.2}/s", net);
+            col.0 = Color::srgb(1.0, 0.46, 0.38);
         }
-    }
-    if let Ok((mut node, mut col)) = q_bar.single_mut() {
-        node.width = Val::Percent((frac.abs() * 100.0).clamp(0.0, 100.0) as f32);
-        col.0 = if frac >= 0.0 { green } else { red };
-    }
-    if let Ok((mut text, mut col)) = q_hint.single_mut() {
-        let (msg, c) = if net < -0.001 {
-            ("\u{2193} losing a peasant \u{2014} build & staff a Farm", red)
-        } else if pop >= cap && net > 0.001 {
-            ("full \u{2014} build a House for room", amber)
-        } else if net > 0.001 && pop < cap {
-            ("\u{2191} a peasant is settling in", green)
-        } else {
-            ("steady", grey)
-        };
-        **text = msg.into();
-        col.0 = c;
     }
 }
 
@@ -499,12 +480,11 @@ fn update_hud(
     mut hp_q: Query<&mut Node, (With<HpFill>, Without<StaminaFill>, Without<XpFill>)>,
     mut st_q: Query<&mut Node, (With<StaminaFill>, Without<HpFill>, Without<XpFill>)>,
     mut xp_q: Query<&mut Node, (With<XpFill>, Without<HpFill>, Without<StaminaFill>)>,
-    mut hp_txt: Query<&mut Text, (With<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>, Without<FoodText>, Without<WoodText>)>,
-    mut lvl_txt: Query<&mut Text, (With<LevelText>, Without<HpText>, Without<GoldText>, Without<StoneText>, Without<FoodText>, Without<WoodText>)>,
-    mut gold_txt: Query<&mut Text, (With<GoldText>, Without<HpText>, Without<LevelText>, Without<StoneText>, Without<FoodText>, Without<WoodText>)>,
-    mut stone_txt: Query<&mut Text, (With<StoneText>, Without<HpText>, Without<LevelText>, Without<GoldText>, Without<FoodText>, Without<WoodText>)>,
-    mut food_txt: Query<&mut Text, (With<FoodText>, Without<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>, Without<WoodText>)>,
-    mut wood_txt: Query<&mut Text, (With<WoodText>, Without<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>, Without<FoodText>)>,
+    mut hp_txt: Query<&mut Text, (With<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>, Without<WoodText>)>,
+    mut lvl_txt: Query<&mut Text, (With<LevelText>, Without<HpText>, Without<GoldText>, Without<StoneText>, Without<WoodText>)>,
+    mut gold_txt: Query<&mut Text, (With<GoldText>, Without<HpText>, Without<LevelText>, Without<StoneText>, Without<WoodText>)>,
+    mut stone_txt: Query<&mut Text, (With<StoneText>, Without<HpText>, Without<LevelText>, Without<GoldText>, Without<WoodText>)>,
+    mut wood_txt: Query<&mut Text, (With<WoodText>, Without<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>)>,
 ) {
     let Ok(hh) = hero_q.single() else { return };
     let p = &player.0;
@@ -531,15 +511,12 @@ fn update_hud(
         **t = format!("{}", p.level);
     }
     if let Ok(mut t) = gold_txt.single_mut() {
-        **t = format!("Gold {}", p.gold);
+        **t = format!("{}", p.gold);
     }
     if let Ok(mut t) = stone_txt.single_mut() {
-        **t = format!("Stone {}", bank.0.stone() as i64);
-    }
-    if let Ok(mut t) = food_txt.single_mut() {
-        **t = format!("Food {}", bank.0.food() as i64);
+        **t = format!("{}", bank.0.stone() as i64);
     }
     if let Ok(mut t) = wood_txt.single_mut() {
-        **t = format!("Wood {}", bank.0.wood() as i64);
+        **t = format!("{}", bank.0.wood() as i64);
     }
 }
