@@ -148,6 +148,49 @@ pub const LINES: &[Line] = &[
     Line { once: true, ..line("rock",   Speaker::Hero, Concept::BiomeEntered(Biome::Rocky),  "[older clip — text not transcribed]") },
     Line { once: true, ..line("desert", Speaker::Hero, Concept::BiomeEntered(Biome::Desert), "[older clip — text not transcribed]") },
     Line { once: true, ..line("swamp",  Speaker::Hero, Concept::BiomeEntered(Biome::Swamp),  "[older clip — text not transcribed]") },
+    // ── Hero observational remarks ──
+    // Trigger: NearTown — hero near townsfolk (folded from people/name/well/townday/laugh/market/woodpile/grumble lines)
+    Line { floor: 300.0, priority: 5, ..line("people_a",   Speaker::Hero, Concept::NearTown, "These people. Loud, stubborn, alive. That's the whole point of all this, isn't it.") },
+    Line { floor: 300.0, priority: 5, ..line("people_b",   Speaker::Hero, Concept::NearTown, "Look at them — bickering, trading, breathing. That's what the wall is for.") },
+    Line { floor: 300.0, priority: 5, ..line("name_a",     Speaker::Hero, Concept::NearTown, "Half of them don't know my name. Good. Means they're free to forget the war.") },
+    Line { floor: 300.0, priority: 5, ..line("name_b",     Speaker::Hero, Concept::NearTown, "They nod and move on. Better that than knowing what's out past the gate.") },
+    Line { floor: 300.0, priority: 5, ..line("well_a",     Speaker::Hero, Concept::NearTown, "Fresh water, idle talk, small quarrels. The things we're actually fighting for.") },
+    Line { floor: 300.0, priority: 5, ..line("well_b",     Speaker::Hero, Concept::NearTown, "Gossip at the well. Sounds like nothing. Sounds like peace, is what it is.") },
+    Line { floor: 300.0, priority: 5, ..line("townday_a",  Speaker::Hero, Concept::NearTown, "A town that still argues over fences and taxes. Means there's still a town.") },
+    Line { floor: 300.0, priority: 5, ..line("townday_b",  Speaker::Hero, Concept::NearTown, "Still squabbling over hens and rent. The day that stops, we've lost.") },
+    Line { floor: 300.0, priority: 5, ..line("laugh_a",    Speaker::Hero, Concept::NearTown, "They laugh like there was never a siege. ...Maybe that's the victory.") },
+    Line { floor: 300.0, priority: 5, ..line("laugh_b",    Speaker::Hero, Concept::NearTown, "Laughter in the square, after all this. ...Maybe that's the whole point.") },
+    Line { floor: 300.0, priority: 5, ..line("market_a",   Speaker::Hero, Concept::NearTown, "Coin changes hands, bread gets baked, the world turns. I just keep the wolves off it.") },
+    Line { floor: 300.0, priority: 5, ..line("market_b",   Speaker::Hero, Concept::NearTown, "Buy, sell, haggle — honest work. I'd take it over mine most days.") },
+    Line { floor: 300.0, priority: 5, ..line("woodpile_a", Speaker::Hero, Concept::NearTown, "Stack it high. The nights are only getting longer.") },
+    Line { floor: 300.0, priority: 5, ..line("woodpile_b", Speaker::Hero, Concept::NearTown, "More wood. Good. Cold kills slower than orks — but it still kills.") },
+    Line { floor: 300.0, priority: 5, ..line("grumble_a",  Speaker::Hero, Concept::NearTown, "The taxes, aye. Tell it to the orks — they're wonderful listeners.") },
+    Line { floor: 300.0, priority: 5, ..line("grumble_b",  Speaker::Hero, Concept::NearTown, "Complain to me about rent. I'll forward it to the horde — they decide who pays.") },
+    // Trigger: NearKids — hero near child villagers
+    Line { floor: 300.0, priority: 5, ..line("kids_a",     Speaker::Hero, Concept::NearKids, "Mind those sticks, little ones. ...Gods, let them stay little ones a while longer.") },
+    Line { floor: 300.0, priority: 5, ..line("kids_b",     Speaker::Hero, Concept::NearKids, "Run while you can, little ones. Wish I still had the knees for it.") },
+    // Trigger: NearPet — hero near a dog or cat
+    Line { floor: 300.0, priority: 5, ..line("pet_a",      Speaker::Hero, Concept::NearPet, "At least the hound's got the right idea. Rest while the light holds.") },
+    Line { floor: 300.0, priority: 5, ..line("pet_b",      Speaker::Hero, Concept::NearPet, "The cat fears nothing. Must be nice, being a cat.") },
+    // Trigger: NearGuard — hero near a guard / militia
+    Line { floor: 300.0, priority: 5, ..line("guard_a",    Speaker::Hero, Concept::NearGuard, "Stand tall. The wall holds because you do.") },
+    Line { floor: 300.0, priority: 5, ..line("guard_b",    Speaker::Hero, Concept::NearGuard, "Eyes on the dark, soldier. I'll be right beside you when it comes.") },
+    // Trigger: InKeep — hero inside the keep footprint
+    Line { floor: 300.0, priority: 5, ..line("keep_a",     Speaker::Hero, Concept::InKeep, "Old stones. They've outlived better men than me. They'll outlive me too.") },
+    Line { floor: 300.0, priority: 5, ..line("keep_b",     Speaker::Hero, Concept::InKeep, "This keep's swallowed a hundred sieges. One more won't choke it.") },
+    // Trigger: NightMusing — during a wave
+    Line { floor: 300.0, priority: 5, ..line("night_a",    Speaker::Hero, Concept::NightMusing, "Stars are out. Somewhere up there someone's keeping a tally. Hope I'm ahead.") },
+    Line { floor: 300.0, priority: 5, ..line("night_b",    Speaker::Hero, Concept::NightMusing, "Clear night. Pretty — if you forget what comes with the dark.") },
+    // Trigger: QuietMusing — prep phase, no orks nearby
+    Line { floor: 300.0, priority: 5, ..line("quiet_a",    Speaker::Hero, Concept::QuietMusing, "Quiet day. I've learned not to trust quiet days.") },
+    Line { floor: 300.0, priority: 5, ..line("quiet_b",    Speaker::Hero, Concept::QuietMusing, "Too calm. The quiet always sends a bill, sooner or later.") },
+    // Trigger: KillMusing — after a kill
+    Line { floor: 300.0, priority: 5, ..line("kill_a",     Speaker::Hero, Concept::KillMusing, "One more for the pile. I stopped counting around the second winter.") },
+    Line { floor: 300.0, priority: 5, ..line("kill_b",     Speaker::Hero, Concept::KillMusing, "Down. There's always another behind it. Always is.") },
+    // ── Hero intro lines (once per run — the tutorial in the hero's own voice) ──
+    // Clips at assets/audio/vo/hero/intro_a.ogg and intro_b.ogg (not yet shipped — guard skips them silently)
+    Line { once: true, priority: 3, ..line("intro_a", Speaker::Hero, Concept::Intro, "Daylight's short — open the chests, gather coin and stone, buy what'll keep you breathing. When dark comes, the orks come for the keep. We hold it.") },
+    Line { once: true, priority: 3, ..line("intro_b", Speaker::Hero, Concept::Intro, "By day you scavenge — chests, ore, gold — and arm up at the War Table. By night the horde hits these walls. Keep the keep standing. Don't waste the light.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.

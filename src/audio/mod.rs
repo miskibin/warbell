@@ -16,7 +16,6 @@ mod ambience;
 mod animals;
 pub(crate) mod director;
 mod footsteps;
-mod hero_remarks;
 pub(crate) mod lines;
 mod music;
 mod npc;
@@ -239,6 +238,7 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<HeroSpeaking>()
             .init_resource::<OthersSpeaking>()
             .init_resource::<director::VoiceManager>()
+            .init_resource::<RemarkTrigger>()
             .add_message::<AudioCue>()
             .add_message::<director::Speak>()
             .add_systems(
@@ -252,7 +252,6 @@ impl Plugin for GameAudioPlugin {
                     voice::setup_voice,
                     npc::setup_npc_voice,
                     ork::setup_ork_voice,
-                    hero_remarks::setup,
                     director::setup_voice_manager,
                     director::preload_voice_lines,
                 ),
@@ -282,7 +281,7 @@ impl Plugin for GameAudioPlugin {
             // `HeroLineCooldown` first — event/biome lines win, observational remarks defer.
             .add_systems(
                 Update,
-                (npc::npc_ambient, npc::npc_events, ork::ork_voices, hero_remarks::tick)
+                (npc::npc_ambient, npc::npc_events, ork::ork_voices, detect_hero_remarks)
                     .after(voice::play_voice_cues)
                     .run_if(in_state(crate::game_state::AppState::Playing)),
             )
@@ -298,17 +297,160 @@ impl Plugin for GameAudioPlugin {
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                (reset_hero_line_gates, hero_remarks::reset, director::reset_voices),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices),
             )
             .add_systems(
                 OnExit(crate::game_state::AppState::GameOver),
-                (reset_hero_line_gates, hero_remarks::reset, director::reset_voices),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices),
             );
     }
 }
 
 fn reset_hero_line_gates(mut gates: ResMut<HeroLineGates>) {
     *gates = HeroLineGates::default();
+}
+
+// ── Hero observational remarks — trigger system ──
+
+/// Hero must be within this many world units of a thing for its proximity remark to fire.
+const NEAR: f32 = 7.0;
+/// "Quiet day" only fires in prep with no ork within this of the hero.
+const QUIET_CLEAR: f32 = 28.0;
+/// Delay after a run starts before the intro line plays (let the scene settle).
+const INTRO_DELAY: f32 = 1.6;
+/// Minimum seconds between two remark emissions — the global cadence throttle.
+const REMARK_GAP: f32 = 20.0;
+
+/// Per-run remark trigger state. Holds the intro arm and the next-remark cadence clock.
+#[derive(Resource, Default)]
+pub(crate) struct RemarkTrigger {
+    intro_done: bool,
+    intro_at: Option<f32>,
+    next_remark: f32,
+}
+
+fn reset_remark_trigger(mut r: ResMut<RemarkTrigger>) {
+    *r = RemarkTrigger::default();
+}
+
+/// Detect proximity / phase situations and emit [`Speak`] for the hero's observational remarks.
+/// Replaces the bespoke `hero_remarks::tick` — per-line replay floors now live in the catalog
+/// (`floor: 300.0`) and random variety comes from `pick_line`; this system owns only the
+/// cadence gate and the proximity computation.
+#[allow(clippy::too_many_arguments)]
+fn detect_hero_remarks(
+    time: Res<Time>,
+    mut trigger: ResMut<RemarkTrigger>,
+    mgr: Res<director::VoiceManager>,
+    mut speak: MessageWriter<Speak>,
+    mut cues: MessageReader<AudioCue>,
+    hero: Query<&crate::player::Hero>,
+    siege: Option<Res<crate::siege::Siege>>,
+    (townsfolk, pets, orks): (
+        Query<
+            (&GlobalTransform, Has<crate::villagers::Kid>, Has<crate::villagers::Guard>),
+            With<crate::villagers::Villager>,
+        >,
+        Query<(&GlobalTransform, &crate::wildlife::Animal)>,
+        Query<&GlobalTransform, (With<crate::orks::Ork>, Without<crate::dying::Dying>)>,
+    ),
+) {
+    let now = time.elapsed_secs();
+
+    // ── Intro: once per run, a short beat after the scene comes up. ──
+    if !trigger.intro_done {
+        match trigger.intro_at {
+            None => {
+                trigger.intro_at = Some(now + INTRO_DELAY);
+                return;
+            }
+            Some(t) if now < t => return,
+            Some(_) => {
+                speak.write(Speak::new(Concept::Intro));
+                trigger.intro_done = true;
+                // Let the intro have its turn — director/guard handles missing clip silently;
+                // catalog `once` prevents replays. Return so the intro gets its own frame.
+                return;
+            }
+        }
+    }
+
+    // ── Global cadence: don't remark constantly. ──
+    if now < trigger.next_remark {
+        return;
+    }
+
+    // ── Don't talk over an ongoing hero or NPC line. ──
+    if mgr.hero_speaking(now) || mgr.others_speaking(now) {
+        return;
+    }
+
+    let Ok(hero) = hero.single() else { return };
+    let hp = hero.pos;
+
+    // Drain the cue stream every frame; note a kill if a connecting blow finished something.
+    let mut killed = false;
+    for c in cues.read() {
+        if matches!(c, AudioCue::Impact { kill: true }) {
+            killed = true;
+        }
+    }
+
+    // ── Proximity flags (one pass over townsfolk; kids/guards are villagers too). ──
+    let dist_ok = |t: &GlobalTransform| {
+        let p = t.translation();
+        Vec2::new(p.x, p.z).distance(hp) <= NEAR
+    };
+    let (mut near_kids, mut near_guard, mut near_town) = (false, false, false);
+    for (t, is_kid, is_guard) in &townsfolk {
+        if dist_ok(t) {
+            if is_kid {
+                near_kids = true;
+            } else if is_guard {
+                near_guard = true;
+            } else {
+                near_town = true;
+            }
+        }
+    }
+    use crate::critters::Species;
+    let near_pet = pets
+        .iter()
+        .any(|(t, a)| matches!(a.species, Species::Dog | Species::Cat) && dist_ok(t));
+    let in_keep = crate::castle::in_footprint(hp.x, hp.y);
+    let phase = siege.as_ref().map(|s| s.phase);
+    let orks_near = orks.iter().any(|t| {
+        let p = t.translation();
+        Vec2::new(p.x, p.z).distance(hp) <= QUIET_CLEAR
+    });
+
+    // ── Trigger priority: Kill > Kids > Pet > Guard > Keep > Town > Night > Quiet. ──
+    use crate::siege::GamePhase;
+    let concept = if killed {
+        Some(Concept::KillMusing)
+    } else if near_kids {
+        Some(Concept::NearKids)
+    } else if near_pet {
+        Some(Concept::NearPet)
+    } else if near_guard {
+        Some(Concept::NearGuard)
+    } else if in_keep {
+        Some(Concept::InKeep)
+    } else if near_town {
+        Some(Concept::NearTown)
+    } else if phase == Some(GamePhase::Wave) {
+        Some(Concept::NightMusing)
+    } else if phase.map(|p| p == GamePhase::Prep).unwrap_or(true) && !orks_near {
+        Some(Concept::QuietMusing)
+    } else {
+        None
+    };
+
+    // TODO(D2): re-add walk-away anchor for proximity remarks (NearTown/NearKids/NearPet/NearGuard/InKeep).
+
+    let Some(concept) = concept else { return };
+    speak.write(Speak::new(concept));
+    trigger.next_remark = now + REMARK_GAP;
 }
 
 /// Cut a place-bound hero line the moment he leaves what prompted it — walks off from the guards
