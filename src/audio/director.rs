@@ -89,6 +89,7 @@ pub fn speak_director(
     cfg: Res<AudioConfig>,
     mut commands: Commands,
     mut mgr: ResMut<VoiceManager>,
+    mut cd: ResMut<super::HeroLineCooldown>,
     mut reqs: MessageReader<Speak>,
     sinks: Query<(Entity, &VoiceSink)>,
     hero: Query<&crate::player::Hero>,
@@ -105,10 +106,16 @@ pub fn speak_director(
         mgr.rng = rng;
         let Some(line) = chosen else { continue };
 
+        // Shared hero-line spacing (~20 s): drop a hero line still inside the window unless it
+        // strictly out-ranks the line that opened it (urgent warnings cut through idle chatter).
+        // Chain replies skip this — they go straight through `tick_chains`/`play_line`.
+        if line.speaker == Speaker::Hero && now < cd.until && line.priority <= cd.priority {
+            continue;
+        }
         if !can_play(mgr.active.get(&line.speaker), now, line.priority) {
             continue;
         }
-        play_line(&mut commands, &cfg, &mut mgr, &sinks, &mut subs, &sources, now, &line, req.at.or(hero_pos));
+        play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &line, req.at.or(hero_pos));
     }
 }
 
@@ -118,6 +125,7 @@ fn play_line(
     commands: &mut Commands,
     cfg: &AudioConfig,
     mgr: &mut VoiceManager,
+    cd: &mut super::HeroLineCooldown,
     sinks: &Query<(Entity, &VoiceSink)>,
     subs: &mut crate::subtitles::Subtitles,
     sources: &Assets<AudioSource>,
@@ -170,6 +178,13 @@ fn play_line(
     if let Some(chain) = line.then {
         mgr.pending_chains.push((now + dur, chain, pos));
     }
+    // Open the shared hero-line spacing window (~20 s). Only the hero is gapped this way; villagers
+    // and orks are paced by their own trigger cadences. A no-op (missing clip) returned above, so a
+    // silently-skipped line never spends the window.
+    if line.speaker == Speaker::Hero {
+        cd.until = now + super::HERO_LINE_CD;
+        cd.priority = line.priority;
+    }
     subs.say_as(now, voice.name, line.text, dur);
 }
 
@@ -181,6 +196,7 @@ pub fn tick_chains(
     cfg: Res<AudioConfig>,
     mut commands: Commands,
     mut mgr: ResMut<VoiceManager>,
+    mut cd: ResMut<super::HeroLineCooldown>,
     sinks: Query<(Entity, &VoiceSink)>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     sources: Res<Assets<AudioSource>>,
@@ -205,7 +221,7 @@ pub fn tick_chains(
             .copied();
         let Some(reply) = pick else { continue };
         if can_play(mgr.active.get(&reply.speaker), now, reply.priority) {
-            play_line(&mut commands, &cfg, &mut mgr, &sinks, &mut subs, &sources, now, &reply, pos);
+            play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &reply, pos);
         }
     }
 }

@@ -124,6 +124,7 @@ pub(crate) fn play_voice_cues(
                 // Also despawn any live catalog hero sink so the scream cuts a musing.
                 mouth.line_until = now + LINE_GUARD;
                 cd.until = now + HERO_LINE_CD;
+                cd.priority = u8::MAX; // nothing out-ranks a death cry — no chatter trails it
                 for (e, s) in &hero_sinks {
                     if s.0 == super::Speaker::Hero {
                         commands.entity(e).try_despawn();

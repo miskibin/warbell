@@ -131,15 +131,19 @@ pub struct MusicState {
     pub fighting: bool,
 }
 
-/// Shared **one-line-at-a-time cooldown** for the hero's spoken voice. EVERY spoken hero LINE —
-/// `voice.rs`'s biome musings + event reactions AND `hero_remarks.rs`'s observations — sets
-/// `until = now + HERO_LINE_CD` when it starts, and refuses to begin if `now < until`. So only one
-/// line plays per window, nothing interrupts/trims a line already playing, and a line that *wanted*
-/// to fire inside the window is simply dropped (never queued — "consider it played"). Short combat
-/// exertions (swing/jump/hurt grunts, the death cry) are exempt.
+/// Shared **hero-line spacing** for the hero's spoken voice. EVERY spoken hero LINE — the catalog's
+/// event reactions, biome musings, AND observational remarks (now all routed through `director`) —
+/// stamps `until = now + HERO_LINE_CD` and the line's `priority` when it starts, and the director
+/// refuses to begin a new hero line while `now < until` **unless** the newcomer strictly out-ranks
+/// the line that opened the window (so urgent warnings — night falling, the keep under attack —
+/// still cut through ~20 s of idle chatter). A line that wanted to fire inside the window is simply
+/// dropped (never queued — "consider it played"); it re-fires next frame if its trigger persists.
+/// Short combat exertions (swing/jump/hurt grunts) are exempt; the death cry spends the window.
 #[derive(Resource, Default)]
 pub(crate) struct HeroLineCooldown {
     pub until: f32,
+    /// Priority of the line that opened the current window — a newcomer must exceed it to bypass.
+    pub priority: u8,
 }
 /// Length of [`HeroLineCooldown`] (seconds) — per user: ~20 s between hero lines.
 pub(crate) const HERO_LINE_CD: f32 = 20.0;
