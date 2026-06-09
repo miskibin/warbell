@@ -186,7 +186,7 @@ fn toggle_mute(settings: &mut AudioSettings, notice: &mut Notice, now: f64) {
 }
 
 fn toggle_quality(quality: &mut GraphicsQuality, notice: &mut Notice, now: f64) {
-    *quality = quality.toggled();
+    *quality = quality.next();
     notice.push(format!("Graphics: {}", quality.label()), now);
 }
 
