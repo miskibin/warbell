@@ -42,11 +42,9 @@ impl Default for TownRes {
     }
 }
 
-/// Marks a build-plot entity; `idx` indexes `TownRes.0.plots`.
+/// Tags a build-plot (foundation pad) entity. Plots are indexed via the `PlotSpots` resource.
 #[derive(Component)]
-pub struct BuildPlot {
-    pub idx: usize,
-}
+pub struct BuildPlot;
 
 /// The building mesh sitting on a plot (despawned on collapse/rebuild).
 #[derive(Component)]
@@ -196,11 +194,6 @@ fn reset_town(mut town: ResMut<TownRes>, mut bank: ResMut<Bank>) {
     bank.0.add_wood(START_WOOD);
 }
 
-/// World-space centre of plot `idx` (set when plots are seeded).
-pub fn plot_world(idx: usize, plots: &[Vec2]) -> Vec2 {
-    plots.get(idx).copied().unwrap_or(Vec2::ZERO)
-}
-
 /// Stores the world-XZ centre of every seeded plot (index = plot idx).
 #[derive(Resource, Default)]
 pub struct PlotSpots(pub Vec<Vec2>);
@@ -234,7 +227,7 @@ pub fn populate_plots(
     });
     let pad = meshes.add(plot_pad_mesh());
     let mut spots = Vec::with_capacity(PLOT_COUNT);
-    for (idx, off) in PLOT_OFFSETS.iter().enumerate() {
+    for off in PLOT_OFFSETS.iter() {
         let y = crate::worldmap::ground_at_world(off.x, off.y).unwrap_or(0.0);
         spots.push(*off);
         commands.spawn((
@@ -242,7 +235,7 @@ pub fn populate_plots(
             MeshMaterial3d(mat.clone()),
             Transform::from_xyz(off.x, y + 0.02, off.y),
             crate::biome::BiomeEntity,
-            BuildPlot { idx },
+            BuildPlot,
         ));
     }
     commands.insert_resource(PlotSpots(spots));
