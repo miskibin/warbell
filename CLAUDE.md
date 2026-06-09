@@ -35,6 +35,25 @@ ONE module in parallel against a *shared* `target/` and must **not** run `cargo 
 (a concurrent build corrupts the shared dir; the integrator builds once at the end). That rule is
 **only** for parallel-dispatch sessions. A normal single Claude session should build and verify.
 
+### Cloud / remote-container setup (Claude Code on the web, fresh containers)
+
+A fresh Linux cloud container has the Rust toolchain but **not** the system libraries Bevy links
+against, so the *first* `cargo check`/`build`/`run` panics in a build script with
+`Package wayland-client was not found` (or `xkbcommon` / `alsa` / `libudev`). This is an
+environment gap, **not** a code problem — don't "fix" it in `Cargo.toml`. Install the headers once
+per container (the container is ephemeral, so this must run every fresh session):
+
+```bash
+sudo apt-get update && sudo apt-get install -y \
+  libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev
+```
+
+(These are Bevy's standard Linux deps: Wayland + XKB for windowing/input, ALSA for the `wav`
+audio feature, libudev for gamepad enumeration.) After installing, `cargo check` succeeds (the
+first build still recompiles all of `bevy` at `opt-level = 3`, ~2–3 min). On developer machines
+(macOS / Windows) none of this applies. To make web sessions build without the manual step, put
+the `apt-get` line in a **SessionStart hook** (see the `session-start-hook` skill).
+
 ### Screenshot harness (how to verify visuals — the Bevy window can't be captured externally)
 
 ```powershell
@@ -160,7 +179,7 @@ explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints
 ## Controls (gameplay)
 
 ` (backquote) toggle free-roam fly-cam ↔ follow-cam · WASD move · LMB attack · RMB block ·
-F1 debug egui panel · **E** contextual interact — walk up to a thing and a screen prompt names it:
+F1 debug egui tuning panel · F2 perf/state stats overlay · **E** contextual interact — walk up to a thing and a screen prompt names it:
 near the **keep** → War Table (upgrades), near the **merchant stall** → shop, near the **war bell**
 (prep only) → ring in the night (the unified resolver lives in `interaction.rs`; nearest in-range
 wins, proximity-only/no-facing, ported from the 3js single-`E` scheme) · **I** Satchel ·
