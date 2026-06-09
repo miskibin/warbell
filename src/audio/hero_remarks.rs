@@ -30,6 +30,9 @@ const NEAR: f32 = 7.0;
 const QUIET_CLEAR: f32 = 28.0;
 /// Delay after a run starts before the intro line plays (let the scene settle).
 const INTRO_DELAY: f32 = 1.6;
+/// If the intro clip still isn't loaded this long after it's due (e.g. no intro audio shipped),
+/// give up on it and let the other remarks run — so a missing intro never gags the whole layer.
+const INTRO_GRACE: f32 = 4.0;
 
 /// What's prompting the hero to speak. Most are proximity; Night/Quiet are phase + clearance;
 /// Kill is an event off the combat cue stream.
@@ -209,15 +212,17 @@ pub(crate) fn tick(
                 return;
             }
             Some(t) if now < t => return,
-            _ => {
+            Some(t) => {
                 let i = (frand(&mut st.rng) * INTRO.len() as f32) as usize % INTRO.len();
                 let (key, text) = INTRO[i];
                 if play(&mut commands, &existing, &bank, &sources, key, vol) {
                     subs.say(now, text, crate::subtitles::read_secs(text));
                     st.intro_done = true;
                     st.next = now + REMARK_GAP + frand(&mut st.rng) * REMARK_JITTER;
+                } else if now >= t + INTRO_GRACE {
+                    st.intro_done = true; // no intro audio → don't gag the rest of the remarks
                 }
-                return; // hold other remarks until the intro has had its turn
+                return; // hold other remarks until the intro has had its turn (or grace expires)
             }
         }
     }
