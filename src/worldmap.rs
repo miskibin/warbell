@@ -18,7 +18,8 @@ use bevy::pbr::ExtendedMaterial;
 use bevy::prelude::*;
 
 use crate::biome::{
-    scatter_region, Backdrop, Biome, BiomeConfig, GroundDetail, ParticleKind, PropClass,
+    scatter_region, AtmoSample, Backdrop, Biome, BiomeAmbience, BiomeAmbiences, BiomeConfig,
+    GroundDetail, ParticleKind, PropClass,
 };
 use crate::groundcover as gc;
 use crate::palette::lin;
@@ -42,7 +43,7 @@ pub const GZ: f32 = ROWS as f32 / 2.0;
 const ISLAND_RX: f32 = 71.0;
 const ISLAND_RZ: f32 = 53.0;
 const ISLAND_EXP: f32 = 2.6;
-const SAFE_R: f32 = 18.0; // castle safe-zone radius (forced flat grass)
+pub const SAFE_R: f32 = 18.0; // castle safe-zone radius (forced flat grass)
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 const SEA_Y: f32 = -0.4;
 /// Colour-blend half-width (tiles) at biome edges.
@@ -479,8 +480,15 @@ pub fn build(
     // ── Scatter: each biome's props on its tiles (height-aware), + grass cover ──
     let lo = -GX;
     let hi = GX; // square covers the whole grid; off-map tiles mask out
+    // Capture each biome's atmosphere + weather while we already have its config in hand, so
+    // the hero-region transition system can lerp toward it without rebuilding configs per frame.
+    let mut ambiences: Vec<(Biome, BiomeAmbience)> = Vec::new();
     for biome in [Biome::Forest, Biome::Snow, Biome::Rocky, Biome::Desert, Biome::Swamp] {
         let cfg = config_for(biome);
+        ambiences.push((
+            biome,
+            BiomeAmbience { atmo: AtmoSample::from_config(&cfg), particle: cfg.particle },
+        ));
         scatter_region(
             &cfg,
             commands,
@@ -493,6 +501,15 @@ pub fn build(
             &|x, z| tile_top_y_world(x, z),
         );
     }
+    // Island-wide base ambience (grass / sand / water): the shared daytime atmosphere, no weather.
+    let (sky, _fog, sun_c, sun_i, amb_c, amb_b, _sun_p) = ATMOSPHERE;
+    commands.insert_resource(BiomeAmbiences {
+        base: BiomeAmbience {
+            atmo: AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b),
+            particle: ParticleKind::None,
+        },
+        list: ambiences,
+    });
     // Grass frontier cover (tufts/clover/flowers) on grass tiles.
     let grass_cfg = grass_config();
     scatter_region(
@@ -524,6 +541,7 @@ pub fn build(
 
     // ── Biome verbs: mineable ore (rock), forage (swamp herbs / forest apples), chests ──
     crate::verbs::populate_ore(commands, meshes, std_mats);
+    crate::town::populate_plots(commands, meshes, std_mats);
     crate::verbs::populate_forage(commands, meshes, std_mats);
     crate::verbs::populate_chests(commands, meshes, std_mats);
 
