@@ -10,7 +10,7 @@ use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::{
     CascadeShadowConfigBuilder, DirectionalLightShadowMap, FogVolume, ShadowFilteringMethod,
-    VolumetricFog, VolumetricLight,
+    SunDisk, VolumetricFog, VolumetricLight,
 };
 use bevy::pbr::{
     Atmosphere, DistanceFog, FogFalloff, ScatteringMedium, ScreenSpaceAmbientOcclusion,
@@ -30,8 +30,11 @@ use crate::siege::{GamePhase, Siege};
 
 /// Sky / fog horizon colour — bright pale daytime blue.
 const SKY: Color = Color::srgb(0.70, 0.82, 0.93);
+/// Daytime distance-fog colour — warm cream haze (NOT the sky blue: a pale-blue fog reads as
+/// milky white-out across the whole frame, a warm haze reads as sunlit atmosphere).
+const FOG_DAY: Color = Color::srgb(0.85, 0.80, 0.66);
 const FOG_DENSITY: f32 = 0.009;
-const IBL_INTENSITY: f32 = 620.0;
+const IBL_INTENSITY: f32 = 430.0;
 
 /// How strongly the hero's current biome tints the DAYTIME light's mood (0 = none, 1 = the
 /// biome's authored colour fully). Scaled by `day`, so night stays the tuned moonlit look.
@@ -228,10 +231,12 @@ fn advance_sky(
     }
     clock.t = clock.t.rem_euclid(1.0);
 
-    // Sun direction (from origin toward the sun): +X east, +Y up, −X west, with a small
-    // constant +Z tilt so shadows are angled (never axis-perfect even at noon).
+    // Sun direction (from origin toward the sun): +X east, +Y up, −X west, with a strong
+    // constant +Z (south) tilt so the sun never passes straight overhead — even at noon the
+    // light stays slanted and every tree keeps a visible cast shadow (flat-noon light was a
+    // big part of the washed "no depth" look).
     let a = clock.t * std::f32::consts::TAU;
-    let sun_dir = Vec3::new(a.cos(), a.sin(), 0.35).normalize();
+    let sun_dir = Vec3::new(a.cos(), a.sin(), 0.55).normalize();
     let elev = sun_dir.y; // −1 (midnight) .. 1 (noon)
 
     let day = smoothstep(-0.02, 0.22, elev); // 0 deep night → 1 full day
@@ -249,11 +254,14 @@ fn advance_sky(
         *tf = Transform::from_translation(sun_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
         // A modest moonlight floor (≈300 lux): enough for soft directional moonlight, but
         // low enough that the procedural Atmosphere sky stays dark/moody after dark. Ground
-        // visibility comes from ambient + IBL below. Daytime peak (≈11 050) is unchanged.
-        light.illuminance = 1100.0 + 9_950.0 * day;
-        // Warm at the horizon → neutral-warm overhead, then cooled toward moonlit blue as
-        // the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
-        let warm = lerp_col(Color::srgb(1.0, 0.45, 0.22), Color::srgb(1.0, 0.95, 0.85), high);
+        // visibility comes from ambient + IBL below. Daytime peak raised (≈14 100) with the
+        // ambient/IBL fill cut below — the sun should dominate the fill so lit vs shadowed
+        // ground actually contrasts instead of washing flat.
+        light.illuminance = 1100.0 + 13_000.0 * day;
+        // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
+        // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
+        // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
+        let warm = lerp_col(Color::srgb(1.0, 0.45, 0.22), Color::srgb(1.0, 0.90, 0.70), high);
         light.color = lerp_col(warm, Color::srgb(0.55, 0.66, 1.0), night * 0.8);
         // Biome tint: warm the desert sun, cool the snow, etc., and nudge brightness toward
         // the biome's authored sun lux (desert brighter, swamp dimmer) — daytime only.
@@ -263,20 +271,23 @@ fn advance_sky(
         }
     }
 
-    // Ambient: brightness rides the sun; tint cools to moonlit blue after dark. The night
-    // floor is lifted high (≈110) since it — not the dimmed moonlight — is what lights the
-    // ground after dark (and ambient doesn't feed the Atmosphere sky, so it brightens the
-    // ground without re-brightening the moody sky). It carries the deeper night exposure cut
-    // below. (Computed from `day`, never read-back, so it can't compound frame-to-frame.)
-    ambient.brightness = 215.0 + 54.0 * day;
-    ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(0.90, 0.93, 1.0), day);
+    // Ambient: the night floor stays HIGH (≈215) since it — not the dimmed moonlight — is
+    // what lights the ground after dark (and ambient doesn't feed the Atmosphere sky, so it
+    // brightens the ground without re-brightening the moody sky). But by DAY the ambient
+    // *dips* (≈140): the sun is the day's fill, and a strong cool ambient was flattening the
+    // lit/shadow contrast into the washed look. (Computed from `day`, never read-back, so it
+    // can't compound frame-to-frame.)
+    ambient.brightness = 215.0 - 75.0 * day;
+    ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
     // Biome tint on the ambient fill colour (brightness stays on the scene's tuned curve).
     if let Some(t) = tint {
         ambient.color = lerp_col(ambient.color, t.ambient_color, bw);
     }
 
-    // IBL (baked daytime) dimmed at night, but kept a strong floor (≈160) so surfaces still
-    // catch skylight after dark — the other half of the after-dark ground light.
+    // IBL (baked daytime) dimmed at night, but kept a strong floor (≈320) so surfaces still
+    // catch skylight after dark — the other half of the after-dark ground light. The daytime
+    // value is deliberately modest (430): like ambient above, too much skylight fill kills
+    // the sun's shadow contrast.
     for mut env in &mut env_q {
         env.intensity = 320.0 + (IBL_INTENSITY - 320.0) * day;
     }
@@ -293,9 +304,9 @@ fn advance_sky(
         g.global.exposure = -night * night_stops;
     }
 
-    // Fog: night navy → day sky-blue, warmed orange at sunrise/sunset. The night navy is
-    // lifted off near-black so the world isn't swallowed by black fog after dark.
-    let mut fog_col = lerp_col(Color::srgb(0.06, 0.08, 0.15), SKY, day);
+    // Fog: night navy → day warm-cream haze, warmed orange at sunrise/sunset. The night navy
+    // is lifted off near-black so the world isn't swallowed by black fog after dark.
+    let mut fog_col = lerp_col(Color::srgb(0.06, 0.08, 0.15), FOG_DAY, day);
     fog_col = lerp_col(fog_col, Color::srgb(1.0, 0.5, 0.3), horizon * 0.6);
     // Biome tint on the daytime fog/haze colour (snow pale-cool, desert warm).
     if let Some(t) = tint {
@@ -444,14 +455,18 @@ fn setup_sun(mut commands: Commands) {
         // Cast volumetric light shafts through the `FogVolume` below — the sun's half of the
         // god-rays effect (the camera's `VolumetricFog` is the other half).
         VolumetricLight,
+        // Visible solar disk in the Atmosphere sky. Default is `SunDisk::EARTH` —
+        // physically-accurate 0.0093 rad (≈0.5°), a barely-visible dot. The stylized look
+        // wants a big warm ball: ~6× earth size, overexposed so Bloom halos it into a glow.
+        SunDisk { angular_size: 0.060, intensity: 1.6 },
         CascadeShadowConfigBuilder {
             num_cascades: 4,
-            // 75 (was 110): the sharp-view band is ~85 tiles and DoF+fog blur anything past it,
-            // so shadows beyond ~75 tiles are never legible. Shrinking the cascade span packs the
-            // four cascades over less ground (crisper near shadows) and feeds less geometry into
-            // the shadow pass each frame as the sun rotates.
-            maximum_distance: 75.0,
-            first_cascade_far_bound: 10.0,
+            // 150 (was 75): with the elevated follow-cam most of the visible frame sits 60–150
+            // tiles out, and a 75-tile cutoff left the whole mid/far ground shadowless — flat.
+            // Long tree shadows ARE the scene's depth cue; the linear fog only fully wins by
+            // ~190, so shadows must reach well past 100 to read in the mid-ground.
+            maximum_distance: 150.0,
+            first_cascade_far_bound: 12.0,
             ..default()
         }
         .build(),
