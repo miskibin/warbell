@@ -12,7 +12,10 @@ use bevy::prelude::*;
 
 use crate::biome::Biome;
 
-use super::{frand, pick, AudioConfig, AudioCue, HeroEvent, HeroLineGates};
+use super::{
+    frand, pick, AudioConfig, AudioCue, HeroEvent, HeroLineAnchor, HeroLineCooldown, HeroLineGates,
+    HeroMouthTag, HeroSpeaking, HERO_LINE_CD,
+};
 
 /// Seconds between any two exertion grunts, so combat doesn't spam the hero's voice.
 const GRUNT_MIN_GAP: f32 = 1.6;
@@ -121,14 +124,17 @@ pub(crate) fn play_voice_cues(
     mut commands: Commands,
     bank: Res<VoiceBank>,
     mut mouth: ResMut<HeroMouth>,
+    mut cd: ResMut<HeroLineCooldown>,
+    mut speaking: ResMut<HeroSpeaking>,
     mut gates: ResMut<HeroLineGates>,
     mut seed: Local<u32>,
-    existing: Query<Entity, With<HeroVoiceTag>>,
+    existing: Query<Entity, With<HeroMouthTag>>,
     mut cues: MessageReader<AudioCue>,
 ) {
     let now = time.elapsed_secs();
     // Decide the single sound the mouth plays this frame; later cues override earlier ones.
-    let mut pending: Option<(Handle<AudioSource>, f32, bool)> = None; // (clip, vol, is_line)
+    // (clip, vol, is_line, place-anchor) — is_line marks the long spoken lines (vs short grunts).
+    let mut pending: Option<(Handle<AudioSource>, f32, bool, Option<HeroLineAnchor>)> = None;
 
     for cue in cues.read() {
         match *cue {
@@ -136,57 +142,66 @@ pub(crate) fn play_voice_cues(
                 // 34% of swings grunt (Character.tsx `playPlayerAttack`), then the canGrunt gate.
                 if frand(&mut seed) < 0.34 && now >= mouth.line_until && now - mouth.last_grunt >= GRUNT_MIN_GAP {
                     mouth.last_grunt = now;
-                    pending = Some((pick(&bank.swings, &mut seed), 0.4 * cfg.voice_vol, false));
+                    pending = Some((pick(&bank.swings, &mut seed), 0.4 * cfg.voice_vol, false, None));
                 }
             }
             AudioCue::HeroJump => {
                 // Only ~40% of jumps grunt (Character.tsx), and only when the mouth is free.
                 if frand(&mut seed) < 0.40 && now >= mouth.line_until && now - mouth.last_grunt >= GRUNT_MIN_GAP {
                     mouth.last_grunt = now;
-                    pending = Some((bank.jump.clone(), 0.28 * cfg.voice_vol, false));
+                    pending = Some((bank.jump.clone(), 0.28 * cfg.voice_vol, false, None));
                 }
             }
             AudioCue::HeroHurt => {
                 // canGrunt = not mid-line (`line_until`) + 1.6 s since the last grunt.
                 if now >= mouth.line_until && now - mouth.last_grunt >= GRUNT_MIN_GAP {
                     mouth.last_grunt = now;
-                    pending = Some((pick(&bank.hurts, &mut seed), 0.45 * cfg.voice_vol, false));
+                    pending = Some((pick(&bank.hurts, &mut seed), 0.45 * cfg.voice_vol, false, None));
                 }
             }
             AudioCue::HeroDeath => {
-                // A death cry always plays (interrupts) but still counts as the last line.
+                // A death cry always plays (interrupts) but still counts as the last line + spends
+                // the shared cooldown.
                 mouth.line_until = now + LINE_GUARD;
                 mouth.last_line = now;
-                pending = Some((pick(&bank.deaths, &mut seed), cfg.voice_vol, true));
+                cd.until = now + HERO_LINE_CD;
+                pending = Some((pick(&bank.deaths, &mut seed), cfg.voice_vol, true, None));
             }
             AudioCue::HeroLine(b) => {
                 // Once per biome per run (old game's `biome:` `spoken` gate), only when the mouth
-                // is free, AND at least GLOBAL_LINE_GAP since the last line — so a musing that
-                // can't fire (mid-sentence or inside the gap) isn't marked spoken and re-fires
-                // once he's quiet (the emitter re-sends every frame he's inside the biome).
+                // is free, the shared line cooldown has cleared, AND at least GLOBAL_LINE_GAP since
+                // the last line — so a musing that can't fire (mid-line or inside the cooldown)
+                // isn't marked spoken and re-fires once he's quiet (re-sent every frame in-biome).
                 if !gates.spoken_biomes.contains(&b)
                     && now >= mouth.line_until
+                    && now >= cd.until
                     && now - mouth.last_line >= GLOBAL_LINE_GAP
                 {
                     if let Some(h) = bank.lines.iter().find(|(bb, _)| *bb == b).map(|(_, h)| h) {
                         gates.spoken_biomes.push(b);
                         mouth.line_until = now + LINE_GUARD;
                         mouth.last_line = now;
-                        pending = Some((h.clone(), cfg.narration_vol, true));
+                        cd.until = now + HERO_LINE_CD;
+                        // Anchored to the biome: cut short if he crosses out of it mid-musing.
+                        pending = Some((h.clone(), cfg.narration_vol, true, Some(HeroLineAnchor::Biome(b))));
                     }
                 }
             }
             AudioCue::HeroEvent(ev) => {
                 // "Once per run" gate for the first-time / home lines; the rest are repeatable
-                // (NightWarning is gated once-per-prep upstream in `siege`).
-                let blocked = match ev {
-                    HeroEvent::FirstStone if gates.first_stone => true,
-                    HeroEvent::FirstRescue if gates.first_rescue => true,
-                    HeroEvent::Home if gates.home => true,
-                    // Flavour reactions obey a 10-minute per-line floor so they stay occasional.
-                    e if e.throttled() && now - mouth.event_last[e.key()] < EVENT_REPLAY_GAP => true,
-                    _ => false,
-                };
+                // (NightWarning is gated once-per-prep upstream in `siege`). The shared line
+                // cooldown gates ALL of them: an event that lands inside the window is dropped
+                // (not played, not queued) so bursts (level-up + first-kill + gold all at once)
+                // never trim each other — only one line plays per cooldown.
+                let blocked = now < cd.until
+                    || match ev {
+                        HeroEvent::FirstStone if gates.first_stone => true,
+                        HeroEvent::FirstRescue if gates.first_rescue => true,
+                        HeroEvent::Home if gates.home => true,
+                        // Flavour reactions obey a 10-minute per-line floor so they stay occasional.
+                        e if e.throttled() && now - mouth.event_last[e.key()] < EVENT_REPLAY_GAP => true,
+                        _ => false,
+                    };
                 if !blocked {
                     if let Some(h) = bank.events.iter().find(|(e, _)| *e == ev).map(|(_, h)| h) {
                         match ev {
@@ -197,11 +212,9 @@ pub(crate) fn play_voice_cues(
                         }
                         mouth.event_last[ev.key()] = now;
                         mouth.line_until = now + LINE_GUARD;
-                        // Count event hints toward the musing gap so a biome line doesn't
-                        // immediately follow a hint — but don't gate the hint itself (one-shot,
-                        // no retry, so a suppressed night warning would be lost).
                         mouth.last_line = now;
-                        pending = Some((h.clone(), cfg.narration_vol, true));
+                        cd.until = now + HERO_LINE_CD;
+                        pending = Some((h.clone(), cfg.narration_vol, true, None));
                     }
                 }
             }
@@ -209,12 +222,17 @@ pub(crate) fn play_voice_cues(
         }
     }
 
-    if let Some((clip, vol, _is_line)) = pending {
-        // Stop whatever the hero was saying (only live sinks are yielded — no stale ids).
+    if let Some((clip, vol, is_line, anchor)) = pending {
+        // One mouth: stop whatever he was saying — a prior line OR a remark (both `HeroMouthTag`).
+        // Only live sinks are yielded, so no stale ids; `try_despawn` is safe if one already ended.
         for e in &existing {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
         }
-        commands.spawn((
+        // A LINE occupies the mouth for ~its length, so villagers/orks defer; grunts don't.
+        if is_line {
+            speaking.until = now + LINE_GUARD;
+        }
+        let mut sink = commands.spawn((
             AudioPlayer(clip),
             PlaybackSettings {
                 mode: PlaybackMode::Despawn,
@@ -223,6 +241,10 @@ pub(crate) fn play_voice_cues(
                 ..default()
             },
             HeroVoiceTag,
+            HeroMouthTag,
         ));
+        if let Some(a) = anchor {
+            sink.insert(a);
+        }
     }
 }

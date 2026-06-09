@@ -346,6 +346,9 @@ const GUARD_ENGAGE: f32 = 8.0;
 pub const KEEP_MAX_HP: f32 = 1000.0;
 /// Keep self-repair during the prep breather (HP/s) — the day is a chance to recover.
 const KEEP_REPAIR_RATE: f32 = 12.0;
+/// On top of the slow continuous repair, the keep is shored up by this fraction of its MAX HP at
+/// the dawn of each new day (the Wave→Prep clear) — a guaranteed bounce-back between sieges.
+const KEEP_DAWN_REPAIR_FRAC: f32 = 0.2;
 /// The night horde's warband tint (camps use both; invaders are uniformly this).
 const INVADER_FACTION: orks::Faction = orks::Faction::Red;
 /// How close an arsonist invader must be to batter a building.
@@ -563,8 +566,12 @@ fn run_director(
             }
             WaveAction::SetPhase(p) => {
                 siege.phase = p;
-                // Wave→Prep is a clear: pay the Tax Office stipend + harvest the Granary's bread.
+                // Wave→Prep is a clear: shore up the keep, pay the Tax Office stipend + harvest
+                // the Granary's bread.
                 if p == GamePhase::Prep {
+                    // Dawn repair: +20% of max HP, guaranteed each new day (on top of the slow
+                    // continuous prep repair above).
+                    keep.hp = (keep.hp + keep.max * KEEP_DAWN_REPAIR_FRAC).min(keep.max);
                     if eco.tax_office {
                         player.0.add_gold(crate::economy::TAX_STIPEND);
                     }

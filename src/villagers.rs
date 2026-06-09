@@ -131,6 +131,9 @@ const GUARD_DEFEND_RADIUS: f32 = 12.0;
 const GUARD_MELEE: f32 = 1.6;
 const GUARD_SPEED: f32 = 2.4;
 const GUARD_ATTACK_CD: f32 = 1.0;
+/// A guard's strike only emits a clash SFX when this near the hero — a small earshot so distant
+/// skirmishes across the field stay silent and only the fight beside you is heard.
+const GUARD_SFX_RADIUS: f32 = 14.0;
 /// Past this distance from its post a guard (a freed captive marching in from a razed camp) routes
 /// home by A* through the gates; nearer than this a revived town-guard just steers in directly.
 const GUARD_PATH_RANGE: f32 = 4.0;
@@ -597,6 +600,8 @@ fn guard_combat(
     siege: Res<crate::siege::Siege>,
     mut incoming: ResMut<GuardDamage>,
     mut commands: Commands,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    hero: Query<&crate::player::Hero>,
     mut guards: Query<
         (Entity, &mut Guard, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
         Without<crate::orks::WaveInvader>,
@@ -610,6 +615,8 @@ fn guard_combat(
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
     let in_wave = siege.phase == crate::siege::GamePhase::Wave;
+    // Hero (≈ listener) position, for the small-earshot gate on guard clash SFX.
+    let hero_pos = hero.single().ok().map(|h| h.pos);
     let inv: Vec<(Entity, Vec2)> =
         invaders.iter().map(|(e, tf, _)| (e, Vec2::new(tf.translation.x, tf.translation.z))).collect();
     let mut dealt: Vec<(Entity, f32)> = Vec::new();
@@ -694,6 +701,11 @@ fn guard_combat(
                     if g.atk_cd <= 0.0 {
                         g.atk_cd = GUARD_ATTACK_CD;
                         dealt.push((te, GUARD_DAMAGE));
+                        // Clash SFX, but only when the fight is close to the hero (small earshot).
+                        if hero_pos.is_some_and(|hp| v.pos.distance(hp) < GUARD_SFX_RADIUS) {
+                            let at = Vec3::new(v.pos.x, tf.translation.y + 1.0, v.pos.y);
+                            cues.write(crate::audio::AudioCue::GuardStrike(at));
+                        }
                     }
                 } else {
                     let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);

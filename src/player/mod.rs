@@ -197,7 +197,13 @@ fn spawn_hero(
 
     // Spawn just outside the north gate, facing into the courtyard (+Z toward origin).
     let gate = crate::castle::gate_centers()[0];
-    let pos = Vec2::new(gate.x, gate.y - 3.0);
+    // Debug/screenshot hook: `FOREST_HERO="x,z"` drops the hero at a world XZ (e.g. deep in a
+    // biome region) so a capture shows that biome's reactive atmosphere/weather.
+    let staged = std::env::var("FOREST_HERO").ok().and_then(|s| {
+        let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        (v.len() == 2).then(|| Vec2::new(v[0], v[1]))
+    });
+    let pos = staged.unwrap_or(Vec2::new(gate.x, gate.y - 3.0));
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
     let facing = 0.0_f32;
 
@@ -233,6 +239,13 @@ fn spawn_hero(
         inv.0.equipped_armor_id.as_deref(),
     );
     spawn_hero_meshes(&mut commands, root, spec, &mut meshes, &mat);
+
+    // When staged into a biome for a screenshot, mirror the pose into `HeroState` now so the
+    // reactive atmosphere/weather pick up that region immediately (in FreeRoam capture mode
+    // `player_move` doesn't run, so it never would otherwise).
+    if staged.is_some() {
+        commands.insert_resource(HeroState { pos, y, facing, alive: true });
+    }
 }
 
 /// Spawn the torso + articulated limb meshes as children of the hero `root`, all sharing the

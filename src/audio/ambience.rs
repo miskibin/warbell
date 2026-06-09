@@ -20,6 +20,13 @@ use super::AudioConfig;
 /// Crossfade rate (per second) as you enter / leave a biome. ~1.5 s to fully fade.
 const AMBIENCE_FADE: f32 = 0.8;
 
+/// Per-biome bed gain, relative to `ambience_vol` — bumped so each biome's character (forest
+/// birds, desert wind, swamp, snow-wind) reads clearly over the mix.
+const BIOME_AMBIENCE_MULT: f32 = 2.0;
+/// Water bed gain, relative to `ambience_vol` — kept low so rivers/coast murmur under everything
+/// rather than wash it out.
+const WATER_AMBIENCE_MULT: f32 = 0.5;
+
 /// Campfire loop level at the source (spatial falloff handles distance from there).
 const CAMPFIRE_VOL: f32 = 0.5;
 
@@ -147,12 +154,13 @@ pub(crate) fn biome_ambience(
     let near_castle = cam_xz.is_some_and(|p| p.length() < CASTLE_AMBIENCE_R);
     let k = (dt * AMBIENCE_FADE).min(1.0);
     for (mut amb, mut sink) in &mut q {
-        let on = match amb.kind {
-            AmbienceKind::Biome(b) => Some(b) == cur,
-            AmbienceKind::Water => water,
-            AmbienceKind::Castle => near_castle && day,
+        // Each bed rides `ambience_vol`, scaled per kind: biome beds louder, water quieter.
+        let (on, mult) = match amb.kind {
+            AmbienceKind::Biome(b) => (Some(b) == cur, BIOME_AMBIENCE_MULT),
+            AmbienceKind::Water => (water, WATER_AMBIENCE_MULT),
+            AmbienceKind::Castle => (near_castle && day, 1.0),
         };
-        let target = if on { cfg.ambience_vol } else { 0.0 };
+        let target = if on { cfg.ambience_vol * mult } else { 0.0 };
         amb.level += (target - amb.level) * k;
         sink.set_volume(Volume::Linear(amb.level));
     }

@@ -456,7 +456,9 @@ fn apple_harvest(
             color: Color::srgb(0.95, 0.45, 0.30),
             scale: 1.2,
         });
-        cues.write(AudioCue::Forage);
+        // The old game's forage (apples/herbs) played `playGold()` — the bright two-blip pickup
+        // jingle for "got something". `AudioCue::Gold` is the faithful synth port of it.
+        cues.write(AudioCue::Gold);
     }
 }
 

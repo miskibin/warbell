@@ -12,14 +12,21 @@ use bevy::prelude::*;
 use crate::player::Hero;
 use crate::villagers::Villager;
 
-use super::{frand, AudioConfig, AudioCue};
+use super::{frand, AudioConfig, AudioCue, HeroSpeaking};
 
 /// A given villager line plays at most once per this window (the user-requested "no line more
 /// than once per 10 minutes" floor).
 const LINE_FLOOR: f32 = 600.0;
 /// Minimum gap between ANY two ambient (proximity) villager lines, so the town isn't a babble.
-/// (Lowered 150 → 80 → 55: a chattier town, but the per-line 10-min floor still prevents repeats.)
-const AMBIENT_GAP: f32 = 55.0;
+/// (Lowered 150 → 80 → 55 → 20: a livelier, chattier town. Still well above a line's length, so
+/// two ambient lines never overlap; the per-line 10-min floor still prevents repeats.)
+const AMBIENT_GAP: f32 = 20.0;
+/// Chance a villager actually speaks once the gap clears and one's in range — high, so the town
+/// feels chatty and alive. A miss burns a full gap; the 10-min per-line floor stops repeats.
+const SPEAK_CHANCE: f32 = 0.9;
+/// Two villagers within this (world units) won't talk at the same time — a new line is held while a
+/// *nearby* one is still mid-sentence, so a crowd doesn't turn into a garbled babble.
+const CLOSE_SPEAKER_DIST: f32 = 14.0;
 /// Hero must be this close (world units) to a villager to trigger a proximity greeting/musing.
 const NEAR_DIST: f32 = 7.0;
 /// For an event line, the nearest villager must be within this of the hero to voice it.
@@ -131,13 +138,23 @@ pub(crate) struct NpcVoiceState {
     last: HashMap<&'static str, f32>,
     /// Earliest time the next ambient line may play (the global throttle).
     next_ambient: f32,
+    /// When the most-recent villager line finishes, and where its speaker stands — shared by both
+    /// voice systems so a new line near that spot is held until it ends (no overlapping crowds).
+    voice_until: f32,
+    voice_pos: Vec2,
     rng: u32,
 }
 
 impl Default for NpcVoiceState {
     fn default() -> Self {
         // Start a touch into the run so nobody greets you over the menu fade.
-        Self { last: HashMap::new(), next_ambient: 25.0, rng: 0x1234_5678 }
+        Self {
+            last: HashMap::new(),
+            next_ambient: 25.0,
+            voice_until: 0.0,
+            voice_pos: Vec2::ZERO,
+            rng: 0x1234_5678,
+        }
     }
 }
 
@@ -172,21 +189,23 @@ fn say_from(commands: &mut Commands, who: Entity, clip: Handle<AudioSource>, vol
     });
 }
 
-/// The villager nearest the hero within `max` (XZ distance), if any.
+/// The villager nearest the hero within `max` (XZ distance), if any — with its world XZ position
+/// (used for the no-overlap-when-close guard).
 fn nearest_villager(
     hero: Vec2,
     villagers: &Query<(Entity, &GlobalTransform), With<Villager>>,
     max: f32,
-) -> Option<Entity> {
-    let mut best: Option<(Entity, f32)> = None;
+) -> Option<(Entity, Vec2)> {
+    let mut best: Option<(Entity, Vec2, f32)> = None;
     for (e, gt) in villagers {
         let t = gt.translation();
-        let d = Vec2::new(t.x, t.z).distance(hero);
-        if d <= max && best.is_none_or(|(_, bd)| d < bd) {
-            best = Some((e, d));
+        let p = Vec2::new(t.x, t.z);
+        let d = p.distance(hero);
+        if d <= max && best.is_none_or(|(_, _, bd)| d < bd) {
+            best = Some((e, p, d));
         }
     }
-    best.map(|(e, _)| e)
+    best.map(|(e, p, _)| (e, p))
 }
 
 /// Occasional proximity chatter: when the hero lingers near a townsperson and the throttle has
@@ -197,6 +216,7 @@ pub(crate) fn npc_ambient(
     mut commands: Commands,
     bank: Res<NpcVoiceBank>,
     mut st: ResMut<NpcVoiceState>,
+    speaking: Res<HeroSpeaking>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     inv: Res<crate::inventory::Inventory>,
     hero: Query<&Hero>,
@@ -206,8 +226,21 @@ pub(crate) fn npc_ambient(
     if now < st.next_ambient {
         return;
     }
+    // Never chatter over the hero's own voice (one-mouth courtesy); retry once he's done.
+    if now < speaking.until {
+        return;
+    }
     let Ok(hero) = hero.single() else { return };
-    let Some(who) = nearest_villager(hero.pos, &villagers, NEAR_DIST) else { return };
+    let Some((who, who_pos)) = nearest_villager(hero.pos, &villagers, NEAR_DIST) else { return };
+    // Don't talk over a nearby villager who's still mid-line — retry next frame once they finish.
+    if now < st.voice_until && who_pos.distance(st.voice_pos) < CLOSE_SPEAKER_DIST {
+        return;
+    }
+    // Mostly stay quiet even when eligible — a miss waits a full gap, not an instant retry.
+    if frand(&mut st.rng) >= SPEAK_CHANCE {
+        st.next_ambient = now + AMBIENT_GAP;
+        return;
+    }
     let armed = inv.0.weapon_bonus() > 0.0;
     // Try a few random picks; play the first line that's off its 10-min floor, else stay quiet.
     for _ in 0..10 {
@@ -218,10 +251,13 @@ pub(crate) fn npc_ambient(
             continue;
         }
         if now - *st.last.get(key).unwrap_or(&-1000.0) >= LINE_FLOOR {
+            let dur = crate::subtitles::read_secs(AMBIENT_TEXT[i]);
             st.last.insert(key, now);
             st.next_ambient = now + AMBIENT_GAP;
+            st.voice_until = now + dur;
+            st.voice_pos = who_pos;
             say_from(&mut commands, who, bank.ambient[i].clone(), NPC_GAIN * cfg.voice_vol);
-            subs.say(now, AMBIENT_TEXT[i], crate::subtitles::read_secs(AMBIENT_TEXT[i]));
+            subs.say(now, AMBIENT_TEXT[i], dur);
             return;
         }
     }
@@ -235,6 +271,7 @@ pub(crate) fn npc_events(
     mut commands: Commands,
     bank: Res<NpcVoiceBank>,
     mut st: ResMut<NpcVoiceState>,
+    speaking: Res<HeroSpeaking>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     hero: Query<&Hero>,
     villagers: Query<(Entity, &GlobalTransform), With<Villager>>,
@@ -270,12 +307,25 @@ pub(crate) fn npc_events(
         }
     }
     let Some((key, text, clip)) = chosen else { return };
+    // One-mouth courtesy: don't speak over the hero. On a rescue he fires his own `FirstRescue`
+    // reaction the same frame (and `npc_events` runs after his voice), so he claims the first
+    // rescue and the freed villager pipes up on later ones — "sometimes me, sometimes them".
+    if now < speaking.until {
+        return;
+    }
     if now - *st.last.get(key).unwrap_or(&-1000.0) < LINE_FLOOR {
         return;
     }
     let Ok(hero) = hero.single() else { return };
-    let Some(who) = nearest_villager(hero.pos, &villagers, EVENT_NEAR) else { return };
+    let Some((who, who_pos)) = nearest_villager(hero.pos, &villagers, EVENT_NEAR) else { return };
+    // Don't overlap a nearby villager who's still mid-line.
+    if now < st.voice_until && who_pos.distance(st.voice_pos) < CLOSE_SPEAKER_DIST {
+        return;
+    }
+    let dur = crate::subtitles::read_secs(text);
     st.last.insert(key, now);
+    st.voice_until = now + dur;
+    st.voice_pos = who_pos;
     say_from(&mut commands, who, clip, NPC_GAIN * cfg.voice_vol);
-    subs.say(now, text, crate::subtitles::read_secs(text));
+    subs.say(now, text, dur);
 }
