@@ -451,7 +451,7 @@ fn pilgrim_brain(
     time: Res<Time>,
     mut q: Query<
         (&mut Pilgrim, &mut Villager, &mut Transform),
-        (Without<Guard>, Without<crate::landmarks::Landmark>),
+        (Without<Guard>, Without<crate::landmarks::Landmark>, Without<crate::town::Worker>),
     >,
     marks: Query<&Transform, With<crate::landmarks::Landmark>>,
 ) {
