@@ -37,6 +37,24 @@ impl Speak {
 #[derive(Component)]
 pub struct VoiceSink(pub Speaker);
 
+/// How long a `manual` chain reply stays on offer after the prompt line ends (seconds).
+pub const REPLY_WINDOW: f32 = 6.0;
+
+/// A `manual` chain whose prompt line just finished: instead of auto-playing, it's offered to the
+/// player as an `E — Talk back` interaction near the speaker (`interaction.rs` shows the prompt
+/// and calls [`VoiceManager::accept_reply`]). Unanswered, it expires silently — same
+/// self-terminating property as a stale chain.
+#[derive(Clone, Copy)]
+pub struct Offer {
+    pub chain: Chain,
+    /// Where the prompting speaker stood — the E-prompt is range-gated on this.
+    pub pos: Option<Vec3>,
+    pub expires_at: f32,
+}
+
+#[derive(Resource, Default)]
+pub struct OfferedReply(pub Option<Offer>);
+
 /// One-line-at-a-time bookkeeping for every speaker, the per-line replay floor, and the rng.
 #[derive(Resource)]
 pub struct VoiceManager {
@@ -79,6 +97,13 @@ impl VoiceManager {
         self.last_played.clear();
         self.played_once.clear();
         self.pending_chains.clear();
+    }
+    /// The player took an offered reply (pressed E): queue its chain for immediate dispatch.
+    /// Re-queued as non-`manual` so `tick_chains` plays it instead of re-offering it.
+    pub fn accept_reply(&mut self, offer: Offer, now: f32) {
+        let mut chain = offer.chain;
+        chain.manual = false;
+        self.pending_chains.push((now, chain, offer.pos));
     }
 }
 
@@ -228,11 +253,16 @@ pub fn tick_chains(
     mut commands: Commands,
     mut mgr: ResMut<VoiceManager>,
     mut cd: ResMut<super::HeroLineCooldown>,
+    mut offered: ResMut<OfferedReply>,
     sinks: Query<(Entity, &VoiceSink)>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     sources: Res<Assets<AudioSource>>,
 ) {
     let now = time.elapsed_secs();
+    // An unanswered offer expires silently.
+    if offered.0.is_some_and(|o| now >= o.expires_at) {
+        offered.0 = None;
+    }
     // Take the chains whose time has come.
     let mut due: Vec<(Chain, Option<Vec3>)> = Vec::new();
     mgr.pending_chains.retain(|(at, chain, pos)| {
@@ -244,6 +274,11 @@ pub fn tick_chains(
         }
     });
     for (chain, pos) in due {
+        // A manual chain isn't played — it's put on offer for the player's E-prompt (latest wins).
+        if chain.manual {
+            offered.0 = Some(Offer { chain, pos, expires_at: now + REPLY_WINDOW });
+            continue;
+        }
         // Pick the highest-priority reply that passes its per-line gates (once + floor).
         let pick = replies_to(chain.concept)
             .filter(|l| l.speaker == chain.target)
@@ -273,8 +308,9 @@ pub fn preload_voice_lines(asset: Res<AssetServer>, mut mgr: ResMut<VoiceManager
 }
 
 /// Fresh run: wipe all voice state (active lines, replay floors, once-per-run set, chains).
-pub fn reset_voices(mut mgr: ResMut<VoiceManager>) {
+pub fn reset_voices(mut mgr: ResMut<VoiceManager>, mut offered: ResMut<OfferedReply>) {
     mgr.reset();
+    offered.0 = None;
 }
 
 /// Reseed the line-pick RNG from wall-clock entropy so catalog line order differs each run

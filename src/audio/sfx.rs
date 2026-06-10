@@ -19,10 +19,16 @@ pub(crate) struct SfxBank {
     flesh: Handle<AudioSource>,
     /// Metallic chips (old `sword-hit-var-{1,3}`) — picked at random for chipping stone (ore).
     chips: Vec<Handle<AudioSource>>,
-    /// A wood-axe chop landing on a tree (one clip, pitch-jittered per swing).
-    chop: Handle<AudioSource>,
+    /// Wood-axe chops landing on a tree (three takes, picked at random + pitch-jittered per
+    /// swing so a long chop session never loops one clip).
+    chops: Vec<Handle<AudioSource>>,
     block: Handle<AudioSource>,
     ui: Handle<AudioSource>,
+    /// Sampled herb-pick rustle (replaces the old `Sting::Forage` synth blip).
+    forage: Handle<AudioSource>,
+    /// Sampled bronze bell toll for summoning the night (replaces the old `Sting::WarBell`
+    /// synth tone) — one hard strike with a long ominous decay.
+    war_bell: Handle<AudioSource>,
     /// Sampled orchestral level-up fanfare (the old game's `playLevelUpFanfare`) — replaces the
     /// synth arpeggio on `AudioCue::LevelUp` (hero level-up + the big landmark/shrine rewards).
     level_up: Handle<AudioSource>,
@@ -46,9 +52,14 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .iter()
             .map(|f| asset.load(*f))
             .collect(),
-        chop: asset.load("audio/chop-wood.ogg"),
+        chops: ["audio/chop-wood-1.ogg", "audio/chop-wood-2.ogg", "audio/chop-wood-3.ogg"]
+            .iter()
+            .map(|f| asset.load(*f))
+            .collect(),
         block: asset.load("audio/block.ogg"),
         ui: asset.load("audio/menu-select.ogg"),
+        forage: asset.load("audio/forage.ogg"),
+        war_bell: asset.load("audio/war-bell.ogg"),
         level_up: asset.load("audio/level-up-orchestra.ogg"),
         foot_dirt: ["audio/footstep-dirt-1.ogg", "audio/footstep-dirt-2.ogg", "audio/footstep-dirt-3.ogg"]
             .iter()
@@ -125,9 +136,10 @@ pub(crate) fn play_cues(
             AudioCue::OreChip => {
                 one_shot(&mut commands, pick(&bank.chips, &mut seed), 0.5 * sfx, jitter(&mut seed, 0.10));
             }
-            // A wood-axe chop per swing that bites a tree — pitch-jittered so a long chop varies.
+            // A wood-axe chop per swing that bites a tree — random take + pitch jitter so a
+            // long chop varies.
             AudioCue::WoodChop => {
-                one_shot(&mut commands, bank.chop.clone(), 0.6 * sfx, jitter(&mut seed, 0.12));
+                one_shot(&mut commands, pick(&bank.chops, &mut seed), 0.6 * sfx, jitter(&mut seed, 0.12));
             }
             AudioCue::Block => one_shot(&mut commands, bank.block.clone(), 0.45 * sfx, jitter(&mut seed, 0.1)),
             AudioCue::Footstep { surface, landing } => {
@@ -169,22 +181,27 @@ pub(crate) fn play_cues(
                 spatial_shot(&mut commands, bank.swing.clone(), 0.16 * sfx, jitter(&mut seed, 0.14), at);
                 spatial_shot(&mut commands, bank.flesh.clone(), 0.26 * sfx, jitter(&mut seed, 0.10), at);
             }
+            // Sampled herb-pick rustle — same 0.35 gain the synth blip used.
+            AudioCue::Forage => {
+                one_shot(&mut commands, bank.forage.clone(), 0.35 * sfx, jitter(&mut seed, 0.08));
+            }
+            // The war bell's single hard toll — pitch jitter kept tiny: a bell is one fixed
+            // pitch, the jitter only keeps back-to-back rings from sounding stamped.
+            AudioCue::WarBell => {
+                one_shot(&mut commands, bank.war_bell.clone(), 0.55 * sfx, jitter(&mut seed, 0.02));
+            }
             // Procedural synth stings (no clip on disk — baked by `synth.rs`).
             AudioCue::OreShatter
             | AudioCue::ChestOpen
-            | AudioCue::Forage
             | AudioCue::Gold
             | AudioCue::ShopBuy
-            | AudioCue::WarBell
             | AudioCue::CampRescue
             | AudioCue::LowHp => {
                 let sting = match *cue {
                     AudioCue::OreShatter => Sting::OreShatter,
                     AudioCue::ChestOpen => Sting::ChestOpen,
-                    AudioCue::Forage => Sting::Forage,
                     AudioCue::Gold => Sting::Gold,
                     AudioCue::ShopBuy => Sting::ShopBuy,
-                    AudioCue::WarBell => Sting::WarBell,
                     AudioCue::CampRescue => Sting::CampRescue,
                     _ => Sting::LowHp,
                 };

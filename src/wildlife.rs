@@ -85,20 +85,27 @@ pub struct Animal {
     /// Timestamp of the last blow the animal TOOK; drives a springy recoil-wobble (reuses
     /// `orks::recoil_tilt`). Stamped by `player::combat`. `0` = none.
     pub(crate) hit_recoil: f32,
-    /// When hunting, the prey entity being chased (None = hunting the hero / not hunting).
+    /// When hunting, the prey entity being chased (caught on contact — eaten).
     hunt_prey: Option<Entity>,
-    /// Elapsed-seconds until which a struck predator stays latched onto the hero (0 = calm).
+    /// When hunting, the townsperson being charged (bitten on contact, like the hero).
+    hunt_npc: Option<Entity>,
+    /// Elapsed-seconds until which a struck predator stays latched onto its attacker (0 = calm).
     aggro_until: f32,
+    /// Who the latch is aimed at: `None` = the hero, `Some` = the townsperson that struck it.
+    aggro_target: Option<Entity>,
     /// Decaying knockback shove (world XZ, units/s) from a recent hero blow — applied + slid
     /// against terrain each frame, the same stagger orks get (`orks::apply_knockback`).
     pub(crate) kb: Vec2,
     pub(crate) rng: u32,
 }
 
-/// Inserted by combat on a surviving animal it struck — a predator latches onto the hero
+/// Inserted by combat on a surviving animal it struck — a predator latches onto its attacker
 /// (struck-enrage). `animal_brain` reads it once, then removes it.
 #[derive(Component)]
-pub struct Struck;
+pub struct Struck {
+    /// Who landed the blow: `None` = the hero; `Some` = a townsperson (guard or defending worker).
+    pub by: Option<Entity>,
+}
 
 /// Seconds a struck predator stays enraged + locked onto the hero.
 const STRUCK_LATCH: f32 = 6.0;
@@ -114,13 +121,19 @@ struct AnimPart {
 
 // ── Systems ──────────────────────────────────────────────────────────────────────
 
+#[allow(clippy::type_complexity)]
 fn animal_brain(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     hero: Res<crate::player::HeroState>,
     mut pending: ResMut<crate::player::PendingHeroDamage>,
+    mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut commands: Commands,
+    townsfolk: Query<
+        (Entity, &crate::villagers::Villager, &Visibility),
+        (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>),
+    >,
     mut q: Query<(Entity, &mut Animal, &mut Transform, Option<&Struck>), Without<crate::dying::Dying>>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -130,6 +143,12 @@ fn animal_brain(
         let t = g.translation();
         Vec2::new(t.x, t.z)
     });
+    // The town pool is fair game for predators, exactly like the hero (hidden bodies excluded).
+    let npcs: Vec<(Entity, Vec2)> = townsfolk
+        .iter()
+        .filter(|(_, _, vis)| **vis != Visibility::Hidden)
+        .map(|(e, v, _)| (e, v.pos))
+        .collect();
 
     // Snapshot every animal's (entity, position, predator?, prey?) so the food-chain can target:
     // predators hunt the nearest prey, prey flee the nearest predator. Read-only pre-pass.
@@ -145,23 +164,35 @@ fn animal_brain(
         a.atk_cd -= dt;
 
         let pred = predator_stats(a.species);
-        // Struck-enrage: a wounded predator (incl. the boar) latches onto the hero for a beat.
-        if struck.is_some() {
+        // Struck-enrage: a wounded predator (incl. the boar) latches onto its attacker — the
+        // hero, or the townsperson whose blade/axe just landed — for a beat.
+        if let Some(s) = struck {
             commands.entity(self_e).remove::<Struck>();
             if pred.is_some() {
                 a.aggro_until = now + STRUCK_LATCH;
+                a.aggro_target = s.by;
             }
         }
         if let Some((aggro_r, _)) = pred {
-            // ── Predator: hunt the nearest prey in range; failing that, the hero — but only
-            // while near home (~26u) so a pack doesn't trail a target across the whole island.
-            // A recently-struck predator stays locked on the hero (ignores leash). ──
+            // ── Predator: hunt the nearest prey in range; failing that, the hero or a
+            // townsperson (the town pool is treated exactly like the hero) — but only while
+            // near home (~26u) so a pack doesn't trail a target across the whole island.
+            // A recently-struck predator stays locked on its attacker (ignores leash). ──
             let near_home = a.pos.distance(a.home) < 26.0;
-            let mut tgt: Option<(Vec2, Option<Entity>)> = None;
-            let mut best = aggro_r;
-            if hero.alive && now < a.aggro_until {
-                tgt = Some((hero.pos, None));
-            } else if near_home {
+            // (position, prey-to-eat, townsperson-to-bite); both None = the hero.
+            let mut tgt: Option<(Vec2, Option<Entity>, Option<Entity>)> = None;
+            if now < a.aggro_until {
+                match a.aggro_target {
+                    None if hero.alive => tgt = Some((hero.pos, None, None)),
+                    Some(ne) => match npcs.iter().find(|(e, _)| *e == ne) {
+                        Some((_, np)) => tgt = Some((*np, None, Some(ne))),
+                        None => a.aggro_until = 0.0, // attacker died/left — shake it off
+                    },
+                    _ => {}
+                }
+            }
+            if tgt.is_none() && near_home {
+                let mut best = aggro_r;
                 for (pe, pp, _ispred, isprey) in &snap {
                     if !*isprey || *pe == self_e {
                         continue;
@@ -169,21 +200,39 @@ fn animal_brain(
                     let d = a.pos.distance(*pp);
                     if d < best {
                         best = d;
-                        tgt = Some((*pp, Some(*pe)));
+                        tgt = Some((*pp, Some(*pe), None));
                     }
                 }
-                if tgt.is_none() && hero.alive && a.pos.distance(hero.pos) < aggro_r {
-                    tgt = Some((hero.pos, None));
+                if tgt.is_none() {
+                    // No prey about: the hero and the townsfolk are fair game alike — charge
+                    // whichever is nearest in aggro range.
+                    let mut best = aggro_r;
+                    if hero.alive {
+                        let d = a.pos.distance(hero.pos);
+                        if d < best {
+                            best = d;
+                            tgt = Some((hero.pos, None, None));
+                        }
+                    }
+                    for (ne, np) in &npcs {
+                        let d = a.pos.distance(*np);
+                        if d < best {
+                            best = d;
+                            tgt = Some((*np, None, Some(*ne)));
+                        }
+                    }
                 }
             }
-            if let Some((tp, prey)) = tgt {
+            if let Some((tp, prey, npc)) = tgt {
                 a.mode = Mode::Hunt;
                 a.target = tp;
                 a.hunt_prey = prey;
+                a.hunt_npc = npc;
             } else if a.mode == Mode::Hunt {
                 a.mode = Mode::Graze;
                 a.timer = rng_range(&mut a.rng, 1.0, 2.5);
                 a.hunt_prey = None;
+                a.hunt_npc = None;
             }
         } else if a.flee_r > 0.0 {
             // ── Prey: bolt from the nearest predator, else the hero, else the camera. ──
@@ -269,11 +318,22 @@ fn animal_brain(
                         a.mode = Mode::Graze;
                         a.timer = rng_range(&mut a.rng, 2.0, 4.0);
                         a.hunt_prey = None;
+                        a.hunt_npc = None;
                     } else if a.atk_cd <= 0.0 {
                         a.atk_cd = 1.0;
                         a.atk_anim = now; // play the lunge-bite / tail-sting / arm-slam
                         if let Some((_, bite)) = pred {
-                            pending.0 += bite;
+                            // The bite lands on whoever is being charged: a townsperson takes it
+                            // through the NPC damage channel, the hero through his own.
+                            if let Some(ne) = a.hunt_npc {
+                                npc_dmg.0.push(crate::villagers::NpcHit {
+                                    victim: ne,
+                                    amount: bite,
+                                    attacker: Some(self_e),
+                                });
+                            } else {
+                                pending.0 += bite;
+                            }
                             // Snarl as it bites — the creature-side SFX so an attack isn't silent.
                             let big = matches!(
                                 a.species,
@@ -553,6 +613,12 @@ fn predator_stats(s: Species) -> Option<(f32, f32)> {
     }
 }
 
+/// The species the town militia treats as hostile (read by `villagers::guard_combat` and the
+/// woodcutter's threat sense in `lumberjack.rs`) — exactly the set that hunts people.
+pub(crate) fn is_hostile_species(s: Species) -> bool {
+    predator_stats(s).is_some()
+}
+
 /// Grazers the predators hunt (the food-chain prey set). Dog/Cat are neutral critters — neither
 /// predator nor prey — so they only startle from the camera.
 fn is_prey(s: Species) -> bool {
@@ -802,7 +868,9 @@ fn spawn_one(
         atk_anim: 0.0,
         hit_recoil: 0.0,
         hunt_prey: None,
+        hunt_npc: None,
         aggro_until: 0.0,
+        aggro_target: None,
         kb: Vec2::ZERO,
         rng,
     };

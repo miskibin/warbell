@@ -80,6 +80,8 @@ pub enum Concept {
     SiegeFalls,
     Dawn,
     Rescued,
+    /// The hero swung at (and harmlessly bonked) a townsperson — they answer with a barbed remark.
+    HitByHero,
     // ── Ork ──
     OrkSpot,
     OrkDeath,
@@ -96,15 +98,22 @@ pub enum Concept {
 pub struct Chain {
     pub concept: Concept,
     pub target: Speaker,
+    /// `true` = don't auto-play: offer the reply to the PLAYER as an `E — Talk back` prompt near
+    /// the speaker for a few seconds (see `interaction.rs`); unanswered, it expires silently.
+    pub manual: bool,
 }
 
-/// A villager's at-the-hero jab → the hero fires back. Used as the `then` on the `pa_*` jab
-/// lines; resolved against the hero's `ReplyToVillagerJab` reply pool.
-const REPLY_TO_JAB: Chain = Chain { concept: Concept::ReplyToVillagerJab, target: Speaker::Hero };
+/// A villager's at-the-hero jab → the hero MAY fire back: offered to the player (`manual`), not
+/// auto-played. Used as the `then` on the `pa_*` jab lines; resolved against the hero's
+/// `ReplyToVillagerJab` reply pool when the player takes it.
+const REPLY_TO_JAB: Chain =
+    Chain { concept: Concept::ReplyToVillagerJab, target: Speaker::Hero, manual: true };
 
 /// Second link: some hero comebacks hand the exchange BACK to the villager for a parting shot
-/// (jab → comeback → last word, then the chain ends — no `then` on the last-word pool).
-const LAST_WORD: Chain = Chain { concept: Concept::VillagerLastWord, target: Speaker::Villager };
+/// (jab → comeback → last word, then the chain ends — no `then` on the last-word pool). The NPC
+/// answers on his own, so this one stays automatic.
+const LAST_WORD: Chain =
+    Chain { concept: Concept::VillagerLastWord, target: Speaker::Villager, manual: false };
 
 /// One voice line — the whole record.
 #[derive(Clone, Copy)]
@@ -255,6 +264,16 @@ pub const LINES: &[Line] = &[
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("siege_dry",   Speaker::Villager, Concept::SiegeFalls, "Orks again. Right on schedule. Everyone act surprised.") },
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("dawn_dry",    Speaker::Villager, Concept::Dawn,       "Still alive, then. The betting pool will be devastated.") },
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("rescued_dry", Speaker::Villager, Concept::Rescued,    "My hero. Only took you, what, a fortnight? Bless.") },
+    // ── "You just HIT me?!" — harmless bonk reactions (the hero can clip a townsperson with a
+    // swing; it does no damage but earns a sarcastic earful). These REUSE existing villager clips
+    // whose lines best fit getting smacked by your own knight — no new audio, same affronted tone.
+    // priority 13 so a bonk barges over idle chatter (prio 10) but yields to event lines (15);
+    // floor 5 throttles machine-gun swinging without making a clip feel unresponsive.
+    Line { priority: 13, floor: 5.0, ..line("last_word_c", Speaker::Villager, Concept::HitByHero, "Touchy, touchy. And after everything we do for you.") },
+    Line { priority: 13, floor: 5.0, ..line("last_word_a", Speaker::Villager, Concept::HitByHero, "Ooh, sharp. Practice that one on the cows, did we?") },
+    Line { priority: 13, floor: 5.0, ..line("last_word_b", Speaker::Villager, Concept::HitByHero, "Noted, m'lord. I'll scream quieter tonight, just for you.") },
+    Line { priority: 13, floor: 5.0, ..line("grateful",    Speaker::Villager, Concept::HitByHero, "We're ever so grateful. Truly. Now could you grateful your boots off my step.") },
+    Line { priority: 13, floor: 5.0, ..line("screaming",   Speaker::Villager, Concept::HitByHero, "Bless you for the protection. The screaming at night is a lovely touch.") },
     // ── Ork battle barks (nearest ork in earshot; pitch-shifted per utterance) ──
     Line { ..line("spot",   Speaker::Ork, Concept::OrkSpot,  "Little knight. Little bones.") },
     Line { ..line("charge", Speaker::Ork, Concept::OrkSpot,  "Smash the stone. Burn the nest.") },
@@ -476,6 +495,7 @@ mod tests {
             let chain = l.then.unwrap_or_else(|| panic!("{id} should chain a reply"));
             assert_eq!(chain.concept, Concept::ReplyToVillagerJab);
             assert_eq!(chain.target, Speaker::Hero);
+            assert!(chain.manual, "the comeback is offered to the player, not auto-played");
         }
     }
 
@@ -517,6 +537,7 @@ mod tests {
             let chain = l.then.unwrap();
             assert_eq!(chain.concept, Concept::VillagerLastWord);
             assert_eq!(chain.target, Speaker::Villager);
+            assert!(!chain.manual, "the NPC's parting shot plays on its own");
         }
         // ...but not ALL of them — sometimes the hero ends the exchange.
         assert!(
