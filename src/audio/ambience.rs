@@ -91,17 +91,23 @@ pub(crate) fn attach_campfire_audio(
     flames: Query<Entity, (With<crate::camps::Flicker>, Without<CampfireAudio>)>,
 ) {
     for e in &flames {
-        commands.entity(e).insert(CampfireAudio).with_children(|p| {
-            p.spawn((
-                AudioPlayer(asset.load::<AudioSource>("audio/campfire-loop.ogg")),
-                PlaybackSettings {
-                    mode: PlaybackMode::Loop,
-                    volume: Volume::Linear(CAMPFIRE_VOL),
-                    spatial: true,
-                    ..default()
-                },
-                Transform::default(),
-            ));
+        // queue_silenced: a biome swap can despawn the flame between this query and command
+        // application — a bare insert would panic, and even a `try_insert` + `with_children`
+        // would orphan a forever-looping sink. The closure runs only if the flame still exists.
+        let clip = asset.load::<AudioSource>("audio/campfire-loop.ogg");
+        commands.entity(e).queue_silenced(move |mut flame: EntityWorldMut| {
+            flame.insert(CampfireAudio).with_children(|p| {
+                p.spawn((
+                    AudioPlayer(clip),
+                    PlaybackSettings {
+                        mode: PlaybackMode::Loop,
+                        volume: Volume::Linear(CAMPFIRE_VOL),
+                        spatial: true,
+                        ..default()
+                    },
+                    Transform::default(),
+                ));
+            });
         });
     }
 }
