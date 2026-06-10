@@ -93,6 +93,13 @@ impl Plugin for TownPlugin {
                 OnExit(AppState::GameOver),
                 reset_town.after(crate::economy::reset_economy),
             )
+            // Pause-menu Restart / Load also begins a fresh run (gated; see game_state).
+            .add_systems(
+                OnExit(AppState::Paused),
+                reset_town
+                    .after(crate::economy::reset_economy)
+                    .run_if(crate::game_state::restart_requested),
+            )
             .add_systems(OnEnter(Modal::Build), spawn_build)
             .add_systems(OnExit(Modal::Build), despawn_build)
             .add_systems(Update, build_interact.run_if(in_state(Modal::Build)))

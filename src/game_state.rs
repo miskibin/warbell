@@ -14,10 +14,15 @@
 //! Panels are a sub-state **of** `Playing` (not sibling `AppState` variants) on purpose:
 //! opening one does NOT fire `OnExit(Playing)`/`OnEnter(Playing)`, so it never wipes the run.
 
+use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::prelude::*;
+use bevy::window::{PrimaryWindow, WindowMode};
 
+use crate::quality::GraphicsQuality;
 use crate::ui::anim::{anim, anim_btn, AnimKind};
 use crate::ui::fonts::{label, UiFonts};
+use crate::ui::notice::Notice;
+use crate::ui::settings::AudioSettings;
 use crate::ui::theme::*;
 use crate::ui::widgets;
 
@@ -46,6 +51,18 @@ pub enum Modal {
     Build,
 }
 
+/// Set true by the pause menu's **Restart** / **Load last save** before it hands back to
+/// `Playing`, so the per-plugin "fresh run" resets (normally keyed to leaving the start /
+/// game-over screens) also fire on the `Paused → Playing` edge. A plain resume leaves it `false`,
+/// so the world is untouched. Cleared again on `OnEnter(Playing)`.
+#[derive(Resource, Default)]
+pub struct RestartRequested(pub bool);
+
+/// Run condition for the gated `OnExit(AppState::Paused)` reset systems (see [`RestartRequested`]).
+pub fn restart_requested(flag: Res<RestartRequested>) -> bool {
+    flag.0
+}
+
 pub struct GameStatePlugin;
 
 impl Plugin for GameStatePlugin {
@@ -54,7 +71,16 @@ impl Plugin for GameStatePlugin {
         let boot = if skip_menu() { AppState::Playing } else { AppState::StartScreen };
         app.insert_state(boot)
             .add_sub_state::<Modal>()
+            .init_resource::<RestartRequested>()
             .add_systems(Update, (pause_toggle, watch_end))
+            // Clear the restart flag once we're back in Playing (after the gated OnExit(Paused)
+            // resets have run during the same transition).
+            .add_systems(OnEnter(AppState::Playing), clear_restart_flag)
+            // Pause-menu buttons + live settings labels (only while the pause screen is up).
+            .add_systems(
+                Update,
+                (pause_click, pause_settings_sync).run_if(in_state(AppState::Paused)),
+            )
             // Minimal overlays (fleshed out + difficulty chooser in P0.6).
             .add_systems(OnEnter(AppState::StartScreen), spawn_start_screen)
             .add_systems(OnExit(AppState::StartScreen), despawn_screen::<StartScreenUi>)
@@ -212,6 +238,25 @@ struct StartContinueButton;
 /// A difficulty segment (click to select).
 #[derive(Component)]
 struct SegButton(crate::siege::Difficulty);
+// ── Pause-menu buttons ──
+#[derive(Component)]
+struct PauseResumeBtn;
+#[derive(Component)]
+struct PauseLoadBtn;
+#[derive(Component)]
+struct PauseRestartBtn;
+#[derive(Component)]
+struct PauseAudioBtn;
+#[derive(Component)]
+struct PauseGfxBtn;
+#[derive(Component)]
+struct PauseFsBtn;
+#[derive(Component)]
+struct PauseAudioLabel;
+#[derive(Component)]
+struct PauseGfxLabel;
+#[derive(Component)]
+struct PauseFsLabel;
 /// The "Play again" / "New Game" button on the game-over screen (a fresh run).
 #[derive(Component)]
 struct AgainButton;
@@ -437,13 +482,62 @@ fn spawn_start_screen(
         });
 }
 
-fn spawn_pause_screen(mut commands: Commands, fonts: Res<UiFonts>) {
+fn audio_label(muted: bool) -> String {
+    format!("Audio: {}", if muted { "Off" } else { "On" })
+}
+fn fs_label(fullscreen: bool) -> String {
+    format!("Fullscreen: {}", if fullscreen { "On" } else { "Off" })
+}
+
+/// A full-width pause-menu button (primary-blue paint), with `text` and an optional extra bundle
+/// on its label (a `PauseXLabel` marker for the live-syncing settings rows; `()` otherwise).
+fn pause_btn<M: Component, L: Bundle>(
+    p: &mut RelatedSpawnerCommands<ChildOf>,
+    font: &Handle<Font>,
+    text: &str,
+    marker: M,
+    label_extra: L,
+    delay: f32,
+) {
+    p.spawn((
+        Node {
+            width: Val::Px(264.0),
+            padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            border: widgets::border(1.0),
+            border_radius: radius(R_BTN),
+            ..default()
+        },
+        widgets::btn_primary_paint(),
+        marker,
+        anim_btn(AnimKind::PopIn, delay, 0.28),
+    ))
+    .with_children(|b| {
+        b.spawn((label(font, text, 16.0, Color::WHITE), label_extra));
+    });
+}
+
+fn spawn_pause_screen(
+    mut commands: Commands,
+    fonts: Res<UiFonts>,
+    save: Res<crate::savegame::SaveExists>,
+    audio: Res<AudioSettings>,
+    quality: Res<GraphicsQuality>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+) {
+    let has_save = save.0;
+    let audio_txt = audio_label(audio.muted);
+    let gfx_txt = format!("Graphics: {}", quality.label());
+    let fs_on = windows.single().map(|w| !matches!(w.mode, WindowMode::Windowed)).unwrap_or(false);
+    let fs_txt = fs_label(fs_on);
+
     commands.spawn((modal_root(50), PausedUi)).with_children(|root| {
         root.spawn((
             Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(10.0),
+                row_gap: Val::Px(9.0),
                 padding: UiRect::axes(Val::Px(40.0), Val::Px(28.0)),
                 border: widgets::border(1.0),
                 border_radius: radius(R_PANEL),
@@ -453,10 +547,128 @@ fn spawn_pause_screen(mut commands: Commands, fonts: Res<UiFonts>) {
             anim(AnimKind::PopIn, 0.0, 0.26),
         ))
         .with_children(|c| {
-            c.spawn(label(&fonts.extrabold, "PAUSED", 40.0, TEXT));
-            c.spawn(label(&fonts.regular, "Esc to resume", 16.0, GREY));
+            c.spawn((
+                label(&fonts.extrabold, "PAUSED", 38.0, TEXT),
+                Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+            ));
+
+            pause_btn(c, &fonts.extrabold, "RESUME", PauseResumeBtn, (), 0.04);
+
+            // ── Settings (toggle in place; labels live-sync via pause_settings_sync) ──
+            c.spawn((
+                label(&fonts.semibold, "SETTINGS", 11.0, KICKER),
+                Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
+            ));
+            pause_btn(c, &fonts.bold, &audio_txt, PauseAudioBtn, PauseAudioLabel, 0.06);
+            pause_btn(c, &fonts.bold, &gfx_txt, PauseGfxBtn, PauseGfxLabel, 0.08);
+            pause_btn(c, &fonts.bold, &fs_txt, PauseFsBtn, PauseFsLabel, 0.10);
+
+            // ── Run controls ──
+            c.spawn((
+                Node {
+                    width: Val::Px(220.0),
+                    height: Val::Px(1.0),
+                    margin: UiRect::vertical(Val::Px(8.0)),
+                    ..default()
+                },
+                BackgroundColor(BORDER_SOFT),
+            ));
+            if has_save {
+                pause_btn(c, &fonts.extrabold, "LOAD LAST SAVE", PauseLoadBtn, (), 0.12);
+            }
+            pause_btn(c, &fonts.extrabold, "RESTART", PauseRestartBtn, (), 0.14);
+
+            c.spawn((
+                label(&fonts.regular, "Esc to resume", 13.0, GREY),
+                Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
+            ));
         });
     });
+}
+
+/// Handle the pause-menu buttons: resume, the three in-place settings toggles, and the two
+/// run actions (Load last save / Restart) that both re-run the fresh-start resets via
+/// [`RestartRequested`] before handing control back to `Playing`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn pause_click(
+    q: Query<
+        (
+            &Interaction,
+            Option<&PauseResumeBtn>,
+            Option<&PauseLoadBtn>,
+            Option<&PauseRestartBtn>,
+            Option<&PauseAudioBtn>,
+            Option<&PauseGfxBtn>,
+            Option<&PauseFsBtn>,
+        ),
+        Changed<Interaction>,
+    >,
+    mut next_app: ResMut<NextState<AppState>>,
+    mut pending: ResMut<crate::savegame::PendingLoad>,
+    mut restart: ResMut<RestartRequested>,
+    mut audio: ResMut<AudioSettings>,
+    mut quality: ResMut<GraphicsQuality>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut notice: ResMut<Notice>,
+    time: Res<Time>,
+) {
+    let now = time.elapsed_secs_f64();
+    for (interaction, resume, load, restart_b, audio_b, gfx_b, fs_b) in &q {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if resume.is_some() {
+            next_app.set(AppState::Playing);
+        }
+        if load.is_some() {
+            // Clear the in-progress field/entities (restart resets), then the loaded snapshot
+            // overwrites the resources on the next Playing frame — identical to Continue.
+            pending.0 = crate::savegame::load_save();
+            restart.0 = true;
+            next_app.set(AppState::Playing);
+        }
+        if restart_b.is_some() {
+            pending.0 = None; // fresh run (keeps the chosen difficulty)
+            restart.0 = true;
+            next_app.set(AppState::Playing);
+        }
+        if audio_b.is_some() {
+            crate::ui::settings::toggle_mute(&mut audio, &mut notice, now);
+        }
+        if gfx_b.is_some() {
+            crate::ui::settings::toggle_quality(&mut quality, &mut notice, now);
+        }
+        if fs_b.is_some() {
+            crate::ui::settings::toggle_fullscreen(&mut windows, &mut notice, now);
+        }
+    }
+}
+
+/// Keep the three pause settings buttons' labels matching live state (they can also be flipped by
+/// the M / F10 / F11 keys while paused).
+#[allow(clippy::type_complexity)]
+fn pause_settings_sync(
+    audio: Res<AudioSettings>,
+    quality: Res<GraphicsQuality>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut audio_l: Query<&mut Text, (With<PauseAudioLabel>, Without<PauseGfxLabel>, Without<PauseFsLabel>)>,
+    mut gfx_l: Query<&mut Text, (With<PauseGfxLabel>, Without<PauseAudioLabel>, Without<PauseFsLabel>)>,
+    mut fs_l: Query<&mut Text, (With<PauseFsLabel>, Without<PauseAudioLabel>, Without<PauseGfxLabel>)>,
+) {
+    if let Ok(mut t) = audio_l.single_mut() {
+        **t = audio_label(audio.muted);
+    }
+    if let Ok(mut t) = gfx_l.single_mut() {
+        **t = format!("Graphics: {}", quality.label());
+    }
+    if let Ok(mut t) = fs_l.single_mut() {
+        let on = windows.single().map(|w| !matches!(w.mode, WindowMode::Windowed)).unwrap_or(false);
+        **t = fs_label(on);
+    }
+}
+
+fn clear_restart_flag(mut restart: ResMut<RestartRequested>) {
+    restart.0 = false;
 }
 
 fn spawn_gameover_screen(

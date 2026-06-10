@@ -77,6 +77,11 @@ impl Plugin for EconomyPlugin {
             // Fresh run wipes the economy (gold resets with PlayerRes).
             .add_systems(OnExit(AppState::StartScreen), reset_economy)
             .add_systems(OnExit(AppState::GameOver), reset_economy)
+            // Pause-menu Restart / Load also begins a fresh run (gated; see game_state).
+            .add_systems(
+                OnExit(AppState::Paused),
+                reset_economy.run_if(crate::game_state::restart_requested),
+            )
             // Open the tree with U (only while actually playing, no other panel open).
             .add_systems(Update, open_tree.run_if(in_state(Modal::None)))
             .add_systems(OnEnter(Modal::UpgradeTree), spawn_tree)
