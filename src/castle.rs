@@ -1263,9 +1263,12 @@ struct CastlePart {
 }
 
 /// Which gated groups have had their (append-only) collision blockers registered, so each is
-/// added exactly once the first time it's revealed.
+/// added exactly once the first time it's revealed. **Must be reset whenever `blockers::reset()`
+/// wipes the obstacle set** (e.g. a world rebuild / biome swap), or the lazily-registered
+/// wall/tower/house boxes never come back — they read as "already built" while their collision is
+/// gone. `biome::apply_build` does this reset right after it calls `blockers::reset()`.
 #[derive(Resource, Default)]
-struct CastleBuilt {
+pub(crate) struct CastleBuilt {
     walls: bool,
     towers: bool,
     houses: [bool; 12],
