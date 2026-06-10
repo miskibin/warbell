@@ -1,6 +1,7 @@
 //! **Contextual interaction** — ports the 3js game's single-key `E` interact. Instead of global
 //! hotkeys, the player walks up to a thing and presses **E**: near the **keep** → upgrades, near the
-//! **merchant stall** → shop, near the **war bell** (prep only) → ring in the night. The nearest
+//! **merchant stall** → shop, near the **war bell** (prep only) → ring in the night, right after a
+//! villager's jab → **talk back** (fires the offered comeback chain). The nearest
 //! in-range interactable wins (the keep and bell zones overlap), and a screen-space "E" prompt names
 //! it. Proximity only — no facing check, matching the original.
 //!
@@ -23,6 +24,9 @@ const KEEP_DIST: f32 = 4.2;
 const BELL_DIST: f32 = 4.2;
 const SHOP_DIST: f32 = 3.5;
 const BUILD_DIST: f32 = 3.0;
+/// Talk-back range: a bit over the villager-chatter trigger (`npc::NEAR_DIST` 7.0) so stepping
+/// back half a pace during the jab doesn't lose the prompt.
+const TALK_DIST: f32 = 8.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InteractKind {
@@ -30,6 +34,8 @@ enum InteractKind {
     Shop,
     WarBell,
     Build,
+    /// A villager jabbed at the hero and a comeback is on offer (`director::OfferedReply`).
+    TalkBack,
 }
 impl InteractKind {
     fn prompt(self) -> &'static str {
@@ -38,6 +44,7 @@ impl InteractKind {
             InteractKind::Shop => "Shop",
             InteractKind::WarBell => "Ring the bell",
             InteractKind::Build => "Build",
+            InteractKind::TalkBack => "Talk back",
         }
     }
 }
@@ -80,6 +87,9 @@ fn drive_interaction(
     plot_spots: Res<crate::town::PlotSpots>,
     town: Res<crate::town::TownRes>,
     mut build_target: ResMut<crate::town::BuildTarget>,
+    time: Res<Time>,
+    mut offered: ResMut<crate::audio::director::OfferedReply>,
+    mut voices: ResMut<crate::audio::director::VoiceManager>,
 ) {
     let p = hero.pos;
 
@@ -103,6 +113,12 @@ fn drive_interaction(
     ];
     if let Some((idx, _)) = nearest_plot {
         candidates.push((InteractKind::Build, plot_spots.0[idx], BUILD_DIST, true));
+    }
+    // A villager jab on offer: the prompt anchors where the speaker stood (expiry is handled by
+    // `tick_chains`; here we only range-gate it).
+    if let Some(offer) = offered.0 {
+        let at = offer.pos.map_or(p, |v| Vec2::new(v.x, v.z));
+        candidates.push((InteractKind::TalkBack, at, TALK_DIST, true));
     }
 
     // Pick the nearest in-range, available interactable.
@@ -128,6 +144,11 @@ fn drive_interaction(
                 feedback.trauma = (feedback.trauma + 0.3).min(1.0);
             }
             InteractKind::Build => next_modal.set(Modal::Build),
+            InteractKind::TalkBack => {
+                if let Some(offer) = offered.0.take() {
+                    voices.accept_reply(offer, time.elapsed_secs());
+                }
+            }
         }
     }
 }

@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use crate::audio::AudioCue;
 use crate::biome::Biome;
 use crate::orks::Ork;
+use crate::villagers::Villager;
 use crate::wildlife::Animal;
 use crate::{blockers, steer, worldmap};
 
@@ -111,6 +112,7 @@ pub fn player_move(
     cam_q: Query<&Transform, (With<Camera3d>, Without<Hero>)>,
     orks: Query<&Ork>,
     animals: Query<&Animal>,
+    villagers: Query<&Villager>,
     mut state: ResMut<HeroState>,
     mut pending: ResMut<PendingHeroDamage>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
@@ -208,6 +210,11 @@ pub fn player_move(
     }
     for a in &animals {
         shove_out_of(&mut hero, a.pos, a.body_r, cur_y);
+    }
+    // Townsfolk are solid too — you bump them, you don't walk through them.
+    for v in &villagers {
+        let (p, r) = v.body();
+        shove_out_of(&mut hero, p, r, cur_y);
     }
 
     // ── Vertical: jump + gravity + ground snap ──

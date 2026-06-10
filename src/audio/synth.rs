@@ -1,7 +1,9 @@
-//! **Procedural SFX synth** — bakes the gameplay stings forest had no clip for (ore shatter,
-//! chest, forage, shop-buy, war-bell, rescue, level-up, gold, low-HP) into in-memory WAV
-//! `AudioSource`s at startup. Pure Rust, no asset files, deterministic (xorshift noise). Lifted
-//! from the old game's `sfx.ts` recipes via the bevy port's `audio.rs` synth.
+//! **Procedural SFX synth** — bakes the gameplay stings forest has no clip for (ore shatter,
+//! chest, shop-buy, rescue, level-up, gold, low-HP) into in-memory WAV `AudioSource`s at
+//! startup. Pure Rust, no asset files, deterministic (xorshift noise). Lifted from the old
+//! game's `sfx.ts` recipes via the bevy port's `audio.rs` synth. (Forage and the war bell
+//! started here too but have since been replaced by recorded clips — see `sfx.rs`; a sting
+//! graduates OUT of this file the moment a real recording lands in `assets/audio/`.)
 
 use bevy::audio::AudioSource;
 use bevy::prelude::*;
@@ -13,24 +15,20 @@ const SAMPLE_RATE: u32 = 44_100;
 pub enum Sting {
     OreShatter,
     ChestOpen,
-    Forage,
     LevelUp,
     Gold,
     ShopBuy,
-    WarBell,
     CampRescue,
     LowHp,
 }
 
 impl Sting {
-    pub const ALL: [Sting; 9] = [
+    pub const ALL: [Sting; 7] = [
         Sting::OreShatter,
         Sting::ChestOpen,
-        Sting::Forage,
         Sting::LevelUp,
         Sting::Gold,
         Sting::ShopBuy,
-        Sting::WarBell,
         Sting::CampRescue,
         Sting::LowHp,
     ];
@@ -39,11 +37,9 @@ impl Sting {
         match self {
             Sting::OreShatter => 0.45,
             Sting::ChestOpen => 0.45,
-            Sting::Forage => 0.35,
             Sting::LevelUp => 0.50,
             Sting::Gold => 0.40,
             Sting::ShopBuy => 0.40,
-            Sting::WarBell => 0.55,
             Sting::CampRescue => 0.50,
             Sting::LowHp => 0.45,
         }
@@ -96,7 +92,7 @@ enum Wave {
     Sine,
 }
 #[derive(Clone, Copy)]
-#[allow(dead_code)] // full synth filter set; not every primitive is used by the 9 stings
+#[allow(dead_code)] // full synth filter set; not every primitive is used by the baked stings
 enum Filter {
     Low,
     High,
@@ -202,10 +198,6 @@ fn synth(s: Sting) -> Vec<f32> {
             y.tone(Wave::Sine, 784.0, 0.12, 0.18, 0.1, None);
             y.tone(Wave::Sine, 1175.0, 0.2, 0.24, 0.1, None);
         }
-        Sting::Forage => {
-            y.noise(0.0, 0.09, 0.06, Filter::Band, 1800.0, 900.0);
-            y.tone(Wave::Sine, 660.0, 0.03, 0.10, 0.07, Some(990.0));
-        }
         Sting::LevelUp => {
             for (i, &f) in [523.25_f32, 659.25, 783.99, 1046.5].iter().enumerate() {
                 y.tone(Wave::Triangle, f, i as f32 * 0.09, 0.22, 0.13, None);
@@ -219,12 +211,6 @@ fn synth(s: Sting) -> Vec<f32> {
             y.tone(Wave::Sine, 988.0, 0.0, 0.06, 0.10, Some(1320.0));
             y.tone(Wave::Square, 1568.0, 0.07, 0.10, 0.08, None);
             y.noise(0.0, 0.02, 0.03, Filter::High, 6000.0, 4000.0);
-        }
-        Sting::WarBell => {
-            y.noise(0.0, 0.02, 0.12, Filter::High, 5000.0, 2500.0); // clapper strike
-            y.tone(Wave::Triangle, 392.0, 0.0, 0.9, 0.16, None); // G4 fundamental
-            y.tone(Wave::Triangle, 588.0, 0.0, 0.7, 0.08, None); // ~5th overtone
-            y.tone(Wave::Sine, 784.0, 0.0, 0.5, 0.05, None); // octave shimmer
         }
         Sting::CampRescue => {
             y.tone(Wave::Sine, 523.25, 0.0, 0.35, 0.10, Some(659.25));
