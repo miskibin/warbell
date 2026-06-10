@@ -474,9 +474,11 @@ pub fn populate_forage(
 
     // Forest apples: standout apple TREES (permanent scenery) carrying a cluster of apples that
     // you strip the WHOLE tree at once by walking up — the apples pop off in a satisfying burst.
-    // The fruit is chunky and glossy-red with a warm emissive lift (≈0.26u after the tree's
-    // scale) so the apples read from well outside harvest range — see red dots, walk over.
-    let apple_mesh = meshes.add(Sphere::new(0.15).mesh().ico(2).unwrap());
+    // The fruit is glossy-red with a warm emissive lift, sized like an actual apple against
+    // the canopy (≈0.29u across after the tree's 1.7× scale). Visibility comes from the
+    // hang spots riding the canopy's outer shell + the emissive pop, NOT from oversizing —
+    // r 0.15 here read as comical red balloons.
+    let apple_mesh = meshes.add(Sphere::new(0.085).mesh().ico(2).unwrap());
     let apple_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.88, 0.15, 0.10),
         emissive: LinearRgba::rgb(0.40, 0.04, 0.03),
