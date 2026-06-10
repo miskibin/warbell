@@ -490,9 +490,15 @@ const ATTACK_ANIM_DUR: f32 = 0.42;
 /// How long the springy hit-recoil wobble lasts after the ork is struck.
 const RECOIL_DUR: f32 = 0.34;
 
-/// Damped springy tilt (radians) since being struck at `hit_recoil`; `0` when at rest. Same
-/// shape as the training dummies' recoil wobble. Used by both the camp brain and the invader
-/// brain (`siege.rs`) so every ork recoils the same.
+/// Damped springy tilt (radians) since being struck at `hit_recoil`; `0` when at rest. Used by
+/// the camp brain, the invader brain (`siege.rs`) and wildlife so every creature recoils the same.
+///
+/// The body snaps to a full BACKWARD lean (negative pitch = away from its facing — in melee the
+/// ork faces the hero, so away from the blow) the instant it's struck, then springs upright with
+/// a small forward overshoot. Starting at the peak matters: hit-stop freezes virtual time for the
+/// first beat of the recoil, so whatever pose this returns at `r = 0` is the one held on screen —
+/// the old version phased off `now` (effectively random per hit) and often froze at ~no tilt,
+/// which is why struck orks didn't visibly bend.
 pub(crate) fn recoil_tilt(hit_recoil: f32, now: f32) -> f32 {
     if hit_recoil <= 0.0 {
         return 0.0;
@@ -502,7 +508,7 @@ pub(crate) fn recoil_tilt(hit_recoil: f32, now: f32) -> f32 {
         return 0.0;
     }
     let k = 1.0 - r / RECOIL_DUR;
-    (now * 30.0).sin() * 0.2 * k * k
+    -(r * 17.0).cos() * 0.3 * k * k
 }
 
 /// Strike progress `0..1` since `atk_anim`, or `None` when not currently striking.
