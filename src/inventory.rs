@@ -380,7 +380,41 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
                         ..default()
                     })
                     .with_children(|bagcol| {
-                        bagcol.spawn(label(&fonts.semibold, "BAG", 10.0, GREY));
+                        // BAG header + a category legend so a glance tells gear from food.
+                        bagcol
+                            .spawn(Node {
+                                width: Val::Px(311.0),
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::SpaceBetween,
+                                ..default()
+                            })
+                            .with_children(|hdr| {
+                                hdr.spawn(label(&fonts.semibold, "BAG", 10.0, GREY));
+                                hdr.spawn(Node {
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(10.0),
+                                    ..default()
+                                })
+                                .with_children(|lg| {
+                                    for (col, txt) in [(GOLD, "Wear"), (GREEN, "Use"), (TEXT_FAINT, "Key")] {
+                                        lg.spawn(Node {
+                                            flex_direction: FlexDirection::Row,
+                                            align_items: AlignItems::Center,
+                                            column_gap: Val::Px(4.0),
+                                            ..default()
+                                        })
+                                        .with_children(|sw| {
+                                            sw.spawn((
+                                                Node { width: Val::Px(8.0), height: Val::Px(8.0), border_radius: radius(2.0), ..default() },
+                                                BackgroundColor(col),
+                                            ));
+                                            sw.spawn(label(&fonts.semibold, txt, 9.0, GREY));
+                                        });
+                                    }
+                                });
+                            });
                         bagcol
                             .spawn(Node {
                                 width: Val::Px(311.0),
@@ -409,6 +443,21 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
                                         InvSlotButton(i),
                                     ))
                                     .with_children(|cell| {
+                                        // Category accent strip along the bottom edge: gold = wearable
+                                        // gear, green = consumable, faint = key item (matches the legend).
+                                        if let Some(k) = item_def(id).map(|d| d.kind) {
+                                            cell.spawn((
+                                                Node {
+                                                    position_type: PositionType::Absolute,
+                                                    left: Val::Px(0.0),
+                                                    right: Val::Px(0.0),
+                                                    bottom: Val::Px(0.0),
+                                                    height: Val::Px(3.0),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(kind_accent_color(k)),
+                                            ));
+                                        }
                                         if let Some(handle) = atlas.get(id) {
                                             cell.spawn(widgets::icon(handle, 28.0));
                                         }
@@ -462,6 +511,17 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
 /// The quick-bar key (Z/X/C) this item id is pinned to, if any — drives the cell badge.
 fn bound_key_for(bag: &Bag, id: &str) -> Option<char> {
     (0..QUICK_SLOTS).find(|&i| bag.quick_bind(i) == Some(id)).map(bind_slot_key)
+}
+
+/// Cell accent colour by category — the bag legend's key: wearable gear (weapon/armor) reads
+/// gold, consumables green, key items faint. Lets a glance separate what you equip from what
+/// you use.
+fn kind_accent_color(kind: ItemKind) -> Color {
+    match kind {
+        ItemKind::Weapon | ItemKind::Armor => GOLD,
+        ItemKind::Consumable => GREEN,
+        ItemKind::Token => TEXT_FAINT,
+    }
 }
 
 /// Click a bag row → use the consumable (heal + buff) or equip the gear, then rebuild the panel
