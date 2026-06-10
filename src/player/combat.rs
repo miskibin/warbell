@@ -183,7 +183,9 @@ pub fn setup_combat_fx(
         cull_mode: None,
         ..default()
     };
-    let slash_mat = materials.add(flash(Color::srgba(1.0, 0.97, 0.9, 0.9), LinearRgba::rgb(4.0, 3.6, 2.8)));
+    // Warm, dim glint — NOT hot white: the old (4.0, 3.6, 2.8) emissive at 0.9 alpha bloomed
+    // into a big white flare on every contact. Kept just bright enough for bloom to kiss it.
+    let slash_mat = materials.add(flash(Color::srgba(1.0, 0.92, 0.74, 0.5), LinearRgba::rgb(1.2, 0.95, 0.55)));
     let ring_mat = materials.add(flash(Color::srgba(1.0, 0.86, 0.6, 0.45), LinearRgba::rgb(1.4, 0.95, 0.4)));
     let splat_mat = materials.add(flash(Color::srgba(0.42, 0.06, 0.06, 0.72), LinearRgba::BLACK));
     commands.insert_resource(CombatFx {
@@ -678,13 +680,13 @@ fn spawn_fade(
     ));
 }
 
-/// A bright slash streak at the contact point — a wide, thin, camera-facing quad that snaps wider
-/// and fades fast, selling the blade connecting.
+/// A subtle slash glint at the contact point — a thin, camera-facing streak that widens slightly
+/// and fades fast, marking where the blade connected without flaring the screen.
 pub(crate) fn spawn_slash(commands: &mut Commands, fx: &CombatFx, mats: &mut Assets<StandardMaterial>, at: Vec3, now: f32) {
     spawn_fade(
         commands, mats, &fx.slash_mat, &fx.quad,
         Transform::from_translation(at),
-        Vec3::new(0.45, 0.12, 1.0), Vec3::new(1.7, 0.2, 1.0), 0.9, 0.12, true, now,
+        Vec3::new(0.35, 0.09, 1.0), Vec3::new(1.05, 0.13, 1.0), 0.5, 0.11, true, now,
     );
 }
 
