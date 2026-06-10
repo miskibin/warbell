@@ -126,7 +126,7 @@ fn step_reward_orbs(
 ) {
     let dt = time.delta_secs() as f64;
     if dt <= 0.0 {
-        return; // hit-stop freeze — orbs hang mid-burst (P1.3 wires the real HitStop gate)
+        return; // world fully paused (panel/menu) — orbs hold. Hit-stop only slows dt, not zeroes it.
     }
     let pose = PlayerPose { x: hero.pos.x as f64, y: (hero.y + 1.0) as f64, z: hero.pos.y as f64 };
     for (e, mut ro, mut tf) in &mut q {

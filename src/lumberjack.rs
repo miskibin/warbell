@@ -6,8 +6,9 @@
 //!
 //! Two hard rails keep this from feeding the orks an endless villager buffet:
 //!   * **Safe ground only** — a tree is workable only inside [`WORK_R`] of the castle and at
-//!     least [`CAMP_AVOID`] from every ork camp (and never inside a camp clearing), so a
-//!     woodcutter never wanders into a warband on its own.
+//!     least [`LIVE_CAMP_AVOID`] from every *occupied* ork camp (and never inside a camp
+//!     clearing), so a woodcutter never wanders into a standing warband on its own. A camp whose
+//!     warband you've wiped stops pushing the cutter away — its grove opens up for cutting.
 //!   * **Threat sense** — any ork or predator inside [`DANGER_R`] sends the woodcutter (working
 //!     or hauling) running home ([`Fleeing`]) and blacklists that ground for [`DANGER_TTL`]
 //!     seconds ([`DangerSpots`]), so it does NOT trudge straight back under the same shaman's
@@ -29,21 +30,30 @@ use crate::worldmap;
 
 /// Trees are only worked this close to the castle origin (the safe heart of the island)…
 const WORK_R: f32 = 45.0;
-/// …and no closer than this to any ork camp centre.
-const CAMP_AVOID: f32 = 22.0;
+/// …and no closer than this to a *live* ork camp's centre. Sized to clear the warband's leash
+/// (`orks` `ORK_LEASH` 16) PLUS the cutter's own threat sense ([`DANGER_R`] 12), so a working
+/// cutter sits outside any leashed camp ork's reach — otherwise it'd be scared off (and blacklist
+/// its own grove) by orks it can never actually escape. A *cleared* camp stops pushing the cutter
+/// away entirely (see [`assign_tree`]), so wiping a warband opens its grove for cutting.
+const LIVE_CAMP_AVOID: f32 = 30.0;
 /// A hostile (ork / predator) this near a woodcutter triggers the flight home.
 const DANGER_R: f32 = 12.0;
 /// Trees this near a remembered scare are off-limits while it lasts.
 const DANGER_BLACKLIST_R: f32 = 16.0;
-/// How long a scare keeps its ground blacklisted (s).
-const DANGER_TTL: f32 = 120.0;
+/// How long a scare keeps its ground blacklisted (s). Kept short: a real threat that lingers
+/// re-trips the scare and re-blacklists, but a transient predator/ork fly-by shouldn't sideline a
+/// whole grove for minutes (the old 120s did, which read as the woodcutter "refusing to work").
+const DANGER_TTL: f32 = 45.0;
 /// Axe damage per work swing — scaled with TREE_HP's ×3 bump (TREE_HP 165 → ~5 swings ≈ 10s a
 /// tree), so the town's wood income keeps its old pace even though the hero now needs 3× the hits.
 const CHOP_DMG: f64 = 36.0;
 /// Seconds between work swings — matches the overhead chop loop in `villager_limbs` (~2.1s).
 const CHOP_CD: f32 = 2.1;
-/// Close enough to swing (trunk blockers are ≤ 0.8, body 0.28 — this clears both).
-const CHOP_REACH: f32 = 2.0;
+/// Pad past the trunk surface (its blocker radius + the cutter's body radius) at which the axe
+/// can land. Small on purpose — the cutter should stand AT the bark, not an axe-handle off it —
+/// but it must leave a little slop over where the trunk blocker parks the body, or "arrived"
+/// never trips and the cutter just orbits the tree.
+const CHOP_REACH_PAD: f32 = 0.45;
 /// Don't rescan the whole tree set every frame when there's nothing eligible.
 const RETRY_SECS: f32 = 3.0;
 /// A flight home gives up after this long even if the walls weren't reached.
@@ -80,13 +90,15 @@ pub struct Hauling {
 /// the brawl broke off). Removed on reaching home ground or after [`FLEE_SECS`].
 #[derive(Component)]
 pub struct Fleeing {
-    until: f32,
+    pub(crate) until: f32,
 }
 
 /// Remembered scares: `(world XZ, expires_at)`. Trees near one are skipped while it lasts —
-/// the cap on the "ork farms the same woodcutter forever" loop.
+/// the cap on the "ork farms the same woodcutter forever" loop. Shared with the stone miner
+/// (`miner.rs`), which pushes/reads the same blacklist (the two trades work disjoint ground, so
+/// one shared list is harmless and keeps a single source of remembered danger).
 #[derive(Resource, Default)]
-struct DangerSpots(Vec<(Vec2, f32)>);
+pub(crate) struct DangerSpots(pub(crate) Vec<(Vec2, f32)>);
 
 pub struct LumberjackPlugin;
 
@@ -158,13 +170,22 @@ fn assign_tree(
         ),
     >,
     trees: Query<(Entity, &Transform), (With<crate::verbs::ChopTree>, Without<crate::verbs::Stump>)>,
+    orks: Query<&crate::orks::Ork, (Without<crate::orks::WaveInvader>, Without<crate::dying::Dying>)>,
 ) {
     let now = time.elapsed_secs();
     if now < *retry_at {
         return;
     }
     *retry_at = now + RETRY_SECS;
-    let camps: Vec<Vec2> = crate::camps::cage_positions().iter().map(|(_, c)| *c).collect();
+    // Only camps that STILL have a standing warband push the cutter away. A camp ork is
+    // home-anchored to its camp centre (`orks::Ork::home`), so a centre with no living ork homed
+    // to it is a cleared camp — its grove is safe to cut (matches the player's intuition: wipe the
+    // warband and the woodcutter starts working that wood).
+    let live_camps: Vec<Vec2> = crate::camps::cage_positions()
+        .iter()
+        .map(|(_, c)| *c)
+        .filter(|c| orks.iter().any(|o| o.home().distance(*c) < 1.0))
+        .collect();
     for (e, worker, v) in &workers {
         if town.0.plots.get(worker.idx).and_then(|p| p.kind) != Some(BuildKind::Lumber) {
             continue; // farmers keep their field mime — only woodcutters roam
@@ -174,7 +195,7 @@ fn assign_tree(
             let tp = Vec2::new(tf.translation.x, tf.translation.z);
             if tp.length() > WORK_R
                 || crate::camps::in_clearing(tp.x, tp.y)
-                || camps.iter().any(|c| c.distance(tp) < CAMP_AVOID)
+                || live_camps.iter().any(|c| c.distance(tp) < LIVE_CAMP_AVOID)
                 || danger.0.iter().any(|(d, _)| d.distance(tp) < DANGER_BLACKLIST_R)
             {
                 continue;
@@ -222,8 +243,11 @@ fn chop_work(
         };
         let tp = Vec2::new(ttf.translation.x, ttf.translation.z);
         let d = v.pos.distance(tp);
+        // Reach is sized to THIS tree's trunk (thin sapling vs fat bole) so the cutter steps right
+        // up to the bark either way, instead of a one-size-fits-all arm's length off the trunk.
+        let reach = tree.trunk_r() + v.body_r + CHOP_REACH_PAD;
         job.atk_cd -= dt;
-        if d <= CHOP_REACH {
+        if d <= reach {
             // At the tree: face it, plant the feet, swing on the cooldown.
             worker.at_post = true;
             v.moving = false;
@@ -239,7 +263,9 @@ fn chop_work(
                 }
                 let dir = (tp - v.pos).normalize_or_zero();
                 if tree.work_chop(CHOP_DMG) {
-                    // Timber — but no wood yet: shoulder the log and carry it home.
+                    // Timber — but no wood yet: shoulder the log and carry it home. Clear
+                    // `at_post` or `villager_limbs` keeps the chop stroke going on the walk.
+                    worker.at_post = false;
                     crate::verbs::topple_tree(&mut commands, job.tree, ttf.translation, dir, now);
                     commands
                         .entity(self_e)
@@ -435,9 +461,10 @@ fn attach_log(
                 .spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mat),
-                    // Across the shoulder, tipped a touch so it reads as carried, not glued.
-                    Transform::from_xyz(0.0, 1.15, 0.05)
-                        .with_rotation(Quat::from_rotation_x(0.12)),
+                    // Slung over the RIGHT shoulder (clear of the head, which y=1.15/x=0 used to
+                    // skewer): drop to shoulder height and tip it so it reads as carried, not glued.
+                    Transform::from_xyz(0.22, 1.0, -0.02)
+                        .with_rotation(Quat::from_rotation_x(0.12) * Quat::from_rotation_z(-0.1)),
                 ))
                 .id();
         });

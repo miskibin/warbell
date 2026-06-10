@@ -305,12 +305,13 @@ fn muster_townsfolk(
     *last = Some(wave);
     if wave {
         for e in &workers {
-            // Down tools entirely: a woodcutter drops its tree job too, or it would keep the
-            // chop steering alongside the guard brain it's about to get.
+            // Down tools entirely: a woodcutter/miner drops its tree/boulder job too, or it
+            // would keep the work steering alongside the guard brain it's about to get.
             commands
                 .entity(e)
                 .try_remove::<crate::town::Worker>()
-                .try_remove::<crate::lumberjack::ChopJob>();
+                .try_remove::<crate::lumberjack::ChopJob>()
+                .try_remove::<crate::miner::MineJob>();
         }
     }
 }
@@ -330,8 +331,11 @@ fn rearm_townsfolk(
         // A woodcutter mustered deep in the woods at dusk gets posted back HOME (its courtyard
         // spot), not where it stands — otherwise the militia ends up scattered through the forest.
         let post = if v.pos.length() > 26.0 { v.home } else { v.pos };
-        // Shed any stale tree job (e.g. the plot collapsed mid-chop) before taking up arms.
-        commands.entity(e).try_remove::<crate::lumberjack::ChopJob>();
+        // Shed any stale tree/boulder job (e.g. the plot collapsed mid-work) before taking up arms.
+        commands
+            .entity(e)
+            .try_remove::<crate::lumberjack::ChopJob>()
+            .try_remove::<crate::miner::MineJob>();
         arm_as_guard(&mut commands, e, post);
     }
 }
@@ -505,15 +509,23 @@ fn villager_brain(
 /// Steer assigned workers to their building, then hold post (sets `at_post`).
 /// Lives here because it pokes the private `Villager` fields. Workers inherit
 /// `townsfolk_curfew` (no `Guard`), so they flee at night automatically.
+///
+/// Every build plot sits OUTSIDE the wall footprint and off the gate lanes (see
+/// `town::PLOT_OFFSETS`), so once the walls are up a straight line from a courtyard
+/// home to a post always crosses a wall — the local steer fan can't find a gate
+/// ~15 units away. Far legs therefore follow a cached A* `NavPath` through the
+/// gates, exactly like the guard post-march in `guard_combat`.
 #[allow(clippy::type_complexity)]
 fn worker_steer(
     time: Res<Time>,
     spots: Res<crate::town::PlotSpots>,
     mut q: Query<
-        (&mut crate::town::Worker, &mut Villager, &mut Transform),
+        (Entity, &mut crate::town::Worker, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
         (
             Without<crate::lumberjack::ChopJob>,
             Without<crate::lumberjack::Hauling>,
+            Without<crate::miner::MineJob>,
+            Without<crate::miner::Carting>,
             Without<crate::lumberjack::Fleeing>,
             Without<FightBack>,
             Without<crate::dying::Dying>,
@@ -522,7 +534,8 @@ fn worker_steer(
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
-    for (mut worker, mut v, mut tf) in &mut q {
+    let now = time.elapsed_secs();
+    for (self_e, mut worker, mut v, mut tf, mut path) in &mut q {
         let Some(post) = spots.0.get(worker.idx).copied() else { continue };
         let to = post - v.pos;
         let dist = to.length();
@@ -537,8 +550,32 @@ fn worker_steer(
         } else {
             worker.at_post = false;
             v.target = post;
+            // Far from the post: follow the A* route (threads the wall gates). Close in:
+            // cheap direct steer, no pathing churn — same split as the guard post-march.
+            let step_target = if dist > GUARD_PATH_RANGE {
+                if path.cursor >= path.waypoints.len()
+                    || now >= path.next_replan
+                    || path.goal_cached.distance(post) > 2.0
+                {
+                    path.waypoints = crate::navgrid::path_to(v.pos, post);
+                    path.cursor = 0;
+                    path.goal_cached = post;
+                    // Stagger replans so a dawn shift-change doesn't path everyone on one frame.
+                    path.next_replan = now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05;
+                }
+                while path.cursor < path.waypoints.len()
+                    && v.pos.distance(path.waypoints[path.cursor]) < 1.2
+                {
+                    path.cursor += 1;
+                }
+                path.waypoints.get(path.cursor).copied().unwrap_or(post)
+            } else {
+                path.waypoints.clear();
+                path.cursor = 0;
+                post
+            };
             let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
-            if let Some(s) = steer::advance(v.pos, v.facing, v.target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
+            if let Some(s) = steer::advance(v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                 v.facing = s.facing;
                 v.pos = s.pos;
                 v.moving = s.moving;
@@ -1064,7 +1101,8 @@ fn villager_limbs(
         // A posted worker plies their trade: a farmer makes quick forward-down HOE strokes; a
         // woodcutter makes slower, bigger overhead CHOPS. Both arms swing together, legs planted.
         let working = worker.is_some_and(|w| w.at_post);
-        let chopping = matches!(role, Some(Role::Working(Trade::Woodcutter)));
+        // Woodcutter chops, miner swings a pick — both make the slow overhead-down stroke.
+        let chopping = matches!(role, Some(Role::Working(Trade::Woodcutter | Trade::Miner)));
         let (arm_work, nod_rate) = if chopping {
             (-0.4 + 1.3 * (0.5 - 0.5 * (t * 3.0).cos()), 3.0) // overhead → down, ~2.1s
         } else {
@@ -1139,6 +1177,7 @@ enum Kind {
 pub enum Trade {
     Farmer,
     Woodcutter,
+    Miner,
 }
 
 /// What the right hand carries (baked into the arm so it swings with the limb).
@@ -1148,6 +1187,7 @@ enum Held {
     Sword,
     Hoe,
     Axe,
+    Pick,
 }
 
 /// The look a townsperson is currently rendered as (idle guard vs a trade), so `reskin_townsfolk`
@@ -1211,6 +1251,7 @@ fn spec(kind: Kind) -> VSpec {
         Kind::Guard { .. } => Held::Sword,
         Kind::Worker { trade: Trade::Farmer, .. } => Held::Hoe,
         Kind::Worker { trade: Trade::Woodcutter, .. } => Held::Axe,
+        Kind::Worker { trade: Trade::Miner, .. } => Held::Pick,
         _ => Held::None,
     };
     let skin = lin(skin_hex);
@@ -1225,6 +1266,7 @@ fn spec(kind: Kind) -> VSpec {
         (true, _) => torso_parts.push(bx(0.46, 0.4, 0.3, v(0.0, 0.7, 0.0), armor)),
         (_, Some(Trade::Farmer)) => torso_parts.push(bx(0.4, 0.4, 0.28, v(0.0, 0.62, 0.04), lin(APRON))),
         (_, Some(Trade::Woodcutter)) => torso_parts.push(bx(0.44, 0.42, 0.29, v(0.0, 0.72, 0.0), lin(VEST))),
+        (_, Some(Trade::Miner)) => torso_parts.push(bx(0.45, 0.44, 0.3, v(0.0, 0.7, 0.0), lin(VEST))),
         _ => {}
     }
     let torso = group(torso_parts);
@@ -1248,6 +1290,10 @@ fn spec(kind: Kind) -> VSpec {
         (_, Some(Trade::Woodcutter), _) => {
             head_parts.push(bx(0.34, 0.1, 0.34, v(0.0, 0.18, 0.0), lin(CAP))); // flat cap
             head_parts.push(bx(0.34, 0.05, 0.14, v(0.0, 0.16, 0.2), lin(CAP))); // peak
+        }
+        (_, Some(Trade::Miner), _) => {
+            // A snug skullcap (no peak) — reads as a digger's cap, distinct from the woodcutter.
+            head_parts.push(bx(0.35, 0.13, 0.35, v(0.0, 0.16, 0.0), lin(CAP)));
         }
         (_, _, true) => head_parts.push(cone(0.22, 0.2, v(0.0, 0.22, 0.0), Quat::IDENTITY, lin(HAT))),
         _ => {}
@@ -1282,6 +1328,11 @@ fn spec(kind: Kind) -> VSpec {
                 // A shaft + a wedge head near the tip.
                 p.push(bx(0.05, 0.05, 0.56, hand + v(0.0, -0.04, 0.24), lin(TOOL_WOOD)));
                 p.push(bx(0.16, 0.18, 0.06, hand + v(0.0, 0.0, 0.5), lin(TOOL_METAL)));
+            }
+            Held::Pick => {
+                // A shaft + a crossways double-pointed pick head (a bar across the tip).
+                p.push(bx(0.05, 0.05, 0.58, hand + v(0.0, -0.04, 0.25), lin(TOOL_WOOD)));
+                p.push(bx(0.46, 0.05, 0.05, hand + v(0.0, 0.02, 0.52), lin(TOOL_METAL)));
             }
         }
         group(p)
@@ -1574,6 +1625,7 @@ fn reskin_townsfolk(
         let desired = match worker.and_then(|w| town.0.plots.get(w.idx)).and_then(|p| p.kind) {
             Some(BuildKind::Farm) => Role::Working(Trade::Farmer),
             Some(BuildKind::Lumber) => Role::Working(Trade::Woodcutter),
+            Some(BuildKind::Mine) => Role::Working(Trade::Miner),
             _ => Role::Guard,
         };
         if *role == desired {

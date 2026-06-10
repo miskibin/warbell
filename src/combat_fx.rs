@@ -38,6 +38,9 @@ const HP_BAR_W: f32 = 0.6;
 const HP_BAR_H: f32 = 0.085;
 /// Height above the ork root the bar floats at.
 const HP_BAR_Y: f32 = 1.9;
+/// Lower float for town NPCs — the townsfolk rig is scaled down (~0.63), so its head-top sits
+/// near ~0.95 world; a bar at the ork height would float a full unit over their heads.
+const HP_BAR_Y_NPC: f32 = 1.2;
 /// Beyond this camera distance a bar is hidden — keeps far-off damaged enemies from floating
 /// bars across the sky (they read as detached when the body's behind trees / off-screen).
 const HP_BAR_MAX_DIST: f32 = 26.0;
@@ -191,10 +194,13 @@ struct HpBarAssets {
 #[derive(Component)]
 struct HasHpBar;
 
-/// A follower bar that tracks `ork` and despawns when it dies.
+/// A follower bar that tracks `ork` (any hittable: ork, animal, or town NPC) and despawns when it
+/// dies.
 #[derive(Component)]
 struct HpBar {
     ork: Entity,
+    /// World-Y the bar floats at above the tracked entity — creatures sit higher than townsfolk.
+    y: f32,
 }
 
 /// The shrinking foreground quad inside a bar.
@@ -219,6 +225,33 @@ fn setup_hp_bar_assets(
     commands.insert_resource(HpBarAssets { quad, bg, fg, fg_hurt });
 }
 
+/// Spawn one follower bar tracking `e`, floating at world-Y `y`. Shared by every hittable
+/// (creatures via `Health`, town NPCs via `NpcHp`). `try_insert` per the despawn-race convention:
+/// the target can be despawned (biome rebuild, a defender bolt) the same frame it's first seen.
+fn spawn_hp_bar(commands: &mut Commands, assets: &HpBarAssets, e: Entity, y: f32) {
+    commands.entity(e).try_insert(HasHpBar);
+    commands
+        .spawn((Transform::default(), Visibility::Hidden, HpBar { ork: e, y }, crate::biome::BiomeEntity))
+        .with_children(|p| {
+            p.spawn((
+                Mesh3d(assets.quad.clone()),
+                MeshMaterial3d(assets.bg.clone()),
+                // +Z = AWAY from the camera (the billboard's forward/-Z faces the camera via
+                // `look_at`), so the dark panel sits BEHIND the red fill instead of hiding it.
+                Transform::from_translation(Vec3::new(0.0, 0.0, 0.01))
+                    .with_scale(Vec3::new(HP_BAR_W + 0.04, HP_BAR_H + 0.02, 1.0)),
+                bevy::light::NotShadowCaster,
+            ));
+            p.spawn((
+                Mesh3d(assets.quad.clone()),
+                MeshMaterial3d(assets.fg.clone()),
+                Transform::from_scale(Vec3::new(HP_BAR_W, HP_BAR_H, 1.0)),
+                bevy::light::NotShadowCaster,
+                HpBarFg,
+            ));
+        });
+}
+
 #[allow(clippy::type_complexity)]
 fn ensure_hp_bars(
     mut commands: Commands,
@@ -226,37 +259,22 @@ fn ensure_hp_bars(
     // `With<Health>`: only attach a bar once the target's vitals exist. `ensure_combat_health`
     // (which adds `Health`) is gated on `Modal::None`, while this runs ungated — without this
     // filter a bar could be born a frame before `Health`, then `drive_hp_bars` (whose query
-    // *requires* `&Health`) would fail its lookup and despawn the bar for good (`HasHpBar`
+    // *requires* the vitals) would fail its lookup and despawn the bar for good (`HasHpBar`
     // lingers, so it never respawns). That silently killed every enemy's bar spawned at startup.
-    orks: Query<
+    creatures: Query<
         Entity,
         (Or<(With<Ork>, With<crate::wildlife::Animal>)>, With<Health>, Without<HasHpBar>),
     >,
+    // Town NPCs carry their HP in `NpcHp` (the whole `Townsfolk` pool — guards + workers), so they
+    // float the same bar as any creature, just lower (their rig is scaled down). It only shows
+    // when wounded, exactly like the orks'.
+    folk: Query<Entity, (With<crate::villagers::NpcHp>, Without<HasHpBar>)>,
 ) {
-    for e in &orks {
-        // `try_insert`: an ork can be despawned (biome rebuild, or a defender bolt reaping a
-        // wave invader) the same frame it's first seen here — tolerate the gone entity.
-        commands.entity(e).try_insert(HasHpBar);
-        commands
-            .spawn((Transform::default(), Visibility::Hidden, HpBar { ork: e }, crate::biome::BiomeEntity))
-            .with_children(|p| {
-                p.spawn((
-                    Mesh3d(assets.quad.clone()),
-                    MeshMaterial3d(assets.bg.clone()),
-                    // +Z = AWAY from the camera (the billboard's forward/-Z faces the camera via
-                    // `look_at`), so the dark panel sits BEHIND the red fill instead of hiding it.
-                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.01))
-                        .with_scale(Vec3::new(HP_BAR_W + 0.04, HP_BAR_H + 0.02, 1.0)),
-                    bevy::light::NotShadowCaster,
-                ));
-                p.spawn((
-                    Mesh3d(assets.quad.clone()),
-                    MeshMaterial3d(assets.fg.clone()),
-                    Transform::from_scale(Vec3::new(HP_BAR_W, HP_BAR_H, 1.0)),
-                    bevy::light::NotShadowCaster,
-                    HpBarFg,
-                ));
-            });
+    for e in &creatures {
+        spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y);
+    }
+    for e in &folk {
+        spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y_NPC);
     }
 }
 
@@ -266,7 +284,11 @@ fn drive_hp_bars(
     mut commands: Commands,
     assets: Res<HpBarAssets>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
-    orks: Query<(&GlobalTransform, &Health, Option<&HurtFlash>, Option<&crate::dying::Dying>), Or<(With<Ork>, With<crate::wildlife::Animal>)>>,
+    // Vitals come from `Health` (orks/animals) OR `NpcHp` (town NPCs) — whichever the target carries.
+    targets: Query<
+        (&GlobalTransform, Option<&Health>, Option<&crate::villagers::NpcHp>, Option<&HurtFlash>, Option<&crate::dying::Dying>),
+        Or<(With<Ork>, With<crate::wildlife::Animal>, With<crate::villagers::NpcHp>)>,
+    >,
     mut bars: Query<(Entity, &HpBar, &mut Transform, &mut Visibility, &Children)>,
     mut fgs: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), (With<HpBarFg>, Without<HpBar>)>,
 ) {
@@ -274,20 +296,29 @@ fn drive_hp_bars(
     let Ok(cam_tf) = cam_q.single() else { return };
     let cam_pos = cam_tf.translation();
     for (bar_e, bar, mut tf, mut vis, children) in &mut bars {
-        let Ok((ork_gt, hp, hurt, dying)) = orks.get(bar.ork) else {
+        let Ok((ork_gt, health, npc_hp, hurt, dying)) = targets.get(bar.ork) else {
             commands.entity(bar_e).despawn();
             continue;
+        };
+        // (hp, max) from whichever vitals component the target carries.
+        let (cur, max) = match (health, npc_hp) {
+            (Some(h), _) => (h.hp, h.max),
+            (_, Some(n)) => (n.hp, n.max),
+            _ => {
+                commands.entity(bar_e).despawn();
+                continue;
+            }
         };
         if dying.is_some() {
             *vis = Visibility::Hidden; // no bar over a crumpling corpse
             continue;
         }
-        let ratio = (hp.hp / hp.max).clamp(0.0, 1.0);
+        let ratio = (cur / max).clamp(0.0, 1.0);
         if ratio >= 1.0 {
             *vis = Visibility::Hidden;
             continue;
         }
-        let head = ork_gt.translation() + Vec3::Y * HP_BAR_Y;
+        let head = ork_gt.translation() + Vec3::Y * bar.y;
         // Cull distant bars so a damaged enemy across the map doesn't float a bar in the sky.
         if head.distance(cam_pos) > HP_BAR_MAX_DIST {
             *vis = Visibility::Hidden;

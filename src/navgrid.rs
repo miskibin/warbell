@@ -68,7 +68,15 @@ fn world_to_pathpoint(wx: f32, wz: f32) -> PathPoint {
 
 /// A* waypoints from `from` to `to` in forest world-space (empty if no route / already there).
 pub fn path_to(from: Vec2, to: Vec2) -> Vec<Vec2> {
-    find_path(&ForestGrid, world_to_pathpoint(from.x, from.y), world_to_pathpoint(to.x, to.y), NAV_MAX_NODES)
+    path_to_budget(from, to, NAV_MAX_NODES)
+}
+
+/// [`path_to`] with an explicit node budget — the default [`NAV_MAX_NODES`] is sized for the
+/// ~40-tile invader run to the keep and **exhausts (→ empty) on cross-island trips** like the
+/// stone miner's castle→Rocky haul (~100 tiles + river detours). On an unreachable goal A*
+/// drains the open set and exits early, so a generous budget only costs when a route exists.
+pub fn path_to_budget(from: Vec2, to: Vec2, max_nodes: u32) -> Vec<Vec2> {
+    find_path(&ForestGrid, world_to_pathpoint(from.x, from.y), world_to_pathpoint(to.x, to.y), max_nodes)
         .into_iter()
         .map(|p| Vec2::new(p.x as f32 - GX, p.z as f32 - GZ))
         .collect()
