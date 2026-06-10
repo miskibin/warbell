@@ -515,6 +515,15 @@ fn setup_invader_armory(
     commands.insert_resource(InvaderArmory(orks::Armory::new(&mut meshes, &mut materials, mat)));
 }
 
+/// Invader spawn footing: **flat** land only (height class 1, Y≈0). The world-30 spawn ring clips
+/// the inner edge of two low plateaus (base (52,50) and (90,36)); a terrace-top spawn strands the
+/// ork on the elevation — it mills there instead of marching the keep ("orks stuck on elevations")
+/// — so the ring keeps only flat tiles, which near the castle are all in the keep's walkable
+/// component. (Heights are discrete 0.5·(class-1) steps, so `y <= 0.05` ⟺ class 1.)
+fn spawn_footing(x: f32, z: f32) -> bool {
+    ground_at_world(x, z).is_some_and(|y| y <= 0.05)
+}
+
 /// Spawn one invader at `ring_index` on the spawn ring, with `hp` HP — home-anchored at the keep
 /// (unused by its brain) and tagged [`WaveInvader`] + [`Health`] in the same command flush (so
 /// the hero's `ensure_combat_health` never overwrites the scaled HP).
@@ -526,7 +535,7 @@ fn spawn_invader(
     ring_index: u32,
     now: f32,
 ) {
-    let p = spawn_point(ring_index, KEEP_POS, SPAWN_RING, |x, z| ground_at_world(x, z).is_some());
+    let p = spawn_point(ring_index, KEEP_POS, SPAWN_RING, spawn_footing);
     let seed = ring_index.wrapping_mul(0x9e37_79b1) ^ (ring_index + 1);
     let e = armory.spawn(commands, variant, INVADER_FACTION, KEEP_POS, p, seed);
     commands.entity(e).insert((
@@ -829,12 +838,17 @@ fn invader_brain(
 
         // Stuck-ork safety net — progress-based: a keep-marcher that hasn't gotten closer to the
         // keep within the timeout is wedged (oscillating round a prop/wall, or gate-flip thrash)
-        // and fades out, so the wave can't hang. Attacking or chasing the hero/a guard counts as
-        // progress (intended behaviour, never culled). See `stuck_step`.
-        // A building-marching arsonist is "engaged": its distance to the KEEP may be increasing as
-        // it heads for an off-keep building, so the keep-progress test must not falsely reap it.
-        let engaged =
-            at_hero || at_guard || at_keep || chase_hero || guard_tgt.is_some() || building_goal.is_some();
+        // and fades out, so the wave can't hang. See `stuck_step`.
+        // `engaged` resets the clock for legitimate non-keep-progress behaviour, but ONLY when it's
+        // real activity — *attacking* something (incl. battering an off-keep building) or *actually
+        // advancing* toward a hero/guard/building this frame. A wedged ork that merely INTENDS to
+        // reach a building/hero but is frozen (steering boxed in → `!o.moving`) must still time out;
+        // keying `engaged` on intent alone left a frozen arsonist immune forever, hanging the wave.
+        let at_building =
+            building_goal.is_some_and(|(_, bp)| o.pos.distance(bp) < BUILDING_ATTACK_RANGE);
+        let attacking = at_hero || at_guard || at_keep || at_building;
+        let pursuing = chase_hero || guard_tgt.is_some() || building_goal.is_some();
+        let engaged = attacking || (pursuing && o.moving);
         let (closest, progress_at, reap) = stuck_step(inv.closest, inv.progress_at, dist_keep, engaged, now);
         inv.closest = closest;
         inv.progress_at = progress_at;
@@ -1266,6 +1280,20 @@ mod tests {
         // engagement is intended behaviour, not stuck. Clock resets even with no keep-ward gain.
         let (c, t, reap) = stuck_step(8.0, 0.0, 25.0, true, STUCK_TIMEOUT + 10.0);
         assert_eq!((c, t, reap), (8.0, STUCK_TIMEOUT + 10.0, false));
+    }
+
+    #[test]
+    fn invaders_spawn_on_flat_keep_connected_ground() {
+        // Regression for "orks stuck on elevations": the world-30 spawn ring clips the inner
+        // edge of two low plateaus (base (52,50) r7 and (90,36) r7), so the old `is_some()`
+        // footing dropped invaders onto a terrace top where they milled instead of marching the
+        // keep. `spawn_footing` keeps only flat (class-1, Y≈0) ring tiles — all in the keep's
+        // walkable component. Sweep every golden-angle bearing and assert none land elevated.
+        for i in 0..400u32 {
+            let p = spawn_point(i, KEEP_POS, SPAWN_RING, spawn_footing);
+            let y = crate::worldmap::ground_at_world(p.x, p.y).expect("spawn lands on land");
+            assert!(y <= 0.05, "spawn #{i} at ({:.1},{:.1}) elevated Y={y:.2}", p.x, p.y);
+        }
     }
 
     #[test]
