@@ -483,7 +483,9 @@ pub fn player_attack(
                         color: crate::combat_fx::col_ork_hit(),
                         scale: 0.85,
                     });
-                    commands.entity(e).insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
+                    // No HurtFlash on cleave splash: one swing used to blink every nearby ork
+                    // white at once, which read as scene-wide flicker. The float number, recoil
+                    // and squash still mark splash victims; only the direct target flashes.
                     spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), false, now_s);
                     if let Some(mut o) = ork {
                         o.hit_recoil = now_s;

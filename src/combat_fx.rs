@@ -25,10 +25,10 @@ const FLOAT_FONT: f32 = 24.0;
 const FLOAT_SHADOW_A: f32 = 0.85;
 /// White-flash duration on a struck ork (s).
 const HURT_FLASH_DUR: f32 = 0.12;
-/// Peak emissive of the hurt-flash. Deliberately LOW: at the old 0.8 the model blew out to a
-/// white silhouette for the whole post-hitstop beat, strobing under rapid hits and completely
-/// masking the squash/recoil body language that sells the blow.
-const HURT_FLASH_PEAK: f32 = 0.28;
+/// Peak emissive of the hurt-flash. Deliberately FAINT: a bright white flash (0.8, then 0.28)
+/// strobed under rapid hits and masked the squash/recoil body language — at 0.12 it's a glint
+/// that confirms the hit while the pose does the talking.
+const HURT_FLASH_PEAK: f32 = 0.12;
 /// Trauma shed per second (old `TRAUMA_DECAY`).
 const SHAKE_DECAY: f32 = 2.4;
 /// Camera offset (world units) at full trauma.
