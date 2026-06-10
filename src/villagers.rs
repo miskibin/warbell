@@ -128,7 +128,8 @@ pub struct Guard {
 /// Hit points for any town-pool NPC ([`Townsfolk`] — guard or worker alike). Death is
 /// **permanent**: at 0 HP the body crumples (`dying.rs`) and the town's population drops by one.
 /// Replacements are grown from the food surplus by day (`town::population_system`) — nobody is
-/// revived at dawn any more.
+/// revived at dawn any more. The one backstop: after a massacre night, refugees top the headcount
+/// back up to a floor of 2 at dawn (`town::dawn_refugees`) so someone can always work the farm.
 #[derive(Component)]
 pub struct NpcHp {
     pub hp: f32,

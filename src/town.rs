@@ -118,6 +118,8 @@ impl Plugin for TownPlugin {
                 Update,
                 (apply_building_damage, repair_system).run_if(in_state(Modal::None)),
             )
+            // Ungated so the night→day edge fires even while frozen (panel open at dawn).
+            .add_systems(Update, dawn_refugees)
             // Rebuild building meshes to match a loaded `TownRes` (ungated; fires on a load).
             .add_systems(Update, restore_buildings)
             // VFX (ungated): flames flicker even when frozen.
@@ -129,32 +131,45 @@ impl Plugin for TownPlugin {
 
 /// By day, staff each producer from the idle townsfolk reserve: pick the nearest standing guard
 /// (an unemployed `Townsfolk`) and swap its `Guard` role for a `Worker` job — it downs its weapon
-/// and walks to the field. Skipped during a wave: nobody gets pulled off the wall mid-assault, and
-/// `muster_townsfolk` has already fired everyone back to guard duty at dusk.
+/// and walks to the field. **Farms are staffed first** (food → population is what keeps the town
+/// alive), so a thin workforce — e.g. the two dawn survivors after a massacre night
+/// ([`dawn_refugees`]) — goes to the fields before any other producer sees a worker; if every hand
+/// is already employed elsewhere, one is pulled off a non-farm plot. Skipped during a wave: nobody
+/// gets pulled off the wall mid-assault, and `muster_townsfolk` has already fired everyone back to
+/// guard duty at dusk.
 #[allow(clippy::type_complexity)]
 fn auto_assign_workers(
     town: Res<TownRes>,
     spots: Res<PlotSpots>,
     siege: Option<Res<crate::siege::Siege>>,
     mut commands: Commands,
-    workers: Query<&Worker>,
+    workers: Query<(Entity, &Worker)>,
     idle: Query<(Entity, &Transform), (With<Townsfolk>, With<Guard>, Without<Worker>)>,
 ) {
     if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
         return; // night: defenders stay on the wall
     }
-    for (idx, plot) in town.0.plots.iter().enumerate() {
+    // Visit plots farm-first (stable sort keeps index order within each group).
+    let mut order: Vec<usize> = (0..town.0.plots.len()).collect();
+    order.sort_by_key(|&i| !matches!(town.0.plots[i].kind, Some(BuildKind::Farm)));
+    let mut claimed: Vec<Entity> = Vec::new(); // picked this frame (commands are deferred)
+    let mut farm_short = false; // a built farm went unstaffed for want of hands
+    for idx in order {
+        let plot = &town.0.plots[idx];
         let Some(kind) = plot.kind else { continue };
         if !plot.is_built() || !kind.needs_worker() {
             continue;
         }
-        if workers.iter().any(|w| w.idx == idx) {
+        if workers.iter().any(|(_, w)| w.idx == idx) {
             continue; // already has a worker assigned
         }
         let Some(spot) = spots.0.get(idx).copied() else { continue };
-        // Nearest idle townsperson.
+        // Nearest idle townsperson not already claimed this frame.
         let mut best: Option<(Entity, f32)> = None;
         for (e, tf) in &idle {
+            if claimed.contains(&e) {
+                continue;
+            }
             let d = Vec2::new(tf.translation.x, tf.translation.z).distance(spot);
             if best.map_or(true, |(_, bd)| d < bd) {
                 best = Some((e, d));
@@ -162,7 +177,21 @@ fn auto_assign_workers(
         }
         if let Some((e, _)) = best {
             // Off guard duty, onto the job (Guard → Worker; the two roles are exclusive).
+            claimed.push(e);
             commands.entity(e).try_remove::<Guard>().try_insert(Worker { idx, at_post: false });
+        } else if kind == BuildKind::Farm {
+            farm_short = true;
+        }
+    }
+    // A built farm went unstaffed with nobody idle → free ONE non-farm worker (wood can wait;
+    // an unfed town starves). `rearm_townsfolk` re-arms it next frame and the farm-first
+    // ordering above walks it to the field — converges without thrash once farms are staffed.
+    if farm_short {
+        if let Some((e, _)) = workers
+            .iter()
+            .find(|(_, w)| town.0.plots.get(w.idx).is_some_and(|p| !matches!(p.kind, Some(BuildKind::Farm))))
+        {
+            commands.entity(e).try_remove::<Worker>().try_remove::<crate::lumberjack::ChopJob>();
         }
     }
 }
@@ -234,6 +263,41 @@ fn population_system(
         }
         PopEvent::None => {}
     }
+}
+
+/// The morning ALWAYS opens with at least this many townsfolk, however bloody the night.
+const MIN_DAWN_POP: u32 = 2;
+
+/// Dawn floor on the headcount: on the night→day flip (Wave→Prep), if the wave butchered the
+/// town below [`MIN_DAWN_POP`], refugees arrive to top it back up — so there is always somebody
+/// left to work the farm the next day (a wiped-out town could otherwise never grow food → never
+/// regrow population). Edge-triggered like `villagers::muster_townsfolk` and ungated, so the flip
+/// fires even while the world is frozen; [`sync_population_bodies`] grows the actual bodies, and
+/// the farm-first [`auto_assign_workers`] sends them straight to the fields.
+fn dawn_refugees(
+    siege: Option<Res<crate::siege::Siege>>,
+    mut last_wave: Local<Option<bool>>,
+    mut town: ResMut<TownRes>,
+    mut lives: ResMut<Lives>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+) {
+    let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
+    let was_wave = last_wave.replace(wave);
+    if was_wave != Some(true) || wave {
+        return; // only on the night→day edge
+    }
+    if town.0.population >= MIN_DAWN_POP {
+        return;
+    }
+    let added = MIN_DAWN_POP - town.0.population;
+    town.0.population = MIN_DAWN_POP;
+    lives.heirs += added; // keep the population→bloodline tie (as rescue/recruit do)
+    floats.0.push(crate::combat_fx::FloatReq {
+        world: Vec3::new(0.0, 6.5, 5.0),
+        text: "\u{1f3da} Refugees arrive to rebuild the town".into(),
+        color: Color::srgb(0.55, 1.0, 0.6),
+        scale: 1.25,
+    });
 }
 
 /// Keep the visible `Townsfolk` bodies matched to `town.population` — the single source of truth
