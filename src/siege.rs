@@ -455,7 +455,12 @@ impl Plugin for SiegePlugin {
             // Fresh run: reset on leaving the start screen or game-over (NOT on un-pausing,
             // which is a Playing↔Paused transition and never touches these).
             .add_systems(OnExit(AppState::StartScreen), reset_siege)
-            .add_systems(OnExit(AppState::GameOver), reset_siege);
+            .add_systems(OnExit(AppState::GameOver), reset_siege)
+            // Pause-menu Restart / Load also begins a fresh run (gated so a plain resume is inert).
+            .add_systems(
+                OnExit(AppState::Paused),
+                reset_siege.run_if(crate::game_state::restart_requested),
+            );
     }
 }
 

@@ -35,6 +35,10 @@ impl Plugin for SuccessionPlugin {
         app.init_resource::<Lives>()
             .add_systems(OnExit(AppState::StartScreen), reset_lives)
             .add_systems(OnExit(AppState::GameOver), reset_lives)
+            .add_systems(
+                OnExit(AppState::Paused),
+                reset_lives.run_if(crate::game_state::restart_requested),
+            )
             .add_systems(Update, watch_bloodline.run_if(in_state(AppState::Playing)));
     }
 }
