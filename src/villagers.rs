@@ -1,7 +1,9 @@
-//! **Villagers** — the castle town's ambient population, ported from the TS `Villager.tsx`
-//! mesh tree. Box-mesh humanoids that idle and stroll around the courtyard, with a few posted
-//! at the keep + spilling out through the gates. The scene is a viewer, so there's no day
-//! schedule, no guard combat and no upgrades — just lived-in townsfolk.
+//! **Villagers** — the castle town's population, ported from the TS `Villager.tsx` mesh tree.
+//! Box-mesh humanoids that idle and stroll around the courtyard, with a few posted at the keep +
+//! spilling out through the gates. The town pool ([`Townsfolk`]) is a full combat participant
+//! now: every member carries [`NpcHp`], guards hunt orks *and* predators near their post, passive
+//! workers fight back when struck ([`FightBack`]), and death is permanent (replacements are grown
+//! from the food surplus by day — see `town.rs`).
 //!
 //! Same ambient-biped pattern as `orks.rs`: a static **torso** plus articulated **parts**
 //! (2 legs, 2 arms, a head) that swing via the shared sin trick; navigation is the shared
@@ -50,20 +52,23 @@ enum Mode {
     Walk,
 }
 
+/// The shared villager pose/locomotion state. The gameplay-relevant fields are `pub(crate)` so
+/// the sibling NPC brains (`lumberjack.rs` chop/flee steering, the predator AI in `wildlife.rs`)
+/// can drive/read the same pose the in-module brains do.
 #[derive(Component)]
 pub struct Villager {
     home: Vec2,
     target: Vec2,
-    pos: Vec2,
-    facing: f32,
-    speed: f32,
+    pub(crate) pos: Vec2,
+    pub(crate) facing: f32,
+    pub(crate) speed: f32,
     wander_r: f32,
-    gait: f32,
+    pub(crate) gait: f32,
     swing: f32,
-    bob: f32,
-    body_r: f32,
-    phase: f32,
-    moving: bool,
+    pub(crate) bob: f32,
+    pub(crate) body_r: f32,
+    pub(crate) phase: f32,
+    pub(crate) moving: bool,
     mode: Mode,
     timer: f32,
     rng: u32,
@@ -103,21 +108,33 @@ pub struct Pilgrim {
 }
 
 /// A castle town-guard: a villager that fights invaders during a wave (chase → strike, trading
-/// blows), goes **down** at 0 HP (lies still), and is revived + walks back to its post at dawn.
+/// blows) and, in peacetime, sallies out after any ork or predator that prowls near its post
+/// (short detect, short leash — see [`guard_combat`]), walking back to the post after the kill.
+/// Its hit points live in the shared [`NpcHp`]; at 0 HP it dies for good like anyone else.
 #[derive(Component)]
 pub struct Guard {
-    hp: f32,
-    max: f32,
     atk_cd: f32,
-    pub downed: bool,
     post: Vec2,
 }
 
-impl Guard {
-    /// Down guards aren't worth an invader's attention (read by the invader AI's targeting).
-    pub fn is_downed(&self) -> bool {
-        self.downed
-    }
+/// Hit points for any town-pool NPC ([`Townsfolk`] — guard or worker alike). Death is
+/// **permanent**: at 0 HP the body crumples (`dying.rs`) and the town's population drops by one.
+/// Replacements are grown from the food surplus by day (`town::population_system`) — nobody is
+/// revived at dawn any more.
+#[derive(Component)]
+pub struct NpcHp {
+    pub hp: f32,
+    pub max: f32,
+}
+
+/// A **passive** townsperson (a worker — no [`Guard`] role) that has been struck in anger: it
+/// stands its ground and trades blows with its attacker until one of them is dead, then goes back
+/// to work. Inserted by [`npc_damage_apply`], driven by [`npc_fight_back`]. Guards never carry
+/// this — their own combat brain handles retaliation.
+#[derive(Component)]
+pub struct FightBack {
+    target: Entity,
+    atk_cd: f32,
 }
 
 /// Marks the **town's working-and-fighting population** (the labour/militia pool), as opposed to
@@ -136,23 +153,37 @@ pub struct Townsfolk;
 /// module-private). `try_insert` per the despawn-race convention.
 fn arm_as_guard(commands: &mut Commands, e: Entity, post: Vec2) {
     commands.entity(e).try_insert((
-        Guard { hp: GUARD_MAX_HP, max: GUARD_MAX_HP, atk_cd: 0.0, downed: false, post },
+        Guard { atk_cd: 0.0, post },
         crate::navgrid::NavPath::default(),
     ));
 }
 
-// Guard combat tuning. Guards now take damage ONLY from invaders that actually strike them
-// (via [`GuardDamage`]) — no more self-inflicted melt — so they're beefier + hit harder and a
-// pair can win a 1v1 but a wave still overwhelms them.
-const GUARD_MAX_HP: f32 = 65.0;
+// NPC combat tuning. Townsfolk take damage ONLY through the [`NpcDamage`] channel (ork blades
+// from `siege.rs`, predator bites from `wildlife.rs`) — no self-inflicted melt — so guards are
+// beefy enough that a pair wins a 1v1 but a wave still overwhelms them.
+const NPC_MAX_HP: f32 = 65.0;
 const GUARD_DAMAGE: f32 = 9.0;
 /// How far a guard will march to hunt an invader at night. Large enough to cover the whole
 /// defended area, so the reserve actively goes out to meet the wave instead of standing idle until
 /// an ork wanders within arm's reach (the old 12-unit passive radius left guards doing nothing).
 const GUARD_HUNT_RADIUS: f32 = 60.0;
+/// Peacetime: a hostile (ork or predator) this near a guard's POST is engaged on sight…
+const GUARD_DETECT: f32 = 15.0;
+/// …and chased only while it stays this near the post — past the leash the guard lets it go and
+/// ambles home, so wildlife can't kite the militia across the island.
+const GUARD_LEASH: f32 = 25.0;
+/// Peacetime mend rate (HP/s). Replaces the old instant dawn full-heal: a guard that brawls a
+/// wolf pack back-to-back stays wounded for a while, and a dead one stays dead.
+const GUARD_REGEN: f32 = 3.0;
 const GUARD_MELEE: f32 = 1.6;
 const GUARD_SPEED: f32 = 2.4;
 const GUARD_ATTACK_CD: f32 = 1.0;
+/// A passive townsperson's self-defence swing: weak (a hoe, an axe haft) but real.
+const NPC_DEFEND_DMG: f32 = 6.0;
+const NPC_DEFEND_CD: f32 = 1.2;
+const NPC_MELEE: f32 = 1.5;
+/// A defender gives up the brawl when its attacker breaks off this far away.
+const NPC_GIVE_UP: f32 = 12.0;
 /// A guard's strike only emits a clash SFX when this near the hero — a small earshot so distant
 /// skirmishes across the field stay silent and only the fight beside you is heard.
 const GUARD_SFX_RADIUS: f32 = 14.0;
@@ -160,11 +191,19 @@ const GUARD_SFX_RADIUS: f32 = 14.0;
 /// home by A* through the gates; nearer than this a revived town-guard just steers in directly.
 const GUARD_PATH_RANGE: f32 = 4.0;
 
-/// Damage invaders have dealt town-guards this frame (`(guard entity, amount)`), pushed by the
-/// invader AI in `siege.rs` and drained into guard HP by [`guard_combat`]. The mirror of the
-/// hero's [`crate::player::PendingHeroDamage`] — combat stays store-mediated, no collision events.
+/// One blow landed on a townsperson this frame. `attacker` lets the victim retaliate
+/// ([`FightBack`] for passive folk) — `None` only for source-less damage.
+pub struct NpcHit {
+    pub victim: Entity,
+    pub amount: f32,
+    pub attacker: Option<Entity>,
+}
+
+/// Damage dealt to town NPCs this frame, pushed by the invader AI in `siege.rs` and the predator
+/// AI in `wildlife.rs`, drained into [`NpcHp`] by [`npc_damage_apply`]. The mirror of the hero's
+/// [`crate::player::PendingHeroDamage`] — combat stays store-mediated, no collision events.
 #[derive(Resource, Default)]
-pub struct GuardDamage(pub Vec<(Entity, f32)>);
+pub struct NpcDamage(pub Vec<NpcHit>);
 
 /// Invader melee is blunted this much against an armoured guard (vs the hero) — guards soak.
 pub const GUARD_ARMOR_MULT: f32 = 0.6;
@@ -187,7 +226,7 @@ const CAMP_HOME_R: f32 = 6.0;
 impl Plugin for VillagersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RescuedCamps>()
-            .init_resource::<GuardDamage>()
+            .init_resource::<NpcDamage>()
             .init_resource::<TownSpots>()
             .add_systems(Update, villager_limbs) // limb anim keeps running while frozen
             // Ungated so they fire on the day↔night edge even if the world is frozen (panel open):
@@ -201,6 +240,8 @@ impl Plugin for VillagersPlugin {
                     worker_steer,
                     pilgrim_brain,
                     pilgrim_hint,
+                    npc_damage_apply,
+                    npc_fight_back,
                     guard_combat,
                     rearm_townsfolk,
                     reskin_townsfolk,
@@ -250,7 +291,12 @@ fn muster_townsfolk(
     *last = Some(wave);
     if wave {
         for e in &workers {
-            commands.entity(e).try_remove::<crate::town::Worker>();
+            // Down tools entirely: a woodcutter drops its tree job too, or it would keep the
+            // chop steering alongside the guard brain it's about to get.
+            commands
+                .entity(e)
+                .try_remove::<crate::town::Worker>()
+                .try_remove::<crate::lumberjack::ChopJob>();
         }
     }
 }
@@ -261,10 +307,18 @@ fn muster_townsfolk(
 /// fights by night; employment is the only thing that pulls one off guard duty.
 fn rearm_townsfolk(
     mut commands: Commands,
-    idle: Query<(Entity, &Villager), (With<Townsfolk>, Without<Guard>, Without<crate::town::Worker>)>,
+    idle: Query<
+        (Entity, &Villager),
+        (With<Townsfolk>, Without<Guard>, Without<crate::town::Worker>, Without<crate::dying::Dying>),
+    >,
 ) {
     for (e, v) in &idle {
-        arm_as_guard(&mut commands, e, v.pos);
+        // A woodcutter mustered deep in the woods at dusk gets posted back HOME (its courtyard
+        // spot), not where it stands — otherwise the militia ends up scattered through the forest.
+        let post = if v.pos.length() > 26.0 { v.home } else { v.pos };
+        // Shed any stale tree job (e.g. the plot collapsed mid-chop) before taking up arms.
+        commands.entity(e).try_remove::<crate::lumberjack::ChopJob>();
+        arm_as_guard(&mut commands, e, post);
     }
 }
 
@@ -374,10 +428,21 @@ fn recruit(
 
 /// Ambient townsfolk wander — guards (their AI is [`guard_combat`]) and pilgrims (their AI is
 /// [`pilgrim_brain`]) are excluded.
+#[allow(clippy::type_complexity)]
 fn villager_brain(
     time: Res<Time>,
     spots: Res<TownSpots>,
-    mut q: Query<(&mut Villager, &mut Transform, Has<Kid>), (Without<Guard>, Without<Pilgrim>, Without<crate::town::Worker>)>,
+    mut q: Query<
+        (&mut Villager, &mut Transform, Has<Kid>),
+        (
+            Without<Guard>,
+            Without<Pilgrim>,
+            Without<crate::town::Worker>,
+            Without<FightBack>,
+            Without<crate::lumberjack::Fleeing>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
@@ -430,10 +495,19 @@ fn villager_brain(
 /// Steer assigned workers to their building, then hold post (sets `at_post`).
 /// Lives here because it pokes the private `Villager` fields. Workers inherit
 /// `townsfolk_curfew` (no `Guard`), so they flee at night automatically.
+#[allow(clippy::type_complexity)]
 fn worker_steer(
     time: Res<Time>,
     spots: Res<crate::town::PlotSpots>,
-    mut q: Query<(&mut crate::town::Worker, &mut Villager, &mut Transform)>,
+    mut q: Query<
+        (&mut crate::town::Worker, &mut Villager, &mut Transform),
+        (
+            Without<crate::lumberjack::ChopJob>,
+            Without<crate::lumberjack::Fleeing>,
+            Without<FightBack>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
@@ -474,7 +548,12 @@ fn pilgrim_brain(
     time: Res<Time>,
     mut q: Query<
         (&mut Pilgrim, &mut Villager, &mut Transform),
-        (Without<Guard>, Without<crate::landmarks::Landmark>, Without<crate::town::Worker>),
+        (
+            Without<Guard>,
+            Without<crate::landmarks::Landmark>,
+            Without<crate::town::Worker>,
+            Without<crate::dying::Dying>,
+        ),
     >,
     marks: Query<&Transform, With<crate::landmarks::Landmark>>,
 ) {
@@ -592,24 +671,161 @@ fn compass(from: Vec2, to: Vec2) -> &'static str {
     ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"][i as usize]
 }
 
-/// Town-guard AI: during a wave, chase the nearest invader inside the defend radius and trade
-/// blows in melee (the guard's strikes wound the invader's `Health`, the invader's wound the
-/// guard); a downed guard lies still. In peacetime guards heal up + amble back to their post.
+/// Drain the frame's NPC hits (ork blades via `siege.rs`, predator bites via `wildlife.rs`)
+/// into townsfolk HP. Death is **permanent**: the body crumples (`dying.rs`) and the town's
+/// population drops by one — the food surplus regrows a replacement by day
+/// (`town::population_system`); nobody rises at dawn. A surviving *passive* townsperson (no
+/// [`Guard`] role) rounds on its attacker ([`FightBack`]): villagers always defend themselves.
+#[allow(clippy::type_complexity)]
+fn npc_damage_apply(
+    time: Res<Time>,
+    mut incoming: ResMut<NpcDamage>,
+    mut town: ResMut<crate::town::TownRes>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut commands: Commands,
+    mut q: Query<(&mut NpcHp, &Transform, Has<Guard>), Without<crate::dying::Dying>>,
+) {
+    let now = time.elapsed_secs();
+    for hit in incoming.0.drain(..) {
+        let Ok((mut hp, tf, is_guard)) = q.get_mut(hit.victim) else { continue };
+        if hp.hp <= 0.0 {
+            continue; // already mortally struck this frame
+        }
+        hp.hp -= hit.amount;
+        if hp.hp <= 0.0 {
+            crate::dying::begin_dying(&mut commands, hit.victim, now);
+            // The headcount is the source of truth — dropping it keeps `sync_population_bodies`
+            // from spawning an instant free replacement; growth has to re-earn the body.
+            town.0.population = town.0.population.saturating_sub(1);
+            floats.0.push(crate::combat_fx::FloatReq {
+                world: tf.translation + Vec3::Y * 2.2,
+                text: "A townsperson has fallen!".into(),
+                color: Color::srgb(1.0, 0.45, 0.35),
+                scale: 1.2,
+            });
+        } else if !is_guard {
+            if let Some(att) = hit.attacker {
+                // "Always defends": a struck worker stops fleeing/working and turns on its foe.
+                commands
+                    .entity(hit.victim)
+                    .try_remove::<crate::lumberjack::Fleeing>()
+                    .try_insert(FightBack { target: att, atk_cd: 0.0 });
+            }
+        }
+    }
+}
+
+/// Passive self-defence: a [`FightBack`] townsperson squares up to its attacker and trades weak
+/// blows until the attacker is dead, it dies, or the attacker breaks off — then back to work.
+#[allow(clippy::type_complexity)]
+fn npc_fight_back(
+    time: Res<Time>,
+    hero: Query<&crate::player::Hero>,
+    mut commands: Commands,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut kills: MessageWriter<crate::verbs::AnimalKilled>,
+    mut npcs: Query<
+        (Entity, &mut FightBack, &mut Villager, &mut Transform),
+        (Without<Guard>, Without<crate::dying::Dying>),
+    >,
+    mut hostiles: Query<
+        (&Transform, &mut crate::player::Health, Option<&crate::wildlife::Animal>),
+        (
+            Or<(With<crate::orks::Ork>, With<crate::wildlife::Animal>)>,
+            Without<Villager>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
+    let hero_pos = hero.single().ok().map(|h| h.pos);
+    for (self_e, mut fb, mut v, mut tf) in &mut npcs {
+        let Ok((ttf, mut thp, animal)) = hostiles.get_mut(fb.target) else {
+            commands.entity(self_e).try_remove::<FightBack>(); // foe gone (dead/despawned)
+            continue;
+        };
+        let tp = Vec2::new(ttf.translation.x, ttf.translation.z);
+        let d = v.pos.distance(tp);
+        if d > NPC_GIVE_UP {
+            commands.entity(self_e).try_remove::<FightBack>(); // it broke off — let it go
+            continue;
+        }
+        fb.atk_cd -= dt;
+        if d < NPC_MELEE {
+            v.moving = false;
+            let to = tp - v.pos;
+            if to.length_squared() > 1e-4 {
+                let want = to.x.atan2(to.y);
+                v.facing += steer::wrap_pi(want - v.facing).clamp(-VIL_MAX_TURN * 2.0 * dt, VIL_MAX_TURN * 2.0 * dt);
+            }
+            if fb.atk_cd <= 0.0 {
+                fb.atk_cd = NPC_DEFEND_CD;
+                thp.hp -= NPC_DEFEND_DMG;
+                if thp.hp <= 0.0 {
+                    crate::dying::begin_dying(&mut commands, fb.target, now);
+                    if let Some(a) = animal {
+                        // Feed the loot/respawn pipeline like any kill.
+                        kills.write(crate::verbs::AnimalKilled { at: ttf.translation, species: a.species });
+                    }
+                } else if animal.is_some() {
+                    // The beast snaps back at whoever is poking it.
+                    commands.entity(fb.target).try_insert(crate::wildlife::Struck { by: Some(self_e) });
+                }
+                if hero_pos.is_some_and(|hp| v.pos.distance(hp) < GUARD_SFX_RADIUS) {
+                    let at = Vec3::new(v.pos.x, tf.translation.y + 1.0, v.pos.y);
+                    cues.write(crate::audio::AudioCue::GuardStrike(at));
+                }
+            }
+        } else {
+            // Close the gap (a touch faster than the work amble — adrenaline).
+            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            match steer::advance(v.pos, v.facing, tp, v.speed * 1.25 * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
+                Some(s) => {
+                    v.facing = s.facing;
+                    v.pos = s.pos;
+                    v.moving = s.moving;
+                }
+                None => v.moving = false,
+            }
+        }
+        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+/// Town-guard AI. During a wave: chase the nearest invader inside the big hunt radius and trade
+/// blows in melee. In peacetime: mend slowly, and sally out after any hostile — an ork **or a
+/// predator** (wolf, bear, golem…) — that prowls within [`GUARD_DETECT`] of the post, chasing it
+/// only while it stays inside [`GUARD_LEASH`]; after the kill (or the leash) walk back to post.
 #[allow(clippy::type_complexity)]
 fn guard_combat(
     time: Res<Time>,
     siege: Res<crate::siege::Siege>,
-    mut incoming: ResMut<GuardDamage>,
     mut commands: Commands,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut kills: MessageWriter<crate::verbs::AnimalKilled>,
     hero: Query<&crate::player::Hero>,
     mut guards: Query<
-        (Entity, &mut Guard, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
-        Without<crate::orks::WaveInvader>,
+        (Entity, &mut Guard, &mut NpcHp, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
+        Without<crate::dying::Dying>,
     >,
-    mut invaders: Query<
-        (Entity, &Transform, &mut crate::player::Health),
-        (With<crate::orks::WaveInvader>, Without<Guard>, Without<crate::dying::Dying>),
+    mut hostiles: Query<
+        (
+            Entity,
+            &Transform,
+            &mut crate::player::Health,
+            Has<crate::orks::WaveInvader>,
+            Option<&crate::wildlife::Animal>,
+        ),
+        (
+            Or<(With<crate::orks::Ork>, With<crate::wildlife::Animal>)>,
+            Without<Guard>,
+            Without<crate::dying::Dying>,
+        ),
     >,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -618,34 +834,106 @@ fn guard_combat(
     let in_wave = siege.phase == crate::siege::GamePhase::Wave;
     // Hero (≈ listener) position, for the small-earshot gate on guard clash SFX.
     let hero_pos = hero.single().ok().map(|h| h.pos);
-    let inv: Vec<(Entity, Vec2)> =
-        invaders.iter().map(|(e, tf, _)| (e, Vec2::new(tf.translation.x, tf.translation.z))).collect();
-    let mut dealt: Vec<(Entity, f32)> = Vec::new();
+    // Everything a guard may engage: every ork, plus the predator species only — the militia
+    // doesn't slaughter the deer herds.
+    let inv: Vec<(Entity, Vec2, bool)> = hostiles
+        .iter()
+        .filter_map(|(e, tf, _, invader, animal)| {
+            let hostile = match animal {
+                Some(a) => crate::wildlife::is_hostile_species(a.species),
+                None => true, // any ork
+            };
+            hostile.then_some((e, Vec2::new(tf.translation.x, tf.translation.z), invader))
+        })
+        .collect();
+    let mut dealt: Vec<(Entity, Entity, f32)> = Vec::new(); // (target, guard, dmg)
 
-    // Sum the invader strikes landed on each guard this frame, then drain the channel.
-    let mut hurt: std::collections::HashMap<Entity, f32> = std::collections::HashMap::new();
-    for (e, dmg) in incoming.0.drain(..) {
-        *hurt.entry(e).or_insert(0.0) += dmg;
-    }
-
-    for (self_e, mut g, mut v, mut tf, mut path) in &mut guards {
-        // Take any strikes invaders landed on this guard this frame.
-        if let Some(d) = hurt.get(&self_e) {
-            g.hp -= *d;
-            if g.hp <= 0.0 {
-                g.downed = true;
+    for (self_e, mut g, mut hp, mut v, mut tf, mut path) in &mut guards {
+        g.atk_cd -= dt;
+        if !in_wave {
+            // Peacetime mend — slow, so a mauling leaves a mark (no more instant dawn heal).
+            hp.hp = (hp.hp + GUARD_REGEN * dt).min(hp.max);
+        }
+        // Pick a target. At night: the nearest invader anywhere in the defended area. By day:
+        // the nearest hostile near the POST (engage inside the detect ring, finish a fight it's
+        // already toe-to-toe with anywhere inside the leash).
+        let mut best: Option<(Entity, Vec2, f32)> = None;
+        for (e, p, invader) in &inv {
+            let d = v.pos.distance(*p);
+            if in_wave {
+                if !*invader || d >= GUARD_HUNT_RADIUS {
+                    continue;
+                }
+            } else {
+                let dp = p.distance(g.post);
+                let engaged = d < GUARD_MELEE * 2.0;
+                if dp > if engaged { GUARD_LEASH } else { GUARD_DETECT } {
+                    continue;
+                }
+            }
+            if best.is_none_or(|(_, _, bd)| d < bd) {
+                best = Some((*e, *p, d));
             }
         }
-        if !in_wave {
-            // Dawn: heal, rise, and head back to the post.
-            g.hp = g.max;
-            g.downed = false;
+
+        if let Some((te, tp, d)) = best {
+            if d < GUARD_MELEE {
+                v.moving = false;
+                let to = tp - v.pos;
+                if to.length_squared() > 1e-4 {
+                    let want = to.x.atan2(to.y);
+                    v.facing += steer::wrap_pi(want - v.facing).clamp(-VIL_MAX_TURN * 2.0 * dt, VIL_MAX_TURN * 2.0 * dt);
+                }
+                if g.atk_cd <= 0.0 {
+                    g.atk_cd = GUARD_ATTACK_CD;
+                    dealt.push((te, self_e, GUARD_DAMAGE));
+                    // Clash SFX, but only when the fight is close to the hero (small earshot).
+                    if hero_pos.is_some_and(|hp| v.pos.distance(hp) < GUARD_SFX_RADIUS) {
+                        let at = Vec3::new(v.pos.x, tf.translation.y + 1.0, v.pos.y);
+                        cues.write(crate::audio::AudioCue::GuardStrike(at));
+                    }
+                }
+            } else {
+                // Far from the foe → A* toward it (thread walls/gates instead of wedging);
+                // close → cheap direct steer. Same pattern as the return-to-post walk.
+                let step_target = if d > GUARD_PATH_RANGE {
+                    if path.cursor >= path.waypoints.len()
+                        || now >= path.next_replan
+                        || path.goal_cached.distance(tp) > 2.0
+                    {
+                        path.waypoints = crate::navgrid::path_to(v.pos, tp);
+                        path.cursor = 0;
+                        path.goal_cached = tp;
+                        path.next_replan = now + 0.5 + (self_e.to_bits() % 16) as f32 * 0.04;
+                    }
+                    while path.cursor < path.waypoints.len()
+                        && v.pos.distance(path.waypoints[path.cursor]) < 1.2
+                    {
+                        path.cursor += 1;
+                    }
+                    path.waypoints.get(path.cursor).copied().unwrap_or(tp)
+                } else {
+                    path.waypoints.clear();
+                    path.cursor = 0;
+                    tp
+                };
+                let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+                if let Some(s) = steer::advance(v.pos, v.facing, step_target, GUARD_SPEED * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
+                    v.facing = s.facing;
+                    v.pos = s.pos;
+                    v.moving = s.moving;
+                } else {
+                    v.moving = false;
+                }
+            }
+        } else {
+            // No foe — amble back to the post.
             let to_post = g.post - v.pos;
             if to_post.length() > 0.4 {
-                // Far from home (a freed captive marching in from a razed camp) → follow an A*
-                // route to the courtyard post so it threads the river crossing and the castle
-                // GATE instead of wedging on the wall. Near home (a revived town-guard) → cheap
-                // direct steer, no pathing churn. Mirrors the invader keep-march in `siege.rs`.
+                // Far from home (a freed captive marching in from a razed camp, or a guard back
+                // from a chase) → follow an A* route to the courtyard post so it threads the
+                // river crossing and the castle GATE instead of wedging on the wall. Near home →
+                // cheap direct steer, no pathing churn. Mirrors the invader keep-march in `siege.rs`.
                 let step_target = if to_post.length() > GUARD_PATH_RANGE {
                     if path.cursor >= path.waypoints.len()
                         || now >= path.next_replan
@@ -679,93 +967,29 @@ fn guard_combat(
             } else {
                 v.moving = false;
             }
-        } else if g.downed {
-            v.moving = false;
-        } else {
-            g.atk_cd -= dt;
-            // Hunt the NEAREST invader (within the big hunt radius) — march out to meet it.
-            let mut best: Option<(Entity, Vec2, f32)> = None;
-            for (e, p) in &inv {
-                let d = v.pos.distance(*p);
-                if d < GUARD_HUNT_RADIUS && best.is_none_or(|(_, _, bd)| d < bd) {
-                    best = Some((*e, *p, d));
-                }
-            }
-            if let Some((te, tp, d)) = best {
-                if d < GUARD_MELEE {
-                    v.moving = false;
-                    let to = tp - v.pos;
-                    if to.length_squared() > 1e-4 {
-                        let want = to.x.atan2(to.y);
-                        v.facing += steer::wrap_pi(want - v.facing).clamp(-VIL_MAX_TURN * 2.0 * dt, VIL_MAX_TURN * 2.0 * dt);
-                    }
-                    if g.atk_cd <= 0.0 {
-                        g.atk_cd = GUARD_ATTACK_CD;
-                        dealt.push((te, GUARD_DAMAGE));
-                        // Clash SFX, but only when the fight is close to the hero (small earshot).
-                        if hero_pos.is_some_and(|hp| v.pos.distance(hp) < GUARD_SFX_RADIUS) {
-                            let at = Vec3::new(v.pos.x, tf.translation.y + 1.0, v.pos.y);
-                            cues.write(crate::audio::AudioCue::GuardStrike(at));
-                        }
-                    }
-                } else {
-                    // Far from the ork → A* toward it (thread walls/gates instead of wedging);
-                    // close → cheap direct steer. Same pattern as the dawn return-to-post.
-                    let step_target = if d > GUARD_PATH_RANGE {
-                        if path.cursor >= path.waypoints.len()
-                            || now >= path.next_replan
-                            || path.goal_cached.distance(tp) > 2.0
-                        {
-                            path.waypoints = crate::navgrid::path_to(v.pos, tp);
-                            path.cursor = 0;
-                            path.goal_cached = tp;
-                            path.next_replan = now + 0.5 + (self_e.to_bits() % 16) as f32 * 0.04;
-                        }
-                        while path.cursor < path.waypoints.len()
-                            && v.pos.distance(path.waypoints[path.cursor]) < 1.2
-                        {
-                            path.cursor += 1;
-                        }
-                        path.waypoints.get(path.cursor).copied().unwrap_or(tp)
-                    } else {
-                        path.waypoints.clear();
-                        path.cursor = 0;
-                        tp
-                    };
-                    let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
-                    if let Some(s) = steer::advance(v.pos, v.facing, step_target, GUARD_SPEED * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
-                        v.facing = s.facing;
-                        v.pos = s.pos;
-                        v.moving = s.moving;
-                    } else {
-                        v.moving = false;
-                    }
-                }
-            } else {
-                v.moving = false;
-            }
         }
 
         // Ground-follow (guards own their full transform since they're out of villager_brain).
         let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        // A downed guard sinks to the ground and keels over.
-        if g.downed {
-            tf.translation = Vec3::new(v.pos.x, gy + 0.1, v.pos.y);
-            tf.rotation = Quat::from_rotation_y(v.facing) * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
-        } else {
-            tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-            tf.rotation = Quat::from_rotation_y(v.facing);
-        }
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
     }
 
-    // Apply guard strikes to invader Health; reap the slain.
-    for (e, dmg) in dealt {
-        if let Ok((_, _, mut hp)) = invaders.get_mut(e) {
+    // Apply guard strikes to hostile Health; reap the slain, enrage struck beasts.
+    for (e, guard_e, dmg) in dealt {
+        if let Ok((_, ttf, mut hp, _, animal)) = hostiles.get_mut(e) {
             if hp.hp > 0.0 {
                 hp.hp -= dmg;
                 if hp.hp <= 0.0 {
                     crate::dying::begin_dying(&mut commands, e, time.elapsed_secs());
+                    if let Some(a) = animal {
+                        // Feed the loot/respawn pipeline like any kill.
+                        kills.write(crate::verbs::AnimalKilled { at: ttf.translation, species: a.species });
+                    }
+                } else if animal.is_some() {
+                    // Struck-enrage, aimed at the guard that landed the blow.
+                    commands.entity(e).try_insert(crate::wildlife::Struck { by: Some(guard_e) });
                 }
             }
         }
@@ -1249,7 +1473,8 @@ fn spawn(
     // when they take a job. The NavPath caches an A* route home for a freed captive (see `guard_combat`).
     if let Kind::Guard { skin, tunic } = kind {
         commands.entity(root).insert((
-            Guard { hp: GUARD_MAX_HP, max: GUARD_MAX_HP, atk_cd: 0.0, downed: false, post: home },
+            Guard { atk_cd: 0.0, post: home },
+            NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
             crate::navgrid::NavPath::default(),
             Townsfolk,
             Folk { skin, tunic },

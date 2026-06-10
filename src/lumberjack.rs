@@ -1,0 +1,328 @@
+//! **Woodcutters work the woods for real.** A townsperson posted to a Lumber plot no longer
+//! mimes at the yard: it walks out to an actual scattered tree, chops it down (the tree falls,
+//! banks wood, and regrows later — see `verbs::fell_tree`), then moves on to the next.
+//!
+//! Two hard rails keep this from feeding the orks an endless villager buffet:
+//!   * **Safe ground only** — a tree is workable only inside [`WORK_R`] of the castle and at
+//!     least [`CAMP_AVOID`] from every ork camp (and never inside a camp clearing), so a
+//!     woodcutter never wanders into a warband on its own.
+//!   * **Threat sense** — any ork or predator inside [`DANGER_R`] sends the woodcutter running
+//!     home ([`Fleeing`]) and blacklists that ground for [`DANGER_TTL`] seconds
+//!     ([`DangerSpots`]), so it does NOT trudge straight back under the same shaman's bolt.
+//!
+//! While a woodcutter is actually at a tree it counts as `at_post` — the Lumber plot stays
+//! staffed, so the test-gated `town_store` production keeps its balance; the felled trees' +1
+//! wood is the visible bonus on top. If it's caught anyway, the shared villager self-defence
+//! (`villagers::FightBack`) takes over — it drops the flight and fights.
+
+use bevy::prelude::*;
+
+use tileworld_core::town_store::BuildKind;
+
+use crate::economy::Bank;
+use crate::steer;
+use crate::town::Worker;
+use crate::villagers::{FightBack, Guard, Townsfolk, Villager};
+use crate::worldmap;
+
+/// Trees are only worked this close to the castle origin (the safe heart of the island)…
+const WORK_R: f32 = 45.0;
+/// …and no closer than this to any ork camp centre.
+const CAMP_AVOID: f32 = 22.0;
+/// A hostile (ork / predator) this near a woodcutter triggers the flight home.
+const DANGER_R: f32 = 12.0;
+/// Trees this near a remembered scare are off-limits while it lasts.
+const DANGER_BLACKLIST_R: f32 = 16.0;
+/// How long a scare keeps its ground blacklisted (s).
+const DANGER_TTL: f32 = 120.0;
+/// Axe damage per work swing (TREE_HP 55 → ~5 swings ≈ 10s a tree).
+const CHOP_DMG: f64 = 12.0;
+/// Seconds between work swings — matches the overhead chop loop in `villager_limbs` (~2.1s).
+const CHOP_CD: f32 = 2.1;
+/// Close enough to swing (trunk blockers are ≤ 0.8, body 0.28 — this clears both).
+const CHOP_REACH: f32 = 2.0;
+/// Don't rescan the whole tree set every frame when there's nothing eligible.
+const RETRY_SECS: f32 = 3.0;
+/// A flight home gives up after this long even if the walls weren't reached.
+const FLEE_SECS: f32 = 9.0;
+/// Reaching this close to the castle origin counts as "safe — stop running".
+const FLEE_HOME_R: f32 = 14.0;
+/// No steering progress toward the tree for this long → wedged; abandon + blacklist briefly.
+const STALL_SECS: f32 = 4.0;
+/// Chop SFX is only audible this near the hero (the guards' small-earshot convention).
+const SFX_EARSHOT: f32 = 16.0;
+
+/// The tree a woodcutter is working: walk to it, swing on the cooldown, fell it, pick the next.
+#[derive(Component)]
+pub struct ChopJob {
+    tree: Entity,
+    atk_cd: f32,
+    /// Seconds without steering progress (wedged on a river/prop) — bail at [`STALL_SECS`].
+    stall: f32,
+}
+
+/// A working NPC running for the castle after its threat sense fired (or it was attacked and
+/// the brawl broke off). Removed on reaching home ground or after [`FLEE_SECS`].
+#[derive(Component)]
+pub struct Fleeing {
+    until: f32,
+}
+
+/// Remembered scares: `(world XZ, expires_at)`. Trees near one are skipped while it lasts —
+/// the cap on the "ork farms the same woodcutter forever" loop.
+#[derive(Resource, Default)]
+struct DangerSpots(Vec<(Vec2, f32)>);
+
+pub struct LumberjackPlugin;
+
+impl Plugin for LumberjackPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<DangerSpots>().add_systems(
+            Update,
+            (lumber_danger, assign_tree, chop_work, flee_steer)
+                .run_if(in_state(crate::game_state::Modal::None)),
+        );
+    }
+}
+
+/// Threat sense: an ork or a predator prowling inside [`DANGER_R`] of a working woodcutter sends
+/// it running home and blacklists the spot. Also expires old scares.
+#[allow(clippy::type_complexity)]
+fn lumber_danger(
+    time: Res<Time>,
+    mut danger: ResMut<DangerSpots>,
+    mut commands: Commands,
+    workers: Query<
+        (Entity, &Villager),
+        (With<Worker>, With<ChopJob>, Without<Fleeing>, Without<crate::dying::Dying>),
+    >,
+    orks: Query<&crate::orks::Ork, Without<crate::dying::Dying>>,
+    animals: Query<&crate::wildlife::Animal, Without<crate::dying::Dying>>,
+) {
+    let now = time.elapsed_secs();
+    danger.0.retain(|(_, until)| now < *until);
+    if workers.is_empty() {
+        return;
+    }
+    let mut hostiles: Vec<Vec2> = orks.iter().map(|o| o.pos).collect();
+    hostiles.extend(
+        animals.iter().filter(|a| crate::wildlife::is_hostile_species(a.species)).map(|a| a.pos),
+    );
+    for (e, v) in &workers {
+        if let Some(hp) = hostiles.iter().find(|h| h.distance(v.pos) < DANGER_R) {
+            commands.entity(e).try_remove::<ChopJob>().try_insert(Fleeing { until: now + FLEE_SECS });
+            danger.0.push((*hp, now + DANGER_TTL));
+        }
+    }
+}
+
+/// Hand each idle Lumber-plot worker the nearest workable tree (safe ground, not blacklisted).
+/// Throttled to every [`RETRY_SECS`] — the tree set is large and assignment isn't urgent.
+#[allow(clippy::type_complexity)]
+fn assign_tree(
+    time: Res<Time>,
+    town: Res<crate::town::TownRes>,
+    danger: Res<DangerSpots>,
+    mut retry_at: Local<f32>,
+    mut commands: Commands,
+    workers: Query<
+        (Entity, &Worker, &Villager),
+        (
+            With<Townsfolk>,
+            Without<ChopJob>,
+            Without<Fleeing>,
+            Without<FightBack>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
+    trees: Query<(Entity, &Transform), (With<crate::verbs::ChopTree>, Without<crate::verbs::Stump>)>,
+) {
+    let now = time.elapsed_secs();
+    if now < *retry_at {
+        return;
+    }
+    *retry_at = now + RETRY_SECS;
+    let camps: Vec<Vec2> = crate::camps::cage_positions().iter().map(|(_, c)| *c).collect();
+    for (e, worker, v) in &workers {
+        if town.0.plots.get(worker.idx).and_then(|p| p.kind) != Some(BuildKind::Lumber) {
+            continue; // farmers keep their field mime — only woodcutters roam
+        }
+        let mut best: Option<(Entity, f32)> = None;
+        for (te, tf) in &trees {
+            let tp = Vec2::new(tf.translation.x, tf.translation.z);
+            if tp.length() > WORK_R
+                || crate::camps::in_clearing(tp.x, tp.y)
+                || camps.iter().any(|c| c.distance(tp) < CAMP_AVOID)
+                || danger.0.iter().any(|(d, _)| d.distance(tp) < DANGER_BLACKLIST_R)
+            {
+                continue;
+            }
+            let d = v.pos.distance(tp);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((te, d));
+            }
+        }
+        if let Some((te, _)) = best {
+            commands.entity(e).try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0 });
+        }
+    }
+}
+
+/// Walk the woodcutter to its tree and swing the axe on the cooldown; fell on the last blow.
+/// At the tree it counts `at_post` (the plot stays staffed) and the overhead-chop work loop in
+/// `villager_limbs` plays for free.
+#[allow(clippy::type_complexity)]
+fn chop_work(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut bank: ResMut<Bank>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut danger: ResMut<DangerSpots>,
+    hero: Res<crate::player::HeroState>,
+    mut workers: Query<
+        (Entity, &mut ChopJob, &mut Worker, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
+        (Without<Fleeing>, Without<FightBack>, Without<crate::dying::Dying>),
+    >,
+    mut trees: Query<
+        (&mut crate::verbs::ChopTree, &Transform),
+        (Without<crate::verbs::Stump>, Without<Worker>),
+    >,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
+    for (self_e, mut job, mut worker, mut v, mut tf, mut path) in &mut workers {
+        let Ok((mut tree, ttf)) = trees.get_mut(job.tree) else {
+            // Felled (stumped) or gone — back to the pool; `assign_tree` hands out the next one.
+            commands.entity(self_e).try_remove::<ChopJob>();
+            continue;
+        };
+        let tp = Vec2::new(ttf.translation.x, ttf.translation.z);
+        let d = v.pos.distance(tp);
+        job.atk_cd -= dt;
+        if d <= CHOP_REACH {
+            // At the tree: face it, plant the feet, swing on the cooldown.
+            worker.at_post = true;
+            v.moving = false;
+            job.stall = 0.0;
+            let to = tp - v.pos;
+            if to.length_squared() > 1e-4 {
+                v.facing = to.x.atan2(to.y);
+            }
+            if job.atk_cd <= 0.0 {
+                job.atk_cd = CHOP_CD;
+                if hero.pos.distance(v.pos) < SFX_EARSHOT {
+                    cues.write(crate::audio::AudioCue::WoodChop);
+                }
+                if tree.work_chop(CHOP_DMG) {
+                    crate::verbs::fell_tree(
+                        &mut commands,
+                        job.tree,
+                        ttf.translation,
+                        now,
+                        &mut bank.0,
+                        &mut floats,
+                    );
+                    commands.entity(self_e).try_remove::<ChopJob>();
+                }
+            }
+        } else {
+            // March to the tree: A* when far (thread the gates/river), direct steer when close.
+            worker.at_post = false;
+            let step_target = if d > 6.0 {
+                if path.cursor >= path.waypoints.len()
+                    || now >= path.next_replan
+                    || path.goal_cached.distance(tp) > 2.0
+                {
+                    path.waypoints = crate::navgrid::path_to(v.pos, tp);
+                    path.cursor = 0;
+                    path.goal_cached = tp;
+                    path.next_replan = now + 1.0 + (self_e.to_bits() % 16) as f32 * 0.05;
+                }
+                while path.cursor < path.waypoints.len()
+                    && v.pos.distance(path.waypoints[path.cursor]) < 1.2
+                {
+                    path.cursor += 1;
+                }
+                path.waypoints.get(path.cursor).copied().unwrap_or(tp)
+            } else {
+                path.waypoints.clear();
+                path.cursor = 0;
+                tp
+            };
+            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            let advanced = steer::advance(
+                v.pos,
+                v.facing,
+                step_target,
+                v.speed * dt,
+                v.body_r,
+                cur_y,
+                3.0 * dt,
+            );
+            match advanced {
+                Some(s) if s.moving => {
+                    v.pos = s.pos;
+                    v.facing = s.facing;
+                    v.moving = true;
+                    job.stall = 0.0;
+                }
+                _ => {
+                    v.moving = false;
+                    job.stall += dt;
+                    if job.stall > STALL_SECS {
+                        // Wedged (river bend, prop knot) — abandon this tree and shun the spot
+                        // briefly so the next pick is a different one.
+                        danger.0.push((tp, now + 45.0));
+                        commands.entity(self_e).try_remove::<ChopJob>();
+                    }
+                }
+            }
+        }
+        // Ground-follow + bob (this system owns the transform while the job is on).
+        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+/// Run a fleeing NPC home (toward the castle origin), then stand down. A dusk-mustered guard
+/// sheds the flag instead — the guard brain owns it from there.
+#[allow(clippy::type_complexity)]
+fn flee_steer(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<
+        (Entity, &Fleeing, &mut Villager, &mut Transform, Option<&mut Worker>, Has<Guard>),
+        Without<crate::dying::Dying>,
+    >,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
+    for (e, flee, mut v, mut tf, worker, is_guard) in &mut q {
+        if is_guard || now > flee.until || v.pos.length() < FLEE_HOME_R {
+            commands.entity(e).try_remove::<Fleeing>();
+            continue;
+        }
+        if let Some(mut w) = worker {
+            w.at_post = false;
+        }
+        let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        // Adrenaline sprint for the walls.
+        match steer::advance(v.pos, v.facing, Vec2::ZERO, v.speed * 1.7 * dt, v.body_r, cur_y, 4.5 * dt) {
+            Some(s) => {
+                v.pos = s.pos;
+                v.facing = s.facing;
+                v.moving = s.moving;
+            }
+            None => v.moving = false,
+        }
+        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}

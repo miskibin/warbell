@@ -196,10 +196,16 @@ fn production_system(time: Res<Time>, mut town: ResMut<TownRes>, mut bank: ResMu
 /// here — [`sync_population_bodies`] reconciles them to `town.population` next frame.
 fn population_system(
     time: Res<Time>,
+    siege: Option<Res<crate::siege::Siege>>,
     mut town: ResMut<TownRes>,
     mut lives: ResMut<Lives>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
 ) {
+    // Growing a new peasant is a daytime thing: while the night wave is on, the food→population
+    // flow pauses entirely — losses to the horde can't be replaced until dawn.
+    if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
+        return;
+    }
     let dt = time.delta_secs() as f64;
     match town.0.population_tick(dt) {
         PopEvent::Grew => {
@@ -234,8 +240,10 @@ fn sync_population_bodies(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    folk: Query<Entity, With<Townsfolk>>,
-    idle_guards: Query<Entity, (With<Townsfolk>, With<Guard>, Without<Worker>)>,
+    // The dying are already subtracted from `population` (see `villagers::npc_damage_apply`) —
+    // counting their still-fading bodies would make this reaper cull a second, living villager.
+    folk: Query<Entity, (With<Townsfolk>, Without<crate::dying::Dying>)>,
+    idle_guards: Query<Entity, (With<Townsfolk>, With<Guard>, Without<Worker>, Without<crate::dying::Dying>)>,
     mut next_seed: Local<u32>,
 ) {
     let want = town.0.population as i64;

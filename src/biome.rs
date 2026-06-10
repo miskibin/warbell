@@ -462,7 +462,8 @@ pub fn scatter_region(
                         // (capped ≤ the blockers neighbour-scan bound) so you can walk under
                         // the canopy and brush past, but not through the bole. Small props
                         // (bushes/rocks/barrel cacti/ground cover) register nothing.
-                        crate::blockers::add(cx, cz, (0.2 * s).min(0.8));
+                        let trunk_r = (0.2 * s).min(0.8);
+                        crate::blockers::add(cx, cz, trunk_r);
                         let base = cardinal(&mut r);
                         commands.spawn((
                             Mesh3d(mesh),
@@ -476,7 +477,7 @@ pub fn scatter_region(
                             crate::wind::sway_for(cx, cz, base),
                             // Every scattered tree is choppable for wood (1 tree = 1 wood). The
                             // trunk blocker is cleared on fell via `blockers::remove_at`.
-                            crate::verbs::ChopTree::new(),
+                            crate::verbs::ChopTree::new(trunk_r),
                             BiomeEntity,
                         ));
                     }

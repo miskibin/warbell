@@ -402,7 +402,7 @@ pub fn player_attack(
             if let Some(mut an) = animal {
                 an.kb = dir * if crit { KNOCKBACK_CRIT } else { KNOCKBACK };
                 an.hit_recoil = now_s;
-                commands.entity(e).try_insert(crate::wildlife::Struck);
+                commands.entity(e).try_insert(crate::wildlife::Struck { by: None });
             }
         }
     }
