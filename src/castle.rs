@@ -312,28 +312,45 @@ fn tex_soil(hex: u32) -> Image {
 }
 
 /// Packed earth — the bare courtyard "klepisko" the young settlement stands on before the walls
-/// are raised. Trodden flat (no furrows — that's tilled `tex_soil`): broad damp/dry mottling plus
-/// sparse trodden-in pebbles, so it reads as a real, walked-over dirt yard rather than flat brown.
+/// are raised. Trodden flat (no furrows — that's tilled `tex_soil`): big SOFT damp/dry mottling
+/// (overlapping low-alpha discs, no hard rectangles — those read as a repeating grid once tiled),
+/// faint surviving grass flecks trodden into the dirt, and a few small pebbles. Deliberately low
+/// contrast: the worn-ground feel comes from broad value drift, not busy noise.
 fn tex_packed(hex: u32) -> Image {
     let c = rgb(hex);
     let mut cv = Canvas::new(shade(c, 0.0));
     let mut r = Rng(0x9e3 ^ hex);
-    // Broad mottled patches (damp vs sun-dried earth).
+    // Broad soft mottled patches (damp vs sun-dried earth) — large overlapping discs at low
+    // alpha so tones flow into each other instead of tiling as visible blocks.
+    for _ in 0..46 {
+        let x = r.f() * TN as f32;
+        let y = r.f() * TN as f32;
+        let rad = 7.0 + r.f() * 18.0;
+        cv.disc(x, y, rad, shade(c, (r.f() - 0.5) * 0.13), 0.22 + r.f() * 0.16);
+    }
+    // Trodden-in grass remnants — small muted green-tan flecks where the lawn survives the
+    // foot traffic ("przebłyski trawy"), denser as soft discs + a few single-pixel blades.
+    let grass = [c[0] * 0.78 + 18.0, c[1] * 0.9 + 42.0, c[2] * 0.75];
+    for _ in 0..26 {
+        let x = r.f() * TN as f32;
+        let y = r.f() * TN as f32;
+        cv.disc(x, y, 1.0 + r.f() * 2.2, shade(grass, (r.f() - 0.4) * 0.12), 0.4 + r.f() * 0.3);
+    }
     for _ in 0..70 {
+        let x = (r.f() * TN as f32).floor();
+        let y = (r.f() * TN as f32).floor();
+        cv.rect(x, y, 1.0, 1.0 + r.f() * 2.0, shade(grass, (r.f() - 0.3) * 0.15));
+    }
+    // Sparse trodden-in pebbles (a light stone over its own little shadow) — fewer + smaller
+    // than before so they read as grit, not confetti.
+    for _ in 0..40 {
         let x = r.f() * TN as f32;
         let y = r.f() * TN as f32;
-        let (w, h) = (6.0 + r.f() * 22.0, 6.0 + r.f() * 22.0);
-        cv.rect(x, y, w, h, shade(c, (r.f() - 0.5) * 0.16));
+        let s = 1.0 + r.f() * 1.6;
+        cv.rect(x, y + s, s, s * 0.5, shade(c, -0.12)); // contact shadow
+        cv.rect(x, y, s, s, shade(c, 0.10 + r.f() * 0.10)); // pebble
     }
-    // Sparse trodden-in pebbles (a light stone over its own little shadow).
-    for _ in 0..90 {
-        let x = r.f() * TN as f32;
-        let y = r.f() * TN as f32;
-        let s = 1.5 + r.f() * 2.0;
-        cv.rect(x, y + s, s, s * 0.5, shade(c, -0.14)); // contact shadow
-        cv.rect(x, y, s, s, shade(c, 0.14 + r.f() * 0.12)); // pebble
-    }
-    speckle(&mut cv, &mut r, 600, c);
+    speckle(&mut cv, &mut r, 450, c);
     cv.into_image()
 }
 
@@ -365,8 +382,24 @@ fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial
     tex(tex_shingle(ROOF), 0.85, M::Roof);
     tex(tex_shingle(H_ROOF), 0.85, M::HouseRoof);
     tex(tex_soil(SOIL), 1.0, M::Soil);
-    tex(tex_cobble(COBBLE), 0.95, M::Cobble);
-    tex(tex_packed(PACKED), 1.0, M::Packed);
+
+    // Yard grounds (Packed klepisko / Cobble courtyard) alpha-blend: their `worn_slab`
+    // mesh fades vertex alpha across a noisy rim band, so the surface dissolves
+    // irregularly into the lawn instead of ending on a hard rectangle edge.
+    let mut ground_tex = |img: Image, rough: f32, m: M| {
+        let t = images.add(img);
+        h.insert(m as u8, std_mats.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(t),
+            perceptual_roughness: rough,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        }));
+    };
+    ground_tex(tex_cobble(COBBLE), 0.95, M::Cobble);
+    ground_tex(tex_packed(PACKED), 1.0, M::Packed);
 
     let mut solid = |hex: u32, rough: f32, metal: f32, m: M| {
         h.insert(m as u8, std_mats.add(StandardMaterial {
@@ -495,7 +528,72 @@ pub(crate) fn gable(span_x: f32, span_z: f32, rise: f32, base_y: f32) -> Mesh {
     flat(m)
 }
 
+/// Smooth low-frequency field used to fray the yard rim and drift its brightness —
+/// a few sin octaves (≈1–3-unit features), cheap and seamless in world space.
+fn wear_noise(x: f32, z: f32) -> f32 {
+    (x * 1.31 + 1.7).sin() * (z * 1.13 - 2.3).cos()
+        + (x * 0.53 + z * 0.61 + 4.5).sin() * 0.6
+        + (x * 2.70 - z * 2.20 + 0.8).sin() * 0.25
+}
+
+/// The yard ground sheet — a vertex grid whose rim ALPHA-fades into the grass over a noisy
+/// `fray`-wide wear band (trodden fingers of dirt reach into the lawn and grass bites back
+/// into the yard — no hard rectangle edge), and whose interior carries a low-frequency
+/// brightness mottle in the vertex colour so the tiling texture stops reading as a grid.
+/// Drawn with the alpha-blended ground materials (see `build_mats`). `noise_amp` scales how
+/// ragged the rim is; `mottle` the interior value drift.
+fn worn_slab(w: f32, d: f32, y: f32, fray: f32, noise_amp: f32, mottle: f32) -> Mesh {
+    let hw = w / 2.0 + fray;
+    let hd = d / 2.0 + fray;
+    let step = 0.5_f32;
+    let nx = (2.0 * hw / step).ceil() as usize;
+    let nz = (2.0 * hd / step).ceil() as usize;
+    let mut pos: Vec<[f32; 3]> = Vec::with_capacity((nx + 1) * (nz + 1));
+    let mut nrm: Vec<[f32; 3]> = Vec::with_capacity(pos.capacity());
+    let mut uv: Vec<[f32; 2]> = Vec::with_capacity(pos.capacity());
+    let mut col: Vec<[f32; 4]> = Vec::with_capacity(pos.capacity());
+    for iz in 0..=nz {
+        for ix in 0..=nx {
+            // Spread the grid exactly across [-hw, hw] (no clamped duplicate columns).
+            let x = -hw + 2.0 * hw * ix as f32 / nx as f32;
+            let z = -hd + 2.0 * hd * iz as f32 / nz as f32;
+            // Distance inside the OUTER rect; the wear band spans ~2×fray of it.
+            let d_in = (hw - x.abs()).min(hd - z.abs());
+            let t = d_in / (fray * 2.0) + wear_noise(x, z) * noise_amp - 0.5 * noise_amp;
+            let mut a = (t.clamp(0.0, 1.0) * t.clamp(0.0, 1.0) * (3.0 - 2.0 * t.clamp(0.0, 1.0))).clamp(0.0, 1.0);
+            // Guarantee full transparency AT the mesh edge (noise can't push it back up).
+            a *= (d_in / 0.8).clamp(0.0, 1.0);
+            // Low-frequency brightness drift breaks the texture's tile repetition.
+            let b = 1.0
+                + mottle * (x * 0.37 + 1.1).sin() * (z * 0.41 - 0.6).cos()
+                + mottle * 0.7 * (x * 0.13 - z * 0.17 + 2.0).sin();
+            pos.push([x, y, z]);
+            nrm.push([0.0, 1.0, 0.0]);
+            uv.push([x / TILE, z / TILE]);
+            col.push([b, b, b, a]);
+        }
+    }
+    let mut idx: Vec<u32> = Vec::with_capacity(nx * nz * 6);
+    let row = (nx + 1) as u32;
+    for iz in 0..nz as u32 {
+        for ix in 0..nx as u32 {
+            let i0 = iz * row + ix;
+            let (i1, i2, i3) = (i0 + 1, i0 + row + 1, i0 + row);
+            // Same up-facing winding as `slab`.
+            idx.extend_from_slice(&[i0, i2, i1, i0, i3, i2]);
+        }
+    }
+    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
+    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+    m.insert_indices(Indices::U32(idx));
+    m
+}
+
 /// A flat upward-facing slab quad at height `y` (cobble courtyard), UV tiled.
+#[allow(dead_code)] // superseded by `worn_slab` for the yard; kept for flat textured sheets
 fn slab(w: f32, d: f32, y: f32) -> Mesh {
     let (hw, hd) = (w / 2.0, d / 2.0);
     let pos = vec![[-hw, y, -hd], [hw, y, -hd], [hw, y, hd], [-hw, y, hd]];
@@ -908,17 +1006,20 @@ pub fn build(
     };
 
     // Ground: a bare packed-earth yard ("klepisko") while the keep stands wall-less, swapped for the
-    // cobbled courtyard the moment the Palisade Walls go up. The two slabs share the footprint but
-    // are mutually exclusive (PreWalls vs Walls), so they never z-fight.
+    // cobbled courtyard the moment the Palisade Walls go up. The two sheets share the footprint but
+    // are mutually exclusive (PreWalls vs Walls), so they never z-fight. Both are `worn_slab`s —
+    // their rims alpha-dissolve into the lawn instead of cutting a hard rectangle: the bare yard
+    // gets a wide ragged wear band (trodden earth fading out where feet stop passing), the cobbled
+    // court a tighter fringe (built paving, but its edge stones still sink into the turf).
     spawn(
-        vec![(slab((HALF_X - 0.3) * 2.0, (HALF_Z - 0.3) * 2.0, 0.02), M::Packed)],
+        vec![(worn_slab((HALF_X - 1.2) * 2.0, (HALF_Z - 1.2) * 2.0, 0.02, 2.6, 0.38, 0.06), M::Packed)],
         Vec3::ZERO,
         0.0,
         Vec3::ONE,
         CastleKind::PreWalls,
     );
     spawn(
-        vec![(slab((HALF_X - 0.3) * 2.0, (HALF_Z - 0.3) * 2.0, 0.02), M::Cobble)],
+        vec![(worn_slab((HALF_X - 0.9) * 2.0, (HALF_Z - 0.9) * 2.0, 0.02, 1.0, 0.16, 0.035), M::Cobble)],
         Vec3::ZERO,
         0.0,
         Vec3::ONE,
@@ -960,6 +1061,65 @@ pub fn build(
     spawn(hay_corner_parts(), Vec3::new(10.0, 0.0, 6.0), -0.5, Vec3::ONE, CastleKind::PreWalls);
     spawn(cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::PreWalls);
     spawn(well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::PreWalls);
+
+    // Grass biting back through the yard rim — sparse tufts + clover scattered over the wear
+    // band (and a few worn survivor patches inside the yard) so the trodden earth reads as
+    // walked-over lawn, not a stamped-out shape. PreWalls: the cobbled court replaces them.
+    {
+        let cover_mat = std_mats.add(StandardMaterial {
+            base_color: Color::WHITE, // vertex colour carries the hue (groundcover contract)
+            perceptual_roughness: 0.62,
+            reflectance: 0.5,
+            ..default()
+        });
+        let tuft = meshes.add(crate::groundcover::build_grass_tuft_mesh());
+        let clover = meshes.add(crate::groundcover::build_clover_mesh());
+        let mut r = Rng(0x9ea5);
+        let sprig = |x: f32, z: f32, mesh: &Handle<Mesh>, s: f32, r: &mut Rng, commands: &mut Commands| {
+            commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(cover_mat.clone()),
+                Transform {
+                    translation: Vec3::new(x, 0.02, z),
+                    rotation: Quat::from_rotation_y(r.f() * std::f32::consts::TAU),
+                    scale: Vec3::splat(s),
+                },
+                bevy::light::NotShadowCaster,
+                CastlePart { kind: CastleKind::PreWalls },
+                BiomeEntity,
+            ));
+        };
+        // Rim band: walk the yard perimeter, jittering across the fray band; skip the four
+        // gate lanes (the approach roads keep their trodden-bare mouths).
+        let (bx_, bz_) = (HALF_X - 1.2, HALF_Z - 1.2);
+        for i in 0..64 {
+            let t = i as f32 / 64.0;
+            let p = t * 2.0 * (bx_ + bz_); // half-perimeter parameter (mirrored to ±)
+            let (mut x, mut z) = if p < bx_ * 2.0 { (p - bx_, bz_) } else { (bx_, p - bx_ * 2.0 - bz_) };
+            if r.f() < 0.5 { x = -x; }
+            if r.f() < 0.5 { z = -z; }
+            x += (r.f() - 0.5) * 3.4;
+            z += (r.f() - 0.5) * 3.4;
+            let near_gate = (x.abs() < 2.4 && z.abs() > bz_ - 1.5) || (z.abs() < 2.4 && x.abs() > bx_ - 1.5);
+            if near_gate {
+                continue;
+            }
+            let mesh = if r.f() < 0.55 { &tuft } else { &clover };
+            let s = 0.45 + r.f() * 0.45;
+            sprig(x, z, mesh, s, &mut r, commands);
+        }
+        // Survivor patches inside the yard — small, sparse, low ("gdzie niegdzie").
+        for _ in 0..14 {
+            let x = (r.f() - 0.5) * 2.0 * (bx_ - 2.0);
+            let z = (r.f() - 0.5) * 2.0 * (bz_ - 2.0);
+            if x.abs() < 4.5 && z.abs() < 4.0 {
+                continue; // keep the keep's doorstep bare
+            }
+            let mesh = if r.f() < 0.35 { &tuft } else { &clover };
+            let s = 0.35 + r.f() * 0.3;
+            sprig(x, z, mesh, s, &mut r, commands);
+        }
+    }
 
     // Chimney smoke above each house.
     let smoke_mat = std_mats.add(StandardMaterial {
