@@ -201,7 +201,9 @@ pub const LINES: &[Line] = &[
     Line { floor: 300.0, priority: 5, ..line("kill_a",     Speaker::Hero, Concept::KillMusing, "One more for the pile. I stopped counting around the second winter.") },
     Line { floor: 300.0, priority: 5, ..line("kill_b",     Speaker::Hero, Concept::KillMusing, "Down. There's always another behind it. Always is.") },
     // ── Hero intro lines (once per run — the tutorial in the hero's own voice) ──
-    // Clips at assets/audio/vo/hero/intro_a.ogg and intro_b.ogg (not yet shipped — guard skips them silently)
+    // Heads-up: these run ~14–17s but read_secs clamps the mouth-busy estimate at 8s, so a
+    // higher-priority hero line arriving after ~8s can cut an intro short (rare: priority 3, once,
+    // at run start).
     Line { once: true, priority: 3, ..line("intro_a", Speaker::Hero, Concept::Intro, "Daylight's short — open the chests, gather coin and stone, buy what'll keep you breathing. When dark comes, the orks come for the keep. We hold it.") },
     Line { once: true, priority: 3, ..line("intro_b", Speaker::Hero, Concept::Intro, "By day you scavenge — chests, ore, gold — and arm up at the War Table. By night the horde hits these walls. Keep the keep standing. Don't waste the light.") },
     // ── Villager ambient chatter (nearest working townsperson, when the hero lingers) ──
@@ -220,8 +222,8 @@ pub const LINES: &[Line] = &[
     Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_hero",   Speaker::Villager, Concept::Greeting, "Off to be a hero again, are we? Must be nice having the time.") },
     Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_chosen", Speaker::Villager, Concept::Greeting, "Oh, the chosen one graces us. Mind you don't trip on all that destiny.") },
     Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_slept",  Speaker::Villager, Concept::Greeting, "Saved us all last night, did you? Funny, I slept fine without you.") },
-    // Clips for pa_armor / pa_late (and every line below without an .ogg on disk) are not yet
-    // recorded — wired + silent until they are, like intro_a/b. Transcript here IS the script.
+    // pa_armor and everything after it in this file were batch-generated with ElevenLabs
+    // ("Victor — deep" voice, single take split on silences), so they share one voice.
     Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_armor",  Speaker::Villager, Concept::Greeting, "Lovely armor, that. Shame about the taxes what paid for it.") },
     Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_late",   Speaker::Villager, Concept::Greeting, "Oh, look who turns up once the screaming's done. Impeccable timing, as ever.") },
     Line { floor: 360.0, ..line("pa_fence",     Speaker::Villager, Concept::Greeting,         "Big strong knight. Can't fix a fence, but big strong knight.") },
@@ -270,8 +272,6 @@ pub const LINES: &[Line] = &[
     // ── Hero comebacks to a villager's jab (chain replies — `reply_to`, never emitted directly) ──
     // Dispatched by `tick_chains` when a `pa_*` jab finishes; `pick`-of-pool gives variety. Priority
     // 12 so the retort lands over idle chatter; floored so the same comeback doesn't repeat soon.
-    // Clips at audio/vo/hero/reply_jab_*.ogg are not shipped yet — the chain fires (see tests) but
-    // stays silent until they're recorded, exactly like intro_a/intro_b.
     Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_a", Speaker::Hero, Concept::ReplyToVillagerJab, "Mm. And yet here you still stand, breathing. Funny how that works.") },
     Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_b", Speaker::Hero, Concept::ReplyToVillagerJab, "Destiny's heavy. Someone has to carry it. Might as well be the fool with the sword.") },
     // These two comebacks chain a SECOND link: the villager gets the last word (jab → comeback →
@@ -280,7 +280,7 @@ pub const LINES: &[Line] = &[
     Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), then: Some(LAST_WORD), ..line("reply_jab_d", Speaker::Hero, Concept::ReplyToVillagerJab, "One day I'll sleep in. Just the once. See how the jokes hold up.") },
     Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_e", Speaker::Hero, Concept::ReplyToVillagerJab, "Wit like that, the orks would die laughing. Saves me the swinging.") },
     // ── Villager last words (chain replies to a hero comeback — never emitted directly) ──
-    // End of the exchange: no `then` here, so the chain terminates. Clips not yet recorded.
+    // End of the exchange: no `then` here, so the chain terminates.
     Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_a", Speaker::Villager, Concept::VillagerLastWord, "Ooh, sharp. Practice that one on the cows, did we?") },
     Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_b", Speaker::Villager, Concept::VillagerLastWord, "Noted, m'lord. I'll scream quieter tonight, just for you.") },
     Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_c", Speaker::Villager, Concept::VillagerLastWord, "Touchy, touchy. And after everything we do for you.") },
