@@ -296,6 +296,21 @@ pub fn item_def(id: &str) -> Option<&'static ItemDef> {
 /// bounce.
 pub const BAG_SIZE: usize = 24;
 
+/// Number of player-assignable quick-slots (the **Z / X / C** keys). The **Q** food
+/// slot is separate and always derives the next food, so it is not counted here.
+pub const QUICK_SLOTS: usize = 3;
+
+/// The buff kind a bindable quick-slot defaults to — drives both `auto_bind` targeting
+/// and the empty-slot ghost icon: slot 0 = Z (Resist), 1 = X (Power), 2 = C (Haste).
+pub fn quick_default_kind(slot: usize) -> Option<BuffKind> {
+    match slot {
+        0 => Some(BuffKind::Resist),
+        1 => Some(BuffKind::Power),
+        2 => Some(BuffKind::Haste),
+        _ => None,
+    }
+}
+
 /// One bag cell: `None` = empty, else an item id + a stack count.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -336,6 +351,15 @@ pub struct Bag {
     pub equipped_armor_id: Option<String>,
     /// incoming-damage multiplier from worn armor (1 = none, 0.6 = −40%).
     pub armor_damage_mult: f64,
+    /// The three player-assignable quick-slots **Z / X / C** (Q is the fixed food
+    /// slot, handled by `eat_food`). Each holds the item id pinned to that slot, or
+    /// `None` for an unbound slot. A bind is by item *id* (not bag position), so it
+    /// survives stacks moving and persists at count 0 (the slot greys but keeps its
+    /// item — Diablo-belt style). New pickups `auto_bind` into an empty default slot,
+    /// so a new player gets the old derived layout (resist→Z, power→X, haste→C) with
+    /// zero setup. See [`Bag::set_quick_bind`] / [`Bag::use_quick_slot`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub quick_binds: [Option<String>; QUICK_SLOTS],
 }
 
 impl Default for Bag {
@@ -346,6 +370,7 @@ impl Default for Bag {
             equipped_id: None,
             equipped_armor_id: None,
             armor_damage_mult: 1.0,
+            quick_binds: [None, None, None],
         }
     }
 }
@@ -381,8 +406,17 @@ impl Bag {
     /// Pick up an item: add it to the bag. Returns true when the slot was taken —
     /// the ECS layer fires the pickup toast on `true` (the TS `addItem` did the
     /// toast inline; here that side effect is the caller's). Mirrors `addItem`.
+    ///
+    /// On a successful pickup the item also `auto_bind`s into an empty default
+    /// quick-slot (gear swap-returns go through `place`, which never auto-binds), so
+    /// every pickup path — forage, chest, hunt, shop — keeps the quick-bar populated
+    /// with no extra call sites.
     pub fn add(&mut self, item_id: &str, count: i64) -> bool {
-        self.place(item_id, count)
+        let ok = self.place(item_id, count);
+        if ok {
+            self.auto_bind(item_id);
+        }
+        ok
     }
 
     /// Total count of an item across the bag.
@@ -515,6 +549,101 @@ impl Bag {
     /// The item the given buff key would use next, or None. Mirrors `getBuffSlot`.
     pub fn buff_slot(&self, kind: BuffKind) -> Option<QuickSlot> {
         self.quick_slot(QuickKind::Buff(kind))
+    }
+
+    // ─── Bindable quick-slots (Z / X / C) ────────────────────────────
+    //
+    // Q stays a pure derived view (`food_slot` / `eat_food`); these three slots add a
+    // thin layer of *player intent* on top of the bag: a slot can be pinned to any
+    // consumable id, and that pin persists across stack movement and depletion. An
+    // unbound slot transparently falls back to the old derived-by-kind behaviour, so
+    // the feature is invisible until a player chooses to use it.
+
+    /// The item id pinned to bindable slot `slot` (0 = Z, 1 = X, 2 = C), or None.
+    pub fn quick_bind(&self, slot: usize) -> Option<&str> {
+        self.quick_binds.get(slot).and_then(|b| b.as_deref())
+    }
+
+    /// Pin consumable `id` to bindable slot `slot`. Only consumables (food *or* buff)
+    /// may be bound. A bind is unique: if `id` is already pinned to a different slot,
+    /// that slot is cleared first (so dragging an item onto a new key moves it rather
+    /// than duplicating). Returns false (no change) for a bad slot or a non-consumable.
+    pub fn set_quick_bind(&mut self, slot: usize, id: &str) -> bool {
+        if slot >= QUICK_SLOTS {
+            return false;
+        }
+        match item_def(id) {
+            Some(d) if d.kind == ItemKind::Consumable => {}
+            _ => return false,
+        }
+        for b in &mut self.quick_binds {
+            if b.as_deref() == Some(id) {
+                *b = None;
+            }
+        }
+        self.quick_binds[slot] = Some(id.to_string());
+        true
+    }
+
+    /// Clear bindable slot `slot` back to unbound (reverts to derived-by-kind).
+    pub fn clear_quick_bind(&mut self, slot: usize) {
+        if let Some(b) = self.quick_binds.get_mut(slot) {
+            *b = None;
+        }
+    }
+
+    /// Auto-pin a freshly added consumable to its default slot — but only when that
+    /// slot is still empty and the item isn't already pinned somewhere. This gives a
+    /// new player the legacy derived layout (resist→Z, power→X, haste→C) with zero
+    /// setup while never stomping a manual bind. Food items target Q (the fixed slot),
+    /// so they are skipped here. Called from `add` (the pickup path).
+    pub fn auto_bind(&mut self, id: &str) {
+        let Some(def) = item_def(id) else { return };
+        if def.kind != ItemKind::Consumable {
+            return;
+        }
+        let QuickKind::Buff(kind) = def.quick_of() else { return };
+        let slot = match kind {
+            BuffKind::Resist => 0,
+            BuffKind::Power => 1,
+            BuffKind::Haste => 2,
+        };
+        if self.quick_binds.iter().any(|b| b.as_deref() == Some(id)) {
+            return; // already pinned to some slot — don't move it
+        }
+        if self.quick_binds[slot].is_none() {
+            self.quick_binds[slot] = Some(id.to_string());
+        }
+    }
+
+    /// Use bindable slot `slot` (Z / X / C): consume one of its pinned item and return
+    /// the effect, or None when the slot is exhausted. An *unbound* slot falls back to
+    /// the legacy "next item of the default kind" path, so the keys work before a
+    /// player has set anything up.
+    pub fn use_quick_slot(&mut self, slot: usize) -> Option<ConsumeEffect> {
+        if slot >= QUICK_SLOTS {
+            return None;
+        }
+        if let Some(id) = self.quick_binds[slot].clone() {
+            let i = self.bag.iter().position(|s| s.item_id.as_deref() == Some(id.as_str()))?;
+            return self.consume_at(i);
+        }
+        let kind = quick_default_kind(slot)?;
+        self.activate_buff(kind)
+    }
+
+    /// The id + count a bindable slot shows on the HUD: the pinned id (count may be 0 →
+    /// render greyed) when bound, else the derived next item of the default kind, else
+    /// None → the caller draws the empty-slot ghost.
+    pub fn quick_view(&self, slot: usize) -> Option<QuickSlot> {
+        if slot >= QUICK_SLOTS {
+            return None;
+        }
+        if let Some(id) = self.quick_binds[slot].as_deref() {
+            return Some(QuickSlot { item_id: id.to_string(), count: self.count_item(id) });
+        }
+        let kind = quick_default_kind(slot)?;
+        self.buff_slot(kind)
     }
 
     // ─── Equipping (driven by panel clicks) ──────────────────────────
@@ -890,10 +1019,119 @@ mod tests {
         b.add("sword_iron", 1);
         b.activate_bag_item(idx_of(&b, "sword_iron"));
         b.add("bread", 5);
+        b.add("fur", 1); // pins Z
         b.reset();
         assert!(b.bag.iter().all(|s| s.item_id.is_none()));
         assert!(b.equipped_id.is_none());
         assert_eq!(b.weapon_bonus(), 0.0);
         assert_eq!(b.armor_damage_mult(), 1.0);
+        assert_eq!(b.quick_binds, [None, None, None]);
+    }
+
+    // ── Bindable quick-slots (Z / X / C) ──
+    #[test]
+    fn auto_bind_pins_buff_items_to_their_default_slot_on_pickup() {
+        let mut b = Bag::new();
+        b.add("fur", 1); // resist → Z (slot 0)
+        b.add("venom", 1); // power → X (slot 1)
+        b.add("goat_charm", 1); // haste → C (slot 2)
+        assert_eq!(b.quick_bind(0), Some("fur"));
+        assert_eq!(b.quick_bind(1), Some("venom"));
+        assert_eq!(b.quick_bind(2), Some("goat_charm"));
+    }
+
+    #[test]
+    fn auto_bind_ignores_food_items_food_belongs_to_q() {
+        let mut b = Bag::new();
+        b.add("bread", 1);
+        b.add("marsh_herb", 1); // heals + resist, but tagged Food → Q, not Z
+        assert_eq!(b.quick_binds, [None, None, None]);
+    }
+
+    #[test]
+    fn auto_bind_never_overrides_a_manual_bind() {
+        let mut b = Bag::new();
+        assert!(b.set_quick_bind(0, "potion")); // pin a heal to Z by hand
+        b.add("fur", 1); // resist would target Z, but it's taken
+        assert_eq!(b.quick_bind(0), Some("potion"));
+        // fur found no empty default slot, so it's left unbound (Q/derive still works).
+        assert!(b.quick_binds.iter().all(|x| x.as_deref() != Some("fur")));
+    }
+
+    #[test]
+    fn set_quick_bind_is_unique_rebinding_moves_it() {
+        let mut b = Bag::new();
+        assert!(b.set_quick_bind(0, "fur"));
+        assert!(b.set_quick_bind(1, "fur")); // same id to a second slot
+        assert_eq!(b.quick_bind(0), None); // moved off the first
+        assert_eq!(b.quick_bind(1), Some("fur"));
+    }
+
+    #[test]
+    fn set_quick_bind_rejects_non_consumables() {
+        let mut b = Bag::new();
+        assert!(!b.set_quick_bind(0, "sword_iron"));
+        assert!(!b.set_quick_bind(0, "leather_armor"));
+        assert!(!b.set_quick_bind(0, "mercenary_contract"));
+        assert!(!b.set_quick_bind(9, "fur")); // out-of-range slot
+        assert_eq!(b.quick_binds, [None, None, None]);
+    }
+
+    #[test]
+    fn use_quick_slot_consumes_the_pinned_item() {
+        let mut b = Bag::new();
+        b.add("fur", 2); // auto-pins Z
+        let eff = b.use_quick_slot(0).expect("used fur");
+        assert_eq!(eff.buff.unwrap().0, BuffKind::Resist);
+        assert_eq!(b.count_item("fur"), 1);
+    }
+
+    #[test]
+    fn use_quick_slot_keeps_the_bind_when_the_stack_is_exhausted() {
+        let mut b = Bag::new();
+        b.add("fur", 1); // auto-pins Z
+        assert!(b.use_quick_slot(0).is_some()); // last fur consumed
+        assert_eq!(b.quick_bind(0), Some("fur")); // bind survives at count 0
+        assert!(b.use_quick_slot(0).is_none()); // nothing left to use → no-op
+    }
+
+    #[test]
+    fn use_quick_slot_can_fire_a_pinned_food_item() {
+        let mut b = Bag::new();
+        b.add("bread", 1); // food: auto-bind skips it
+        assert!(b.set_quick_bind(1, "bread")); // but a player can pin it to X
+        let eff = b.use_quick_slot(1).expect("ate bread from X");
+        assert_eq!(eff.heal, 15.0);
+        assert!(!b.has_item("bread"));
+    }
+
+    #[test]
+    fn use_quick_slot_unbound_falls_back_to_derived_kind() {
+        let mut b = Bag::new();
+        b.clear_quick_bind(0); // explicitly unbound Z
+        b.place("fur", 1); // bypass `add`'s auto-bind so the slot stays unbound
+        assert_eq!(b.quick_bind(0), None);
+        let eff = b.use_quick_slot(0).expect("derived resist item");
+        assert_eq!(eff.buff.unwrap().0, BuffKind::Resist);
+    }
+
+    #[test]
+    fn quick_view_reports_pinned_id_and_count_for_the_hud() {
+        let mut b = Bag::new();
+        b.add("fur", 3); // pins Z, count 3
+        assert_eq!(b.quick_view(0), Some(QuickSlot { item_id: "fur".into(), count: 3 }));
+        // Depleted but still pinned → count 0 (HUD greys it, keeps the icon).
+        b.consume_item("fur", 3);
+        assert_eq!(b.quick_view(0), Some(QuickSlot { item_id: "fur".into(), count: 0 }));
+        // Truly unbound with nothing of its kind → None (HUD draws the ghost).
+        assert_eq!(b.quick_view(1), None);
+    }
+
+    #[test]
+    fn quick_default_kind_maps_zxc_and_rejects_others() {
+        assert_eq!(quick_default_kind(0), Some(BuffKind::Resist));
+        assert_eq!(quick_default_kind(1), Some(BuffKind::Power));
+        assert_eq!(quick_default_kind(2), Some(BuffKind::Haste));
+        assert_eq!(quick_default_kind(3), None);
     }
 }

@@ -12,8 +12,9 @@
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use tileworld_core::buff_store::{BuffKind, BuffStore};
-use tileworld_core::inventory::{item_def, Bag, ConsumeEffect};
+use bevy::window::PrimaryWindow;
+use tileworld_core::buff_store::BuffStore;
+use tileworld_core::inventory::{item_def, Bag, ConsumeEffect, ItemKind, QUICK_SLOTS};
 use tileworld_core::item_toast_store::ToastStack;
 use tileworld_core::player::Player;
 
@@ -25,6 +26,16 @@ use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
+
+/// A quick-slot fired this frame — HUD reads it to pop the matching cell. Index is the
+/// quick-bar order: 0 = Q (food), 1 = Z, 2 = X, 3 = C.
+#[derive(Message, Clone, Copy)]
+pub struct QuickFlash(pub u8);
+
+/// Letter shown for bindable slot `i` (0 = Z, 1 = X, 2 = C) — the key that uses/assigns it.
+pub fn bind_slot_key(i: usize) -> char {
+    ['Z', 'X', 'C'][i.min(2)]
+}
 
 /// The hero's 24-slot bag + two equip slots (the combat-read weapon bonus / armor mult live
 /// inside). Filled by ore/forage/chest/hunt pickups and the shop; drained by the quick-bar.
@@ -100,6 +111,7 @@ impl Plugin for InventoryPlugin {
         app.init_resource::<Inventory>()
             .init_resource::<Buffs>()
             .init_resource::<Toasts>()
+            .add_message::<QuickFlash>()
             .add_systems(Startup, (debug_seed, debug_equip))
             // Fresh run wipes bag, buffs and toasts (with the rest of progression).
             .add_systems(OnExit(AppState::StartScreen), reset_inventory)
@@ -109,12 +121,16 @@ impl Plugin for InventoryPlugin {
                 OnExit(AppState::Paused),
                 reset_inventory.run_if(crate::game_state::restart_requested),
             )
-            // Quick-bar (Q/Z/X/C) + open the satchel (I): only while playing with no panel up.
+            // Quick-bar (Q/Z/X/C) + open the satchel (Tab/I): only while playing with no panel up.
             .add_systems(Update, (quickbar_input, open_inventory).run_if(in_state(Modal::None)))
             // The satchel modal (freezes the world like the tree).
             .add_systems(OnEnter(Modal::Inventory), spawn_inventory_panel)
             .add_systems(OnExit(Modal::Inventory), despawn_inventory_panel)
-            .add_systems(Update, inv_panel_interact.run_if(in_state(Modal::Inventory)));
+            .add_systems(
+                Update,
+                (inv_panel_interact, inv_assign_input, inv_tooltip, close_inventory)
+                    .run_if(in_state(Modal::Inventory)),
+            );
     }
 }
 
@@ -123,8 +139,9 @@ impl Plugin for InventoryPlugin {
 fn debug_seed(mut inv: ResMut<Inventory>) {
     if std::env::var("FOREST_PANEL").ok().as_deref() == Some("inv") {
         for (id, n) in [("bread", 3), ("potion", 2), ("fur", 1), ("sword_iron", 1), ("leather_armor", 1), ("apple", 4)] {
-            inv.0.add(id, n);
+            inv.0.add(id, n); // fur auto-binds Z (slot 0)
         }
+        inv.0.set_quick_bind(1, "potion"); // demo a manual bind: a heal pinned to X
     }
 }
 
@@ -150,9 +167,10 @@ fn reset_inventory(mut inv: ResMut<Inventory>, mut buffs: ResMut<Buffs>, mut toa
     toasts.0.reset();
 }
 
-/// Q eats the next food; Z/X/C use the next resist/power/haste item. Each surfaces the next
-/// matching bag item (the core `eat_food`/`activate_buff` derive the quick-slot), heals +
-/// applies its buff, and blips a confirm. No-op when the matching slot is empty.
+/// Q eats the next food; Z/X/C use their bound item (or, when unbound, the next
+/// resist/power/haste item — the core `use_quick_slot` derives that fallback). On a
+/// successful use it heals + applies the buff, blips a confirm, and emits a [`QuickFlash`]
+/// so the HUD pops the cell. No-op when the slot is empty/exhausted.
 fn quickbar_input(
     time: Res<Time>,
     mode: Res<PlayMode>,
@@ -161,24 +179,26 @@ fn quickbar_input(
     mut buffs: ResMut<Buffs>,
     mut player: ResMut<PlayerRes>,
     mut cues: MessageWriter<AudioCue>,
+    mut flash: MessageWriter<QuickFlash>,
 ) {
     if *mode != PlayMode::Play {
         return;
     }
-    let used = if keys.just_pressed(KeyCode::KeyQ) {
-        inv.0.eat_food()
+    let (used, slot) = if keys.just_pressed(KeyCode::KeyQ) {
+        (inv.0.eat_food(), 0u8)
     } else if keys.just_pressed(KeyCode::KeyZ) {
-        inv.0.activate_buff(BuffKind::Resist)
+        (inv.0.use_quick_slot(0), 1)
     } else if keys.just_pressed(KeyCode::KeyX) {
-        inv.0.activate_buff(BuffKind::Power)
+        (inv.0.use_quick_slot(1), 2)
     } else if keys.just_pressed(KeyCode::KeyC) {
-        inv.0.activate_buff(BuffKind::Haste)
+        (inv.0.use_quick_slot(2), 3)
     } else {
-        None
+        (None, 0)
     };
     if let Some(eff) = used {
         apply_consume(&eff, &mut player.0, &mut buffs.0, time.elapsed_secs() as f64);
         cues.write(AudioCue::UiSelect);
+        flash.write(QuickFlash(slot));
     }
 }
 
@@ -186,12 +206,21 @@ fn quickbar_input(
 
 #[derive(Component)]
 struct InvUi;
-/// A clickable bag row, tagged with its bag-slot index (use/equip on click).
+/// A clickable bag cell, tagged with its bag-slot index (use/equip on click, assign on Z/X/C).
 #[derive(Component)]
 struct InvSlotButton(usize);
+/// The floating item tooltip (persists across panel rebuilds; separate from [`InvUi`]).
+#[derive(Component)]
+struct InvTooltip;
+#[derive(Component)]
+struct InvTipName;
+#[derive(Component)]
+struct InvTipStat;
+#[derive(Component)]
+struct InvTipCompare;
 
-/// Open the satchel with **I** (or the `FOREST_PANEL=inv` screenshot hook). Esc closes it
-/// (via the shared `pause_toggle`), like the upgrade tree.
+/// Open the satchel with **Tab** or **I** (or the `FOREST_PANEL=inv` screenshot hook). Esc / Tab /
+/// I close it (Esc via the shared `pause_toggle`, Tab/I via `close_inventory`), like the tree.
 fn open_inventory(
     keys: Res<ButtonInput<KeyCode>>,
     mut next: ResMut<NextState<Modal>>,
@@ -201,8 +230,17 @@ fn open_inventory(
     if force {
         *auto_done = true;
     }
-    if keys.just_pressed(KeyCode::KeyI) || force {
+    if keys.just_pressed(KeyCode::KeyI) || keys.just_pressed(KeyCode::Tab) || force {
         next.set(Modal::Inventory);
+    }
+}
+
+/// Make **Tab** / **I** a toggle: pressed while the satchel is open, they close it (Esc is
+/// handled centrally by `pause_toggle`). The open press can't re-fire here because state only
+/// flips to `Inventory` next frame, by which point the key is no longer `just_pressed`.
+fn close_inventory(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<Modal>>) {
+    if keys.just_pressed(KeyCode::Tab) || keys.just_pressed(KeyCode::KeyI) {
+        next.set(Modal::None);
     }
 }
 
@@ -213,12 +251,49 @@ fn spawn_inventory_panel(
     atlas: Res<IconAtlas>,
 ) {
     build_inv_panel(&mut commands, &inv.0, &fonts, &atlas);
+    spawn_tooltip(&mut commands, &fonts);
 }
 
-fn despawn_inventory_panel(mut commands: Commands, q: Query<Entity, With<InvUi>>) {
+#[allow(clippy::type_complexity)]
+fn despawn_inventory_panel(
+    mut commands: Commands,
+    q: Query<Entity, Or<(With<InvUi>, With<InvTooltip>)>>,
+) {
     for e in &q {
         commands.entity(e).despawn();
     }
+}
+
+/// The floating tooltip shell — hidden until `inv_tooltip` parks it at the cursor over a hovered
+/// item. Spawned once per open (outside [`InvUi`]) so it survives the panel's rebuild-on-action.
+fn spawn_tooltip(commands: &mut Commands, fonts: &UiFonts) {
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(-9999.0), // parked off-screen until shown
+                top: Val::Px(0.0),
+                max_width: Val::Px(240.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(3.0),
+                padding: UiRect::axes(Val::Px(11.0), Val::Px(9.0)),
+                border: border(1.0),
+                border_radius: radius(R_BTN),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(rgba(16, 18, 24, 0.97)),
+            BorderColor::all(rgba(255, 255, 255, 0.16)),
+            shadow_card(),
+            GlobalZIndex(90),
+            bevy::ui::FocusPolicy::Pass,
+            InvTooltip,
+        ))
+        .with_children(|t| {
+            t.spawn((label(&fonts.bold, "", 14.0, TEXT), InvTipName));
+            t.spawn((label(&fonts.semibold, "", 12.0, GREEN), InvTipStat));
+            t.spawn((label(&fonts.regular, "", 11.0, TEXT_DIM), InvTipCompare));
+        });
 }
 
 /// (Re)build the satchel panel: an equipped-gear column beside a 6-wide bag grid. Each occupied
@@ -344,6 +419,27 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
                                                 TextShadow { offset: Vec2::ZERO, color: rgba(0, 0, 0, 0.9) },
                                             ));
                                         }
+                                        // Quick-bar badge: if this item is pinned to Z/X/C, stamp the
+                                        // key in the corner so the binding is visible at a glance.
+                                        if let Some(key) = bound_key_for(bag, id) {
+                                            cell.spawn((
+                                                Node {
+                                                    position_type: PositionType::Absolute,
+                                                    top: Val::Px(-3.0),
+                                                    left: Val::Px(-3.0),
+                                                    min_width: Val::Px(14.0),
+                                                    align_items: AlignItems::Center,
+                                                    justify_content: JustifyContent::Center,
+                                                    padding: UiRect::axes(Val::Px(3.0), Val::Px(1.0)),
+                                                    border_radius: radius(3.0),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(GOLD_DEEP),
+                                                children![(
+                                                    label(&fonts.extrabold, key.to_string(), 10.0, INK),
+                                                )],
+                                            ));
+                                        }
                                     });
                                 }
                                 if !any {
@@ -353,9 +449,19 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
                     });
                 });
 
-            card.spawn(label(&fonts.regular, "I or Esc to close  ·  click an item to use or equip", 11.0, GREY));
+            card.spawn(label(
+                &fonts.regular,
+                "Tab/I or Esc to close  ·  click to use or equip  ·  hover + Z/X/C to set a quick-slot",
+                11.0,
+                GREY,
+            ));
         });
     });
+}
+
+/// The quick-bar key (Z/X/C) this item id is pinned to, if any — drives the cell badge.
+fn bound_key_for(bag: &Bag, id: &str) -> Option<char> {
+    (0..QUICK_SLOTS).find(|&i| bag.quick_bind(i) == Some(id)).map(bind_slot_key)
 }
 
 /// Click a bag row → use the consumable (heal + buff) or equip the gear, then rebuild the panel
@@ -390,4 +496,99 @@ fn inv_panel_interact(
         }
         build_inv_panel(&mut commands, &inv.0, &fonts, &atlas);
     }
+}
+
+/// The bag index currently under the cursor (hovered or pressed), if any. Shared by the
+/// tooltip and the assign-key handler so both react to the same cell.
+fn hovered_slot(buttons: &Query<(&Interaction, &InvSlotButton)>) -> Option<usize> {
+    buttons
+        .iter()
+        .find(|(i, _)| !matches!(**i, Interaction::None))
+        .map(|(_, b)| b.0)
+}
+
+/// Hover a bag item and press **Z / X / C** to pin it to that quick-slot (consumables only).
+/// Rebuilds the panel so the new key badge shows. The same physical keys *use* a slot in
+/// `Modal::None`; here, inside the satchel, they *assign* — no conflict (different modal).
+#[allow(clippy::too_many_arguments)]
+fn inv_assign_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut inv: ResMut<Inventory>,
+    mut cues: MessageWriter<AudioCue>,
+    mut commands: Commands,
+    fonts: Res<UiFonts>,
+    atlas: Res<IconAtlas>,
+    buttons: Query<(&Interaction, &InvSlotButton)>,
+    panel: Query<Entity, With<InvUi>>,
+) {
+    let slot = if keys.just_pressed(KeyCode::KeyZ) {
+        0
+    } else if keys.just_pressed(KeyCode::KeyX) {
+        1
+    } else if keys.just_pressed(KeyCode::KeyC) {
+        2
+    } else {
+        return;
+    };
+    let Some(idx) = hovered_slot(&buttons) else { return };
+    let Some(id) = inv.0.bag.get(idx).and_then(|s| s.item_id.clone()) else { return };
+    if !inv.0.set_quick_bind(slot, &id) {
+        return; // not a consumable — nothing to assign
+    }
+    cues.write(AudioCue::UiSelect);
+    for e in &panel {
+        commands.entity(e).despawn();
+    }
+    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas);
+}
+
+/// Park the floating tooltip at the cursor over the hovered bag item, filling name + stat +
+/// an action line (equip delta for gear, the assign hint for consumables). Hidden when nothing
+/// is hovered.
+#[allow(clippy::type_complexity)]
+fn inv_tooltip(
+    inv: Res<Inventory>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    buttons: Query<(&Interaction, &InvSlotButton)>,
+    mut tip: Query<&mut Node, With<InvTooltip>>,
+    mut name_q: Query<&mut Text, (With<InvTipName>, Without<InvTipStat>, Without<InvTipCompare>)>,
+    mut stat_q: Query<&mut Text, (With<InvTipStat>, Without<InvTipName>, Without<InvTipCompare>)>,
+    mut cmp_q: Query<&mut Text, (With<InvTipCompare>, Without<InvTipName>, Without<InvTipStat>)>,
+) {
+    let Ok(mut node) = tip.single_mut() else { return };
+    let hovered = hovered_slot(&buttons)
+        .and_then(|i| inv.0.bag.get(i))
+        .and_then(|s| s.item_id.as_deref())
+        .and_then(item_def);
+    let cursor = windows.single().ok().and_then(|w| w.cursor_position());
+
+    let Some((def, pos)) = hovered.zip(cursor) else {
+        node.display = Display::None;
+        node.left = Val::Px(-9999.0);
+        return;
+    };
+
+    if let Ok(mut t) = name_q.single_mut() {
+        **t = def.name.to_string();
+    }
+    if let Ok(mut t) = stat_q.single_mut() {
+        **t = def.stat_line();
+    }
+    if let Ok(mut t) = cmp_q.single_mut() {
+        **t = match def.kind {
+            ItemKind::Consumable => "Z / X / C  set quick-slot".to_string(),
+            ItemKind::Weapon => {
+                let cur = inv.0.weapon_bonus() as i64;
+                format!("Equip: +{} atk  (current +{})", def.damage_bonus as i64, cur)
+            }
+            ItemKind::Armor => {
+                let cur = ((1.0 - inv.0.armor_damage_mult()) * 100.0).round() as i64;
+                format!("Equip: -{}% dmg taken  (current -{}%)", (def.defense * 100.0).round() as i64, cur)
+            }
+            ItemKind::Token => String::new(),
+        };
+    }
+    node.display = Display::Flex;
+    node.left = Val::Px(pos.x + 16.0);
+    node.top = Val::Px(pos.y + 16.0);
 }

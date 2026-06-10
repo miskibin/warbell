@@ -1,19 +1,20 @@
-//! **Combat HUD** — ported from the 3js `PlayerHud` / `QuickBar` / `BuffBar` / `ItemToasts`.
-//! Bottom-left: a level badge + gradient HP/XP/stamina bars. Bottom-centre: the gold/stone tally
-//! over four quick-use slots (Q/Z/X/C). Above the vitals: buff pips. Top-left: pickup toasts.
-//! All chrome comes from [`crate::ui`]; the bars/text bind to the live hero stores.
+//! **Combat HUD.** Bottom-left: a level badge + gradient HP/XP/stamina bars. Bottom-centre: four
+//! quick-use slots (Q food + Z/X/C bindable buffs) — each shows its item icon + count, greys when
+//! exhausted, and falls back to a faint category ghost when empty. Above the vitals: buff pips.
+//! Top-left: the stat bar + pickup toasts. All chrome comes from [`crate::ui`]; everything binds
+//! to the live hero stores.
 
 use bevy::prelude::*;
 use tileworld_core::buff_store::BuffKind;
-use tileworld_core::inventory::{item_def, QuickSlot};
+use tileworld_core::inventory::item_def;
 
 use crate::player::{HeroHealth, PlayerRes};
-use crate::ui::anim::{anim, AnimKind};
+use crate::ui::anim::{anim, anim_btn, AnimKind};
 use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
-use crate::inventory::{Buffs, Inventory, Toasts};
+use crate::inventory::{Buffs, Inventory, QuickFlash, Toasts};
 
 #[derive(Component)]
 struct HpFill;
@@ -55,11 +56,46 @@ impl SlotKind {
             SlotKind::Haste => 'C',
         }
     }
+    /// Bindable core slot index (Z/X/C → 0/1/2); `None` for the fixed food slot (Q).
+    fn bind_slot(self) -> Option<usize> {
+        match self {
+            SlotKind::Food => None,
+            SlotKind::Resist => Some(0),
+            SlotKind::Power => Some(1),
+            SlotKind::Haste => Some(2),
+        }
+    }
+    /// Atlas key for the faint category ghost shown when the slot holds nothing.
+    fn ghost_key(self) -> &'static str {
+        match self {
+            SlotKind::Food => "buff:food",
+            SlotKind::Resist => "buff:resist",
+            SlotKind::Power => "buff:power",
+            SlotKind::Haste => "buff:haste",
+        }
+    }
+    /// Index matching [`QuickFlash`] (0 = Q, 1 = Z, 2 = X, 3 = C).
+    fn flash_idx(self) -> u8 {
+        match self {
+            SlotKind::Food => 0,
+            SlotKind::Resist => 1,
+            SlotKind::Power => 2,
+            SlotKind::Haste => 3,
+        }
+    }
 }
 #[derive(Component)]
 struct QuickSlotIcon(SlotKind);
 #[derive(Component)]
 struct QuickSlotCount(SlotKind);
+/// The 52px quick-slot cell — tagged so a use can pop it ([`flash_quick_slots`]).
+#[derive(Component)]
+struct QuickSlotCell(SlotKind);
+
+/// Tint alpha for a quick-slot icon: pinned-but-exhausted (greyed, keeps its item) vs an
+/// unbound/empty slot (fainter category ghost).
+const DEPLETED_ALPHA: f32 = 0.32;
+const GHOST_ALPHA: f32 = 0.22;
 /// Container the buff pips are rebuilt into each frame.
 #[derive(Component)]
 struct BuffRoot;
@@ -76,7 +112,10 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup_hud, setup_inv_hud))
-            .add_systems(Update, (setup_stat_bar, update_hud, update_inv_hud, update_town_stats));
+            .add_systems(
+                Update,
+                (setup_stat_bar, update_hud, update_inv_hud, update_town_stats, flash_quick_slots),
+            );
     }
 }
 
@@ -301,6 +340,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                             ..default()
                         },
                         widgets::slot_paint(),
+                        QuickSlotCell(kind),
                     ))
                     .with_children(|slot| {
                         // Key (top-left).
@@ -327,12 +367,18 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         });
 }
 
-fn slot_for(inv: &Inventory, kind: SlotKind) -> Option<QuickSlot> {
-    match kind {
-        SlotKind::Food => inv.0.food_slot(),
-        SlotKind::Resist => inv.0.buff_slot(BuffKind::Resist),
-        SlotKind::Power => inv.0.buff_slot(BuffKind::Power),
-        SlotKind::Haste => inv.0.buff_slot(BuffKind::Haste),
+/// What a quick-slot should render: its icon handle, the tint alpha (full / greyed-depleted /
+/// faint-ghost), and the count to show. Q derives the next food; Z/X/C use the bound item
+/// (or, unbound, the derived next item of their kind) via the core `quick_view`.
+fn quick_display(inv: &Inventory, atlas: &IconAtlas, kind: SlotKind) -> (Option<Handle<Image>>, f32, i64) {
+    let view = match kind.bind_slot() {
+        None => inv.0.food_slot(),
+        Some(i) => inv.0.quick_view(i),
+    };
+    match view {
+        Some(qs) if qs.count > 0 => (atlas.get(&qs.item_id), 1.0, qs.count),
+        Some(qs) => (atlas.get(&qs.item_id), DEPLETED_ALPHA, 0), // pinned but exhausted
+        None => (atlas.get(kind.ghost_key()), GHOST_ALPHA, 0),   // empty → category ghost
     }
 }
 
@@ -363,22 +409,22 @@ fn update_inv_hud(
 ) {
     let now = time.elapsed_secs() as f64;
 
-    // Quick-slot icons.
+    // Quick-slot icons: live item (full), pinned-but-empty (greyed), or category ghost (faint).
     for (slot, mut node, mut img) in &mut icon_q {
-        match slot_for(&inv, slot.0).and_then(|s| atlas.get(&s.item_id)) {
-            Some(handle) => {
-                img.image = handle;
+        let (handle, alpha, _) = quick_display(&inv, &atlas, slot.0);
+        match handle {
+            Some(h) => {
+                img.image = h;
+                img.color = Color::WHITE.with_alpha(alpha);
                 node.display = Display::Flex;
             }
             None => node.display = Display::None,
         }
     }
-    // Quick-slot counts ("" if empty/single).
+    // Quick-slot counts ("" unless a live stack of >1).
     for (slot, mut text) in &mut count_q {
-        **text = match slot_for(&inv, slot.0) {
-            Some(s) if s.count > 1 => format!("{}", s.count),
-            _ => String::new(),
-        };
+        let (_, _, count) = quick_display(&inv, &atlas, slot.0);
+        **text = if count > 1 { format!("{count}") } else { String::new() };
     }
 
     // ── Buff pips: rebuild one column [icon + seconds] per active buff. ──
@@ -447,6 +493,22 @@ fn update_inv_hud(
                 });
             }
         });
+    }
+}
+
+/// Pop a quick-slot cell when its key fires (a [`QuickFlash`] from `quickbar_input`), giving the
+/// use a tactile confirm. `anim_btn` reuses the cell's existing `UiTransform` (from `slot_paint`).
+fn flash_quick_slots(
+    mut commands: Commands,
+    mut flashes: MessageReader<QuickFlash>,
+    cells: Query<(Entity, &QuickSlotCell)>,
+) {
+    for f in flashes.read() {
+        for (e, cell) in &cells {
+            if cell.0.flash_idx() == f.0 {
+                commands.entity(e).try_insert(anim_btn(AnimKind::PopIn, 0.0, 0.22));
+            }
+        }
     }
 }
 
