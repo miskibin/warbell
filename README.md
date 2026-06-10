@@ -79,3 +79,13 @@ env vars read at startup: `FOREST_CAM` / `FOREST_TIME` (camera pose / time-of-da
 `FOREST_MENU=1` (start screen), `FOREST_PANEL=tree|inv|shop` (open a UI panel),
 `FOREST_EQUIP="sword_gold,gold_armor"` (equip items on the hero). `BEVY_ASSET_ROOT` points at
 this dir if you run the binary from elsewhere (WGSL loads from `assets/shaders/`).
+
+
+<img width="1905" height="992" alt="image" src="https://github.com/user-attachments/assets/9b80b27f-688b-4f4d-b13d-7919d156d598" />
+<img width="1907" height="999" alt="image" src="https://github.com/user-attachments/assets/b699a1cc-7df4-47c3-ab31-1b5a8fd670c6" />
+<img width="1914" height="1005" alt="image" src="https://github.com/user-attachments/assets/3d6e62b8-6159-4055-9e25-6a1dc361f8e3" />
+<img width="1913" height="1004" alt="image" src="https://github.com/user-attachments/assets/09f16620-9098-4f3d-9eda-9a4e4694cad7" />
+<img width="1919" height="1010" alt="image" src="https://github.com/user-attachments/assets/3078fe5a-720f-44f7-80d3-8ffcf24e2da7" />
+<img width="1914" height="1004" alt="image" src="https://github.com/user-attachments/assets/c76da516-d9ee-4776-9507-b6a5b3ca9b78" />
+<img width="1909" height="1010" alt="image" src="https://github.com/user-attachments/assets/445809c9-5443-4e2c-857f-f8b3f228a9bc" />
+
