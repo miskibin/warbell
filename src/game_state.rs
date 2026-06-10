@@ -63,6 +63,14 @@ pub fn restart_requested(flag: Res<RestartRequested>) -> bool {
     flag.0
 }
 
+/// The "Overwrite saved game?" confirm dialog. `Some(from_pause)` = open; `from_pause` records
+/// whether the request came from the pause-menu **Restart** (so confirming sets [`RestartRequested`]
+/// for the `Paused → Playing` resets) versus a start/game-over **New Game** (whose fresh-run resets
+/// fire automatically on the screen's `OnExit`). `None` = closed. Every fresh-run button routes
+/// through this whenever a save exists, so a misclick can't wipe a long run.
+#[derive(Resource, Default)]
+pub struct ConfirmWipe(pub Option<bool>);
+
 pub struct GameStatePlugin;
 
 impl Plugin for GameStatePlugin {
@@ -72,6 +80,10 @@ impl Plugin for GameStatePlugin {
         app.insert_state(boot)
             .add_sub_state::<Modal>()
             .init_resource::<RestartRequested>()
+            .init_resource::<ConfirmWipe>()
+            // Overwrite-confirm dialog: reconcile its overlay + resolve its input. Ungated so it
+            // works over the start / game-over / pause screens alike.
+            .add_systems(Update, (sync_confirm_overlay, confirm_input))
             .add_systems(Update, (pause_toggle, watch_end))
             // Clear the restart flag once we're back in Playing (after the gated OnExit(Paused)
             // resets have run during the same transition).
@@ -122,8 +134,13 @@ fn pause_toggle(
     modal: Option<Res<State<Modal>>>,
     mut next_app: ResMut<NextState<AppState>>,
     mut next_modal: ResMut<NextState<Modal>>,
+    confirm: Res<ConfirmWipe>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
+        return;
+    }
+    // While the overwrite dialog is up, Esc belongs to it (cancel), not the pause toggle.
+    if confirm.0.is_some() {
         return;
     }
     match app.get() {
@@ -161,14 +178,23 @@ fn start_screen_input(
     mut next_app: ResMut<NextState<AppState>>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
     save: Res<crate::savegame::SaveExists>,
+    mut confirm: ResMut<ConfirmWipe>,
 ) {
-    // C resumes the saved run; Enter/Space starts a fresh one.
+    // While the overwrite dialog is up, it owns the keyboard (see `confirm_input`).
+    if confirm.0.is_some() {
+        return;
+    }
+    // C resumes the saved run; Enter/Space starts a fresh one (confirming first if it'd overwrite).
     if save.0 && keys.just_pressed(KeyCode::KeyC) {
         pending.0 = crate::savegame::load_save();
         next_app.set(AppState::Playing);
     } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-        pending.0 = None;
-        next_app.set(AppState::Playing);
+        if save.0 {
+            confirm.0 = Some(false); // ask before wiping the existing run
+        } else {
+            pending.0 = None;
+            next_app.set(AppState::Playing);
+        }
     }
 }
 
@@ -208,16 +234,24 @@ fn gameover_input(
     mut pending: ResMut<crate::savegame::PendingLoad>,
     siege: Option<Res<crate::siege::Siege>>,
     save: Res<crate::savegame::SaveExists>,
+    mut confirm: ResMut<ConfirmWipe>,
 ) {
+    if confirm.0.is_some() {
+        return; // dialog owns the keyboard
+    }
     let defeat = !matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
-    // C resumes last night (defeat + save only); Enter starts a fresh run. The per-plugin
-    // OnExit(GameOver) resets rebuild a fresh run, then any pending load overwrites them.
+    // C resumes last night (defeat + save only); Enter starts a fresh run (confirming first if it'd
+    // overwrite). The per-plugin OnExit(GameOver) resets rebuild a fresh run on confirm.
     if defeat && save.0 && keys.just_pressed(KeyCode::KeyC) {
         pending.0 = crate::savegame::load_save();
         next_app.set(AppState::Playing);
     } else if keys.just_pressed(KeyCode::Enter) {
-        pending.0 = None;
-        next_app.set(AppState::Playing);
+        if save.0 {
+            confirm.0 = Some(false);
+        } else {
+            pending.0 = None;
+            next_app.set(AppState::Playing);
+        }
     }
 }
 
@@ -263,6 +297,13 @@ struct AgainButton;
 /// The "Continue from last night" button on the game-over screen (loads the save).
 #[derive(Component)]
 struct GameOverContinueButton;
+// ── Overwrite-confirm dialog ──
+#[derive(Component)]
+struct ConfirmUi;
+#[derive(Component)]
+struct ConfirmOkBtn;
+#[derive(Component)]
+struct ConfirmCancelBtn;
 
 /// A centred full-screen scrim card root (pause / game-over).
 fn modal_root(z: i32) -> impl Bundle {
@@ -288,10 +329,14 @@ fn spawn_start_screen(
     mut commands: Commands,
     fonts: Res<UiFonts>,
     siege: Option<Res<crate::siege::Siege>>,
-    save: Res<crate::savegame::SaveExists>,
+    mut save: ResMut<crate::savegame::SaveExists>,
 ) {
     let cur = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
-    let has_save = save.0;
+    // Re-check the file here: Bevy runs the initial `OnEnter(StartScreen)` *before* `Startup`
+    // (where `detect_existing_save` sets the flag), so reading `save.0` directly would miss an
+    // existing save on a fresh launch. Recompute + write it back so the flag is right from frame 0.
+    let has_save = crate::savegame::load_save().is_some();
+    save.0 = has_save;
 
     commands
         .spawn((
@@ -355,7 +400,8 @@ fn spawn_start_screen(
                     BackgroundColor(rgba(199, 155, 106, 0.6)),
                     anim(AnimKind::Rise, 0.3, 0.7),
                 ));
-                // Continue button (only with a save) — the primary action when resuming.
+                // Continue button — always shown; the primary action when resuming. Dim + inert
+                // when there's no save yet (so the menu reads as "New Game / Continue Game").
                 if has_save {
                     m.spawn((
                         Node {
@@ -369,10 +415,26 @@ fn spawn_start_screen(
                         anim_btn(AnimKind::Rise, 0.34, 0.7),
                     ))
                     .with_children(|b| {
-                        b.spawn(label(&fonts.extrabold, "CONTINUE", 19.0, Color::WHITE));
+                        b.spawn(label(&fonts.extrabold, "CONTINUE GAME", 19.0, Color::WHITE));
+                    });
+                } else {
+                    // Disabled: no Button/Interaction/Hoverable, just a dim card.
+                    m.spawn((
+                        Node {
+                            padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
+                            border: widgets::border(1.0),
+                            border_radius: radius(11.0),
+                            ..default()
+                        },
+                        BackgroundColor(rgba(74, 111, 200, 0.20)),
+                        BorderColor::all(rgba(130, 162, 234, 0.22)),
+                        anim(AnimKind::Rise, 0.34, 0.7),
+                    ))
+                    .with_children(|b| {
+                        b.spawn(label(&fonts.extrabold, "CONTINUE GAME", 19.0, GREY));
                     });
                 }
-                // Play / New Game button. With a save present it's the secondary "fresh run".
+                // New Game — a fresh run (confirms first if it'd overwrite a save).
                 m.spawn((
                     Node {
                         padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
@@ -385,8 +447,7 @@ fn spawn_start_screen(
                     anim_btn(AnimKind::Rise, 0.36, 0.7),
                 ))
                 .with_children(|b| {
-                    let txt = if has_save { "NEW GAME" } else { "PLAY" };
-                    b.spawn(label(&fonts.extrabold, txt, 19.0, Color::WHITE));
+                    b.spawn(label(&fonts.extrabold, "NEW GAME", 19.0, Color::WHITE));
                 });
                 // Difficulty selector.
                 m.spawn((
@@ -611,7 +672,12 @@ fn pause_click(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
+    save: Res<crate::savegame::SaveExists>,
+    mut confirm: ResMut<ConfirmWipe>,
 ) {
+    if confirm.0.is_some() {
+        return; // dialog owns input
+    }
     let now = time.elapsed_secs_f64();
     for (interaction, resume, load, restart_b, audio_b, gfx_b, fs_b) in &q {
         if *interaction != Interaction::Pressed {
@@ -628,9 +694,13 @@ fn pause_click(
             next_app.set(AppState::Playing);
         }
         if restart_b.is_some() {
-            pending.0 = None; // fresh run (keeps the chosen difficulty)
-            restart.0 = true;
-            next_app.set(AppState::Playing);
+            if save.0 {
+                confirm.0 = Some(true); // Restart wipes the save too — confirm (from_pause = true)
+            } else {
+                pending.0 = None; // fresh run (keeps the chosen difficulty)
+                restart.0 = true;
+                next_app.set(AppState::Playing);
+            }
         }
         if audio_b.is_some() {
             crate::ui::settings::toggle_mute(&mut audio, &mut notice, now);
@@ -751,17 +821,26 @@ fn start_click(
     mut next_app: ResMut<NextState<AppState>>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
     siege: Option<ResMut<crate::siege::Siege>>,
+    save: Res<crate::savegame::SaveExists>,
+    mut confirm: ResMut<ConfirmWipe>,
 ) {
+    if confirm.0.is_some() {
+        return; // dialog up — the scrim already blocks these, but be explicit
+    }
     let mut siege = siege;
     for (interaction, play, cont, seg) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
         if play.is_some() {
-            pending.0 = None; // New Game: a fresh run, never a load.
-            next_app.set(AppState::Playing);
+            if save.0 {
+                confirm.0 = Some(false); // New Game would overwrite — confirm first
+            } else {
+                pending.0 = None; // New Game: a fresh run, never a load.
+                next_app.set(AppState::Playing);
+            }
         }
-        if cont.is_some() {
+        if cont.is_some() && save.0 {
             pending.0 = crate::savegame::load_save();
             next_app.set(AppState::Playing);
         }
@@ -800,19 +879,172 @@ fn gameover_click(
     >,
     mut next_app: ResMut<NextState<AppState>>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
+    save: Res<crate::savegame::SaveExists>,
+    mut confirm: ResMut<ConfirmWipe>,
 ) {
+    if confirm.0.is_some() {
+        return;
+    }
     for (interaction, again, cont) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
         if again.is_some() {
-            pending.0 = None; // fresh run
-            next_app.set(AppState::Playing);
+            if save.0 {
+                confirm.0 = Some(false); // would overwrite — confirm first
+            } else {
+                pending.0 = None; // fresh run
+                next_app.set(AppState::Playing);
+            }
         }
         if cont.is_some() {
             pending.0 = crate::savegame::load_save();
             next_app.set(AppState::Playing);
         }
+    }
+}
+
+// ── Overwrite-confirm dialog ────────────────────────────────────────────────────────────
+
+/// Spawn / despawn the confirm overlay to match [`ConfirmWipe`]. Runs every frame (ungated) but
+/// acts only on a mismatch, so it cleans the overlay up even across the state transition that
+/// confirming triggers.
+fn sync_confirm_overlay(
+    mut commands: Commands,
+    confirm: Res<ConfirmWipe>,
+    fonts: Res<UiFonts>,
+    existing: Query<Entity, With<ConfirmUi>>,
+) {
+    let want = confirm.0.is_some();
+    let have = !existing.is_empty();
+    if want && !have {
+        spawn_confirm(&mut commands, &fonts);
+    } else if !want && have {
+        for e in &existing {
+            commands.entity(e).despawn();
+        }
+    }
+}
+
+/// The "Overwrite saved game?" card — a danger **OVERWRITE** + a **CANCEL**, over a click-blocking
+/// scrim above every other screen (z 100).
+fn spawn_confirm(commands: &mut Commands, fonts: &UiFonts) {
+    commands.spawn((modal_root(100), ConfirmUi)).with_children(|root| {
+        root.spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(14.0),
+                padding: UiRect::axes(Val::Px(40.0), Val::Px(28.0)),
+                border: widgets::border(1.0),
+                border_radius: radius(R_PANEL),
+                ..default()
+            },
+            widgets::card_paint(),
+            anim(AnimKind::PopIn, 0.0, 0.26),
+        ))
+        .with_children(|c| {
+            c.spawn(label(&fonts.extrabold, "OVERWRITE SAVED GAME?", 24.0, TEXT));
+            c.spawn(label(
+                &fonts.regular,
+                "This deletes your current run. It can't be undone.",
+                14.0,
+                TEXT_DIM,
+            ));
+            c.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(12.0),
+                margin: UiRect::top(Val::Px(6.0)),
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(28.0), Val::Px(11.0)),
+                        border: widgets::border(1.0),
+                        border_radius: radius(R_BTN),
+                        ..default()
+                    },
+                    widgets::btn_danger_paint(),
+                    ConfirmOkBtn,
+                    anim_btn(AnimKind::PopIn, 0.05, 0.26),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.extrabold, "OVERWRITE", 16.0, Color::WHITE));
+                });
+                row.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(28.0), Val::Px(11.0)),
+                        border: widgets::border(1.0),
+                        border_radius: radius(R_BTN),
+                        ..default()
+                    },
+                    widgets::btn_primary_paint(),
+                    ConfirmCancelBtn,
+                    anim_btn(AnimKind::PopIn, 0.05, 0.26),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.extrabold, "CANCEL", 16.0, Color::WHITE));
+                });
+            });
+            c.spawn((
+                label(&fonts.regular, "Enter to overwrite · Esc to cancel", 12.0, GREY),
+                Node { margin: UiRect::top(Val::Px(2.0)), ..default() },
+            ));
+        });
+    });
+}
+
+/// Resolve the confirm dialog from its buttons or the keyboard (Enter/Space = overwrite,
+/// Esc = cancel). On overwrite: delete the save, mark it gone, and start a fresh run — replaying
+/// what the originating button would have done (`from_pause` ⇒ fire the `Paused → Playing` resets
+/// via [`RestartRequested`]). Ungated; no-ops while the dialog is closed.
+#[allow(clippy::type_complexity)]
+fn confirm_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    q: Query<
+        (&Interaction, Option<&ConfirmOkBtn>, Option<&ConfirmCancelBtn>),
+        Changed<Interaction>,
+    >,
+    mut confirm: ResMut<ConfirmWipe>,
+    mut next_app: ResMut<NextState<AppState>>,
+    mut pending: ResMut<crate::savegame::PendingLoad>,
+    mut save: ResMut<crate::savegame::SaveExists>,
+    mut restart: ResMut<RestartRequested>,
+    mut was_open: Local<bool>,
+) {
+    // Swallow input on the frame the dialog opens, so the very Enter/Space that opened it (from
+    // New Game) doesn't also confirm it. (System order vs. the openers is otherwise undefined.)
+    let opened_this_frame = confirm.0.is_some() && !*was_open;
+    *was_open = confirm.0.is_some();
+
+    let Some(from_pause) = confirm.0 else { return };
+    if opened_this_frame {
+        return;
+    }
+
+    let mut ok = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space);
+    let mut cancel = keys.just_pressed(KeyCode::Escape);
+    for (interaction, ok_b, cancel_b) in &q {
+        if *interaction == Interaction::Pressed {
+            ok |= ok_b.is_some();
+            cancel |= cancel_b.is_some();
+        }
+    }
+
+    if cancel {
+        confirm.0 = None; // overlay despawns on the next sync
+        return;
+    }
+    if ok {
+        crate::savegame::delete_save();
+        save.0 = false;
+        pending.0 = None; // a fresh run, never a load
+        if from_pause {
+            restart.0 = true; // fire the Paused → Playing fresh-run resets
+        }
+        next_app.set(AppState::Playing);
+        confirm.0 = None;
     }
 }
 

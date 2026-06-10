@@ -129,12 +129,29 @@ fn save_path() -> PathBuf {
 pub fn load_save() -> Option<SaveData> {
     let path = save_path();
     let text = std::fs::read_to_string(&path).ok()?;
-    let data: SaveData = serde_json::from_str(&text).ok()?;
+    let data: SaveData = match serde_json::from_str(&text) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("ignoring unparseable save at {path:?}: {e}");
+            return None;
+        }
+    };
     if data.version != SAVE_VERSION {
         warn!("ignoring save with version {} (expected {})", data.version, SAVE_VERSION);
         return None;
     }
     Some(data)
+}
+
+/// Delete the one save slot — used by every **fresh-run** entry point (New Game / Restart) so the
+/// old run can't be resumed. A missing file is not an error (already gone is the goal).
+pub fn delete_save() {
+    let path = save_path();
+    match std::fs::remove_file(&path) {
+        Ok(()) => info!("deleted save"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => warn!("failed to delete save: {e}"),
+    }
 }
 
 /// Serialize + write the save (creating the parent dir). Errors are returned for the caller to log.

@@ -55,6 +55,24 @@ pub fn btn_primary_paint() -> impl Bundle {
     )
 }
 
+/// Danger button paint (solid red — destructive confirms like Overwrite save).
+pub fn btn_danger_paint() -> impl Bundle {
+    (
+        Button,
+        Interaction::default(),
+        BackgroundColor(RED),
+        BorderColor::all(RED_BORDER),
+        UiTransform::IDENTITY,
+        Hoverable {
+            rest_bg: RED,
+            hover_bg: RED_HI,
+            rest_border: RED_BORDER,
+            hover_border: RED_BORDER,
+            lift: 2.0,
+        },
+    )
+}
+
 /// Inventory/quick-slot cell paint (square; hover lightens the border + lifts).
 pub fn slot_paint() -> impl Bundle {
     (

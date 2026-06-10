@@ -60,6 +60,10 @@ pub const BLUE: Color = rgb(74, 111, 200); // #4a6fc8
 pub const BLUE_HI: Color = rgb(98, 134, 219); // #6286db
 pub const BLUE_BORDER: Color = rgb(130, 162, 234); // #82a2ea
 
+// Danger action button (Overwrite save / destructive confirms)
+pub const RED_HI: Color = rgb(232, 82, 82); // hover
+pub const RED_BORDER: Color = rgb(240, 120, 120);
+
 // Start-screen warm accent
 pub const KICKER: Color = rgb(199, 155, 106); // #c79b6a
 
