@@ -20,9 +20,9 @@ use crate::palette::lin;
 use crate::player::{HeroState, PlayerRes};
 use crate::worldmap;
 
-/// Forest ore HP — rescaled from core's TS-anchored 500 into forest's 60-HP combat units
-/// (~5 swings at the hero's base 25 damage). A real dig, not a slog.
-const ORE_HP: f64 = 118.0;
+/// Forest ore HP — rescaled from core's TS-anchored 500 into forest's combat units, then ×3 so a
+/// boulder is a real dig: ~14 swings at the hero's base 25 damage (was ~5).
+const ORE_HP: f64 = 354.0;
 /// Front-cone reach the swing checks ore against (the hero melee cone + the boulder radius).
 const SWING_RANGE: f32 = 1.9;
 const SWING_CONE_DOT: f32 = 0.5;
@@ -170,7 +170,7 @@ fn mine_ore(
     }
 }
 
-// ── Tree chopping (1 tree = 1 wood) — the wood mirror of ore mining ──────────────────
+// ── Tree chopping (1 tree = TREE_WOOD wood) — the wood mirror of ore mining ──────────
 
 /// A choppable tree: an individual entity (the decorative scattered trees are merged, so
 /// can't carry per-tree HP). Looks like any forest tree; fell it for wood.
@@ -391,11 +391,13 @@ pub(crate) fn chop_burst(commands: &mut Commands, fxa: &TreeFx, tree_pos: Vec3, 
     crate::player::spawn_motes(commands, &fxa.chip_mesh, &fxa.leaf_mat, canopy, 3, 1.5, 1.1, 0.7);
 }
 
-/// Swings to fell a tree (~2 at the hero's base 25–30 dmg).
-const TREE_HP: f64 = 55.0;
+/// Swings to fell a tree — ×3 the old 55 so chopping is a real commitment (~6 at the hero's base
+/// 25–30 dmg). The woodcutter NPC's per-swing damage is scaled to match, so town wood income keeps
+/// its old pace (see `lumberjack::CHOP_DMG`).
+const TREE_HP: f64 = 165.0;
 /// Wood banked per felled tree. This is the ONLY wood source — the Woodcutter plot has no
 /// passive trickle (core `BuildKind::produces` → `None`) — so a tree is worth a real haul.
-pub(crate) const TREE_WOOD: f64 = 3.0;
+pub(crate) const TREE_WOOD: f64 = 2.0;
 /// Tree trunk radius added to the swing reach.
 const CHOP_TREE_RADIUS: f32 = 1.0;
 /// Seconds before a felled tree grows back in place.
@@ -460,7 +462,7 @@ fn regrow_trees(
 }
 
 /// Read each published swing; any live choppable tree in the cone takes the blow. On felling
-/// it banks 1 wood, pops a float, and despawns. Mirrors [`mine_ore`].
+/// it banks [`TREE_WOOD`] wood, pops a float, and despawns. Mirrors [`mine_ore`].
 fn chop_tree(
     time: Res<Time>,
     mut swings: MessageReader<HeroSwing>,

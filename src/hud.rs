@@ -35,6 +35,8 @@ struct FoodText;
 struct WoodText;
 #[derive(Component)]
 struct PopText;
+#[derive(Component)]
+struct PopGrowthText;
 
 /// Which derived quick-slot a node belongs to.
 #[derive(Clone, Copy, PartialEq)]
@@ -221,6 +223,9 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
             row.spawn(cell(5.0)).with_children(|c| {
                 if let Some(h) = p { c.spawn(widgets::icon(h, 19.0)); }
                 c.spawn((label(&fonts.extrabold, "4/4", 14.0, rgb(235, 224, 180)), PopText));
+                // Progress of the settle/starve meter toward the next ±1 peasant: green +% when a
+                // settler is incoming, red -% when one is starving away (colour set in update).
+                c.spawn((label(&fonts.extrabold, "", 12.0, rgb(150, 156, 164)), PopGrowthText));
             });
             let f = atlas.get("stat:food");
             row.spawn(cell(5.0)).with_children(|c| {
@@ -451,12 +456,31 @@ fn update_inv_hud(
 /// peasants arrive or leave. (More detail could live in a hover tooltip later.)
 fn update_town_stats(
     town: Res<crate::town::TownRes>,
-    mut q_pop: Query<&mut Text, (With<PopText>, Without<FoodText>)>,
-    mut q_food: Query<(&mut Text, &mut TextColor), (With<FoodText>, Without<PopText>)>,
+    mut q_pop: Query<&mut Text, (With<PopText>, Without<FoodText>, Without<PopGrowthText>)>,
+    mut q_food: Query<(&mut Text, &mut TextColor), (With<FoodText>, Without<PopText>, Without<PopGrowthText>)>,
+    mut q_growth: Query<(&mut Text, &mut TextColor), (With<PopGrowthText>, Without<PopText>, Without<FoodText>)>,
 ) {
     let t = &town.0;
     if let Ok(mut text) = q_pop.single_mut() {
         **text = format!("{}/{}", t.population, t.pop_cap());
+    }
+    // How close to the next ±1 peasant: the growth meter as a percent toward the settle (+) or
+    // starve (-) rail. A full meter blocked by no free house reads "full" so the gate is obvious.
+    if let Ok((mut text, mut col)) = q_growth.single_mut() {
+        let frac = t.growth_fraction(); // [-1, 1]
+        let pct = (frac.abs() * 100.0).round() as i32;
+        if frac > 0.005 && t.population >= t.pop_cap() {
+            **text = "full".into();
+            col.0 = Color::srgb(0.95, 0.78, 0.35); // amber: food's there, build a house
+        } else if frac > 0.005 {
+            **text = format!("+{pct}%");
+            col.0 = Color::srgb(0.45, 0.92, 0.5);
+        } else if frac < -0.005 {
+            **text = format!("-{pct}%");
+            col.0 = Color::srgb(1.0, 0.46, 0.38);
+        } else {
+            **text = String::new();
+        }
     }
     if let Ok((mut text, mut col)) = q_food.single_mut() {
         let net = t.net_food();

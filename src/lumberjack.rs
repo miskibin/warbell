@@ -37,8 +37,9 @@ const DANGER_R: f32 = 12.0;
 const DANGER_BLACKLIST_R: f32 = 16.0;
 /// How long a scare keeps its ground blacklisted (s).
 const DANGER_TTL: f32 = 120.0;
-/// Axe damage per work swing (TREE_HP 55 → ~5 swings ≈ 10s a tree).
-const CHOP_DMG: f64 = 12.0;
+/// Axe damage per work swing — scaled with TREE_HP's ×3 bump (TREE_HP 165 → ~5 swings ≈ 10s a
+/// tree), so the town's wood income keeps its old pace even though the hero now needs 3× the hits.
+const CHOP_DMG: f64 = 36.0;
 /// Seconds between work swings — matches the overhead chop loop in `villager_limbs` (~2.1s).
 const CHOP_CD: f32 = 2.1;
 /// Close enough to swing (trunk blockers are ≤ 0.8, body 0.28 — this clears both).

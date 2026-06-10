@@ -74,6 +74,10 @@ pub struct Villager {
     rng: u32,
     /// True while walking to a gathering spot (so the brain lingers longer on arrival).
     gathering: bool,
+    /// Timestamp (`elapsed_secs`) of the last melee strike; [`villager_limbs`] plays a weapon-swing
+    /// for [`ATTACK_ANIM_DUR`] after it. `0` = never struck. Stamped by [`guard_combat`] and
+    /// [`npc_fight_back`] when a blow lands — the townsfolk mirror of the ork rig's `atk_anim`.
+    pub(crate) atk_anim: f32,
 }
 
 impl Villager {
@@ -769,6 +773,7 @@ fn npc_fight_back(
             }
             if fb.atk_cd <= 0.0 {
                 fb.atk_cd = NPC_DEFEND_CD;
+                v.atk_anim = now; // fire the tool-swing (read by villager_limbs)
                 thp.hp -= NPC_DEFEND_DMG;
                 if thp.hp <= 0.0 {
                     crate::dying::begin_dying(&mut commands, fb.target, now);
@@ -893,6 +898,7 @@ fn guard_combat(
                 }
                 if g.atk_cd <= 0.0 {
                     g.atk_cd = GUARD_ATTACK_CD;
+                    v.atk_anim = now; // fire the sword-swing (read by villager_limbs)
                     dealt.push((te, self_e, GUARD_DAMAGE));
                     // Clash SFX, but only when the fight is close to the hero (small earshot).
                     if hero_pos.is_some_and(|hp| v.pos.distance(hp) < GUARD_SFX_RADIUS) {
@@ -1006,6 +1012,37 @@ fn guard_combat(
 /// Squared camera distance past which limb animation is skipped (fog/DoF hide the joints).
 const LIMB_CULL2: f32 = 70.0 * 70.0;
 
+/// How long a townsperson's weapon-swing plays after a strike is stamped onto [`Villager::atk_anim`].
+const ATTACK_ANIM_DUR: f32 = 0.42;
+
+/// Strike progress `0..1` since `atk_anim`, or `None` when not currently swinging. The townsfolk
+/// mirror of the ork rig's `strike_p`.
+fn strike_p(atk_anim: f32, now: f32) -> Option<f32> {
+    if atk_anim <= 0.0 {
+        return None;
+    }
+    let p = (now - atk_anim) / ATTACK_ANIM_DUR;
+    (0.0..1.0).contains(&p).then_some(p)
+}
+
+/// Overhead weapon swing on X: raise back (ease-in), fast slash down (ease-out), recover to rest.
+/// Same crisp shape as the ork club-chop, so a guard's sword (or a worker's hoe/axe) reads as a
+/// real strike on the box-mesh arm.
+fn swing_x(p: f32) -> f32 {
+    if p < 0.3 {
+        let u = p / 0.3;
+        -1.5 * (u * u)
+    } else if p < 0.55 {
+        let u = (p - 0.3) / 0.25;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        -1.5 + 2.4 * e
+    } else {
+        let u = (p - 0.55) / 0.45;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        0.9 * (1.0 - e)
+    }
+}
+
 fn villager_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
@@ -1013,6 +1050,7 @@ fn villager_limbs(
     mut parts: Query<(&VilPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
     let cam_p = cam.single().ok().map(|g| g.translation());
     for (v, children, gt, worker, role) in &vils {
         if let Some(cp) = cam_p {
@@ -1021,6 +1059,8 @@ fn villager_limbs(
             }
         }
         let t = tw + v.phase;
+        // A live strike (set by guard_combat / npc_fight_back) drives a weapon-swing on the arm.
+        let strike = strike_p(v.atk_anim, now);
         // A posted worker plies their trade: a farmer makes quick forward-down HOE strokes; a
         // woodcutter makes slower, bigger overhead CHOPS. Both arms swing together, legs planted.
         let working = worker.is_some_and(|w| w.at_post);
@@ -1038,7 +1078,11 @@ fn villager_limbs(
                     Quat::from_rotation_x(sign * s)
                 }
                 PartKind::Arm(sign) => {
-                    if working {
+                    // The right arm (sign > 0) carries the weapon (sword / hoe / axe) → a strike
+                    // swing overrides the work stroke and the walk sway. Other arms keep working.
+                    if sign > 0.0 && strike.is_some() {
+                        Quat::from_rotation_x(swing_x(strike.unwrap()))
+                    } else if working {
                         // Both arms together (ignore the L/R sign) — a two-handed work stroke.
                         Quat::from_rotation_x(arm_work)
                     } else {
@@ -1462,6 +1506,7 @@ fn spawn(
         timer: rng_range(&mut r, 0.5, 4.0),
         rng: r,
         gathering: false,
+        atk_anim: 0.0,
     };
 
     let root = commands

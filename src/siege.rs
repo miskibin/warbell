@@ -28,8 +28,10 @@ use crate::worldmap::ground_at_world;
 
 // ── Tuning (ported from waveStore.ts) ──────────────────────────────────────────────
 
-/// Seconds the prep "day" lasts at Normal difficulty (the explore/rebuild breather).
-pub const PREP_DURATION: f32 = 150.0;
+/// Seconds the prep "day" lasts at Normal difficulty (the explore/rebuild breather). Each
+/// difficulty's `prep_mul` multiplies this, so bumping the base lengthens the day on ALL of them
+/// (this is the old 150s × 1.3 — a 30% longer day across the board).
+pub const PREP_DURATION: f32 = 195.0;
 /// A war-bell / HUD skip is ignored for this many seconds after a day begins, so a stale or
 /// spam-pressed skip can't collapse the day to ~0s right after a wave→prep transition.
 pub const MIN_PREP_SECONDS: f32 = 3.0;
@@ -1100,7 +1102,7 @@ mod tests {
             timers: WaveTimers::default(), now: 0.0, skip: false, mods: normal(),
         });
         assert!(r1.actions.is_empty(), "no transition on the arming frame");
-        assert_eq!(r1.timers.prep_ends_at, PREP_DURATION); // 0 + 150·1
+        assert_eq!(r1.timers.prep_ends_at, PREP_DURATION); // 0 + PREP_DURATION·1 (normal prep_mul)
 
         let r2 = step_wave_director(&WaveStepInput {
             phase: GamePhase::Prep, wave_index: -1, spawned: 0, alive: 0,

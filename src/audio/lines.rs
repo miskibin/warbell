@@ -150,12 +150,12 @@ const fn line(id: &'static str, speaker: Speaker, concept: Concept, text: &'stat
 /// THE catalog. Filled in across the migration tasks (Phase C).
 pub const LINES: &[Line] = &[
     // ── Hero event reactions ──
-    Line { once: true,  priority: 20, ..line("stone",         Speaker::Hero, Concept::FirstStone,   "[older clip — text not transcribed]") },
-    Line { floor: 300.0,              ..line("chest",         Speaker::Hero, Concept::ChestOpen,    "[older clip — text not transcribed]") },
-    Line { once: true,  priority: 20, ..line("rescue",        Speaker::Hero, Concept::FirstRescue,  "[older clip — text not transcribed]") },
-    Line { priority: 30,              ..line("night",         Speaker::Hero, Concept::NightWarning, "[older clip — text not transcribed]") },
-    Line { floor: 300.0, priority: 15, ..line("hurt",         Speaker::Hero, Concept::LowHp,        "[older clip — text not transcribed]") },
-    Line { once: true,  priority: 15, ..line("home",          Speaker::Hero, Concept::Home,         "[older clip — text not transcribed]") },
+    Line { once: true,  priority: 20, ..line("stone",         Speaker::Hero, Concept::FirstStone,   "Huh, stone. I could shore up the castle walls with this.") },
+    Line { floor: 300.0,              ..line("chest",         Speaker::Hero, Concept::ChestOpen,    "Ooh, a chest.") },
+    Line { once: true,  priority: 20, ..line("rescue",        Speaker::Hero, Concept::FirstRescue,  "There, you're free. Get to the castle. You'll fight at my side now.") },
+    Line { priority: 30,              ..line("night",         Speaker::Hero, Concept::NightWarning, "Getting dark. Night soon. Maybe I wandered too far.") },
+    Line { floor: 300.0, priority: 15, ..line("hurt",         Speaker::Hero, Concept::LowHp,        "I'm hurt. Could use some herbs.") },
+    Line { once: true,  priority: 15, ..line("home",          Speaker::Hero, Concept::Home,         "Home. Finally. Safe here. Guess I ring the bell when I'm ready. Then they come.") },
     Line { once: true,  priority: 15, ..line("equip",         Speaker::Hero, Concept::Equip,        "Mm, new armor. I should look it over in my satchel.") },
     Line { floor: 300.0, priority: 15, ..line("levelup",      Speaker::Hero, Concept::LevelUp,      "Stronger. The blade feels lighter than it did.") },
     Line { floor: 300.0, priority: 20, ..line("wave_survived", Speaker::Hero, Concept::WaveSurvived, "Dawn. We held. ...this time.") },
@@ -165,11 +165,11 @@ pub const LINES: &[Line] = &[
     Line { floor: 300.0, priority: 25, ..line("keep_hurt",    Speaker::Hero, Concept::KeepHurt,     "The keep's taking a beating. Get to the walls.") },
     Line { floor: 300.0,              ..line("shrine_heal",   Speaker::Hero, Concept::ShrineHeal,   "The old stones still have mercy in them.") },
     // ── Hero biome musings (once per biome per run via `once`) ──
-    Line { once: true, ..line("forest", Speaker::Hero, Concept::BiomeEntered(Biome::Forest), "[older clip — text not transcribed]") },
-    Line { once: true, ..line("snow",   Speaker::Hero, Concept::BiomeEntered(Biome::Snow),   "[older clip — text not transcribed]") },
-    Line { once: true, ..line("rock",   Speaker::Hero, Concept::BiomeEntered(Biome::Rocky),  "[older clip — text not transcribed]") },
-    Line { once: true, ..line("desert", Speaker::Hero, Concept::BiomeEntered(Biome::Desert), "[older clip — text not transcribed]") },
-    Line { once: true, ..line("swamp",  Speaker::Hero, Concept::BiomeEntered(Biome::Swamp),  "[older clip — text not transcribed]") },
+    Line { once: true, ..line("forest", Speaker::Hero, Concept::BiomeEntered(Biome::Forest), "Oh, a forest. Looks like good hunting. Might find some apples, too. Huh. Prisoners. Maybe I can help them.") },
+    Line { once: true, ..line("snow",   Speaker::Hero, Concept::BiomeEntered(Biome::Snow),   "Brr, freezing up here. Bet there's beasts to hunt. Maybe loot in the ice. Someone's locked in that cage. Should I free them?") },
+    Line { once: true, ..line("rock",   Speaker::Hero, Concept::BiomeEntered(Biome::Rocky),  "All this rock. That's a lot of ore. I could mine some. The walls could use the stone.") },
+    Line { once: true, ..line("desert", Speaker::Hero, Concept::BiomeEntered(Biome::Desert), "Desert. Great. It's hot. Something worth hunting out here, I bet. Are those captives? I could get them out.") },
+    Line { once: true, ..line("swamp",  Speaker::Hero, Concept::BiomeEntered(Biome::Swamp),  "Ugh, the marsh. Slow going. Oh, herbs. Those patch me up. And the poison stings less. Shouldn't stay long, though.") },
     // ── Hero observational remarks ──
     // Trigger: NearTown — hero near townsfolk (folded from people/name/well/townday/laugh/market/woodpile/grumble lines)
     Line { floor: 300.0, priority: 5, ..line("people_a",   Speaker::Hero, Concept::NearTown, "These people. Loud, stubborn, alive. That's the whole point of all this, isn't it.") },

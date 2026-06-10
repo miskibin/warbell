@@ -9,3 +9,5 @@
 
 # Claude Code local runtime artifacts
 /.claude/scheduled_tasks.lock
+
+/target-shot
