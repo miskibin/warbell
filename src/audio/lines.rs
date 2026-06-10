@@ -85,6 +85,8 @@ pub enum Concept {
     OrkDeath,
     // ── Chain reply concepts ──
     ReplyToVillagerJab,
+    /// Second-level chain: after the hero's comeback, the villager gets the last word.
+    VillagerLastWord,
 }
 
 /// A follow-up dispatched when a line finishes: ask `target` to look up a line whose
@@ -96,9 +98,13 @@ pub struct Chain {
     pub target: Speaker,
 }
 
-/// The one wired chain so far: a villager's at-the-hero jab → the hero fires back. Used as the
-/// `then` on the `pa_*` jab lines; resolved against the hero's `ReplyToVillagerJab` reply pool.
+/// A villager's at-the-hero jab → the hero fires back. Used as the `then` on the `pa_*` jab
+/// lines; resolved against the hero's `ReplyToVillagerJab` reply pool.
 const REPLY_TO_JAB: Chain = Chain { concept: Concept::ReplyToVillagerJab, target: Speaker::Hero };
+
+/// Second link: some hero comebacks hand the exchange BACK to the villager for a parting shot
+/// (jab → comeback → last word, then the chain ends — no `then` on the last-word pool).
+const LAST_WORD: Chain = Chain { concept: Concept::VillagerLastWord, target: Speaker::Villager };
 
 /// One voice line — the whole record.
 #[derive(Clone, Copy)]
@@ -207,13 +213,17 @@ pub const LINES: &[Line] = &[
     Line { floor: 360.0, ..line("idle_hens",    Speaker::Villager, Concept::Greeting,         "I told the hens about the orks. They were not impressed.") },
     Line { floor: 360.0, ..line("idle_cousin",  Speaker::Villager, Concept::Greeting,         "Me cousin says he killed an ork once. Me cousin says a lotta things.") },
     Line { floor: 360.0, ..line("merchant",     Speaker::Villager, Concept::Greeting,         "Finest wares this side of the swamp. Only wares this side of the swamp, but still.") },
-    // These three jabs are aimed AT the hero, so each opens a call-and-response chain: when the
+    // These jabs are aimed AT the hero, so each opens a call-and-response chain: when the
     // line finishes it dispatches `ReplyToVillagerJab` to the hero, who picks a comeback from his
     // reply pool below (the Valve "then" dispatch — `tick_chains` resolves it against current facts,
     // so if the hero has wandered out of earshot / is mid-line, the comeback simply doesn't land).
     Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_hero",   Speaker::Villager, Concept::Greeting, "Off to be a hero again, are we? Must be nice having the time.") },
     Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_chosen", Speaker::Villager, Concept::Greeting, "Oh, the chosen one graces us. Mind you don't trip on all that destiny.") },
     Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_slept",  Speaker::Villager, Concept::Greeting, "Saved us all last night, did you? Funny, I slept fine without you.") },
+    // Clips for pa_armor / pa_late (and every line below without an .ogg on disk) are not yet
+    // recorded — wired + silent until they are, like intro_a/b. Transcript here IS the script.
+    Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_armor",  Speaker::Villager, Concept::Greeting, "Lovely armor, that. Shame about the taxes what paid for it.") },
+    Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_late",   Speaker::Villager, Concept::Greeting, "Oh, look who turns up once the screaming's done. Impeccable timing, as ever.") },
     Line { floor: 360.0, ..line("pa_fence",     Speaker::Villager, Concept::Greeting,         "Big strong knight. Can't fix a fence, but big strong knight.") },
     Line { floor: 360.0, ..line("story_barn",   Speaker::Villager, Concept::Greeting,         "See ol' Marek's barn? Burned clean down. He says lightning. Was the ale.") },
     Line { floor: 360.0, ..line("story_miller", Speaker::Villager, Concept::Greeting,         "The miller's daughter married a soldier. He left, she kept the goat. Smart girl.") },
@@ -226,13 +236,23 @@ pub const LINES: &[Line] = &[
     Line { floor: 360.0, ..line("trade",        Speaker::Villager, Concept::Greeting,         "I had a trade once, then the war. Now I... do this.") },
     Line { floor: 360.0, ..line("grateful",     Speaker::Villager, Concept::Greeting,         "We're ever so grateful. Truly. Now could you grateful your boots off my step.") },
     Line { floor: 360.0, ..line("screaming",    Speaker::Villager, Concept::Greeting,         "Bless you for the protection. The screaming at night is a lovely touch.") },
+    Line { floor: 360.0, ..line("statue",       Speaker::Villager, Concept::Greeting,         "They'll raise you a statue one day, m'lord. The pigeons are very excited.") },
+    Line { floor: 360.0, ..line("favorite",     Speaker::Villager, Concept::Greeting,         "You're my favorite knight. You're the only knight. Still counts.") },
+    Line { floor: 360.0, ..line("moat",         Speaker::Villager, Concept::Greeting,         "I said dig a moat. 'Too dear,' they said. But swords for everyone, sure.") },
+    Line { floor: 360.0, ..line("optimist",     Speaker::Villager, Concept::Greeting,         "Mum always said look on the bright side. So: at least the orks are punctual.") },
+    Line { floor: 360.0, ..line("roof",         Speaker::Villager, Concept::Greeting,         "There's a hole in my roof shaped just like a catapult stone. Decorative, I'm told.") },
     // pa_sword is weapon-gated → its own concept so the trigger can conditionally emit it only when armed
     Line { floor: 360.0, ..line("pa_sword",     Speaker::Villager, Concept::VillagerArmedJab, "Look at the size of that sword. My uncle's is smaller, and he's twice the man.") },
+    Line { floor: 360.0, ..line("pa_shiny",     Speaker::Villager, Concept::VillagerArmedJab, "Ooh, shiny. Did the merchant see you coming, or did you queue up special?") },
     // ── Villager event reactions (must finish; outrank ambient chatter) ──
     // interruptible:false + priority:15 so these aren't cut off by ambient. floor:600 = 10-min floor.
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("siege_fear",  Speaker::Villager, Concept::SiegeFalls, "They're coming. Inside, inside. Lock the door.") },
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("dawn_relief", Speaker::Villager, Concept::Dawn,       "Made it to morning. Knew you'd see us through.") },
     Line { interruptible: false, priority: 15, floor: 600.0, ..line("rescued",     Speaker::Villager, Concept::Rescued,    "You came for me? Gods bless you. I'll take up a spear, I swear it.") },
+    // Dry-wit variants of the same events — same must-finish gating, so the pool just gets wider.
+    Line { interruptible: false, priority: 15, floor: 600.0, ..line("siege_dry",   Speaker::Villager, Concept::SiegeFalls, "Orks again. Right on schedule. Everyone act surprised.") },
+    Line { interruptible: false, priority: 15, floor: 600.0, ..line("dawn_dry",    Speaker::Villager, Concept::Dawn,       "Still alive, then. The betting pool will be devastated.") },
+    Line { interruptible: false, priority: 15, floor: 600.0, ..line("rescued_dry", Speaker::Villager, Concept::Rescued,    "My hero. Only took you, what, a fortnight? Bless.") },
     // ── Ork battle barks (nearest ork in earshot; pitch-shifted per utterance) ──
     Line { ..line("spot",   Speaker::Ork, Concept::OrkSpot,  "Little knight. Little bones.") },
     Line { ..line("charge", Speaker::Ork, Concept::OrkSpot,  "Smash the stone. Burn the nest.") },
@@ -241,8 +261,12 @@ pub const LINES: &[Line] = &[
     Line { ..line("where",  Speaker::Ork, Concept::OrkSpot,  "Where? Where you hide, worm?") },
     Line { ..line("feast",  Speaker::Ork, Concept::OrkSpot,  "Tonight we feast.") },
     Line { ..line("shaman", Speaker::Ork, Concept::OrkSpot,  "Spirits take him. Saka.") },
+    Line { ..line("gate",   Speaker::Ork, Concept::OrkSpot,  "Break the gate. Break the man.") },
+    Line { ..line("meat",   Speaker::Ork, Concept::OrkSpot,  "Fresh meat for the war pot.") },
     // ── Ork death snarl (on a kill) ──
     Line { ..line("death",  Speaker::Ork, Concept::OrkDeath, "Not done.") },
+    Line { ..line("death_2", Speaker::Ork, Concept::OrkDeath, "Cold... why cold...") },
+    Line { ..line("death_3", Speaker::Ork, Concept::OrkDeath, "Good fight. Good... fight.") },
     // ── Hero comebacks to a villager's jab (chain replies — `reply_to`, never emitted directly) ──
     // Dispatched by `tick_chains` when a `pa_*` jab finishes; `pick`-of-pool gives variety. Priority
     // 12 so the retort lands over idle chatter; floored so the same comeback doesn't repeat soon.
@@ -250,7 +274,16 @@ pub const LINES: &[Line] = &[
     // stays silent until they're recorded, exactly like intro_a/intro_b.
     Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_a", Speaker::Hero, Concept::ReplyToVillagerJab, "Mm. And yet here you still stand, breathing. Funny how that works.") },
     Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_b", Speaker::Hero, Concept::ReplyToVillagerJab, "Destiny's heavy. Someone has to carry it. Might as well be the fool with the sword.") },
-    Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_c", Speaker::Hero, Concept::ReplyToVillagerJab, "Keep talking. The orks find the loud ones first.") },
+    // These two comebacks chain a SECOND link: the villager gets the last word (jab → comeback →
+    // parting shot, three speaker turns through the same `then` machinery — no special casing).
+    Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), then: Some(LAST_WORD), ..line("reply_jab_c", Speaker::Hero, Concept::ReplyToVillagerJab, "Keep talking. The orks find the loud ones first.") },
+    Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), then: Some(LAST_WORD), ..line("reply_jab_d", Speaker::Hero, Concept::ReplyToVillagerJab, "One day I'll sleep in. Just the once. See how the jokes hold up.") },
+    Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_e", Speaker::Hero, Concept::ReplyToVillagerJab, "Wit like that, the orks would die laughing. Saves me the swinging.") },
+    // ── Villager last words (chain replies to a hero comeback — never emitted directly) ──
+    // End of the exchange: no `then` here, so the chain terminates. Clips not yet recorded.
+    Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_a", Speaker::Villager, Concept::VillagerLastWord, "Ooh, sharp. Practice that one on the cows, did we?") },
+    Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_b", Speaker::Villager, Concept::VillagerLastWord, "Noted, m'lord. I'll scream quieter tonight, just for you.") },
+    Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_c", Speaker::Villager, Concept::VillagerLastWord, "Touchy, touchy. And after everything we do for you.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.
@@ -470,6 +503,55 @@ mod tests {
         let reply = pick.expect("a fresh jab should resolve to a comeback");
         assert_eq!(reply.speaker, Speaker::Hero);
         assert!(reply.id.starts_with("reply_jab_"));
+    }
+
+    // ── Second-level chain: jab → comeback → villager last word ────────────────────────────────
+
+    #[test]
+    fn some_comebacks_hand_the_villager_the_last_word() {
+        let chained: Vec<&Line> = replies_to(Concept::ReplyToVillagerJab)
+            .filter(|l| l.then.is_some())
+            .collect();
+        assert!(!chained.is_empty(), "at least one comeback should chain a last word");
+        for l in &chained {
+            let chain = l.then.unwrap();
+            assert_eq!(chain.concept, Concept::VillagerLastWord);
+            assert_eq!(chain.target, Speaker::Villager);
+        }
+        // ...but not ALL of them — sometimes the hero ends the exchange.
+        assert!(
+            replies_to(Concept::ReplyToVillagerJab).any(|l| l.then.is_none()),
+            "some comebacks should end the exchange"
+        );
+    }
+
+    #[test]
+    fn last_word_pool_answers_and_terminates() {
+        let pool: Vec<&Line> = replies_to(Concept::VillagerLastWord).collect();
+        assert!(pool.len() >= 2, "want a pool of last words, got {}", pool.len());
+        assert!(pool.iter().all(|l| l.speaker == Speaker::Villager));
+        // The exchange must END here: a last word that chained again could ping-pong forever.
+        assert!(pool.iter().all(|l| l.then.is_none()));
+    }
+
+    #[test]
+    fn three_step_chain_resolves_end_to_end() {
+        // jab (villager) → comeback (hero) → last word (villager), replaying `tick_chains` twice.
+        let (last, once) = (HashMap::new(), HashSet::new());
+        let jab = LINES.iter().find(|l| l.id == "pa_armor").unwrap();
+        let step1 = jab.then.expect("jab chains a comeback");
+        let comeback = replies_to(step1.concept)
+            .filter(|l| l.speaker == step1.target && l.then.is_some())
+            .max_by_key(|l| l.priority)
+            .expect("a chaining comeback exists");
+        let step2 = comeback.then.unwrap();
+        let last_word = replies_to(step2.concept)
+            .filter(|l| l.speaker == step2.target)
+            .filter(|l| passes_gates(l, &last, &once, 0.0))
+            .max_by_key(|l| l.priority)
+            .expect("the villager gets the last word");
+        assert!(last_word.id.starts_with("last_word_"));
+        assert!(last_word.then.is_none(), "and the exchange ends there");
     }
 
     #[test]
