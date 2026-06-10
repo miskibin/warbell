@@ -7,6 +7,8 @@ use bevy::audio::{AudioSink, AudioSinkPlayback, SpatialAudioSink};
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 
+use crate::economy::Bank;
+use crate::player::PlayerRes;
 use crate::quality::GraphicsQuality;
 
 use super::fonts::{label, UiFonts};
@@ -31,6 +33,9 @@ struct FsIcon;
 /// The Low/High graphics-preset button, and the text label inside it.
 #[derive(Component)]
 struct QualityToggle;
+/// Debug cheat: grants 1000 of every resource (gold + stone + food + wood) on click.
+#[derive(Component)]
+struct DebugGrant;
 #[derive(Component)]
 struct QualityLabel;
 
@@ -57,6 +62,26 @@ fn setup_settings(mut commands: Commands, fonts: Res<UiFonts>) {
             ..default()
         })
         .with_children(|row| {
+            // Debug cheat: "+1k" text button grants 1000 of every resource for testing.
+            row.spawn((
+                Node {
+                    height: Val::Px(34.0),
+                    padding: UiRect::horizontal(Val::Px(10.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: border(1.0),
+                    border_radius: radius(R_BTN),
+                    ..default()
+                },
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(BORDER_SOFT),
+                Button,
+                Interaction::default(),
+                DebugGrant,
+            ))
+            .with_children(|b| {
+                b.spawn(label(&fonts.bold, "+1k", 13.0, TEXT));
+            });
             // Graphics-quality toggle: a text button ("High"/"Low") so the choice is explicit and
             // legible without depending on an icon asset. Click or press F10 to flip.
             row.spawn((
@@ -131,17 +156,25 @@ fn sync_audio_icon(
 #[allow(clippy::type_complexity)]
 fn settings_click(
     q: Query<
-        (&Interaction, Option<&AudioToggle>, Option<&FullscreenToggle>, Option<&QualityToggle>),
+        (
+            &Interaction,
+            Option<&AudioToggle>,
+            Option<&FullscreenToggle>,
+            Option<&QualityToggle>,
+            Option<&DebugGrant>,
+        ),
         Changed<Interaction>,
     >,
     mut settings: ResMut<AudioSettings>,
     mut quality: ResMut<GraphicsQuality>,
+    mut bank: ResMut<Bank>,
+    mut player: ResMut<PlayerRes>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
-    for (interaction, audio, fs, qual) in &q {
+    for (interaction, audio, fs, qual, grant) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -154,7 +187,19 @@ fn settings_click(
         if qual.is_some() {
             toggle_quality(&mut quality, &mut notice, now);
         }
+        if grant.is_some() {
+            grant_debug_resources(&mut bank, &mut player, &mut notice, now);
+        }
     }
+}
+
+/// Debug cheat behind the "+1k" button: 1000 gold + 1000 of each bank resource.
+fn grant_debug_resources(bank: &mut Bank, player: &mut PlayerRes, notice: &mut Notice, now: f64) {
+    bank.0.add_stone(1000.0);
+    bank.0.add_food(1000.0);
+    bank.0.add_wood(1000.0);
+    player.0.add_gold(1000);
+    notice.push("Debug: +1000 gold/stone/food/wood", now);
 }
 
 /// M = mute, F11 = fullscreen, F10 = graphics preset.

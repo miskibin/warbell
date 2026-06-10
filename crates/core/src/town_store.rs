@@ -61,6 +61,11 @@ pub enum BuildKind {
     /// felled tree; there is NO passive wood trickle). Costs only stone so it can always be
     /// bootstrapped by mining, even once the starting wood stipend is spent (no chicken-and-egg).
     Lumber,
+    /// Stone Miner — employs a miner who roams to real ore boulders, picks them apart, and carts
+    /// the stone home (the world layer banks stone per depleted boulder; NO passive trickle).
+    /// Costs only wood — the mirror-image of the Woodcutter — so the two bootstrap each other
+    /// (wood → stone → wood). See the Bevy layer's `miner.rs` / `verbs.rs` ore regrow.
+    Mine,
 }
 
 /// A resource a producer yields.
@@ -83,6 +88,7 @@ impl BuildKind {
         match self {
             BuildKind::Farm => Cost { wood: 8.0, stone: 0.0 },
             BuildKind::Lumber => Cost { wood: 0.0, stone: 6.0 },
+            BuildKind::Mine => Cost { wood: 6.0, stone: 0.0 },
         }
     }
 
@@ -93,6 +99,7 @@ impl BuildKind {
         match self {
             BuildKind::Farm => Some((Resource::Food, 0.5)),
             BuildKind::Lumber => None,
+            BuildKind::Mine => None,
         }
     }
 
@@ -100,6 +107,7 @@ impl BuildKind {
         match self {
             BuildKind::Farm => 60.0,
             BuildKind::Lumber => 55.0,
+            BuildKind::Mine => 55.0,
         }
     }
 
@@ -113,6 +121,7 @@ impl BuildKind {
         match self {
             BuildKind::Farm => "Farm",
             BuildKind::Lumber => "Woodcutter",
+            BuildKind::Mine => "Stone Miner",
         }
     }
 }
@@ -468,6 +477,19 @@ mod tests {
         // No trickle: wood is banked per tree the woodcutter actually fells (world layer).
         t.production_tick(60.0, &mut bank);
         assert_eq!(bank.wood(), before);
+    }
+
+    #[test]
+    fn mine_costs_wood_only_and_has_no_passive_stone() {
+        let mut t = Town::new(1, 0);
+        let mut bank = bank_with(10.0, 0.0, 0.0); // some wood, no stone
+        assert!(t.build(0, BuildKind::Mine, &mut bank));
+        assert_eq!(bank.wood(), 4.0); // 10 - 6
+        t.plots[0].staffed = true;
+        let before = bank.stone();
+        // No trickle: stone is banked per boulder the miner actually depletes (world layer).
+        t.production_tick(60.0, &mut bank);
+        assert_eq!(bank.stone(), before);
     }
 
     #[test]

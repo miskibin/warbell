@@ -4,7 +4,7 @@
 //! centre safe-zone (the castle spot), a grass frontier with scattered forest clumps and
 //! rolling terraced knolls, a beach ring backed by patchy coastal mountain ridges, four
 //! carved rivers + one lake, and **terraced** stepped heights (flat tile-tops + cliff
-//! faces; snow peak 10, rock peak 15).
+//! faces; snow peak 10, rock peak 9).
 //!
 //! `build` seeds the full playable island: the ground mesh plus ork-camp / castle / ore / chest
 //! placement and wildlife (single-biome views, keys 1–5, have no island layout, so none of these).
@@ -105,7 +105,10 @@ struct Region {
 const REGIONS: [Region; 5] = [
     Region { x: 26.0, z: 24.0, r: 31.0, biome: TB::Snow, peak: 10 }, // NW snow massif
     Region { x: 112.0, z: 28.0, r: 34.0, biome: TB::Desert, peak: 0 }, // NE dunes
-    Region { x: 122.0, z: 58.0, r: 28.0, biome: TB::Rock, peak: 15 }, // E rock range
+    // E rock range — pulled in toward the castle (122→116: the mine country starts just past
+    // the safe-zone fray instead of a 33-unit trek) and LOWERED (peak 15→9) so most faces are
+    // 1-class terraces the nav-grid can climb; less coast-clipping on the far side too.
+    Region { x: 116.0, z: 57.0, r: 28.0, biome: TB::Rock, peak: 9 },
     Region { x: 32.0, z: 80.0, r: 34.0, biome: TB::Forest, peak: 0 }, // SW forest
     Region { x: 72.0, z: 92.0, r: 32.0, biome: TB::Swamp, peak: 0 }, // S swamp
 ];
@@ -295,7 +298,9 @@ fn plateau_height(x: f32, z: f32) -> i32 {
     0
 }
 
-const RAMP_HALF_TILES: f32 = 1.7;
+// Half-width of the castle-facing ramp corridor up each peak region (base tiles). Widened
+// 1.7→3.0 so the rock range / snow massif climb is a broad avenue, not a one-tile stair.
+const RAMP_HALF_TILES: f32 = 3.0;
 fn ramp_class(x: f32, z: f32, reg: &Region) -> Option<i32> {
     if reg.peak <= 0 {
         return None;
@@ -331,7 +336,10 @@ fn mountain_height(x: f32, z: f32, reg: &Region) -> i32 {
     let dc = (x - reg.x).hypot(z - reg.z);
     let peak = reg.peak;
     let t = (1.0 - dc / reg.r).max(0.0);
-    let h = (peak as f32 * t * t + noise_b(x, z) * (0.35 + t * 0.95)).round() as i32;
+    // Noise weight kept LOW (was 0.35 + t·0.95): noise_b swings ±1.4, so the old weight stamped
+    // frequent ≥2-class jumps between neighbour tiles — sheer cliff pockets `can_step` refuses,
+    // which walled off most of the range. Now slopes are mostly 1-class walkable terraces.
+    let h = (peak as f32 * t * t + noise_b(x, z) * (0.2 + t * 0.4)).round() as i32;
     h.clamp(1, peak)
 }
 

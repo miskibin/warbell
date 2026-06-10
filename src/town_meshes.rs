@@ -7,6 +7,7 @@
 //!
 //! - **Farm** — a plaster cottage beside a tilled, fenced field of crop rows + a hay bale.
 //! - **Woodcutter** — the same cottage beside a stacked log yard, a sawhorse and a chopping stump.
+//! - **Stone Miner** — the same cottage beside a stone yard: cut blocks, a parked handcart, a pick.
 //! - **Plot** — a marked-out construction site: a cleared earth pad framed in timber beams, corner
 //!   survey stakes, and a little "build here" signpost.
 
@@ -85,6 +86,41 @@ fn log_yard(cx: f32) -> Vec<(Mesh, M)> {
 pub fn woodcutter_parts() -> Vec<(Mesh, M)> {
     let mut v = cottage();
     v.extend(log_yard(0.95));
+    v
+}
+
+// ── Stone Miner: cottage (−X) + a stone yard (+X) ──────────────────────────────────────
+
+fn stone_yard(cx: f32) -> Vec<(Mesh, M)> {
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    // Bottom row of cut stone blocks running along Z (mixed greys for a quarried look).
+    for (dz, m) in [(-0.5, M::Stone), (0.0, M::LightStone), (0.5, M::DarkStone)] {
+        v.push((bx(0.5, 0.42, 0.46, cx, 0.21, dz), m));
+    }
+    // Two more blocks stacked on top.
+    for (dz, m) in [(-0.25, M::LightStone), (0.25, M::Stone)] {
+        v.push((bx(0.46, 0.4, 0.44, cx, 0.6, dz), m));
+    }
+    // A parked empty handcart in front of the pile: a plank bed with side rails on two wheels,
+    // and two push-handles out the back (the loaded version rides home on the miner — `miner.rs`).
+    let kx = cx - 1.0;
+    v.push((bx(0.7, 0.16, 1.0, kx, 0.36, 0.0), M::Wood)); // bed
+    for rz in [-0.46_f32, 0.46] {
+        v.push((bx(0.66, 0.18, 0.07, kx, 0.5, rz), M::Beam)); // end rails
+    }
+    for wx in [-0.42_f32, 0.42] {
+        v.push((bx(0.1, 0.4, 0.4, kx + wx, 0.2, 0.0), M::DarkStone)); // wheel (disk facing X)
+    }
+    v.push((bx(0.06, 0.06, 0.5, kx, 0.5, -0.7), M::Beam)); // push-handle bar
+    // A pick leaning against the stone pile: a haft topped by a crossways head.
+    v.push((bx(0.06, 0.86, 0.06, cx + 0.34, 0.5, 0.7), M::Beam));
+    v.push((bx(0.44, 0.07, 0.07, cx + 0.34, 0.9, 0.7), M::Bronze));
+    v
+}
+
+pub fn mine_parts() -> Vec<(Mesh, M)> {
+    let mut v = cottage();
+    v.extend(stone_yard(0.95));
     v
 }
 

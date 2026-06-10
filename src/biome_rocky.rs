@@ -754,10 +754,13 @@ pub fn config() -> BiomeConfig {
                     (build_boulder_mesh(2), 1.05),
                     (build_boulder_mesh(3), 0.3), // cairns stay a rare waymarker treat
                 ],
-                chance: 0.085,
+                // Thinned (0.085→0.055) + lighter blockers (0.3→0.24, so only s≳0.9 instances
+                // pass the ≥0.22 floor): keeps the crag look but leaves walking lanes for the
+                // hero + the stone miners' A* instead of a collision maze.
+                chance: 0.055,
                 scale: (0.7, 2.2),
                 tree: false,
-                block_radius: 0.3, // dominant crags — big ones block, scree-sized walk-through
+                block_radius: 0.24,
             },
             // The "tree" class (spacing-checked, no sway harm): hoodoos + wind-bent
             // mountain pines (mirrored pair) + a bleached snag. 5 variants.
@@ -769,7 +772,7 @@ pub fn config() -> BiomeConfig {
                     (build_windpine_mesh(1), 0.9),
                     (build_snag_mesh(), 0.45),
                 ],
-                chance: 0.024,
+                chance: 0.018, // trunk-blocked spires kept sparse — see crag-thinning note above
                 scale: (0.9, 1.8),
                 tree: true,
                 block_radius: 0.0,

@@ -188,7 +188,11 @@ fn auto_assign_workers(
             .iter()
             .find(|(_, w)| town.0.plots.get(w.idx).is_some_and(|p| !matches!(p.kind, Some(BuildKind::Farm))))
         {
-            commands.entity(e).try_remove::<Worker>().try_remove::<crate::lumberjack::ChopJob>();
+            commands
+                .entity(e)
+                .try_remove::<Worker>()
+                .try_remove::<crate::lumberjack::ChopJob>()
+                .try_remove::<crate::miner::MineJob>();
         }
     }
 }
@@ -566,10 +570,11 @@ fn stage_town_for_shot(
     bank.0.add_wood(100.0);
     bank.0.add_stone(100.0);
     town.0.build(0, BuildKind::Farm, &mut bank.0);
+    town.0.build(1, BuildKind::Mine, &mut bank.0);
     town.0.build(2, BuildKind::Farm, &mut bank.0);
     town.0.build(3, BuildKind::Lumber, &mut bank.0);
     town.0.build_house(&mut bank.0); // raise one extra dwelling (castle reveals it)
-    for idx in [0usize, 2, 3] {
+    for idx in [0usize, 1, 2, 3] {
         if let Some(kind) = town.0.plots[idx].kind {
             spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
         }
@@ -596,8 +601,12 @@ enum BuildItem {
 #[derive(Component)]
 struct BuildOption(BuildItem);
 
-const MENU: [BuildItem; 3] =
-    [BuildItem::Producer(BuildKind::Farm), BuildItem::House, BuildItem::Producer(BuildKind::Lumber)];
+const MENU: [BuildItem; 4] = [
+    BuildItem::Producer(BuildKind::Farm),
+    BuildItem::House,
+    BuildItem::Producer(BuildKind::Lumber),
+    BuildItem::Producer(BuildKind::Mine),
+];
 
 impl BuildItem {
     fn label(self) -> &'static str {
@@ -620,6 +629,7 @@ impl BuildItem {
         match self {
             BuildItem::Producer(BuildKind::Farm) => "Grows food \u{2192} feeds the town so peasants settle in",
             BuildItem::Producer(BuildKind::Lumber) => "Woodcutter \u{2192} fells real trees and hauls the logs home (needs a worker)",
+            BuildItem::Producer(BuildKind::Mine) => "Stone Miner \u{2192} mines real boulders and carts the stone home (needs a worker)",
             BuildItem::House => "Home in the walls \u{2192} +2 people your town can hold",
         }
     }
@@ -786,5 +796,6 @@ fn building_parts(kind: BuildKind) -> Vec<(Mesh, M)> {
     match kind {
         BuildKind::Farm => crate::town_meshes::farm_parts(),
         BuildKind::Lumber => crate::town_meshes::woodcutter_parts(),
+        BuildKind::Mine => crate::town_meshes::mine_parts(),
     }
 }
