@@ -932,20 +932,61 @@ fn ore_crystal_mesh() -> Mesh {
     ])
 }
 
-/// Small standout apple tree: a brown trunk, a bright orchard-green canopy (lighter than the
-/// forest's pines/broadleaf so it reads as special) studded with red apples. Trunk base at y=0.
+/// Small standout apple tree: a gnarled orchard trunk forking into three limbs, a full
+/// three-tone canopy (shadowed underside → orchard green → sunlit top, brighter than the
+/// forest's pines/broadleaf so it reads as special) dusted with pale blossom, and a root
+/// flare gripping the grass. Trunk base at y=0. The canopy covers every `APPLE_SPOTS`
+/// hang point (x ±0.4, y 0.74–1.22) — the apples are separate child entities that pop off.
 fn apple_tree_mesh() -> Mesh {
     let trunk = lin(0x6b4a2a);
+    let leaf_dk = lin(0x3d7e2e);
     let leaf = lin(0x4f9c3a);
     let leaf_hi = lin(0x74c64c);
-    // Trunk + canopy only — the apples are separate child entities so they can pop off.
-    cgroup(vec![
-        ccyl(0.11, 0.74, v(0.0, 0.37, 0.0), Quat::IDENTITY, trunk),
-        csph(0.44, v(0.0, 0.98, 0.0), leaf),
-        csph(0.34, v(0.30, 0.88, 0.12), leaf_hi),
-        csph(0.32, v(-0.28, 0.90, -0.10), leaf),
-        csph(0.30, v(0.06, 1.20, -0.16), leaf_hi),
-    ])
+    let blossom = lin(0xf3e9da);
+    let mut parts = vec![
+        // Stout tapering bole, kinked a touch off plumb like a pruned orchard tree.
+        ccyl(0.115, 0.42, v(0.0, 0.21, 0.0), Quat::IDENTITY, trunk),
+        ccyl(0.085, 0.34, v(0.025, 0.52, 0.01), rz(-0.10), trunk),
+        // Three limbs forking from the bole crook up into the canopy.
+        ccyl(0.045, 0.34, v(0.20, 0.78, 0.10), rz(-0.55), trunk),
+        ccyl(0.042, 0.32, v(-0.18, 0.80, -0.05), rz(0.60), trunk),
+        ccyl(0.038, 0.28, v(0.02, 0.84, -0.14), rx(0.5), trunk),
+    ];
+    // Root flare: four stubby toes leaning out from the foot.
+    for i in 0..4 {
+        let a = 0.5 + i as f32 * std::f32::consts::FRAC_PI_2;
+        parts.push(ccyl(
+            0.045,
+            0.14,
+            v(a.cos() * 0.10, 0.045, a.sin() * 0.10),
+            ry(-a) * rz(1.0),
+            trunk,
+        ));
+    }
+    // Canopy: dark grounded underside → mid body → sunlit cap, wrapping the hang spots.
+    for (r, x, yy, z, c) in [
+        (0.40, 0.0, 0.86, 0.04, leaf_dk),   // core mass
+        (0.30, 0.32, 0.84, 0.16, leaf),     // east lobe (covers spot 1)
+        (0.30, -0.32, 0.88, 0.04, leaf),    // west lobe (covers spot 2)
+        (0.27, 0.10, 0.80, 0.34, leaf_dk),  // south lobe (covers spot 3)
+        (0.28, 0.26, 1.06, -0.08, leaf),    // upper-east (spot 4)
+        (0.26, -0.18, 1.10, 0.20, leaf_hi), // upper-west (spot 5)
+        (0.26, 0.02, 1.22, 0.02, leaf_hi),  // crown (spot 6)
+        (0.18, 0.12, 1.34, -0.06, leaf_hi), // sunlit tip
+    ] {
+        parts.push(csph(r, v(x, yy, z), c));
+    }
+    // A dusting of pale blossom over the sunny side — the orchard tree's calling card.
+    for (x, yy, z) in [
+        (0.30_f32, 1.22_f32, 0.14_f32),
+        (-0.26, 1.26, -0.06),
+        (0.06, 1.40, 0.10),
+        (0.42, 1.00, 0.20),
+        (-0.38, 1.06, 0.16),
+    ] {
+        parts.push(csph(0.045, v(x, yy, z), blossom));
+    }
+    cgroup(parts)
 }
 
 /// Gatherable swamp bramble: a squat dark-green leaf mound dotted with near-black blackberries

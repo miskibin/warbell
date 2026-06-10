@@ -160,155 +160,199 @@ pub const TREE_TINTS: [[f32; 3]; 3] = [
     [0.80, 0.92, 0.86],
 ];
 
-// ── Broadleaf "tree" — tapered trunk + 6 icosphere foliage layers (ico detail 1) ──
+/// A root flare: short fat cylinders leaning out from the trunk foot, base sunk to y≈0,
+/// so the bole reads grounded and gnarled instead of a pole stuck in the lawn.
+fn root_flare(trunk_r: f32, n: usize, len: f32, color: [f32; 4], phase: f32) -> Vec<Mesh> {
+    (0..n)
+        .map(|i| {
+            let a = phase + (i as f32 / n as f32) * std::f32::consts::TAU;
+            let m = Cylinder::new(trunk_r * 0.42, len)
+                .mesh()
+                .resolution(5)
+                .build()
+                .translated_by(Vec3::new(0.0, len * 0.5, 0.0))
+                // Lean well out from vertical so the root crawls along the ground...
+                .rotated_by(Quat::from_rotation_z(1.05))
+                .rotated_by(Quat::from_rotation_y(a))
+                // ...rooted right at the trunk foot.
+                .translated_by(Vec3::new(a.cos() * trunk_r * 0.55, 0.02, -a.sin() * trunk_r * 0.55));
+            tinted(m, color)
+        })
+        .collect()
+}
+
+/// A short branch reaching from the trunk up into the canopy: a thin cylinder rotated by
+/// `(tilt about Z, then yaw about Y)` with its BASE pivoted at `base` (not its centre).
+fn branch_part(r: f32, len: f32, tilt: f32, yaw: f32, base: Vec3, color: [f32; 4]) -> Mesh {
+    let m = Cylinder::new(r, len)
+        .mesh()
+        .resolution(5)
+        .build()
+        .translated_by(Vec3::new(0.0, len * 0.5, 0.0))
+        .rotated_by(Quat::from_rotation_z(tilt))
+        .rotated_by(Quat::from_rotation_y(yaw))
+        .translated_by(base);
+    tinted(m, color)
+}
+
+// ── Broadleaf "tree" — flared tapered trunk + branches + a 9-blob three-tone crown ──
 //
-// Trunk: CylinderGeometry(0.09, 0.12, 0.5, 6) at [0,0.25,0], #5a3a22.
-// Six foliage layers (dark/dark, mid/mid, light/light) per the spec, building a
-// layered three-tone crown so it reads lush and 3D rather than a flat sphere.
+// Upgraded from the original 6-layer spec build: the trunk is now two stacked tapering
+// segments with a root flare and two visible limbs climbing into the foliage, and the
+// crown is nine icospheres (dark base mass → mid body → light cap) pushed asymmetric so
+// the silhouette reads grown, not stacked. Same palette + ~1.5u height as the original.
 fn build_broadleaf() -> Mesh {
-    let trunk = tinted(
-        trunk_part(0.09, 0.12, 0.5, 6, Vec3::new(0.0, 0.25, 0.0)),
-        lin(TREE_TRUNK),
-    );
+    let bark = lin(TREE_TRUNK);
+    let mut parts = vec![
+        // Two-segment tapering bole (thicker foot, slimmer upper) + root flare.
+        tinted(trunk_part(0.10, 0.13, 0.34, 7, Vec3::new(0.0, 0.17, 0.0)), bark),
+        tinted(trunk_part(0.075, 0.10, 0.34, 7, Vec3::new(0.015, 0.48, 0.01)), bark),
+    ];
+    parts.extend(root_flare(0.13, 4, 0.16, bark, 0.45));
+    // Two limbs forking off the upper bole into the canopy mass.
+    parts.push(branch_part(0.045, 0.34, 0.65, 0.4, Vec3::new(0.03, 0.52, 0.0), bark));
+    parts.push(branch_part(0.04, 0.30, -0.75, 2.6, Vec3::new(-0.02, 0.46, 0.02), bark));
 
-    // Layer 1+2: dark base mass (#2f7a36)
-    let l1 = tinted(foliage(0.46, 1, Vec3::new(0.0, 0.64, 0.0)), lin(FOLIAGE_DARK));
-    let l2 = tinted(
-        foliage(0.26, 1, Vec3::new(0.24, 0.6, 0.06)),
-        lin(FOLIAGE_DARK),
-    );
-    // Layer 3+4: mid tone (#3a9442)
-    let l3 = tinted(foliage(0.4, 1, Vec3::new(0.0, 0.86, 0.0)), lin(FOLIAGE_MID));
-    let l4 = tinted(
-        foliage(0.24, 1, Vec3::new(-0.22, 0.82, -0.08)),
-        lin(FOLIAGE_MID),
-    );
-    // Layer 5+6: light crown cap + tip (#4cb358)
-    let l5 = tinted(
-        foliage(0.33, 1, Vec3::new(0.0, 1.06, 0.0)),
-        lin(FOLIAGE_LIGHT),
-    );
-    let l6 = tinted(
-        foliage(0.22, 1, Vec3::new(0.0, 1.24, 0.0)),
-        lin(FOLIAGE_LIGHT),
-    );
-
-    merged(vec![trunk, l1, l2, l3, l4, l5, l6])
+    // Crown: dark grounded mass → mid body → sunlit cap, with off-axis side lobes so no
+    // two silhouettes line up. (radius, centre, tone)
+    let blobs: [(f32, Vec3, u32); 9] = [
+        (0.46, Vec3::new(0.0, 0.66, 0.0), FOLIAGE_DARK),
+        (0.27, Vec3::new(0.27, 0.60, 0.10), FOLIAGE_DARK),
+        (0.25, Vec3::new(-0.20, 0.58, -0.18), FOLIAGE_DARK),
+        (0.40, Vec3::new(0.02, 0.88, 0.0), FOLIAGE_MID),
+        (0.25, Vec3::new(-0.26, 0.84, 0.10), FOLIAGE_MID),
+        (0.23, Vec3::new(0.22, 0.92, -0.16), FOLIAGE_MID),
+        (0.32, Vec3::new(0.0, 1.08, 0.02), FOLIAGE_LIGHT),
+        (0.20, Vec3::new(0.16, 1.18, 0.10), FOLIAGE_LIGHT),
+        (0.21, Vec3::new(-0.06, 1.26, -0.06), FOLIAGE_LIGHT),
+    ];
+    for (r, c, tone) in blobs {
+        parts.push(tinted(foliage(r, 1, c), lin(tone)));
+    }
+    merged(parts)
 }
 
-// ── Birch — pale tapered trunk + 2 dark bark-mark boxes + 4 rounder foliage (ico 0) ──
+// ── Birch — tall pale trunk, banded bark marks all the way up, a side limb, airy crown ──
 //
-// Trunk: CylinderGeometry(0.06, 0.075, 0.8, 6) at [0,0.4,0], #ece8d8.
-// Marks: thin dark boxes suggesting peeling-bark stripes.
-// Foliage: 4 detail-0 icospheres (rounder than the broadleaf), dark/light alternating.
+// Upgraded from the 2-mark/4-blob original: the trunk keeps its pale tapered column but
+// now carries five staggered peeling-bark bands (alternating sides, varied widths — the
+// classic birch "ladder"), a slim limb lifting a satellite leaf puff clear of the crown,
+// and a six-blob crown (rounder ico-0 masses, dark under / light over) that drifts off
+// axis for an airy, open silhouette. Same palette, slightly taller (~1.35u).
 fn build_birch() -> Mesh {
-    let trunk = tinted(
-        trunk_part(0.06, 0.075, 0.8, 6, Vec3::new(0.0, 0.4, 0.0)),
+    let mut parts = vec![tinted(
+        trunk_part(0.055, 0.075, 0.86, 7, Vec3::new(0.0, 0.43, 0.0)),
         lin(BIRCH_TRUNK),
-    );
+    )];
+    // Shallow root flare keeps the slim pole grounded.
+    parts.extend(root_flare(0.075, 3, 0.10, lin(BIRCH_TRUNK), 1.1));
 
-    // Two dark bark-mark boxes (BoxGeometry(w,h,d) at center positions).
-    let mark1 = tinted(
-        Cuboid::new(0.005, 0.04, 0.08)
-            .mesh()
-            .build()
-            .translated_by(Vec3::new(0.075, 0.55, 0.0)),
-        lin(BIRCH_MARK),
-    );
-    let mark2 = tinted(
-        Cuboid::new(0.005, 0.03, 0.06)
-            .mesh()
-            .build()
-            .translated_by(Vec3::new(-0.075, 0.32, 0.02)),
-        lin(BIRCH_MARK),
-    );
+    // Five peeling-bark bands hugging the trunk surface, alternating faces + heights.
+    // (y, yaw, w, h) — thin boxes just proud of the bark.
+    let marks: [(f32, f32, f32, f32); 5] = [
+        (0.18, 0.3, 0.085, 0.030),
+        (0.34, 2.4, 0.070, 0.040),
+        (0.50, 4.4, 0.080, 0.026),
+        (0.63, 1.4, 0.065, 0.036),
+        (0.76, 3.5, 0.060, 0.024),
+    ];
+    for (my, yaw, w, h) in marks {
+        let r_here = 0.075 - (my / 0.86) * 0.02; // follow the taper
+        parts.push(tinted(
+            Cuboid::new(0.006, h, w)
+                .mesh()
+                .build()
+                .translated_by(Vec3::new(r_here, 0.0, 0.0))
+                .rotated_by(Quat::from_rotation_y(yaw))
+                .translated_by(Vec3::new(0.0, my, 0.0)),
+            lin(BIRCH_MARK),
+        ));
+    }
 
-    // Four foliage masses (rounder, detail 0): dark base, light bump, dark bump, light tip.
-    let f1 = tinted(foliage(0.34, 0, Vec3::new(0.0, 0.95, 0.0)), lin(BIRCH_DARK));
-    let f2 = tinted(
-        foliage(0.22, 0, Vec3::new(0.18, 1.05, 0.1)),
-        lin(BIRCH_LIGHT),
-    );
-    let f3 = tinted(
-        foliage(0.24, 0, Vec3::new(-0.16, 1.0, -0.1)),
-        lin(BIRCH_DARK),
-    );
-    let f4 = tinted(
-        foliage(0.18, 0, Vec3::new(0.05, 1.18, 0.0)),
-        lin(BIRCH_LIGHT),
-    );
+    // A slim limb carrying its own small leaf puff out beside the crown.
+    parts.push(branch_part(0.025, 0.30, 0.95, 0.9, Vec3::new(0.02, 0.62, 0.0), lin(BIRCH_TRUNK)));
+    parts.push(tinted(foliage(0.16, 0, Vec3::new(0.27, 0.80, -0.22)), lin(BIRCH_LIGHT)));
 
-    merged(vec![trunk, mark1, mark2, f1, f2, f3, f4])
+    // Airy six-blob crown: dark base masses, light top puffs, drifting off the axis.
+    let blobs: [(f32, Vec3, u32); 6] = [
+        (0.32, Vec3::new(0.0, 0.98, 0.0), BIRCH_DARK),
+        (0.22, Vec3::new(0.20, 1.06, 0.10), BIRCH_LIGHT),
+        (0.23, Vec3::new(-0.18, 1.02, -0.10), BIRCH_DARK),
+        (0.18, Vec3::new(-0.10, 1.18, 0.12), BIRCH_LIGHT),
+        (0.17, Vec3::new(0.07, 1.24, -0.08), BIRCH_LIGHT),
+        (0.13, Vec3::new(0.0, 1.34, 0.02), BIRCH_LIGHT),
+    ];
+    for (r, c, tone) in blobs {
+        parts.push(tinted(foliage(r, 0, c), lin(tone)));
+    }
+    merged(parts)
 }
 
-// ── Dead tree — bare tapered trunk + 4 angled broken-branch cylinders, no foliage ──
+// ── Dead tree — gnarled leaning snag: kinked trunk, root flare, 6 branches, deadfall ──
 //
-// Trunk: CylinderGeometry(0.06, 0.095, 0.9, 6) at [0,0.45,0], #6e6258.
-// Branches: tapered (avg-radius) cylinders, 5 segments, each rotated by the TS Euler
-// then translated to its TS centre. Two darker (#4a4238), two trunk-tone (#6e6258).
+// Upgraded from the straight-pole original: the bole is two segments with a visible kink
+// (the upper segment leans), flared roots grip the ground, six broken branches (two now
+// carry short forked twig tips) claw at the sky, the top ends in a shattered-spike cone,
+// and one fallen limb lies in the grass at the foot. Same two-tone dead-wood palette.
 fn build_dead() -> Mesh {
-    let trunk = tinted(
-        trunk_part(0.06, 0.095, 0.9, 6, Vec3::new(0.0, 0.45, 0.0)),
-        lin(DEAD_WOOD),
-    );
+    let wood = lin(DEAD_WOOD);
+    let dark = lin(DEAD_WOOD_DARK);
 
-    // Each branch: build the avg-radius cylinder at the origin, rotate by the TS Euler
-    // (XYZ radians), then translate to the TS centre position.
-    let branch = |r_top: f32,
-                  r_bottom: f32,
-                  height: f32,
-                  rot: Vec3,
-                  center: Vec3,
-                  color: [f32; 4]|
-     -> Mesh {
-        let r = (r_top + r_bottom) * 0.5;
-        let m = Cylinder::new(r, height)
+    let mut parts = vec![
+        // Lower bole (stout) + kinked upper bole leaning off plumb.
+        tinted(trunk_part(0.065, 0.10, 0.5, 6, Vec3::new(0.0, 0.25, 0.0)), wood),
+        tinted(
+            Cylinder::new(0.05, 0.48)
+                .mesh()
+                .resolution(6)
+                .build()
+                .rotated_by(Quat::from_rotation_z(-0.16))
+                .translated_by(Vec3::new(0.055, 0.71, 0.0)),
+            wood,
+        ),
+        // Shattered spike topping the snag (a narrow cone, off the lean axis).
+        tinted(
+            Cone { radius: 0.04, height: 0.22 }
+                .mesh()
+                .resolution(5)
+                .build()
+                .rotated_by(Quat::from_rotation_z(-0.2))
+                .translated_by(Vec3::new(0.12, 1.02, 0.0)),
+            dark,
+        ),
+    ];
+    parts.extend(root_flare(0.10, 4, 0.15, dark, 0.2));
+
+    // Clawing branches: (r, len, tilt, yaw, base, tone). Tilts past ±1.2 lay them near
+    // horizontal — a dead canopy's reach, not living lift.
+    let limbs: [(f32, f32, f32, f32, Vec3, [f32; 4]); 6] = [
+        (0.030, 0.42, 1.05, 0.2, Vec3::new(0.06, 0.66, 0.02), dark),
+        (0.026, 0.36, -1.15, 0.5, Vec3::new(-0.03, 0.78, -0.02), dark),
+        (0.022, 0.30, 0.85, 2.3, Vec3::new(0.04, 0.88, 0.04), wood),
+        (0.020, 0.26, -0.95, 3.9, Vec3::new(0.02, 0.94, -0.03), wood),
+        (0.018, 0.22, 1.25, 5.1, Vec3::new(0.05, 0.58, -0.04), wood),
+        (0.016, 0.18, -0.7, 1.5, Vec3::new(0.08, 1.0, 0.02), dark),
+    ];
+    for (r, len, tilt, yaw, base, tone) in limbs {
+        parts.push(branch_part(r, len, tilt, yaw, base, tone));
+    }
+    // Forked twig tips on the two big limbs (short thin stubs off the limb ends).
+    parts.push(branch_part(0.014, 0.16, 1.5, 0.4, Vec3::new(0.40, 0.85, 0.10), dark));
+    parts.push(branch_part(0.012, 0.13, -1.5, 0.7, Vec3::new(-0.30, 0.92, -0.10), dark));
+
+    // A fallen limb rotting in the grass by the foot.
+    parts.push(tinted(
+        Cylinder::new(0.028, 0.4)
             .mesh()
             .resolution(5)
             .build()
-            .rotated_by(Quat::from_euler(EulerRot::XYZ, rot.x, rot.y, rot.z))
-            .translated_by(center);
-        tinted(m, color)
-    };
+            .rotated_by(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
+            .rotated_by(Quat::from_rotation_y(0.7))
+            .translated_by(Vec3::new(0.28, 0.03, 0.22)),
+        dark,
+    ));
 
-    // Branch 1 (upper right): rot z −0.8, darker.
-    let b1 = branch(
-        0.025,
-        0.04,
-        0.42,
-        Vec3::new(0.0, 0.0, -0.8),
-        Vec3::new(0.2, 0.7, 0.08),
-        lin(DEAD_WOOD_DARK),
-    );
-    // Branch 2 (upper left): rot z 0.7, darker.
-    let b2 = branch(
-        0.022,
-        0.035,
-        0.36,
-        Vec3::new(0.0, 0.0, 0.7),
-        Vec3::new(-0.17, 0.82, -0.04),
-        lin(DEAD_WOOD_DARK),
-    );
-    // Branch 3 (mid upper right): rot [0.4, 0, 0.2], trunk tone.
-    let b3 = branch(
-        0.018,
-        0.028,
-        0.3,
-        Vec3::new(0.4, 0.0, 0.2),
-        Vec3::new(0.06, 1.0, 0.13),
-        lin(DEAD_WOOD),
-    );
-    // Branch 4 (mid upper left): rot [−0.3, 0, −0.4], trunk tone.
-    let b4 = branch(
-        0.016,
-        0.024,
-        0.26,
-        Vec3::new(-0.3, 0.0, -0.4),
-        Vec3::new(-0.08, 1.05, -0.1),
-        lin(DEAD_WOOD),
-    );
-
-    merged(vec![trunk, b1, b2, b3, b4])
+    merged(parts)
 }
 
 // ── Pine / spruce conifer — short brown trunk + 3 stacked green cone tiers + a tip ──
@@ -318,25 +362,33 @@ fn build_dead() -> Mesh {
 // lush dark→light green spruce. Wide low tier → narrow high tier, each base overlapping
 // the one below so the boughs layer. ~1.65u tall (towers a touch over the broadleaf).
 fn build_pine() -> Mesh {
-    // Short stub trunk poking out under the lowest boughs.
-    let trunk = tinted(
-        trunk_part(0.07, 0.09, 0.40, 6, Vec3::new(0.0, 0.20, 0.0)),
-        lin(TREE_TRUNK),
-    );
+    let bark = lin(TREE_TRUNK);
+    // Stub trunk under the boughs + a shallow root flare gripping the ground.
+    let mut parts = vec![tinted(trunk_part(0.07, 0.095, 0.42, 6, Vec3::new(0.0, 0.21, 0.0)), bark)];
+    parts.extend(root_flare(0.095, 3, 0.12, bark, 0.8));
 
-    // Three green cone tiers, dark (shadowed base) → mid → light (sunlit crown). 7 sides
-    // so the cones read crisply faceted once flat-shaded. (base_y, radius, height, tone).
-    let tiers = [
-        (0.30_f32, 0.52_f32, 0.62_f32, FOLIAGE_DARK),
-        (0.66, 0.40, 0.56, FOLIAGE_MID),
-        (1.02, 0.28, 0.50, FOLIAGE_LIGHT),
+    // Five overlapping bough tiers, dark shadowed skirt → sunlit crown, each nudged a
+    // touch off the spire axis and yawed so the faceted cones never align — the jitter is
+    // what turns "stacked party hats" into a grown spruce. 8 sides for crisper facets.
+    // (base_y, radius, height, xz-nudge, yaw, tone)
+    let tiers: [(f32, f32, f32, Vec3, f32, u32); 5] = [
+        (0.26, 0.54, 0.52, Vec3::new(0.02, 0.0, -0.02), 0.0, FOLIAGE_DARK),
+        (0.52, 0.46, 0.50, Vec3::new(-0.03, 0.0, 0.02), 0.4, FOLIAGE_DARK),
+        (0.78, 0.38, 0.48, Vec3::new(0.02, 0.0, 0.03), 0.8, FOLIAGE_MID),
+        (1.04, 0.30, 0.44, Vec3::new(-0.02, 0.0, -0.02), 1.2, FOLIAGE_MID),
+        (1.28, 0.22, 0.38, Vec3::new(0.01, 0.0, 0.01), 1.6, FOLIAGE_LIGHT),
     ];
-    let mut parts = vec![trunk];
-    for (base_y, r, h, c) in tiers {
-        parts.push(tinted(cone_at(r, h, base_y, 7, Vec3::ZERO), lin(c)));
+    for (base_y, r, h, nudge, yaw, c) in tiers {
+        let m = Cone { radius: r, height: h }
+            .mesh()
+            .resolution(8)
+            .build()
+            .rotated_by(Quat::from_rotation_y(yaw))
+            .translated_by(Vec3::new(nudge.x, h * 0.5 + base_y, nudge.z));
+        parts.push(tinted(m, lin(c)));
     }
-    // A small light crown tip capping the spire.
-    parts.push(tinted(cone_at(0.14, 0.28, 1.40, 7, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
+    // The sunlit leader spike capping the spire (~1.78u total).
+    parts.push(tinted(cone_at(0.12, 0.30, 1.48, 7, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
 
     merged(parts)
 }

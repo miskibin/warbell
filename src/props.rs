@@ -81,15 +81,29 @@ fn ball_at(r: f32, off: Vec3, squash: f32, c: [f32; 4]) -> Mesh {
 /// `duplicate_vertices()` MUST run before `compute_flat_normals()` (the latter panics
 /// on an indexed mesh — contract §"flat-shading helpers").
 fn facet_at(r: f32, off: Vec3, squash: f32, c: [f32; 4]) -> Mesh {
+    facet_rot(r, off, Vec3::new(1.0, squash, 1.0), Quat::IDENTITY, c)
+}
+
+/// The general faceted lump: per-axis stretch + an arbitrary pre-rotation before the
+/// translate. Rotating each lump differently keeps the 20 icosahedron facets from
+/// lining up across a cluster — that repeated-orientation tell is what makes prop
+/// rocks read as copy-pasted spheres.
+fn facet_rot(r: f32, off: Vec3, stretch: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
     let mut m = Sphere::new(r)
         .mesh()
         .ico(0)
         .unwrap()
-        .scaled_by(Vec3::new(1.0, squash, 1.0))
+        .scaled_by(stretch)
+        .rotated_by(rot)
         .translated_by(off);
     m.duplicate_vertices();
     m.compute_flat_normals();
     tinted(m, c)
+}
+
+/// A draped moss patch: a very flat green disc-blob melted over a boulder's crown.
+fn moss_drape(r: f32, off: Vec3, c: [f32; 4]) -> Mesh {
+    facet_rot(r, off, Vec3::new(1.25, 0.30, 1.1), Quat::from_rotation_y(0.7), c)
 }
 
 // ─── Rocks ──────────────────────────────────────────────────────────────────────
@@ -104,43 +118,54 @@ fn facet_at(r: f32, off: Vec3, squash: f32, c: [f32; 4]) -> Mesh {
 /// 0.85–1.30 by the scatter; these boulders read at ~0.3–0.45u so they sit between
 /// the ground cover and the trees, then the scatter scales them per-instance.
 pub fn build_rock_mesh(variant: u32) -> Mesh {
+    let rot = |x: f32, yw: f32, z: f32| Quat::from_euler(EulerRot::XYZ, x, yw, z);
     match variant % NUM_ROCK_VARIANTS {
-        // Variant 0 — a squat, wide boulder: one broad squashed lump + two side cobbles.
+        // Variant 0 — a squat, wide boulder: a broad tilted body + bright crown facet,
+        // two leaning side cobbles, a moss drape over the shoulder and grit at the foot.
         0 => {
             let r = 0.34;
             merged(vec![
-                // Body — wide & squashed; slightly darkened base tone.
-                facet_at(r, y(r * 0.74), 0.78, lin_scaled(ROCK_STONE, 0.9)),
+                // Body — wide, squashed, rolled a few degrees so its facets sit unique.
+                facet_rot(r, y(r * 0.72), Vec3::new(1.15, 0.78, 1.0), rot(0.12, 0.5, -0.08), lin_scaled(ROCK_STONE, 0.9)),
                 // A bright top facet catching the light.
-                facet_at(r * 0.5, y(r * 1.18), 0.7, lin_scaled(ROCK_STONE, 1.12)),
+                facet_rot(r * 0.5, Vec3::new(-r * 0.1, r * 1.18, r * 0.06), Vec3::new(1.0, 0.7, 0.9), rot(-0.1, 1.7, 0.15), lin_scaled(ROCK_STONE, 1.12)),
                 // Two side cobbles leaning against the base.
-                facet_at(r * 0.55, Vec3::new(r * 0.92, r * 0.4, r * 0.18), 0.85, lin(ROCK_MOSS)),
-                facet_at(r * 0.46, Vec3::new(-r * 0.78, r * 0.34, -r * 0.28), 0.85, lin(ROCK_LICHEN)),
+                facet_rot(r * 0.55, Vec3::new(r * 0.92, r * 0.38, r * 0.18), Vec3::new(1.0, 0.8, 0.9), rot(0.3, 2.6, 0.2), lin_scaled(ROCK_STONE, 0.97)),
+                facet_rot(r * 0.46, Vec3::new(-r * 0.78, r * 0.32, -r * 0.28), Vec3::new(0.9, 0.85, 1.05), rot(-0.2, 4.0, -0.25), lin(ROCK_LICHEN)),
+                // Moss melted over the sunward shoulder + a grounded skirt of grit.
+                moss_drape(r * 0.55, Vec3::new(r * 0.28, r * 1.28, -r * 0.1), lin(ROCK_MOSS)),
+                facet_at(r * 0.28, Vec3::new(-r * 0.5, r * 0.16, r * 0.75), 0.55, lin_scaled(ROCK_STONE, 0.84)),
             ])
         }
-        // Variant 1 — a taller, split crag: two stacked lumps + a high bright cap.
+        // Variant 1 — a taller, split crag: stacked rotated blocks, a moss seam in the
+        // cleft, a bright peak cap and a toppled chip at the foot.
         1 => {
             let r = 0.3;
             merged(vec![
-                // Lower block.
-                facet_at(r, y(r * 0.82), 0.92, lin_scaled(ROCK_STONE, 0.88)),
-                // Upper block offset to one side (the "split").
-                facet_at(r * 0.72, Vec3::new(r * 0.34, r * 1.5, -r * 0.1), 0.95, lin(ROCK_LICHEN)),
-                // A small mossy chip wedged in the cleft.
-                facet_at(r * 0.4, Vec3::new(-r * 0.5, r * 0.7, r * 0.3), 0.85, lin(ROCK_MOSS)),
+                // Lower block, tilted into the hill.
+                facet_rot(r, y(r * 0.8), Vec3::new(1.1, 0.95, 0.95), rot(0.1, 0.3, 0.14), lin_scaled(ROCK_STONE, 0.88)),
+                // Upper block sheared to one side (the "split").
+                facet_rot(r * 0.72, Vec3::new(r * 0.36, r * 1.52, -r * 0.1), Vec3::new(0.95, 1.1, 0.9), rot(-0.12, 1.9, -0.2), lin(ROCK_LICHEN)),
+                // A mossy seam wedged in the cleft.
+                facet_rot(r * 0.4, Vec3::new(-r * 0.5, r * 0.72, r * 0.3), Vec3::new(1.1, 0.7, 0.9), rot(0.4, 3.2, 0.0), lin(ROCK_MOSS)),
                 // Bright cap on the peak.
-                facet_at(r * 0.42, Vec3::new(r * 0.3, r * 2.05, -r * 0.05), 0.8, lin_scaled(ROCK_STONE, 1.14)),
+                facet_rot(r * 0.42, Vec3::new(r * 0.32, r * 2.1, -r * 0.05), Vec3::new(0.9, 0.8, 0.85), rot(0.2, 5.1, -0.1), lin_scaled(ROCK_STONE, 1.14)),
+                // A toppled chip resting at the foot.
+                facet_rot(r * 0.3, Vec3::new(r * 0.85, r * 0.22, r * 0.55), Vec3::new(1.2, 0.55, 0.9), rot(0.0, 2.2, 0.5), lin_scaled(ROCK_STONE, 1.02)),
             ])
         }
-        // Variant 2 — a low scatter of cobbles: several small lumps spread flat.
+        // Variant 2 — a low scatter of cobbles: several small rotated lumps spread flat,
+        // moss creeping over the two biggest.
         _ => {
             let r = 0.26;
             merged(vec![
-                facet_at(r, y(r * 0.7), 0.74, lin_scaled(ROCK_STONE, 0.92)),
-                facet_at(r * 0.78, Vec3::new(r * 1.05, r * 0.5, r * 0.25), 0.78, lin(ROCK_LICHEN)),
-                facet_at(r * 0.66, Vec3::new(-r * 0.95, r * 0.42, -r * 0.4), 0.78, lin(ROCK_MOSS)),
-                facet_at(r * 0.5, Vec3::new(r * 0.1, r * 0.4, -r * 1.0), 0.8, lin_scaled(ROCK_STONE, 1.06)),
-                facet_at(r * 0.4, Vec3::new(-r * 0.2, r * 0.36, r * 0.95), 0.8, lin(ROCK_MOSS)),
+                facet_rot(r, y(r * 0.68), Vec3::new(1.2, 0.74, 1.0), rot(0.1, 0.9, -0.1), lin_scaled(ROCK_STONE, 0.92)),
+                facet_rot(r * 0.78, Vec3::new(r * 1.05, r * 0.46, r * 0.25), Vec3::new(1.0, 0.78, 1.1), rot(-0.15, 2.0, 0.2), lin(ROCK_LICHEN)),
+                facet_rot(r * 0.66, Vec3::new(-r * 0.95, r * 0.4, -r * 0.4), Vec3::new(0.95, 0.78, 0.9), rot(0.25, 3.4, 0.0), lin_scaled(ROCK_STONE, 1.0)),
+                facet_rot(r * 0.5, Vec3::new(r * 0.1, r * 0.38, -r * 1.0), Vec3::new(1.1, 0.8, 0.95), rot(0.0, 4.6, -0.3), lin_scaled(ROCK_STONE, 1.06)),
+                facet_rot(r * 0.4, Vec3::new(-r * 0.2, r * 0.34, r * 0.95), Vec3::new(0.9, 0.8, 1.0), rot(0.3, 5.6, 0.15), lin_scaled(ROCK_STONE, 0.95)),
+                moss_drape(r * 0.5, y(r * 1.02), lin(ROCK_MOSS)),
+                moss_drape(r * 0.34, Vec3::new(r * 1.05, r * 0.78, r * 0.25), lin(ROCK_MOSS)),
             ])
         }
     }
@@ -170,15 +195,14 @@ pub fn build_bush_mesh(variant: u32) -> Mesh {
     let mid = lin(base); // body
     let light = lin_scaled(base, 1.16); // sunlit crown
 
-    // Flat-shaded so the bush reads as crisp low-poly facets (like the TS game), not a
-    // soft blob.
-    flat_shaded(merged(vec![
+    let mut parts = vec![
         // ── Dark base skirt — wide low lobes that give the bush its grounded spread.
         // Mirrors the TS part radii/offsets (0.24 centre + 0.20/0.18/0.19 lobes),
         // squashed into domes and kept low so the silhouette is rounder than a tree.
         ball_at(0.24, y(0.17), 0.82, dark),
         ball_at(0.2, Vec3::new(0.2, 0.14, 0.05), 0.82, dark),
         ball_at(0.18, Vec3::new(-0.17, 0.13, 0.1), 0.82, dark),
+        ball_at(0.15, Vec3::new(0.02, 0.12, -0.19), 0.82, dark),
         // ── Mid body — fills the centre of the mound.
         ball_at(0.21, y(0.27), 0.86, mid),
         ball_at(0.16, Vec3::new(0.13, 0.3, -0.13), 0.86, mid),
@@ -187,7 +211,45 @@ pub fn build_bush_mesh(variant: u32) -> Mesh {
         ball_at(0.16, y(0.38), 0.9, light),
         ball_at(0.12, Vec3::new(0.09, 0.42, 0.08), 0.9, light),
         ball_at(0.11, Vec3::new(-0.08, 0.41, -0.07), 0.9, light),
-    ]))
+    ];
+    // A couple of woody twig stubs poking through the canopy — shrubs aren't solid.
+    for (a, tilt, len) in [(0.7_f32, 0.5_f32, 0.14_f32), (3.6, -0.6, 0.12)] {
+        parts.push(tinted(
+            Cylinder::new(0.012, len)
+                .mesh()
+                .resolution(4)
+                .build()
+                .translated_by(y(len * 0.5))
+                .rotated_by(Quat::from_rotation_z(tilt))
+                .rotated_by(Quat::from_rotation_y(a))
+                .translated_by(y(0.40)),
+            lin(0x6b4a2c),
+        ));
+    }
+    // Per-variant fruiting accent: the dark bush carries red berries, the mid one white
+    // blossom dots, the light one stays plain — three shrubs, three reads.
+    let accent = match variant % NUM_BUSH_VARIANTS {
+        0 => Some(lin(0xc83a3a)), // holly-red berries
+        1 => Some(lin(0xf2efe0)), // white blossom
+        _ => None,
+    };
+    if let Some(acc) = accent {
+        for (i, &(dx, dy, dz)) in [
+            (0.14_f32, 0.40_f32, 0.06_f32),
+            (-0.10, 0.42, -0.09),
+            (0.03, 0.46, 0.12),
+            (0.20, 0.32, -0.10),
+            (-0.18, 0.34, 0.08),
+        ]
+        .iter()
+        .enumerate()
+        {
+            parts.push(ball_at(0.022 + (i % 2) as f32 * 0.006, Vec3::new(dx, dy, dz), 1.0, acc));
+        }
+    }
+    // Flat-shaded so the bush reads as crisp low-poly facets (like the TS game), not a
+    // soft blob.
+    flat_shaded(merged(parts))
 }
 
 /// Un-index + recompute per-face normals so a merged mesh shows hard, flat-shaded
