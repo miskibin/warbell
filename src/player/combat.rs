@@ -133,6 +133,8 @@ pub(crate) struct CombatFx {
     slash_mat: Handle<StandardMaterial>,
     ring_mat: Handle<StandardMaterial>,
     splat_mat: Handle<StandardMaterial>,
+    /// Non-emissive pale gold for the blade-trail ribbon (bloom must never catch the trail).
+    trail_mat: Handle<StandardMaterial>,
 }
 
 pub fn setup_combat_fx(
@@ -186,14 +188,18 @@ pub fn setup_combat_fx(
     // Warm, dim glint — NOT hot white: the old (4.0, 3.6, 2.8) emissive at 0.9 alpha bloomed
     // into a big white flare on every contact. Kept just bright enough for bloom to kiss it.
     let slash_mat = materials.add(flash(Color::srgba(1.0, 0.92, 0.74, 0.5), LinearRgba::rgb(1.2, 0.95, 0.55)));
+    // The blade-trail ribbon: pale gold with ZERO emissive, so bloom can never whiten it — the
+    // trail should read as a translucent smear of motion, not a light source.
+    let trail_mat = materials.add(flash(Color::srgba(0.95, 0.87, 0.62, 0.28), LinearRgba::BLACK));
     let ring_mat = materials.add(flash(Color::srgba(1.0, 0.86, 0.6, 0.45), LinearRgba::rgb(1.4, 0.95, 0.4)));
     let splat_mat = materials.add(flash(Color::srgba(0.42, 0.06, 0.06, 0.72), LinearRgba::BLACK));
     commands.insert_resource(CombatFx {
         mesh, hit, kill, heal, blood, chip, quad, ring, disc, slash_mat, ring_mat, splat_mat,
+        trail_mat,
     });
 }
 
-/// A short-lived planar flash (slash streak / kill shockwave / blood splat / blade-trail ghost).
+/// A short-lived planar flash (slash streak / kill shockwave / blood splat / blade-trail ribbon).
 /// Owns a cloned material so it can alpha-fade alone; [`update_fx_fades`] frees that material on
 /// despawn so per-hit clones never leak.
 #[derive(Component)]
@@ -204,13 +210,24 @@ pub(crate) struct FxFade {
     s0: Vec3,
     s1: Vec3,
     a0: f32,
-    /// True → re-face the camera each frame (slash / trail). False → keep the spawn pose (the
-    /// ground-flat shockwave + splat).
-    billboard: bool,
+    face: FadeFace,
 }
 
-/// Drain a planar flash over its life: scale `s0→s1` (ease-out), fade alpha `a0→0`, billboard if
-/// asked, then despawn + free the cloned material.
+/// How a fading quad orients each frame.
+#[derive(Clone, Copy)]
+pub(crate) enum FadeFace {
+    /// Keep the spawn pose (the ground-flat shockwave + splat).
+    Keep,
+    /// Re-face the camera flat-on each frame (the contact slash flash).
+    Camera,
+    /// Cylindrical billboard: the quad's local X stays pinned along this world axis while it
+    /// rolls about it to face the camera — a ribbon segment (the blade trail), so the streak
+    /// follows the blade's real sweep instead of flashing a fixed-size card at the camera.
+    Axis(Vec3),
+}
+
+/// Drain a planar flash over its life: scale `s0→s1` (ease-out), fade alpha `a0→0`, orient per
+/// its [`FadeFace`], then despawn + free the cloned material.
 pub fn update_fx_fades(
     time: Res<Time>,
     mut commands: Commands,
@@ -229,10 +246,18 @@ pub fn update_fx_fades(
         }
         let ease = 1.0 - (1.0 - k) * (1.0 - k); // ease-out
         tf.scale = f.s0.lerp(f.s1, ease);
-        if f.billboard {
-            if let Some(cp) = cam_pos {
-                tf.look_at(cp, Vec3::Y);
+        match (f.face, cam_pos) {
+            (FadeFace::Camera, Some(cp)) => tf.look_at(cp, Vec3::Y),
+            (FadeFace::Axis(a), Some(cp)) => {
+                // Quad normal = the camera direction with its along-axis component removed, so
+                // the ribbon stays edge-true to the sweep while showing the camera its face.
+                let to_cam = cp - tf.translation;
+                let n = (to_cam - a * a.dot(to_cam)).normalize_or_zero();
+                if n != Vec3::ZERO {
+                    tf.rotation = Quat::from_mat3(&Mat3::from_cols(a, n.cross(a), n));
+                }
             }
+            _ => {}
         }
         if let Some(m) = mats.get_mut(&f.mat) {
             m.base_color = m.base_color.with_alpha(f.a0 * (1.0 - k));
@@ -653,7 +678,7 @@ pub(crate) fn spawn_chips(commands: &mut Commands, fx: &CombatFx, at: Vec3, shat
 }
 
 /// Spawn one planar flash: clone `base` so it fades alone, lay `mesh` at `pose`, scale `s0→s1`
-/// and fade from `a0` over `life`. `billboard` re-faces the camera each frame.
+/// and fade from `a0` over `life`, orienting per `face` each frame.
 #[allow(clippy::too_many_arguments)]
 fn spawn_fade(
     commands: &mut Commands,
@@ -665,7 +690,7 @@ fn spawn_fade(
     s1: Vec3,
     a0: f32,
     life: f32,
-    billboard: bool,
+    face: FadeFace,
     now: f32,
 ) {
     let Some(m) = mats.get(base).cloned() else { return };
@@ -676,7 +701,7 @@ fn spawn_fade(
         pose.with_scale(s0),
         bevy::light::NotShadowCaster,
         crate::biome::BiomeEntity,
-        FxFade { born: now, life, mat, s0, s1, a0, billboard },
+        FxFade { born: now, life, mat, s0, s1, a0, face },
     ));
 }
 
@@ -686,7 +711,7 @@ pub(crate) fn spawn_slash(commands: &mut Commands, fx: &CombatFx, mats: &mut Ass
     spawn_fade(
         commands, mats, &fx.slash_mat, &fx.quad,
         Transform::from_translation(at),
-        Vec3::new(0.35, 0.09, 1.0), Vec3::new(1.05, 0.13, 1.0), 0.5, 0.11, true, now,
+        Vec3::new(0.35, 0.09, 1.0), Vec3::new(1.05, 0.13, 1.0), 0.5, 0.11, FadeFace::Camera, now,
     );
 }
 
@@ -694,7 +719,7 @@ pub(crate) fn spawn_slash(commands: &mut Commands, fx: &CombatFx, mats: &mut Ass
 pub(crate) fn spawn_shockwave(commands: &mut Commands, fx: &CombatFx, mats: &mut Assets<StandardMaterial>, at: Vec3, now: f32) {
     let pose = Transform::from_translation(at + Vec3::Y * 0.05)
         .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2));
-    spawn_fade(commands, mats, &fx.ring_mat, &fx.ring, pose, Vec3::splat(0.4), Vec3::splat(1.6), 0.45, 0.22, false, now);
+    spawn_fade(commands, mats, &fx.ring_mat, &fx.ring, pose, Vec3::splat(0.4), Vec3::splat(1.6), 0.45, 0.22, FadeFace::Keep, now);
 }
 
 /// A dark blood splat on the ground under a struck creature — fades slowly so a fight leaves a
@@ -705,41 +730,50 @@ pub(crate) fn spawn_splat(commands: &mut Commands, fx: &CombatFx, mats: &mut Ass
     // A kill leaves a big, long-lived pool; a glancing hit just flecks the ground briefly.
     let (size, life, a0) = if kill { (1.4, 3.5, 0.72) } else { (0.55, 1.6, 0.6) };
     let s = Vec3::splat(size);
-    spawn_fade(commands, mats, &fx.splat_mat, &fx.disc, pose, s, s, a0, life, false, now);
+    spawn_fade(commands, mats, &fx.splat_mat, &fx.disc, pose, s, s, a0, life, FadeFace::Keep, now);
 }
 
-/// Emit a faint ghost streak at the sword tip across the fast part of the swing — a cheap weapon
-/// trail. The blade tip sits at `ArmR`-local `(0,-0.5,0.96)` (the baked sword's cone), so the
-/// arm's `GlobalTransform` places it in the world.
+/// Emit a translucent ribbon along the sword tip's path across the fast part of the swing — a
+/// cheap weapon trail. Each frame stretches one quad between the previous and current tip
+/// positions ([`FadeFace::Axis`] keeps it rolled toward the camera), so the segments chain into
+/// one continuous smear that follows the real sweep — instead of the old fixed-size camera-facing
+/// cards popping at the tip, which read as white flashes. The blade tip sits at `ArmR`-local
+/// `(0,-0.5,0.96)` (the baked sword's cone), so the arm's `GlobalTransform` places it in the world.
 pub fn hero_blade_trail(
     time: Res<Time>,
     fx: Option<Res<CombatFx>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
-    mut frame: Local<u32>,
+    mut last_tip: Local<Option<Vec3>>,
     hero_q: Query<&Hero>,
     parts: Query<(&HeroPart, &GlobalTransform)>,
 ) {
     let Some(fx) = fx else { return };
     let Ok(hero) = hero_q.single() else { return };
-    if !hero.attacking {
-        return;
-    }
-    let phase = hero.attack_t / ATTACK_DURATION;
+    let phase = if hero.attacking { hero.attack_t / ATTACK_DURATION } else { -1.0 };
     if !(0.25..0.55).contains(&phase) {
-        return; // only across the fast sweep, where the blade actually whips through
-    }
-    // Emit on every other frame — a faint, sparse smear rather than a thick bright arc.
-    *frame = frame.wrapping_add(1);
-    if *frame % 2 != 0 {
+        *last_tip = None; // only across the fast sweep, where the blade actually whips through
         return;
     }
     let Some((_, gt)) = parts.iter().find(|(p, _)| p.limb == HeroLimb::ArmR) else { return };
     let tip = gt.transform_point(Vec3::new(0.0, -0.5, 0.96));
+    let prev = last_tip.replace(tip);
+    let Some(prev) = prev else { return }; // first sweep frame: just record the anchor
+    let seg = tip - prev;
+    let len = seg.length();
+    if len < 1e-3 {
+        return;
+    }
+    let axis = seg / len;
     spawn_fade(
-        &mut commands, &mut materials, &fx.slash_mat, &fx.quad,
-        Transform::from_translation(tip),
-        Vec3::new(0.3, 0.09, 1.0), Vec3::new(0.42, 0.1, 1.0), 0.16, 0.1, true, time.elapsed_secs(),
+        &mut commands, &mut materials, &fx.trail_mat, &fx.quad,
+        // Rough spawn-frame alignment; FadeFace::Axis re-rolls it toward the camera every frame.
+        Transform::from_translation(prev.midpoint(tip))
+            .with_rotation(Quat::from_rotation_arc(Vec3::X, axis)),
+        // Slight overlap (×1.15) hides the seams between consecutive segments; the ribbon fades
+        // by THINNING (height → ~0) rather than ballooning, so it dissolves instead of flashing.
+        Vec3::new(len * 1.15, 0.055, 1.0), Vec3::new(len * 1.15, 0.012, 1.0), 0.28, 0.18,
+        FadeFace::Axis(axis), time.elapsed_secs(),
     );
 }
 
