@@ -1,19 +1,21 @@
-//! **Woodcutters work the woods for real.** A townsperson posted to a Lumber plot no longer
-//! mimes at the yard: it walks out to an actual scattered tree, chops it down (the tree falls,
-//! banks wood, and regrows later — see `verbs::fell_tree`), then moves on to the next.
+//! **Woodcutters work the woods for real — and the woods are the town's ONLY wood income.**
+//! The Lumber plot has no passive trickle (core `BuildKind::produces` → `None` for Lumber);
+//! instead its worker walks out to an actual scattered tree, chops it down (the tree topples
+//! and regrows later), shoulders the log ([`Hauling`]), carries it back to the yard, and only
+//! THERE the wood is banked. Lose the woodcutter on the road and you lose the log.
 //!
 //! Two hard rails keep this from feeding the orks an endless villager buffet:
 //!   * **Safe ground only** — a tree is workable only inside [`WORK_R`] of the castle and at
 //!     least [`CAMP_AVOID`] from every ork camp (and never inside a camp clearing), so a
 //!     woodcutter never wanders into a warband on its own.
-//!   * **Threat sense** — any ork or predator inside [`DANGER_R`] sends the woodcutter running
-//!     home ([`Fleeing`]) and blacklists that ground for [`DANGER_TTL`] seconds
-//!     ([`DangerSpots`]), so it does NOT trudge straight back under the same shaman's bolt.
+//!   * **Threat sense** — any ork or predator inside [`DANGER_R`] sends the woodcutter (working
+//!     or hauling) running home ([`Fleeing`]) and blacklists that ground for [`DANGER_TTL`]
+//!     seconds ([`DangerSpots`]), so it does NOT trudge straight back under the same shaman's
+//!     bolt.
 //!
-//! While a woodcutter is actually at a tree it counts as `at_post` — the Lumber plot stays
-//! staffed, so the test-gated `town_store` production keeps its balance; the felled trees' +1
-//! wood is the visible bonus on top. If it's caught anyway, the shared villager self-defence
-//! (`villagers::FightBack`) takes over — it drops the flight and fights.
+//! While a woodcutter is actually at a tree it counts as `at_post` (the plot reads as staffed
+//! in the build UI). If it's caught anyway, the shared villager self-defence
+//! (`villagers::FightBack`) takes over — it drops the flight and fights, then resumes the haul.
 
 use bevy::prelude::*;
 
@@ -51,6 +53,8 @@ const FLEE_HOME_R: f32 = 14.0;
 const STALL_SECS: f32 = 4.0;
 /// Chop SFX is only audible this near the hero (the guards' small-earshot convention).
 const SFX_EARSHOT: f32 = 16.0;
+/// Close enough to the yard to dump the log on the pile (matches `worker_steer`'s post reach).
+const HAUL_REACH: f32 = 1.8;
 
 /// The tree a woodcutter is working: walk to it, swing on the cooldown, fell it, pick the next.
 #[derive(Component)]
@@ -58,6 +62,16 @@ pub struct ChopJob {
     tree: Entity,
     atk_cd: f32,
     /// Seconds without steering progress (wedged on a river/prop) — bail at [`STALL_SECS`].
+    stall: f32,
+}
+
+/// A felled log on the woodcutter's shoulder: walk it back to the Lumber yard — the wood is
+/// banked only on arrival ([`haul_home`]). `log` is the visible carried-log child mesh.
+#[derive(Component)]
+pub struct Hauling {
+    amount: f64,
+    log: Option<Entity>,
+    /// Seconds without steering progress on the way home — force a replan past [`STALL_SECS`].
     stall: f32,
 }
 
@@ -79,14 +93,15 @@ impl Plugin for LumberjackPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DangerSpots>().add_systems(
             Update,
-            (lumber_danger, assign_tree, chop_work, flee_steer)
+            (lumber_danger, assign_tree, chop_work, haul_home, attach_log, shed_log_at_muster, flee_steer)
                 .run_if(in_state(crate::game_state::Modal::None)),
         );
     }
 }
 
-/// Threat sense: an ork or a predator prowling inside [`DANGER_R`] of a working woodcutter sends
-/// it running home and blacklists the spot. Also expires old scares.
+/// Threat sense: an ork or a predator prowling inside [`DANGER_R`] of a working (or hauling)
+/// woodcutter sends it running home and blacklists the spot. Also expires old scares. A scared
+/// hauler keeps the log — the flight ends at the walls and [`haul_home`] finishes the delivery.
 #[allow(clippy::type_complexity)]
 fn lumber_danger(
     time: Res<Time>,
@@ -94,7 +109,12 @@ fn lumber_danger(
     mut commands: Commands,
     workers: Query<
         (Entity, &Villager),
-        (With<Worker>, With<ChopJob>, Without<Fleeing>, Without<crate::dying::Dying>),
+        (
+            With<Worker>,
+            Or<(With<ChopJob>, With<Hauling>)>,
+            Without<Fleeing>,
+            Without<crate::dying::Dying>,
+        ),
     >,
     orks: Query<&crate::orks::Ork, Without<crate::dying::Dying>>,
     animals: Query<&crate::wildlife::Animal, Without<crate::dying::Dying>>,
@@ -130,6 +150,7 @@ fn assign_tree(
         (
             With<Townsfolk>,
             Without<ChopJob>,
+            Without<Hauling>,
             Without<Fleeing>,
             Without<FightBack>,
             Without<crate::dying::Dying>,
@@ -168,22 +189,21 @@ fn assign_tree(
     }
 }
 
-/// Walk the woodcutter to its tree and swing the axe on the cooldown; fell on the last blow.
-/// At the tree it counts `at_post` (the plot stays staffed) and the overhead-chop work loop in
+/// Walk the woodcutter to its tree and swing the axe on the cooldown; the last blow topples the
+/// tree and shoulders the log ([`Hauling`] — NO wood is banked here; that happens back at the
+/// yard in [`haul_home`]). At the tree it counts `at_post` and the overhead-chop work loop in
 /// `villager_limbs` plays for free.
 #[allow(clippy::type_complexity)]
 fn chop_work(
     time: Res<Time>,
     mut commands: Commands,
-    mut bank: ResMut<Bank>,
-    mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut danger: ResMut<DangerSpots>,
     hero: Res<crate::player::HeroState>,
     tree_fx: Option<Res<crate::verbs::TreeFx>>,
     mut workers: Query<
         (Entity, &mut ChopJob, &mut Worker, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
-        (Without<Fleeing>, Without<FightBack>, Without<crate::dying::Dying>),
+        (Without<Hauling>, Without<Fleeing>, Without<FightBack>, Without<crate::dying::Dying>),
     >,
     mut trees: Query<
         (&mut crate::verbs::ChopTree, &Transform),
@@ -218,16 +238,12 @@ fn chop_work(
                 }
                 let dir = (tp - v.pos).normalize_or_zero();
                 if tree.work_chop(CHOP_DMG) {
-                    crate::verbs::fell_tree(
-                        &mut commands,
-                        job.tree,
-                        ttf.translation,
-                        dir,
-                        now,
-                        &mut bank.0,
-                        &mut floats,
-                    );
-                    commands.entity(self_e).try_remove::<ChopJob>();
+                    // Timber — but no wood yet: shoulder the log and carry it home.
+                    crate::verbs::topple_tree(&mut commands, job.tree, ttf.translation, dir, now);
+                    commands
+                        .entity(self_e)
+                        .try_remove::<ChopJob>()
+                        .try_insert(Hauling { amount: crate::verbs::TREE_WOOD, log: None, stall: 0.0 });
                 } else {
                     // The same chop juice the hero's swings get: the trunk shudders under the
                     // axe and sheds chips/leaves (visual-only, so no earshot gate).
@@ -297,6 +313,151 @@ fn chop_work(
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+/// Carry the felled log back to the worker's own plot (the Lumber yard) and bank the wood
+/// THERE — the delivery, not the chop, is what pays. Same A*-when-far march as [`chop_work`];
+/// a wedged hauler just forces a replan (home is always reachable, unlike an arbitrary tree).
+#[allow(clippy::type_complexity)]
+fn haul_home(
+    time: Res<Time>,
+    spots: Res<crate::town::PlotSpots>,
+    mut commands: Commands,
+    mut bank: ResMut<Bank>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut haulers: Query<
+        (Entity, &mut Hauling, &Worker, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
+        (Without<Fleeing>, Without<FightBack>, Without<crate::dying::Dying>),
+    >,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
+    for (self_e, mut hauling, worker, mut v, mut tf, mut path) in &mut haulers {
+        let Some(yard) = spots.0.get(worker.idx).copied() else { continue };
+        let d = v.pos.distance(yard);
+        if d <= HAUL_REACH {
+            // Log on the pile — NOW the wood lands in the stock.
+            bank.0.add_wood(hauling.amount);
+            floats.0.push(crate::combat_fx::FloatReq {
+                world: Vec3::new(v.pos.x, tf.translation.y + 1.6, v.pos.y),
+                text: format!("+{} wood", hauling.amount as i64),
+                color: Color::srgb(0.78, 0.62, 0.36),
+                scale: 1.1,
+            });
+            if let Some(log) = hauling.log {
+                commands.entity(log).try_despawn();
+            }
+            commands.entity(self_e).try_remove::<Hauling>();
+            v.moving = false;
+            continue;
+        }
+        // March home: A* when far, direct steer when close (same shape as chop_work's march).
+        let step_target = if d > 6.0 {
+            if path.cursor >= path.waypoints.len()
+                || now >= path.next_replan
+                || path.goal_cached.distance(yard) > 2.0
+            {
+                path.waypoints = crate::navgrid::path_to(v.pos, yard);
+                path.cursor = 0;
+                path.goal_cached = yard;
+                path.next_replan = now + 1.0 + (self_e.to_bits() % 16) as f32 * 0.05;
+            }
+            while path.cursor < path.waypoints.len()
+                && v.pos.distance(path.waypoints[path.cursor]) < 1.2
+            {
+                path.cursor += 1;
+            }
+            path.waypoints.get(path.cursor).copied().unwrap_or(yard)
+        } else {
+            path.waypoints.clear();
+            path.cursor = 0;
+            yard
+        };
+        let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        match steer::advance(v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, 3.0 * dt) {
+            Some(s) if s.moving => {
+                v.pos = s.pos;
+                v.facing = s.facing;
+                v.moving = true;
+                hauling.stall = 0.0;
+            }
+            _ => {
+                v.moving = false;
+                hauling.stall += dt;
+                if hauling.stall > STALL_SECS {
+                    // Wedged on the way home — drop the cached route and replan now.
+                    path.waypoints.clear();
+                    path.cursor = 0;
+                    path.next_replan = now;
+                    hauling.stall = 0.0;
+                }
+            }
+        }
+        // Ground-follow + bob (this system owns the transform while the haul is on).
+        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+/// Put the visible log on a fresh hauler's shoulder: a small brown cuboid child riding above
+/// the pack. Mesh/material are built once and cached (every log looks the same).
+fn attach_log(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut cache: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
+    mut fresh: Query<(Entity, &mut Hauling), Added<Hauling>>,
+) {
+    for (e, mut hauling) in &mut fresh {
+        if hauling.log.is_some() {
+            continue;
+        }
+        let (mesh, mat) = cache
+            .get_or_insert_with(|| {
+                (
+                    meshes.add(Cuboid::new(0.26, 0.26, 1.05)),
+                    materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.42, 0.28, 0.15),
+                        perceptual_roughness: 0.95,
+                        ..default()
+                    }),
+                )
+            })
+            .clone();
+        let mut log = Entity::PLACEHOLDER;
+        commands.entity(e).with_children(|p| {
+            log = p
+                .spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(mat),
+                    // Across the shoulder, tipped a touch so it reads as carried, not glued.
+                    Transform::from_xyz(0.0, 1.15, 0.05)
+                        .with_rotation(Quat::from_rotation_x(0.12)),
+                ))
+                .id();
+        });
+        hauling.log = Some(log);
+    }
+}
+
+/// A hauler mustered to guard duty at dusk dumps the log where it stands: the wood is banked
+/// on the spot (don't strand the town's only wood income on a soldier's back all night) and
+/// the carried-log mesh goes away before the sword comes out.
+fn shed_log_at_muster(
+    mut commands: Commands,
+    mut bank: ResMut<Bank>,
+    mustered: Query<(Entity, &Hauling), With<Guard>>,
+) {
+    for (e, hauling) in &mustered {
+        bank.0.add_wood(hauling.amount);
+        if let Some(log) = hauling.log {
+            commands.entity(log).try_despawn();
+        }
+        commands.entity(e).try_remove::<Hauling>();
     }
 }
 

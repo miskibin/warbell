@@ -511,6 +511,7 @@ fn worker_steer(
         (&mut crate::town::Worker, &mut Villager, &mut Transform),
         (
             Without<crate::lumberjack::ChopJob>,
+            Without<crate::lumberjack::Hauling>,
             Without<crate::lumberjack::Fleeing>,
             Without<FightBack>,
             Without<crate::dying::Dying>,

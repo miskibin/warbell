@@ -393,18 +393,17 @@ pub(crate) fn chop_burst(commands: &mut Commands, fxa: &TreeFx, tree_pos: Vec3, 
 
 /// Swings to fell a tree (~2 at the hero's base 25–30 dmg).
 const TREE_HP: f64 = 55.0;
-/// Wood banked per felled tree.
-const TREE_WOOD: f64 = 1.0;
+/// Wood banked per felled tree. This is the ONLY wood source — the Woodcutter plot has no
+/// passive trickle (core `BuildKind::produces` → `None`) — so a tree is worth a real haul.
+pub(crate) const TREE_WOOD: f64 = 3.0;
 /// Tree trunk radius added to the swing reach.
 const CHOP_TREE_RADIUS: f32 = 1.0;
 /// Seconds before a felled tree grows back in place.
 const TREE_REGROW: f32 = 150.0;
 
-/// Fell `e`: bank the wood (+ float), lift the trunk blocker, and start the [`Felling`] topple
-/// along `dir` (the blow direction) — the tree falls over for real, then [`drive_felling`] hides
-/// it on landing and the [`Stump`] regrows it later. Shared by the hero's [`chop_tree`] and the
-/// woodcutter NPC (`lumberjack.rs`). The `Stump` goes on NOW, so a falling tree is already
-/// un-choppable / un-assignable (every chop site filters `Without<Stump>`).
+/// Fell `e`: bank the wood (+ float), then [`topple_tree`]. The hero's [`chop_tree`] path —
+/// he pockets the wood on the spot. The woodcutter NPC instead calls [`topple_tree`] directly
+/// and hauls the log home before any wood is banked (`lumberjack.rs`).
 pub fn fell_tree(
     commands: &mut Commands,
     e: Entity,
@@ -421,6 +420,15 @@ pub fn fell_tree(
         color: Color::srgb(0.78, 0.62, 0.36),
         scale: 1.1,
     });
+    topple_tree(commands, e, at, dir, now);
+}
+
+/// Knock tree `e` over WITHOUT banking anything: lift the trunk blocker and start the
+/// [`Felling`] topple along `dir` (the blow direction) — the tree falls over for real, then
+/// [`drive_felling`] hides it on landing and the [`Stump`] regrows it later. The `Stump` goes
+/// on NOW, so a falling tree is already un-choppable / un-assignable (every chop site filters
+/// `Without<Stump>`).
+pub fn topple_tree(commands: &mut Commands, e: Entity, at: Vec3, dir: Vec2, now: f32) {
     crate::blockers::remove_at(at.x, at.z); // clear the trunk blocker so no ghost nub
     let dir = if dir.length_squared() > 1e-6 { dir.normalize() } else { Vec2::Y };
     commands.entity(e).try_insert((

@@ -585,7 +585,7 @@ impl BuildItem {
     fn desc(self) -> &'static str {
         match self {
             BuildItem::Producer(BuildKind::Farm) => "Grows food \u{2192} feeds the town so peasants settle in",
-            BuildItem::Producer(BuildKind::Lumber) => "Woodcutter \u{2192} produces wood (needs a worker)",
+            BuildItem::Producer(BuildKind::Lumber) => "Woodcutter \u{2192} fells real trees and hauls the logs home (needs a worker)",
             BuildItem::House => "Home in the walls \u{2192} +2 people your town can hold",
         }
     }

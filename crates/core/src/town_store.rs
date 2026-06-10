@@ -40,8 +40,9 @@ pub const HOUSE_COST: Cost = Cost { wood: 6.0, stone: 4.0 };
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BuildKind {
     Farm,
-    /// Woodcutter — produces wood. Costs only stone so it can always be bootstrapped by
-    /// mining, even once the starting wood stipend is spent (no wood chicken-and-egg).
+    /// Woodcutter — employs a woodcutter who fells real trees (the world layer banks wood per
+    /// felled tree; there is NO passive wood trickle). Costs only stone so it can always be
+    /// bootstrapped by mining, even once the starting wood stipend is spent (no chicken-and-egg).
     Lumber,
 }
 
@@ -68,11 +69,13 @@ impl BuildKind {
         }
     }
 
-    /// `(resource, units per second)` when staffed. Every producer yields something.
-    pub fn produces(self) -> (Resource, f64) {
+    /// `(resource, units per second)` of passive flow when staffed, or `None` for a producer
+    /// whose yield is earned in the world instead (the Woodcutter: wood is banked per tree its
+    /// worker actually fells — see the Bevy layer's `lumberjack.rs` / `verbs::fell_tree`).
+    pub fn produces(self) -> Option<(Resource, f64)> {
         match self {
-            BuildKind::Farm => (Resource::Food, 0.5),
-            BuildKind::Lumber => (Resource::Wood, 0.4),
+            BuildKind::Farm => Some((Resource::Food, 0.5)),
+            BuildKind::Lumber => None,
         }
     }
 
@@ -222,7 +225,7 @@ impl Town {
             .iter()
             .filter_map(|p| match (p.state, p.kind, p.staffed) {
                 (PlotState::Built { burning: false, .. }, Some(k), true) => match k.produces() {
-                    (Resource::Food, r) => Some(r),
+                    Some((Resource::Food, r)) => Some(r),
                     _ => None,
                 },
                 _ => None,
@@ -266,8 +269,10 @@ impl Town {
         PopEvent::None
     }
 
-    /// Each staffed, non-burning producer banks its **material** yield (wood/stone).
-    /// Food is a flow (see [`Town::food_rate`]) and is deliberately NOT banked.
+    /// Each staffed, non-burning producer banks its passive **material** yield (wood/stone).
+    /// Food is a flow (see [`Town::food_rate`]) and is deliberately NOT banked. Note: with the
+    /// current building set this banks nothing — the Woodcutter has no passive flow (its wood
+    /// comes from real felled trees) — but the mechanism stays for future quarry-like producers.
     pub fn production_tick(&mut self, dt: f64, bank: &mut ResourceState) {
         for plot in &self.plots {
             let PlotState::Built { burning, .. } = plot.state else { continue };
@@ -275,7 +280,7 @@ impl Town {
                 continue;
             }
             let Some(kind) = plot.kind else { continue };
-            let (res, rate) = kind.produces();
+            let Some((res, rate)) = kind.produces() else { continue };
             let amount = rate * dt;
             match res {
                 Resource::Food => {} // a flow, not banked
@@ -423,15 +428,16 @@ mod tests {
     }
 
     #[test]
-    fn woodcutter_costs_stone_only_and_banks_wood() {
+    fn woodcutter_costs_stone_only_and_has_no_passive_wood() {
         let mut t = Town::new(1, 0);
         let mut bank = bank_with(0.0, 10.0, 0.0); // no wood, some stone
         assert!(t.build(0, BuildKind::Lumber, &mut bank));
         assert_eq!(bank.stone(), 4.0); // 10 - 6
         t.plots[0].staffed = true;
         let before = bank.wood();
-        t.production_tick(2.0, &mut bank); // 2s at 0.4/s = +0.8 wood
-        assert!((bank.wood() - (before + 0.8)).abs() < 1e-9);
+        // No trickle: wood is banked per tree the woodcutter actually fells (world layer).
+        t.production_tick(60.0, &mut bank);
+        assert_eq!(bank.wood(), before);
     }
 
     #[test]
@@ -501,15 +507,14 @@ mod tests {
     }
 
     #[test]
-    fn burning_farm_halts_wood_and_food() {
+    fn burning_farm_halts_food() {
         let mut t = Town::new(1, 0);
         let mut bank = bank_with(50.0, 0.0, 0.0);
-        t.build(0, BuildKind::Lumber, &mut bank);
+        t.build(0, BuildKind::Farm, &mut bank);
         t.plots[0].staffed = true;
+        assert!((t.food_rate() - 0.5).abs() < 1e-9);
         t.damage(0, 5.0); // ignites
-        let before = bank.wood();
-        t.production_tick(5.0, &mut bank);
-        assert_eq!(bank.wood(), before); // no output while burning
+        assert_eq!(t.food_rate(), 0.0); // no output while burning
     }
 
     #[test]
