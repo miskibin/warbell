@@ -72,11 +72,21 @@ pub(crate) fn play_voice_cues(
     mut seed: Local<u32>,
     existing: Query<Entity, With<HeroMouthTag>>,
     hero_sinks: Query<(Entity, &super::director::VoiceSink)>,
+    // Catalog hero-line sinks ONLY (grunts/death carry `HeroVoiceTag`, so excluding it leaves the
+    // spoken lines). Their entities live exactly as long as the clip plays (`PlaybackMode::Despawn`).
+    hero_lines: Query<&super::director::VoiceSink, Without<HeroVoiceTag>>,
     mut cues: MessageReader<AudioCue>,
 ) {
     let now = time.elapsed_secs();
     // Decide the single sound the mouth plays this frame; later cues override earlier ones.
     let mut pending: Option<(Handle<AudioSource>, f32)> = None;
+
+    // Is a spoken hero line audible RIGHT NOW? Keyed on the live sink entity, not the director's
+    // `ends_at` estimate — `read_secs` caps that at 8 s, so the long intro (~14 s) under-reports and
+    // grunts used to leak through its back half. Union with `hero_speaking` covers the first frame
+    // before the sink spawns. One mouth: no grunt while he's talking.
+    let hero_talking =
+        mgr.hero_speaking(now) || hero_lines.iter().any(|s| s.0 == super::Speaker::Hero);
 
     for cue in cues.read() {
         match *cue {
@@ -86,7 +96,7 @@ pub(crate) fn play_voice_cues(
                 if frand(&mut seed) < 0.34
                     && now >= mouth.line_until
                     && now - mouth.last_grunt >= GRUNT_MIN_GAP
-                    && !mgr.hero_speaking(now)
+                    && !hero_talking
                 {
                     mouth.last_grunt = now;
                     pending = Some((pick(&bank.swings, &mut seed), 0.4 * cfg.voice_vol));
@@ -98,7 +108,7 @@ pub(crate) fn play_voice_cues(
                 if frand(&mut seed) < 0.40
                     && now >= mouth.line_until
                     && now - mouth.last_grunt >= GRUNT_MIN_GAP
-                    && !mgr.hero_speaking(now)
+                    && !hero_talking
                 {
                     mouth.last_grunt = now;
                     pending = Some((bank.jump.clone(), 0.28 * cfg.voice_vol));
@@ -109,7 +119,7 @@ pub(crate) fn play_voice_cues(
                 // Suppressed while a catalog hero line is sounding.
                 if now >= mouth.line_until
                     && now - mouth.last_grunt >= GRUNT_MIN_GAP
-                    && !mgr.hero_speaking(now)
+                    && !hero_talking
                 {
                     mouth.last_grunt = now;
                     pending = Some((pick(&bank.hurts, &mut seed), 0.45 * cfg.voice_vol));

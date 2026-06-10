@@ -42,8 +42,9 @@ impl CombatRng {
 }
 
 /// Brief whole-sim freeze on a hit/kill — the "punch" that sells a blow. Combat tops up
-/// `remaining`; [`drive_hit_stop`] zeroes virtual time while it counts down (AI, orbs and anim
-/// all hang for the beat). Runs ungated so it always resumes the clock.
+/// `remaining`; [`drive_hit_stop`] crawls virtual time (×`HITSTOP_SLOWMO`) while it counts down
+/// (AI, orbs and anim all slow to a near-stop for the beat). Runs ungated so it always resumes
+/// the clock.
 #[derive(Resource, Default)]
 pub struct HitStop {
     pub remaining: f32,
@@ -51,6 +52,9 @@ pub struct HitStop {
 
 const HITSTOP_KILL: f32 = 0.09;
 const HITSTOP_HIT: f32 = 0.05;
+/// During hit-stop the sim runs at this fraction of real time rather than a dead freeze — a brief
+/// slow-mo dip that still sells the "punch" without the full-stop stutter that read as micro-lag.
+const HITSTOP_SLOWMO: f32 = 0.15;
 const SHAKE_KILL: f32 = 0.55;
 const SHAKE_HIT: f32 = 0.30;
 const KNOCKBACK: f32 = 6.0;
@@ -63,7 +67,7 @@ pub fn drive_hit_stop(
 ) {
     if hs.remaining > 0.0 {
         hs.remaining -= real.delta_secs();
-        vtime.set_relative_speed(0.0);
+        vtime.set_relative_speed(HITSTOP_SLOWMO);
     } else {
         vtime.set_relative_speed(1.0);
     }

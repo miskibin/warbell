@@ -26,8 +26,12 @@ const ORE_HP: f64 = 354.0;
 /// Front-cone reach the swing checks ore against (the hero melee cone + the boulder radius).
 const SWING_RANGE: f32 = 1.9;
 const SWING_CONE_DOT: f32 = 0.5;
-/// How many boulders to seed across the rock biome.
-const ORE_COUNT: u32 = 18;
+/// How many boulders to seed across the rock biome. Higher than the old 18 so the town's stone
+/// miner (`miner.rs`) has boulders to work without starving the hero's own mining.
+const ORE_COUNT: u32 = 28;
+/// Seconds before a depleted boulder regrows in place. Deliberately slow (~6 min) — stone is a
+/// frontier resource, and a working miner shouldn't strip the map (cf. trees' 150s `TREE_REGROW`).
+const ORE_REGROW: f32 = 360.0;
 
 /// Published by combat at each swing's hit-phase: the cone the blow sweeps. Mining (and later
 /// the training dummies) test their targets against it, sharing the player's one swing.
@@ -44,7 +48,29 @@ pub struct HeroSwing {
 /// A mineable boulder — wraps the pure `ore_store::Ore` (HP + shatter logic).
 #[derive(Component)]
 pub struct OreNode {
-    ore: Ore,
+    pub(crate) ore: Ore,
+    /// Footprint blocker radius registered at spawn, so a regrown node can re-block (mirror of
+    /// `ChopTree::trunk_r`). Also the miner's swing-reach anchor (`miner::pick_work`).
+    pub(crate) blocker_r: f32,
+}
+
+/// A depleted boulder waiting to regrow: hidden in place (blocker lifted), restored to full HP by
+/// [`regrow_ore`] — so mining (hero OR town miner) doesn't permanently strip the map. Mirror of
+/// the tree [`Stump`].
+#[derive(Component)]
+pub struct DepletedOre {
+    regrow_at: f32,
+}
+
+/// Knock boulder `e` out WITHOUT banking anything: hide it, lift its blocker, and schedule the
+/// regrow. The hero's [`mine_ore`] calls this on shatter (then banks the stone itself); the town
+/// miner (`miner.rs`) calls it on the depleting blow (then carts the stone home). Shared so the
+/// world-state bookkeeping is identical regardless of who lands the last blow.
+pub(crate) fn deplete_ore(commands: &mut Commands, e: Entity, pos: Vec3, now: f32) {
+    crate::blockers::remove_at(pos.x, pos.z); // clear the boulder blocker — no ghost collision
+    commands
+        .entity(e)
+        .try_insert((Visibility::Hidden, DepletedOre { regrow_at: now + ORE_REGROW }));
 }
 
 pub struct VerbsPlugin;
@@ -59,6 +85,7 @@ impl Plugin for VerbsPlugin {
                 Update,
                 (
                     mine_ore,
+                    regrow_ore,
                     ore_glow_pulse,
                     chop_tree,
                     regrow_trees,
@@ -150,8 +177,9 @@ fn mine_ore(
                 cues.write(AudioCue::OreChip); // metallic crack on the breaking blow…
                 cues.write(AudioCue::OreShatter); // …layered under the synth shatter sting
                 speak.write(crate::audio::Speak::new(crate::audio::Concept::FirstStone));
-                crate::blockers::remove_at(p.x, p.z); // clear the boulder blocker — no ghost collision
-                commands.entity(e).try_despawn();
+                // Don't despawn — deplete + schedule a slow regrow (shared with the town miner),
+                // so the boulder comes back instead of stripping the map.
+                deplete_ore(&mut commands, e, p, now as f32);
             } else {
                 // Metallic chip + a small grey rock-chip spray each pick-swing (was a flesh hit),
                 // and the boulder itself judders under the pick (its rest yaw is restored after).
@@ -167,6 +195,28 @@ fn mine_ore(
                 cues.write(AudioCue::OreChip);
             }
         }
+    }
+}
+
+/// Restore each due depleted boulder to a full, mineable node (visible again, blocker re-added),
+/// springing it up with a [`RegrowPop`] instead of blinking it in. Mirror of [`regrow_trees`].
+fn regrow_ore(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut OreNode, &DepletedOre, &Transform, &mut Visibility)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, mut node, dep, tf, mut vis) in &mut q {
+        if now < dep.regrow_at {
+            continue;
+        }
+        node.ore.hp = node.ore.max_hp;
+        *vis = Visibility::Visible;
+        crate::blockers::add(tf.translation.x, tf.translation.z, node.blocker_r);
+        commands
+            .entity(e)
+            .try_insert(RegrowPop { started: now, base: tf.scale })
+            .try_remove::<DepletedOre>();
     }
 }
 
@@ -186,6 +236,12 @@ impl ChopTree {
     /// which passes the same trunk radius it registered as the blocker.
     pub fn new(trunk_r: f32) -> Self {
         Self { hp: TREE_HP, trunk_r }
+    }
+
+    /// Trunk-blocker radius — the woodcutter (`lumberjack.rs`) plants its swing just outside this
+    /// so it stands at the bark, not an arm's length off it.
+    pub fn trunk_r(&self) -> f32 {
+        self.trunk_r
     }
 
     /// Take a work swing (a woodcutter's axe — `lumberjack.rs`). True once the tree is felled.
@@ -398,8 +454,6 @@ const TREE_HP: f64 = 165.0;
 /// Wood banked per felled tree. This is the ONLY wood source — the Woodcutter plot has no
 /// passive trickle (core `BuildKind::produces` → `None`) — so a tree is worth a real haul.
 pub(crate) const TREE_WOOD: f64 = 2.0;
-/// Tree trunk radius added to the swing reach.
-const CHOP_TREE_RADIUS: f32 = 1.0;
 /// Seconds before a felled tree grows back in place.
 const TREE_REGROW: f32 = 150.0;
 
@@ -483,7 +537,10 @@ fn chop_tree(
             let p = tf.translation;
             let to = Vec2::new(p.x - sw.origin.x, p.z - sw.origin.y);
             let dist = to.length();
-            if dist > SWING_RANGE + CHOP_TREE_RADIUS || dist < 1e-3 {
+            // Measure to the trunk SURFACE, not a fat fixed pad — a thin sapling/cactus shouldn't
+            // be hittable from an arm's length of empty air around it. Floored so tiny saplings
+            // still have a sane sliver of reach.
+            if dist > SWING_RANGE + tree.trunk_r().max(0.25) || dist < 1e-3 {
                 continue;
             }
             let dir = to / dist;
@@ -586,14 +643,15 @@ pub fn populate_ore(
         // Block the boulder's footprint so the hero (and every mover) bumps it instead of walking
         // through it — scaled with the rock, kept ≤1.0 for the neighbour-only blocker scan. Cleared
         // in `mine_ore` on shatter so no invisible nub lingers where the boulder stood.
-        crate::blockers::add(x, z, (0.55 * scale).min(0.95));
+        let blocker_r = (0.55 * scale).min(0.95);
+        crate::blockers::add(x, z, blocker_r);
         commands
             .spawn((
                 Transform::from_xyz(x, y + 0.10 * scale, z)
                     .with_rotation(Quat::from_rotation_y(yaw))
                     .with_scale(Vec3::splat(scale)),
                 Visibility::Visible,
-                OreNode { ore },
+                OreNode { ore, blocker_r },
                 crate::biome::BiomeEntity,
             ))
             .with_children(|p| {
