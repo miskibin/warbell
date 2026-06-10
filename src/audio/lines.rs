@@ -206,7 +206,8 @@ pub const LINES: &[Line] = &[
     // Trigger: QuietMusing — prep phase, no orks nearby
     Line { floor: 300.0, priority: 5, ..line("quiet_a",    Speaker::Hero, Concept::QuietMusing, "Quiet day. I've learned not to trust quiet days.") },
     Line { floor: 300.0, priority: 5, ..line("quiet_b",    Speaker::Hero, Concept::QuietMusing, "Too calm. The quiet always sends a bill, sooner or later.") },
-    // Trigger: KillMusing — after a kill
+    // Trigger: KillMusing — after a kill, but only on a small chance roll (`KILL_REMARK_CHANCE`)
+    // so the hero doesn't comment on every felled ork/animal during a wave ("mouth never closes").
     Line { floor: 300.0, priority: 5, ..line("kill_a",     Speaker::Hero, Concept::KillMusing, "One more for the pile. I stopped counting around the second winter.") },
     Line { floor: 300.0, priority: 5, ..line("kill_b",     Speaker::Hero, Concept::KillMusing, "Down. There's always another behind it. Always is.") },
     // ── Hero intro lines (once per run — the tutorial in the hero's own voice) ──

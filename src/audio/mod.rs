@@ -264,7 +264,7 @@ impl Plugin for GameAudioPlugin {
                     detect_home_return,
                     detect_biome_entry,
                     detect_siege_voice,
-                    detect_equip,
+                    detect_armor_found,
                     synth::debug_play_stings,
                     stop_displaced_hero_lines,
                     fade_out_hero_lines,
@@ -320,6 +320,11 @@ const REMARK_GAP: f32 = 20.0;
 /// `RETRY / CHANCE ≈ 35 s` (plus however long the remark itself ran). Event reactions
 /// (night warning, keep hurt, low HP…) don't pass through this system and are unaffected.
 const REMARK_CHANCE: f32 = 0.3;
+/// Kill barks ("one more for the pile") roll much lower than ordinary remarks — a kill preempts
+/// the ambient pool (it's first in the priority list), so without a small chance the hero would
+/// comment on every felled ork/animal during a wave. Most kills pass in silence; combined with
+/// the per-line 5-min `floor` a bark lands only occasionally.
+const KILL_REMARK_CHANCE: f32 = 0.1;
 /// Re-check delay after a failed remark roll (seconds).
 const REMARK_RETRY: f32 = 10.0;
 
@@ -455,10 +460,12 @@ fn detect_hero_remarks(
     // if he leaves. The trigger just decides what to say.
 
     let Some(concept) = concept else { return };
-    // The dice roll: most due cadences pass in silence (see `REMARK_CHANCE`). Frame-time bits
-    // mixed into the rng keep the pattern from repeating run to run.
+    // The dice roll: most due cadences pass in silence. Kill barks use a much smaller chance so
+    // the hero doesn't narrate every kill. Frame-time bits mixed into the rng keep the pattern
+    // from repeating run to run.
+    let chance = if concept == Concept::KillMusing { KILL_REMARK_CHANCE } else { REMARK_CHANCE };
     trigger.rng ^= now.to_bits();
-    if frand(&mut trigger.rng) > REMARK_CHANCE {
+    if frand(&mut trigger.rng) > chance {
         trigger.next_remark = now + REMARK_RETRY;
         return;
     }
@@ -640,31 +647,26 @@ fn detect_siege_voice(
     }
 }
 
-/// Emit the "new armor / check my satchel" line the first time the hero's equipped gear changes
-/// to something real (a weapon bonus or armour mitigation) — detected centrally off the bag so no
-/// equip call-site needs to know about audio. Once per run.
-fn detect_equip(
+/// Emit the "new armor / check my satchel" line the first time an armour piece ENTERS the bag —
+/// i.e. when the hero finds, loots or buys armour, NOT when he equips/wears it (the line tells him
+/// to go look it over in his satchel, so it belongs at the moment of acquiring it). Detected
+/// centrally off the bag so no pickup call-site needs to know about audio. Once per run
+/// (`gates.equip` is the per-run latch).
+fn detect_armor_found(
     inv: Res<crate::inventory::Inventory>,
     mut gates: ResMut<HeroLineGates>,
     mut speak: MessageWriter<Speak>,
-    mut init: Local<bool>,
-    mut last: Local<(i64, i64)>,
 ) {
-    let wb = inv.0.weapon_bonus() as i64;
-    let am = (inv.0.armor_damage_mult() * 1000.0) as i64; // <1000 ⇒ armour equipped
-    let snap = (wb, am);
-    if !*init {
-        *init = true;
-        *last = snap;
+    use tileworld_core::inventory::{item_def, ItemKind};
+    if gates.equip {
         return;
     }
-    if snap != *last {
-        *last = snap;
-        // Only speak when newly geared (ignore a reset that strips gear back to fists).
-        if !gates.equip && (wb > 0 || am < 1000) {
-            gates.equip = true;
-            speak.write(Speak::new(Concept::Equip));
-        }
+    let has_armor = inv.0.bag.iter().any(|s| {
+        s.item_id.as_deref().and_then(item_def).is_some_and(|d| d.kind == ItemKind::Armor)
+    });
+    if has_armor {
+        gates.equip = true;
+        speak.write(Speak::new(Concept::Equip));
     }
 }
 

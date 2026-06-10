@@ -148,6 +148,12 @@ pub(crate) fn play_voice_cues(
             },
             HeroVoiceTag,
             HeroMouthTag,
+            // Also a hero-mouth sink as far as the director is concerned: a spoken catalog line
+            // (`play_line`) despawns every `VoiceSink(Hero)` before it starts, so a line now CUTS an
+            // in-flight grunt. Grunts already defer while a line sounds (`!hero_speaking`); this
+            // closes the other direction — one mouth, grunts least priority. (Grunts don't touch
+            // `mgr.active`, so a playing grunt never blocks a line from starting over it.)
+            super::director::VoiceSink(super::Speaker::Hero),
         ));
     }
 }

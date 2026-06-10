@@ -21,8 +21,12 @@ pub fn apply_hero_damage(
     buffs: Res<crate::inventory::Buffs>,
     inv: Res<crate::inventory::Inventory>,
     mut lives: ResMut<crate::succession::Lives>,
+    mut town: ResMut<crate::town::TownRes>,
     mut hero_q: Query<(&mut Hero, &mut Transform, &mut HeroHealth)>,
-    villagers: Query<(Entity, &Transform), (With<crate::villagers::Villager>, Without<Hero>)>,
+    villagers: Query<
+        (Entity, &Transform),
+        (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<Hero>),
+    >,
     mut commands: Commands,
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
@@ -72,14 +76,16 @@ pub fn apply_hero_damage(
     // ── Death → the blade passes to an heir, who rises at the north gate after a beat ──
     if let Some(t0) = p.dead_since {
         if now - t0 >= RESPAWN_DELAY {
-            // No heir left → the bloodline ends; leave the hero down and let the run lose.
-            if lives.heirs == 0 {
+            // The bloodline IS the town headcount (an heir = a townsperson; `Lives.heirs` just
+            // mirrors `town.population`). Nobody left to take up the blade → the line ends.
+            if town.0.population == 0 {
                 lives.defeat = true;
                 return;
             }
-            lives.heirs -= 1; // the next heir takes up the blade
-            // The blade passes: a townsfolk standing nearest the fallen hero is consumed (the
-            // heir who takes up the line). Best-effort — fine when the town has run dry.
+            // The next heir takes up the blade: one townsperson leaves the pool to become the
+            // hero. The headcount is the source of truth — decrement it, and despawn the nearest
+            // townsfolk body below so `sync_population_bodies` doesn't reap a second one.
+            town.0.population -= 1;
             let mut nearest: Option<(Entity, f32)> = None;
             for (e, vtf) in &villagers {
                 let d = Vec2::new(vtf.translation.x, vtf.translation.z).distance(hero.pos);

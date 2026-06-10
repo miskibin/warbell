@@ -556,7 +556,7 @@ fn run_director(
     mut keep: ResMut<KeepHp>,
     mut player: ResMut<crate::player::PlayerRes>,
     eco: Res<crate::economy::EconomyState>,
-    mut lives: ResMut<crate::succession::Lives>,
+    mut town: ResMut<crate::town::TownRes>,
     armory: Option<Res<InvaderArmory>>,
     invaders: Query<Entity, With<WaveInvader>>,
     alive_invaders: Query<(), (With<WaveInvader>, Without<crate::dying::Dying>)>,
@@ -614,7 +614,9 @@ fn run_director(
                     if eco.tax_office {
                         player.0.add_gold(crate::economy::TAX_STIPEND);
                     }
-                    lives.heirs += 1; // dawn: a new heir comes of age
+                    // Dawn: a youth comes of age — heirs ARE townsfolk (one headcount), so the
+                    // bloodline grows by growing the town.
+                    town.0.population += 1;
                 }
                 if p == GamePhase::Victory {
                     for e in &invaders {

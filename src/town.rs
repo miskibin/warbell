@@ -11,7 +11,6 @@ use bevy::prelude::*;
 use tileworld_core::town_store::{BuildKind, Cost, PopEvent, Town, HOUSE_COST};
 
 use crate::castle::{Mats, VillageMats, M};
-use crate::succession::Lives;
 use crate::villagers::{Guard, Townsfolk};
 
 use crate::economy::Bank;
@@ -234,7 +233,6 @@ fn population_system(
     time: Res<Time>,
     siege: Option<Res<crate::siege::Siege>>,
     mut town: ResMut<TownRes>,
-    mut lives: ResMut<Lives>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
 ) {
     // Growing a new peasant is a daytime thing: while the night wave is on, the food→population
@@ -245,7 +243,7 @@ fn population_system(
     let dt = time.delta_secs() as f64;
     match town.0.population_tick(dt) {
         PopEvent::Grew => {
-            lives.heirs += 1; // a new household → a new heir (keeps the population→bloodline tie)
+            // (Heirs need no bump: `Lives.heirs` mirrors `town.population` — one headcount.)
             floats.0.push(crate::combat_fx::FloatReq {
                 world: Vec3::new(0.0, 6.5, 5.0),
                 text: "\u{1f331} A peasant settles in your town!".into(),
@@ -278,7 +276,6 @@ fn dawn_refugees(
     siege: Option<Res<crate::siege::Siege>>,
     mut last_wave: Local<Option<bool>>,
     mut town: ResMut<TownRes>,
-    mut lives: ResMut<Lives>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
 ) {
     let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
@@ -289,9 +286,7 @@ fn dawn_refugees(
     if town.0.population >= MIN_DAWN_POP {
         return;
     }
-    let added = MIN_DAWN_POP - town.0.population;
     town.0.population = MIN_DAWN_POP;
-    lives.heirs += added; // keep the population→bloodline tie (as rescue/recruit do)
     floats.0.push(crate::combat_fx::FloatReq {
         world: Vec3::new(0.0, 6.5, 5.0),
         text: "\u{1f3da} Refugees arrive to rebuild the town".into(),
@@ -336,10 +331,15 @@ fn sync_population_bodies(
 fn reset_town(
     mut town: ResMut<TownRes>,
     mut bank: ResMut<Bank>,
+    siege: Option<Res<crate::siege::Siege>>,
     mut commands: Commands,
     stale: Query<Entity, Or<(With<BuildingMesh>, With<Flame>)>>,
 ) {
     town.0.reset();
+    // Difficulty handicap: Easy seeds spare townsfolk — heirs ARE the headcount now, so the
+    // old "spare heirs" grant lands here (was `succession::reset_lives`).
+    let diff = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
+    town.0.population += crate::siege::mods_for(diff).heirs_bonus;
     bank.0.add_wood(START_WOOD);
     // The world map isn't rebuilt on restart, so reap last run's building meshes +
     // flames here (the empty plot pads persist; TownRes is now all-Empty, so the

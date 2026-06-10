@@ -1,30 +1,30 @@
 //! **Succession — the bloodline.** The hero is one of a line of heirs: when he falls, the blade
-//! passes to the next (he respawns at a gate with all progression intact). Run out of heirs and
-//! the run ends — Defeat by *bloodline*, the second way to lose besides the keep falling. The
-//! pool starts at [`STARTING_HEIRS`] and grows by one each **dawn** (a cleared wave), so holding
-//! the line buys you lives.
+//! passes to the next (he respawns at a gate with all progression intact) and the town's
+//! headcount drops by one — **an heir IS a townsperson**. There is exactly one number:
+//! `town.population` is the source of truth, and [`Lives::heirs`] is a read-only mirror of it
+//! ([`mirror_heirs`]) so the HUD/save never drift from the town. The hero falling with the town
+//! empty ends the line — Defeat by *bloodline*, the second way to lose besides the keep falling.
 //!
-//! This is the headline P5 mechanic. Guard combat, camp rescue, the muster yard and
-//! district→population growth are the deferred long-tail (tracked in the roadmap).
+//! The pool grows however the town grows: food surplus (`town::population_system`), camp rescues,
+//! mercenary recruits, the dawn coming-of-age (+1 in `siege::run_director`), and the dawn refugee
+//! floor of 2 (`town::dawn_refugees`) that guarantees a morning workforce.
 
 use bevy::prelude::*;
 
 use crate::game_state::AppState;
 
-/// Heirs the bloodline starts a run with (TS `STARTING_HEIRS`).
-pub const STARTING_HEIRS: u32 = 3;
-
-/// The bloodline pool: how many heirs remain, and whether the line has ended.
+/// The bloodline pool. `heirs` is a **read-only mirror** of `town.population` — never write it;
+/// write the town headcount instead ([`mirror_heirs`] stomps any drift every frame).
 #[derive(Resource)]
 pub struct Lives {
     pub heirs: u32,
-    /// Set when the hero falls with no heir left → the run is lost.
+    /// Set when the hero falls with no townsperson left → the run is lost.
     pub defeat: bool,
 }
 
 impl Default for Lives {
     fn default() -> Self {
-        Self { heirs: STARTING_HEIRS, defeat: false }
+        Self { heirs: 0, defeat: false } // heirs filled from town.population by `mirror_heirs`
     }
 }
 
@@ -39,15 +39,25 @@ impl Plugin for SuccessionPlugin {
                 OnExit(AppState::Paused),
                 reset_lives.run_if(crate::game_state::restart_requested),
             )
+            // Ungated: the heir count shown in the HUD tracks the town even while frozen.
+            .add_systems(Update, mirror_heirs)
             .add_systems(Update, watch_bloodline.run_if(in_state(AppState::Playing)));
     }
 }
 
-fn reset_lives(mut lives: ResMut<Lives>, siege: Option<Res<crate::siege::Siege>>) {
+/// New run: clear the defeat flag. The heir count needs no seeding — it mirrors the town, and
+/// `town::reset_town` owns the starting headcount (incl. the Easy spare-townsfolk handicap).
+fn reset_lives(mut lives: ResMut<Lives>) {
     *lives = Lives::default();
-    // Difficulty handicap: Easy grants spare heirs so a beginner's run survives a few falls.
-    let diff = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
-    lives.heirs += crate::siege::mods_for(diff).heirs_bonus;
+}
+
+/// Enforce heirs ≡ town.population every frame. Heirs and townsfolk are the SAME people; any
+/// system that used to bump `heirs` separately now writes the town headcount and this sync
+/// carries it into the HUD/save view.
+fn mirror_heirs(town: Res<crate::town::TownRes>, mut lives: ResMut<Lives>) {
+    if lives.heirs != town.0.population {
+        lives.heirs = town.0.population;
+    }
 }
 
 /// End the run once the bloodline is spent (hand off to the GameOver screen).

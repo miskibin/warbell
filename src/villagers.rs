@@ -361,7 +361,6 @@ pub fn spawn_courtyard_guard(
 /// so you see it happen. `seen` gates against freeing a camp before its orks have even spawned.
 #[allow(clippy::too_many_arguments)]
 fn camp_rescue(
-    mut lives: ResMut<crate::succession::Lives>,
     mut town: ResMut<crate::town::TownRes>,
     mut rescued: ResMut<RescuedCamps>,
     orks: Query<&crate::orks::Ork, Without<crate::orks::WaveInvader>>,
@@ -402,9 +401,8 @@ fn camp_rescue(
         }
         crate::camps::open_cage(&mut commands, &mut meshes, &mut materials, cage_tf);
         // The freed captive joins the town's population (a guard appears in the courtyard via
-        // `sync_population_bodies`) and grows the bloodline.
+        // `sync_population_bodies`) — and the bloodline with it: heirs ARE the headcount.
         town.0.population += 1;
-        lives.heirs += 1;
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(cage.x, y + 1.8, cage.y),
             text: "Captive freed!  +1 townsperson".into(),
@@ -417,12 +415,11 @@ fn camp_rescue(
 }
 
 /// **R** inside the castle spends a Mercenary Contract (from chests) to hire a sellsword — a new
-/// townsperson (a guard appears via `sync_population_bodies`) + an heir.
+/// townsperson (a guard appears via `sync_population_bodies`), which is also a new heir.
 fn recruit(
     keys: Res<ButtonInput<KeyCode>>,
     hero: Res<crate::player::HeroState>,
     mut inv: ResMut<crate::inventory::Inventory>,
-    mut lives: ResMut<crate::succession::Lives>,
     mut town: ResMut<crate::town::TownRes>,
 ) {
     if keys.just_pressed(KeyCode::KeyR)
@@ -430,7 +427,6 @@ fn recruit(
         && crate::castle::in_footprint(hero.pos.x, hero.pos.y)
         && inv.0.consume_item("mercenary_contract", 1)
     {
-        lives.heirs += 1;
         town.0.population += 1;
     }
 }

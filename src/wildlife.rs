@@ -4,7 +4,8 @@
 //!
 //! Animals are full combat actors: per-species HP, a predator/prey food-chain, struck-enrage,
 //! death-fade (`crate::dying`), loot drops, and respawn (35s herbivore / 50s predator, near the
-//! death spot). They're placed biome-matched + walkable + deterministic inside `worldmap::build`,
+//! death spot — except predator homes get pushed back out past [`TOWN_SANCTUARY_R`]).
+//! They're placed biome-matched + walkable + deterministic inside `worldmap::build`,
 //! tagged [`crate::biome::BiomeEntity`] so the biome-switch despawn/rebuild handles them.
 //!
 //! Two `Update` systems:
@@ -113,6 +114,18 @@ const STRUCK_LATCH: f32 = 6.0;
 const ANIMAL_RESPAWN: f32 = 35.0;
 const PREDATOR_RESPAWN: f32 = 50.0;
 
+/// Town sanctuary radius (world units from the castle origin). Covers the grass safe-zone
+/// (`worldmap::SAFE_R` = 18) PLUS the build-plot ring (farthest plot centre ~21.5 +
+/// `town::PLOT_CLEAR_R`), so peasants working the farms stand inside it. Predators never
+/// acquire a target standing in the sanctuary (struck-enrage still overrides — a wounded
+/// predator fights back anywhere), and predator herd anchors / respawn homes keep their whole
+/// wander circle outside it so packs don't mill around the gates.
+const TOWN_SANCTUARY_R: f32 = 27.0;
+
+fn in_sanctuary(p: Vec2) -> bool {
+    p.length() < TOWN_SANCTUARY_R
+}
+
 /// Marks an articulated child part + how it animates.
 #[derive(Component)]
 struct AnimPart {
@@ -192,9 +205,12 @@ fn animal_brain(
                 }
             }
             if tgt.is_none() && near_home {
+                // Anyone standing in the town sanctuary is off-limits (guarded ground) — the
+                // re-acquire below runs every frame, so a chase auto-drops the moment its
+                // target crosses the ring. Only struck-enrage (above) pursues inside.
                 let mut best = aggro_r;
                 for (pe, pp, _ispred, isprey) in &snap {
-                    if !*isprey || *pe == self_e {
+                    if !*isprey || *pe == self_e || in_sanctuary(*pp) {
                         continue;
                     }
                     let d = a.pos.distance(*pp);
@@ -207,7 +223,7 @@ fn animal_brain(
                     // No prey about: the hero and the townsfolk are fair game alike — charge
                     // whichever is nearest in aggro range.
                     let mut best = aggro_r;
-                    if hero.alive {
+                    if hero.alive && !in_sanctuary(hero.pos) {
                         let d = a.pos.distance(hero.pos);
                         if d < best {
                             best = d;
@@ -215,6 +231,9 @@ fn animal_brain(
                         }
                     }
                     for (ne, np) in &npcs {
+                        if in_sanctuary(*np) {
+                            continue;
+                        }
                         let d = a.pos.distance(*np);
                         if d < best {
                             best = d;
@@ -569,11 +588,23 @@ fn drain_respawns(
         if let (Some(plan), Some(tmpl)) =
             (PLANS.iter().find(|p| p.species == slot.species), assets.template(slot.species))
         {
+            // A predator slain near town does NOT re-home at its death spot — that would walk
+            // the pack to the gates one respawn cycle at a time. Push the home back out past
+            // the sanctuary ring along the same bearing.
+            let min_r = anchor_min_r(plan);
+            let mut home = slot.home;
+            if home.length() < min_r {
+                home = if home.length() > 1e-3 {
+                    home.normalize() * (min_r + 2.0)
+                } else {
+                    Vec2::new(min_r + 2.0, 0.0)
+                };
+            }
             for _ in 0..14 {
-                let jx = slot.home.x + rng_range(r, -3.0, 3.0);
-                let jz = slot.home.y + rng_range(r, -3.0, 3.0);
-                if valid(plan.place, jx, jz) {
-                    spawn_one(&mut commands, &assets.mat, tmpl, plan, jx, jz, slot.home, next_u32(r));
+                let jx = home.x + rng_range(r, -3.0, 3.0);
+                let jz = home.y + rng_range(r, -3.0, 3.0);
+                if valid(plan.place, jx, jz, min_r) {
+                    spawn_one(&mut commands, &assets.mat, tmpl, plan, jx, jz, home, next_u32(r));
                     break;
                 }
             }
@@ -651,12 +682,24 @@ fn place_ok(place: Place, x: f32, z: f32) -> bool {
     }
 }
 
-fn valid(place: Place, x: f32, z: f32) -> bool {
+fn valid(place: Place, x: f32, z: f32, min_r: f32) -> bool {
     worldmap::ground_at_world(x, z).is_some()
         && !crate::blockers::is_blocked(x, z)
         && !crate::camps::in_clearing(x, z) // keep herds out of the ork camps
-        && (x * x + z * z).sqrt() >= worldmap::SAFE_R // keep wild herds out of the castle safe-zone
+        && !crate::town::near_build_plot(x, z) // keep animals off the farm/building plots
+        && (x * x + z * z).sqrt() >= min_r // castle/town exclusion (wider for predators)
         && place_ok(place, x, z)
+}
+
+/// Minimum anchor distance from the castle for a species: a predator keeps its whole wander
+/// circle outside the town sanctuary; grazers only stay off the forced-grass safe-zone (deer at
+/// the walls are charming, wolves at the walls eat the peasants).
+fn anchor_min_r(plan: &Plan) -> f32 {
+    if predator_stats(plan.species).is_some() {
+        TOWN_SANCTUARY_R + plan.wander_r
+    } else {
+        worldmap::SAFE_R
+    }
 }
 
 /// One species' population + behaviour, all `Copy` so the table is a plain `const`.
@@ -767,7 +810,7 @@ pub fn populate(
             // Reject-sample a valid herd anchor inside the island.
             let ax = rng_range(&mut rng, -worldmap::GX + 5.0, worldmap::GX - 5.0);
             let az = rng_range(&mut rng, -worldmap::GZ + 5.0, worldmap::GZ - 5.0);
-            if !valid(plan.place, ax, az) {
+            if !valid(plan.place, ax, az, anchor_min_r(&plan)) {
                 continue;
             }
             let home = Vec2::new(ax, az);
@@ -778,7 +821,7 @@ pub fn populate(
                 for _ in 0..14 {
                     let jx = ax + rng_range(&mut rng, -3.0, 3.0);
                     let jz = az + rng_range(&mut rng, -3.0, 3.0);
-                    if valid(plan.place, jx, jz) {
+                    if valid(plan.place, jx, jz, anchor_min_r(&plan)) {
                         pos = Some((jx, jz));
                         break;
                     }
@@ -814,8 +857,12 @@ pub fn populate(
             let ax = rng_range(&mut rng, -16.0, 16.0);
             let az = rng_range(&mut rng, -16.0, 16.0);
             let p = Vec2::new(ax, az);
-            // Open grass, outside the keep core, off any wall/house/prop blocker.
-            if p.length() < 6.0 || !worldmap::is_grass_world(ax, az) || crate::blockers::is_blocked(ax, az) {
+            // Open grass, outside the keep core, off any wall/house/prop blocker or build plot.
+            if p.length() < 6.0
+                || !worldmap::is_grass_world(ax, az)
+                || crate::blockers::is_blocked(ax, az)
+                || crate::town::near_build_plot(ax, az)
+            {
                 continue;
             }
             spawn_one(commands, &mat, tmpl, plan, ax, az, p, next_u32(&mut rng));
