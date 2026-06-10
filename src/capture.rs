@@ -36,6 +36,7 @@ impl Plugin for CapturePlugin {
         } else if let Ok(dir) = std::env::var("FOREST_CLIP") {
             app.insert_resource(clip_cfg(dir))
                 .init_resource::<ClipClock>()
+                .init_resource::<ClipProgress>()
                 .add_systems(Startup, clip_setup)
                 .add_systems(Update, (clip_orbit, drive_clip).chain());
         }
@@ -87,6 +88,17 @@ struct ClipClock {
     done_at: Option<u32>,
 }
 
+/// Read by the demo director (`demo.rs` / `town.rs`) so scripted timelines (the hero walk, the
+/// build sequence, caption cues) start only once recording begins — the warm-up frames render
+/// (shaders compile, lighting / IBL / the world sim settle) without burning the scripted action.
+#[derive(Resource, Default)]
+pub struct ClipProgress {
+    /// false during warm-up, true once frames are being saved
+    pub recording: bool,
+    /// count of frames written so far (0 during warm-up) — a frame-locked clock for scripts
+    pub frame: u32,
+}
+
 fn clip_cfg(dir: String) -> ClipCfg {
     let num = |k: &str, d: f32| {
         std::env::var(k).ok().and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(d)
@@ -135,9 +147,12 @@ fn clip_orbit(cfg: Res<ClipCfg>, clock: Res<ClipClock>, mut cam: Query<&mut Tran
 fn drive_clip(
     cfg: Res<ClipCfg>,
     mut clock: ResMut<ClipClock>,
+    mut prog: ResMut<ClipProgress>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
 ) {
+    prog.recording = clock.frame >= cfg.warmup;
+    prog.frame = clock.saved;
     // Flush tail: all frames written → wait a few ticks for the async disk writes to land, exit.
     if let Some(done) = clock.done_at {
         if clock.frame >= done + 15 {
