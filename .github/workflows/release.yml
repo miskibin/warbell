@@ -1,0 +1,71 @@
+name: Release
+
+# Build the game binary when a version tag (v*) is pushed, and attach
+# zipped binary + assets/ to a GitHub Release for that tag.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the release + upload artifacts
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: tileworld-windows-x86_64
+            binary: target/release/tileworld_bevy_forest.exe
+          - os: ubuntu-latest
+            artifact: tileworld-linux-x86_64
+            binary: target/release/tileworld_bevy_forest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Bevy's standard Linux link deps: Wayland + XKB (windowing/input),
+      # ALSA (the `wav` audio feature), libudev (gamepad enumeration).
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      # The game loads WGSL/audio/fonts from assets/ next to the exe
+      # (or via BEVY_ASSET_ROOT), so ship the folder alongside the binary.
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist/${{ matrix.artifact }} | Out-Null
+          Copy-Item ${{ matrix.binary }} dist/${{ matrix.artifact }}/
+          Copy-Item -Recurse assets dist/${{ matrix.artifact }}/assets
+          Compress-Archive -Path dist/${{ matrix.artifact }}/* -DestinationPath dist/${{ matrix.artifact }}.zip
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/${{ matrix.artifact }}
+          cp ${{ matrix.binary }} dist/${{ matrix.artifact }}/
+          cp -r assets dist/${{ matrix.artifact }}/assets
+          tar -C dist -czf dist/${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ matrix.artifact }}.zip
+            dist/${{ matrix.artifact }}.tar.gz
+          generate_release_notes: true
