@@ -40,6 +40,7 @@ mod hud;
 mod interaction;
 mod inventory;
 mod landmarks;
+mod lumberjack;
 mod navgrid;
 mod orbs;
 mod orks;
@@ -152,6 +153,7 @@ fn main() {
         ))
         .add_plugins((
             town::TownPlugin, // city-building: plots, build menu, economy, burn/repair
+            lumberjack::LumberjackPlugin, // woodcutters fell real trees (safe zone + threat sense)
             savegame::SaveGamePlugin, // dawn autosave + Continue/New Game (one slot)
         ))
         .run();
