@@ -88,4 +88,5 @@ this dir if you run the binary from elsewhere (WGSL loads from `assets/shaders/`
 <img width="1919" height="1010" alt="image" src="https://github.com/user-attachments/assets/3078fe5a-720f-44f7-80d3-8ffcf24e2da7" />
 <img width="1914" height="1004" alt="image" src="https://github.com/user-attachments/assets/c76da516-d9ee-4776-9507-b6a5b3ca9b78" />
 <img width="1909" height="1010" alt="image" src="https://github.com/user-attachments/assets/445809c9-5443-4e2c-857f-f8b3f228a9bc" />
+<img width="1902" height="1004" alt="image" src="https://github.com/user-attachments/assets/e9fd7230-3756-464c-aff6-1f39bb616313" />
 
