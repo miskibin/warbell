@@ -139,6 +139,7 @@ pub fn build(s: Species) -> CreatureSpec {
 // ─── Wolf ───────────────────────────────────────────────────────────────────────
 fn wolf() -> CreatureSpec {
     const FUR: u32 = 0x6b6f78;
+    const LIGHT: u32 = 0x8a8e96;
     const DARK: u32 = 0x494d55;
     const SNOUT: u32 = 0x3a3e44;
     const NOSE: u32 = 0x141414;
@@ -146,18 +147,37 @@ fn wolf() -> CreatureSpec {
     let torso = group(vec![
         bx(0.42, 0.42, 1.0, v(0.0, 0.62, 0.0), FUR),
         bx(0.44, 0.4, 0.42, v(0.0, 0.7, 0.28), FUR),
+        bx(0.5, 0.46, 0.2, v(0.0, 0.68, 0.42), DARK), // chest ruff collar
+        bx(0.12, 0.05, 0.92, v(0.0, 0.845, -0.02), DARK), // dark saddle stripe down the spine
+        bx(0.38, 0.08, 0.78, v(0.0, 0.43, 0.02), LIGHT), // pale belly
+        bx(0.15, 0.32, 0.36, v(-0.19, 0.6, -0.3), FUR), // haunches over the hind legs
+        bx(0.15, 0.32, 0.36, v(0.19, 0.6, -0.3), FUR),
     ]);
     let head = group(vec![
         bx(0.32, 0.3, 0.32, v(0.0, 0.0, 0.0), FUR),
         bx(0.16, 0.14, 0.22, v(0.0, -0.06, 0.22), SNOUT),
+        bx(0.14, 0.05, 0.16, v(0.0, -0.14, 0.21), LIGHT), // lower jaw
         bx(0.08, 0.06, 0.05, v(0.0, -0.04, 0.34), NOSE),
         cone(0.07, 0.18, v(-0.11, 0.22, -0.02), rz(-0.1), DARK),
         cone(0.07, 0.18, v(0.11, 0.22, -0.02), rz(0.1), DARK),
-        bx(0.04, 0.04, 0.01, v(-0.09, 0.03, 0.15), EYE),
-        bx(0.04, 0.04, 0.01, v(0.09, 0.03, 0.15), EYE),
+        bx(0.07, 0.03, 0.05, v(-0.09, 0.07, 0.145), DARK), // brow ridges
+        bx(0.07, 0.03, 0.05, v(0.09, 0.07, 0.145), DARK),
+        bx(0.04, 0.04, 0.01, v(-0.09, 0.03, 0.165), EYE),
+        bx(0.04, 0.04, 0.01, v(0.09, 0.03, 0.165), EYE),
+        bx(0.05, 0.16, 0.20, v(-0.165, -0.07, 0.02), LIGHT), // cheek fur tufts
+        bx(0.05, 0.16, 0.20, v(0.165, -0.07, 0.02), LIGHT),
     ]);
-    let tail = group(vec![bxr(0.13, 0.13, 0.4, v(0.0, 0.04, -0.18), rx(0.7), DARK)]);
-    let mut parts = legs(0.52, 0.16, 0.34, -0.34, &|| bx(0.12, 0.5, 0.13, v(0.0, -0.25, 0.0), DARK));
+    let tail = group(vec![
+        bxr(0.13, 0.13, 0.4, v(0.0, 0.04, -0.18), rx(0.7), DARK),
+        bxr(0.10, 0.10, 0.16, v(0.0, 0.215, -0.345), rx(0.7), LIGHT), // pale brush tip
+    ]);
+    let leg = || {
+        group(vec![
+            bx(0.12, 0.5, 0.13, v(0.0, -0.25, 0.0), DARK),
+            bx(0.13, 0.07, 0.16, v(0.0, -0.485, 0.02), LIGHT), // paw
+        ])
+    };
+    let mut parts = legs(0.52, 0.16, 0.34, -0.34, &leg);
     parts.push(PartDef { kind: PartKind::Head, pivot: v(0.0, 0.8, 0.56), mesh: head });
     parts.push(PartDef { kind: PartKind::Tail, pivot: v(0.0, 0.62, -0.5), mesh: tail });
     CreatureSpec { torso, parts }
@@ -173,9 +193,16 @@ fn deer() -> CreatureSpec {
     let torso = group(vec![
         bx(0.34, 0.36, 0.85, v(0.0, 0.95, 0.0), COAT),
         bx(0.3, 0.1, 0.78, v(0.0, 0.8, 0.0), BELLY),
+        bx(0.3, 0.24, 0.05, v(0.0, 0.93, -0.41), BELLY), // pale rump patch
+        // fawn spots dappled along the back
+        bx(0.04, 0.012, 0.04, v(-0.09, 1.131, 0.18), BELLY),
+        bx(0.04, 0.012, 0.04, v(0.08, 1.131, 0.02), BELLY),
+        bx(0.04, 0.012, 0.04, v(-0.07, 1.131, -0.16), BELLY),
+        bx(0.04, 0.012, 0.04, v(0.1, 1.131, -0.3), BELLY),
     ]);
     let head = group(vec![
         bxr(0.15, 0.45, 0.15, v(0.0, 0.18, 0.04), rx(-0.5), COAT),
+        bxr(0.1, 0.34, 0.06, v(0.0, 0.17, 0.115), rx(-0.5), BELLY), // pale throat
         bx(0.18, 0.2, 0.34, v(0.0, 0.42, 0.2), COAT),
         bx(0.12, 0.12, 0.14, v(0.0, 0.38, 0.4), DARK),
         bx(0.07, 0.06, 0.04, v(0.0, 0.38, 0.48), NOSE),
@@ -183,11 +210,22 @@ fn deer() -> CreatureSpec {
         bx(0.03, 0.03, 0.01, v(0.07, 0.5, 0.28), NOSE),
         cone(0.05, 0.16, v(-0.13, 0.52, 0.16), rz(-0.5), DARK),
         cone(0.05, 0.16, v(0.13, 0.52, 0.16), rz(0.5), DARK),
-        cone(0.022, 0.22, v(-0.08, 0.62, 0.12), xyz(0.2, 0.0, -0.3), ANTLER),
-        cone(0.022, 0.22, v(0.08, 0.62, 0.12), xyz(0.2, 0.0, 0.3), ANTLER),
+        // antlers: a main beam each side with two forward tines (was a single spike)
+        bxr(0.035, 0.3, 0.035, v(-0.09, 0.65, 0.1), xyz(0.15, 0.0, 0.3), ANTLER),
+        bxr(0.028, 0.18, 0.028, v(-0.14, 0.76, 0.16), xyz(-0.6, 0.0, 0.25), ANTLER),
+        bxr(0.025, 0.15, 0.025, v(-0.18, 0.85, 0.1), xyz(0.2, 0.0, 0.5), ANTLER),
+        bxr(0.035, 0.3, 0.035, v(0.09, 0.65, 0.1), xyz(0.15, 0.0, -0.3), ANTLER),
+        bxr(0.028, 0.18, 0.028, v(0.14, 0.76, 0.16), xyz(-0.6, 0.0, -0.25), ANTLER),
+        bxr(0.025, 0.15, 0.025, v(0.18, 0.85, 0.1), xyz(0.2, 0.0, -0.5), ANTLER),
     ]);
     let tail = group(vec![bx(0.08, 0.16, 0.08, v(0.0, -0.04, -0.04), COAT)]);
-    let mut parts = legs(0.78, 0.13, 0.32, -0.32, &|| bx(0.08, 0.74, 0.08, v(0.0, -0.37, 0.0), DARK));
+    let leg = || {
+        group(vec![
+            bx(0.08, 0.7, 0.08, v(0.0, -0.35, 0.0), DARK),
+            bx(0.07, 0.05, 0.09, v(0.0, -0.715, 0.005), NOSE), // hoof
+        ])
+    };
+    let mut parts = legs(0.78, 0.13, 0.32, -0.32, &leg);
     parts.push(PartDef { kind: PartKind::Head, pivot: v(0.0, 1.05, 0.4), mesh: head });
     parts.push(PartDef { kind: PartKind::Tail, pivot: v(0.0, 1.0, -0.42), mesh: tail });
     CreatureSpec { torso, parts }
@@ -212,16 +250,28 @@ fn boar() -> CreatureSpec {
     let head = group(vec![
         bx(0.38, 0.34, 0.36, v(0.0, 0.0, 0.0), HIDE),
         bx(0.2, 0.18, 0.22, v(0.0, -0.08, 0.24), SNOUT),
+        bx(0.16, 0.07, 0.16, v(0.0, -0.185, 0.22), DARK), // lower jaw
         bx(0.12, 0.1, 0.05, v(0.0, -0.06, 0.36), NOSE),
+        bx(0.025, 0.035, 0.012, v(-0.03, -0.06, 0.385), BRISTLE), // nostrils on the disc
+        bx(0.025, 0.035, 0.012, v(0.03, -0.06, 0.385), BRISTLE),
         cone(0.028, 0.16, v(-0.1, -0.12, 0.3), xyz(-0.5, 0.0, -0.2), TUSK),
         cone(0.028, 0.16, v(0.1, -0.12, 0.3), xyz(-0.5, 0.0, 0.2), TUSK),
         cone(0.06, 0.14, v(-0.16, 0.18, -0.02), rz(-0.4), DARK),
         cone(0.06, 0.14, v(0.16, 0.18, -0.02), rz(0.4), DARK),
-        bx(0.04, 0.04, 0.01, v(-0.1, 0.04, 0.17), NOSE),
-        bx(0.04, 0.04, 0.01, v(0.1, 0.04, 0.17), NOSE),
+        cone(0.04, 0.1, v(0.0, 0.20, 0.06), rx(-0.3), BRISTLE), // forelock bristle
+        bx(0.04, 0.04, 0.01, v(-0.1, 0.04, 0.185), NOSE),
+        bx(0.04, 0.04, 0.01, v(0.1, 0.04, 0.185), NOSE),
     ]);
-    let mut parts = legs(0.36, 0.18, 0.3, -0.3, &|| bx(0.13, 0.34, 0.14, v(0.0, -0.17, 0.0), DARK));
+    let tail = group(vec![bxr(0.05, 0.2, 0.05, v(0.0, -0.07, -0.02), rx(0.45), DARK)]);
+    let leg = || {
+        group(vec![
+            bx(0.13, 0.3, 0.14, v(0.0, -0.15, 0.0), DARK),
+            bx(0.12, 0.05, 0.15, v(0.0, -0.315, 0.01), BRISTLE), // trotter
+        ])
+    };
+    let mut parts = legs(0.36, 0.18, 0.3, -0.3, &leg);
     parts.push(PartDef { kind: PartKind::Head, pivot: v(0.0, 0.6, 0.55), mesh: head });
+    parts.push(PartDef { kind: PartKind::Tail, pivot: v(0.0, 0.64, -0.44), mesh: tail });
     CreatureSpec { torso, parts }
 }
 
@@ -268,18 +318,33 @@ fn polar_bear() -> CreatureSpec {
     let torso = group(vec![
         bx(0.62, 0.58, 1.3, v(0.0, 0.68, 0.0), BODY),
         bx(0.58, 0.46, 0.56, v(0.0, 0.82, 0.38), BODY),
+        bx(0.5, 0.16, 0.5, v(0.0, 1.02, 0.1), BODY), // shoulder hump
+        bx(0.56, 0.1, 1.1, v(0.0, 0.42, 0.0), SHADOW), // shaded underbelly
+        bx(0.2, 0.36, 0.4, v(-0.26, 0.66, -0.4), BODY), // haunches
+        bx(0.2, 0.36, 0.4, v(0.26, 0.66, -0.4), BODY),
     ]);
     let head = group(vec![
         bx(0.42, 0.4, 0.42, v(0.0, 0.0, 0.0), BODY),
         bx(0.22, 0.18, 0.24, v(0.0, -0.07, 0.26), SNOUT),
+        bx(0.18, 0.06, 0.18, v(0.0, -0.17, 0.24), SHADOW), // lower jaw
         bx(0.1, 0.07, 0.05, v(0.0, -0.05, 0.39), NOSE),
+        bx(0.36, 0.05, 0.06, v(0.0, 0.12, 0.19), SHADOW), // brow shading
         cone(0.09, 0.14, v(-0.16, 0.24, -0.06), rz(-0.08), SHADOW),
         cone(0.09, 0.14, v(0.16, 0.24, -0.06), rz(0.08), SHADOW),
-        bx(0.05, 0.05, 0.01, v(-0.12, 0.04, 0.21), EYE),
-        bx(0.05, 0.05, 0.01, v(0.12, 0.04, 0.21), EYE),
+        bx(0.05, 0.05, 0.01, v(-0.12, 0.04, 0.215), EYE),
+        bx(0.05, 0.05, 0.01, v(0.12, 0.04, 0.215), EYE),
     ]);
     let tail = group(vec![bx(0.12, 0.12, 0.18, v(0.0, 0.0, -0.08), SHADOW)]);
-    let mut parts = legs(0.55, 0.22, 0.38, -0.38, &|| bx(0.18, 0.55, 0.2, v(0.0, -0.275, 0.0), SHADOW));
+    let leg = || {
+        group(vec![
+            bx(0.18, 0.5, 0.2, v(0.0, -0.25, 0.0), SHADOW),
+            bx(0.2, 0.1, 0.24, v(0.0, -0.5, 0.02), BODY), // broad paw
+            cone(0.02, 0.06, v(-0.06, -0.53, 0.15), rx(1.2), NOSE), // claws
+            cone(0.02, 0.06, v(0.0, -0.53, 0.15), rx(1.2), NOSE),
+            cone(0.02, 0.06, v(0.06, -0.53, 0.15), rx(1.2), NOSE),
+        ])
+    };
+    let mut parts = legs(0.55, 0.22, 0.38, -0.38, &leg);
     parts.push(PartDef { kind: PartKind::Head, pivot: v(0.0, 0.92, 0.72), mesh: head });
     parts.push(PartDef { kind: PartKind::Tail, pivot: v(0.0, 0.68, -0.66), mesh: tail });
     CreatureSpec { torso, parts }
@@ -473,23 +538,41 @@ fn golem() -> CreatureSpec {
     const CORE: u32 = 0x7ad2ff; // bright cyan reads as a glowing heart-stone
     let torso = group(vec![
         bx(0.74, 0.72, 0.56, v(0.0, 0.95, 0.0), STONE),
+        bxr(0.34, 0.26, 0.3, v(-0.28, 1.26, -0.06), xyz(0.25, 0.4, 0.2), STONE), // shoulder crags
+        bxr(0.3, 0.22, 0.28, v(0.3, 1.24, -0.04), xyz(-0.2, 0.3, -0.25), STONE),
+        bxr(0.52, 0.5, 0.18, v(0.0, 1.0, -0.3), xyz(0.15, 0.0, 0.1), DARK), // back slab
         bx(0.16, 0.12, 0.2, v(-0.34, 1.18, 0.0), MOSS), // shoulder moss
         bx(0.16, 0.12, 0.2, v(0.34, 1.18, 0.0), MOSS),
+        bx(0.2, 0.1, 0.14, v(0.1, 1.14, -0.34), MOSS), // back-slab moss
         bx(0.2, 0.22, 0.06, v(0.0, 0.96, 0.3), CORE), // chest core
+        bx(0.04, 0.2, 0.03, v(-0.2, 0.85, 0.275), CORE), // glowing seams radiating from the core
+        bx(0.18, 0.04, 0.03, v(0.18, 1.1, 0.275), CORE),
     ]);
     let head = group(vec![
         bx(0.42, 0.36, 0.36, v(0.0, 0.0, 0.0), STONE),
         bx(0.4, 0.08, 0.06, v(0.0, 0.12, 0.18), DARK), // brow ridge
+        cone(0.07, 0.16, v(-0.13, 0.22, -0.04), rz(0.3), STONE), // crown crags
+        cone(0.06, 0.13, v(0.1, 0.23, 0.02), rz(-0.25), STONE),
+        bx(0.14, 0.05, 0.12, v(0.04, 0.205, -0.1), MOSS), // mossy scalp
         bx(0.08, 0.08, 0.03, v(-0.12, 0.02, 0.18), CORE), // glowing eyes
         bx(0.08, 0.08, 0.03, v(0.12, 0.02, 0.18), CORE),
+        bx(0.3, 0.05, 0.04, v(0.0, -0.13, 0.18), DARK), // grim mouth slit
     ]);
     let arm = || {
         group(vec![
             bx(0.26, 0.6, 0.26, v(0.0, -0.3, 0.0), DARK),
+            bx(0.02, 0.34, 0.03, v(-0.13, -0.28, 0.06), CORE), // cracked glow seam
             bx(0.3, 0.26, 0.3, v(0.0, -0.66, 0.02), STONE), // fist
+            bx(0.1, 0.08, 0.06, v(-0.07, -0.56, 0.15), DARK), // knuckle stones
+            bx(0.1, 0.08, 0.06, v(0.07, -0.56, 0.15), DARK),
         ])
     };
-    let leg = || bx(0.24, 0.5, 0.26, v(0.0, -0.25, 0.0), DARK);
+    let leg = || {
+        group(vec![
+            bx(0.24, 0.5, 0.26, v(0.0, -0.25, 0.0), DARK),
+            bx(0.27, 0.12, 0.3, v(0.0, -0.44, 0.02), STONE), // boulder foot
+        ])
+    };
     let parts = vec![
         PartDef { kind: PartKind::Leg(1.0), pivot: v(-0.2, 0.5, 0.0), mesh: leg() },
         PartDef { kind: PartKind::Leg(-1.0), pivot: v(0.2, 0.5, 0.0), mesh: leg() },
@@ -555,15 +638,33 @@ fn bog_croc() -> CreatureSpec {
         bx(0.28, 0.1, 0.3, v(0.0, -0.02, 0.26), HIDE), // snout
         bx(0.24, 0.06, 0.26, v(0.0, -0.1, 0.22), DARK), // lower jaw
         bx(0.22, 0.04, 0.04, v(0.0, -0.04, 0.38), TOOTH), // teeth
+        bx(0.2, 0.03, 0.03, v(0.0, -0.09, 0.36), TOOTH), // lower tooth row
+        bx(0.06, 0.025, 0.025, v(-0.12, -0.045, 0.30), TOOTH), // side fangs proud of the lip
+        bx(0.06, 0.025, 0.025, v(0.12, -0.045, 0.30), TOOTH),
+        bx(0.07, 0.04, 0.09, v(-0.1, 0.135, 0.0), DARK), // raised eye ridges
+        bx(0.07, 0.04, 0.09, v(0.1, 0.135, 0.0), DARK),
         bx(0.05, 0.05, 0.05, v(-0.1, 0.1, 0.0), EYE),
         bx(0.05, 0.05, 0.05, v(0.1, 0.1, 0.0), EYE),
+        bx(0.025, 0.025, 0.012, v(-0.05, 0.035, 0.41), DARK), // nostril bumps on the snout tip
+        bx(0.025, 0.025, 0.012, v(0.05, 0.035, 0.41), DARK),
     ]);
-    let tail = group(vec![
+    let mut tail_parts = vec![
         bx(0.3, 0.22, 0.44, v(0.0, 0.0, 0.0), HIDE),
         bx(0.22, 0.16, 0.44, v(0.0, 0.0, -0.4), DARK),
         bx(0.12, 0.1, 0.38, v(0.0, 0.0, -0.78), DARK),
-    ]);
-    let leg = || group(vec![bx(0.16, 0.2, 0.16, v(0.0, -0.1, 0.0), DARK), bx(0.14, 0.08, 0.18, v(0.0, -0.2, 0.03), DARK)]);
+    ];
+    for (i, z) in [0.05f32, -0.25, -0.5].into_iter().enumerate() {
+        // the back's spine ridge continues down the tail, shrinking toward the tip
+        tail_parts.push(cone(0.05 - i as f32 * 0.01, 0.12 - i as f32 * 0.02, v(0.0, 0.11 - i as f32 * 0.03, z), Quat::IDENTITY, DARK));
+    }
+    let tail = group(tail_parts);
+    let leg = || {
+        group(vec![
+            bx(0.16, 0.2, 0.16, v(0.0, -0.1, 0.0), DARK),
+            bx(0.14, 0.08, 0.18, v(0.0, -0.2, 0.03), DARK),
+            bx(0.13, 0.035, 0.05, v(0.0, -0.22, 0.13), TOOTH), // claws
+        ])
+    };
     let mut parts = legs(0.2, 0.3, 0.5, -0.5, &leg);
     parts.push(PartDef { kind: PartKind::Head, pivot: v(0.0, 0.22, 0.9), mesh: head });
     parts.push(PartDef { kind: PartKind::Tail, pivot: v(0.0, 0.2, -0.78), mesh: tail });
