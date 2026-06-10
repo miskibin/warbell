@@ -228,9 +228,11 @@ fn region_at(x: f32, z: f32) -> Option<usize> {
 }
 
 /// Terraced coastal ridge height class (≥2) at base `(x, z)`, or 0 for no hill. A low-frequency
-/// mask picks which stretches of coast get a mountain ring (the rest stays open beach/plain),
-/// and the height tapers to flat at both edges of the band so the nav-grid's 1-class step rule
-/// still finds ways through.
+/// mask picks which stretches of coast get a mountain ring (the rest stays open beach/plain).
+/// Height rises MONOTONICALLY toward the sea — tallest just behind the beach, tapering to flat
+/// inland — so the inland face is a climbable terraced ramp (≤1 class per step for the
+/// nav-grid) while the seaward face drops to the beach as a sheer cliff: the ridge tops are
+/// reachable from one side only.
 fn coast_hill_class(x: f32, z: f32) -> i32 {
     let d = dist_from_coast(x, z) as f32;
     if !(2.0..=7.0).contains(&d) {
@@ -240,9 +242,9 @@ fn coast_hill_class(x: f32, z: f32) -> i32 {
     if mask < 0.3 {
         return 0;
     }
-    let band = 1.0 - ((d - 4.5) / 2.5).abs().min(1.0); // peak mid-band, flat at both edges
-    let h = 1.0 + mask.min(1.6) * 2.6 * band + noise_b(x * 1.1 + 5.0, z * 1.1) * 0.7;
-    let cls = h.round().clamp(1.0, 6.0) as i32;
+    let band = ((7.0 - d) / 4.5).clamp(0.0, 1.0); // 0 inland (d=7) → 1 at the coast side
+    let h = 1.0 + mask.min(1.6) * 5.0 * band + noise_b(x * 1.1 + 5.0, z * 1.1) * 0.7;
+    let cls = h.round().clamp(1.0, 9.0) as i32;
     if cls >= 2 { cls } else { 0 }
 }
 

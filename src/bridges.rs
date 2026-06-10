@@ -18,9 +18,10 @@ const DECK_HALF_Z: f32 = 1.2;
 /// Bank overhang past the water edge on each side (world units).
 const OVERHANG: f32 = 1.4;
 /// Min world-XZ gap between two bridges (so they don't cluster on one crossing).
-const MIN_SPACING: f32 = 18.0;
-/// At most this many bridges (four rivers now cross the island — each needs crossings).
-const MAX_BRIDGES: usize = 7;
+const MIN_SPACING: f32 = 13.0;
+/// At most this many bridges (four rivers now cross the island — each needs several crossings
+/// or the player/invaders detour absurdly far).
+const MAX_BRIDGES: usize = 12;
 /// Acceptable half-width of the channel being bridged (skip slivers + wide lake-like spans —
 /// a clean river crossing is a couple units across).
 const MIN_HALF: f32 = 0.6;
@@ -57,16 +58,31 @@ fn spans() -> &'static [Span] {
             }
             z += 2.0;
         }
-        // 2. Greedily keep the narrowest, well-spaced crossings (a tidy deck reads better than
-        //    a wide one; clustered duplicates over a single crossing are redundant).
+        // 2. Pick well-SPREAD crossings: seed with the narrowest, then repeatedly take the
+        //    candidate farthest from every chosen deck (max-min distance, capped at
+        //    MIN_SPACING). Narrowest-first alone clustered every deck on the thinnest
+        //    channels and left the widest river with no bridge at all; spreading by distance
+        //    covers each river — and each stretch of it.
         cands.sort_by(|a, b| a.half.partial_cmp(&b.half).unwrap_or(std::cmp::Ordering::Equal));
         let mut out: Vec<Span> = Vec::new();
-        for c in cands {
-            if out.len() >= MAX_BRIDGES {
-                break;
-            }
-            if out.iter().all(|s| (s.cx - c.cx).hypot(s.cz - c.cz) >= MIN_SPACING) {
-                out.push(c);
+        if let Some(&first) = cands.first() {
+            out.push(first);
+        }
+        while out.len() < MAX_BRIDGES {
+            let next = cands
+                .iter()
+                .map(|c| {
+                    let d = out
+                        .iter()
+                        .map(|s| (s.cx - c.cx).hypot(s.cz - c.cz))
+                        .fold(f32::INFINITY, f32::min);
+                    (c, d)
+                })
+                .filter(|(_, d)| *d >= MIN_SPACING)
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            match next {
+                Some((c, _)) => out.push(*c),
+                None => break,
             }
         }
         out
@@ -196,6 +212,31 @@ fn deck_mesh(half_x: f32) -> Mesh {
     base.duplicate_vertices();
     base.compute_flat_normals();
     base
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every river must end up with at least one deck — the greedy narrowest-first pick is
+    /// allowed to favour clean crossings, but a whole river with no bridge strands invader
+    /// camps (and players) on long detours. Buckets are loose world-space regions of the four
+    /// channels: west vertical, southern stream, north horizontal, south horizontal.
+    #[test]
+    fn every_river_gets_a_bridge() {
+        let s = spans();
+        assert!(s.len() >= 8, "expected a healthy bridge count, got {}", s.len());
+        let west_vert = s.iter().any(|b| b.across_x && b.cx < -30.0);
+        let south_stream = s.iter().any(|b| b.across_x && b.cx >= -30.0 && b.cz > 5.0);
+        let north_horiz = s.iter().any(|b| !b.across_x && b.cz < -35.0);
+        let south_horiz = s.iter().any(|b| !b.across_x && b.cz > 30.0);
+        let dump: Vec<(f32, f32, bool)> = s.iter().map(|b| (b.cx, b.cz, b.across_x)).collect();
+        assert!(
+            west_vert && south_stream && north_horiz && south_horiz,
+            "uncovered river (west_vert={west_vert} south_stream={south_stream} \
+             north_horiz={north_horiz} south_horiz={south_horiz}); spans: {dump:?}"
+        );
+    }
 }
 
 /// Spawn a deck at each river crossing. Called from `worldmap::build` (after terrain).
