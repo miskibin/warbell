@@ -3,9 +3,12 @@
 //! complete: keep, perimeter walls split around four gates, four corner towers, eight
 //! houses, a cobbled courtyard, the war bell, banners, torches and chimney smoke.
 //!
-//! Static — no gameplay. At the island centre (world origin, flat grass safe-zone, y=0).
-//! Kept at TS *absolute* size (NOT ×1.4) but the PERIMETER is widened (`HALF_X/HALF_Z`) for
-//! more courtyard room. Coordinate map: world = `(base − (72,54))`.
+//! This module owns the **meshes** — the structures are otherwise static here; the gameplay that
+//! lives *on* them is wired elsewhere: the keep's HP/repair and the night siege in `siege.rs`, the
+//! war-bell ring + War Table in `interaction.rs`, the tower-mounted archers/ballista in
+//! `defenses.rs`. At the island centre (world origin, flat grass safe-zone, y=0). Kept at TS
+//! *absolute* size (NOT ×1.4) but the PERIMETER is widened (`HALF_X/HALF_Z`) for more courtyard
+//! room. Coordinate map: world = `(base − (72,54))`.
 //!
 //! Surfaces use procedural canvas-style textures ported from the TS `textures.ts`
 //! (ashlar stone, plaster, wood planks, roof shingles, cobbles, tilled soil) on tiling

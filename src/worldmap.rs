@@ -1,11 +1,12 @@
 //! The **world map** — a faithful Bevy port of the TS game's island
 //! (`src/world/tileMap.ts`) at the original BASE resolution (144×108): an elliptical
 //! island with a noisy coast, five biome blobs (snow NW, desert NE, rock E, forest SW,
-//! swamp S), a grass centre safe-zone (the future castle spot), a grass frontier with
+//! swamp S), a grass centre safe-zone (the castle spot), a grass frontier with
 //! scattered forest clumps, a beach ring, two carved rivers + one lake, and **terraced**
 //! stepped heights (flat tile-tops + cliff faces; snow peak 9, rock peak 15).
 //!
-//! Differences from the game (this is a static viewer): no ork camps / castle / wildlife.
+//! `build` seeds the full playable island: the ground mesh plus ork-camp / castle / ore / chest
+//! placement and wildlife (single-biome views, keys 1–5, have no island layout, so none of these).
 //! Biome boundaries get **smooth colour blending** (the ground mesh's per-vertex colour is
 //! a soft distance-weighted mix of the biome palettes), while the discrete classification
 //! still drives heights + which biome's props scatter on each tile.

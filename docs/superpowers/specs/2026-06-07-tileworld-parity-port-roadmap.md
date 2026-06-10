@@ -350,7 +350,7 @@ in-code:
   death path (combat, cleave, siege-stuck, brawl, defender bolt).
 - **Wildlife death-fade — DONE.** same `begin_dying()` path (`combat.rs:380`).
 - **Wildlife respawn — DONE.** `wildlife.rs` `enqueue_respawn`/`drain_respawns`, 35s herbivore /
-  50s predator, near the death spot. (The module-top comment still says "no respawn" — stale.)
+  50s predator, near the death spot.
 - **Wildlife struck-enrage — DONE.** `Struck` component → 6s aggro latch onto the hero
   (`wildlife.rs:147`, inserted at `combat.rs:405`). Applies to all predators.
 - **Audio SFX synth — DONE.** `audio/synth.rs` bakes 9 in-memory WAV stings (ore/chest/forage/

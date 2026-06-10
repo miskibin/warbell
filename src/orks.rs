@@ -1,6 +1,9 @@
 //! **Orks** — the camp warbands. Box-mesh humanoids ported 1:1 from the TS `Ork.tsx` mesh
-//! tree, plus an ambient AI: each ork is home-anchored to its camp and idles / patrols within
-//! it (the scene is a viewer — no combat, no player aggro, no marching on the keep, no flee).
+//! tree, plus a full combat AI: each ork is home-anchored to its camp and runs an
+//! Idle / Patrol / Hunt / Attack state machine — idling within the camp until the hero (or a
+//! rival-faction ork) comes into range, then hunting via A* (`navgrid`) and striking. Berserkers
+//! frenzy under 40% HP. (The night sieges marching on the keep are a separate brain in
+//! `siege.rs`; this module owns the camp warbands.)
 //!
 //! Like `critters`, an ork is a small entity hierarchy: a static **torso** (legs become
 //! articulated) plus articulated **parts** — 2 legs, 2 arms (the right arm carries a baked

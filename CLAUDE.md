@@ -11,11 +11,12 @@ has grown into a near-parity playable game: a knight defends a central castle ag
 ork sieges, with combat, economy, an upgrade tree, inventory, villagers, succession, and five
 biomes on one enlarged island.
 
-> **`README.md` and the `main.rs` module doc-comment are stale** — they describe the original
-> "no player, no gameplay, just the scene" viewer. Trust the code and `docs/superpowers/specs/`,
-> not those two, for what the game *is now*. The parity effort is tracked in
-> `docs/superpowers/specs/2026-06-07-tileworld-parity-port-roadmap.md` (source of truth for
-> per-subsystem numbers and reuse pointers).
+> `README.md` and the `main.rs` module doc-comment now describe the actual game (both were
+> truthed-up after an earlier era where they still claimed "no player, no gameplay, just the
+> scene"). They're fine as entry points, but the per-subsystem **source of truth** is the parity
+> roadmap, `docs/superpowers/specs/2026-06-07-tileworld-parity-port-roadmap.md` (numbers + reuse
+> pointers). If you spot a code comment still describing the old static-viewer state, it's stale —
+> fix it.
 
 ## Commands
 

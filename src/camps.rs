@@ -3,9 +3,11 @@
 //! forest, swamp, rock). Each is a clearing of tents, a flickering campfire, a warband banner,
 //! skull-spikes and a prisoner cage with captives, patrolled by a mixed warband (`orks.rs`).
 //!
-//! The scene is a viewer: **no rescue, respawn, combat or faction fighting** — pure set-dressing.
-//! Camps render only in the Combined world-map view (built from `worldmap::build`, like the
-//! castle); single-biome views (keys 1–5) have no island layout, so no camps.
+//! This module builds the **camp dioramas + placement**; the warbands that occupy them fight,
+//! flee, brawl rival factions and respawn (`orks.rs`), and a cleared warband frees the prisoner
+//! cage (`villagers::camp_rescue`, tagged here by [`Cage`]). Camps render only in the Combined
+//! world-map view (built from `worldmap::build`, like the castle); single-biome views (keys 1–5)
+//! have no island layout, so no camps.
 //!
 //! Placement ([`plan`]) deterministically reject-samples one flat 7×7 walkable clearing per
 //! biome (mountainous snow/rock land on the flat grass apron at the biome edge — what the TS
