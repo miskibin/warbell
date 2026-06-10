@@ -81,24 +81,24 @@ pub enum AudioCue {
     /// One metallic chip on a pick-swing against an ore boulder (sampled `var-1`/`var-3`
     /// clips, pitch-jittered). Distinct from the `OreShatter` synth sting on the breaking blow.
     OreChip,
-    /// A single axe chop landing on a tree (sampled `chop-wood.ogg`, pitch-jittered). Emitted
-    /// once per swing that strikes any choppable tree (`verbs::chop_tree`).
+    /// A single axe chop landing on a tree (sampled `chop-wood-{1..3}.ogg`, random take +
+    /// pitch jitter). Emitted once per swing that strikes any choppable tree (`verbs::chop_tree`).
     WoodChop,
+    /// Herb / loot picked up (sampled `forage.ogg`).
+    Forage,
+    /// Night wave summoned — the war bell's single hard toll (sampled `war-bell.ogg`).
+    WarBell,
     // ── Procedural stings (synth-baked, handled by `sfx` via [`synth::StingBank`]) ──
     /// Ore boulder shattered.
     OreShatter,
     /// Chest lid opened.
     ChestOpen,
-    /// Herb / loot picked up.
-    Forage,
     /// Hero gained a level.
     LevelUp,
     /// Gold collected.
     Gold,
     /// Shop purchase confirmed.
     ShopBuy,
-    /// Night wave summoned (war bell).
-    WarBell,
     /// Camp captive freed.
     CampRescue,
     /// Hero HP crossed the low threshold.
