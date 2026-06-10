@@ -170,31 +170,34 @@ fn build_saguaro_mesh(variant: u32) -> Mesh {
 
     let mut parts: Vec<Mesh> = Vec::new();
 
-    // Trunk body + a shaded back rib + a lit front rib (so it reads ribbed/lit).
-    parts.push(cyl_up(trunk_r, trunk_h, trunk_h * 0.5, 6, CACTUS_MID));
-    parts.push(tinted(
-        Cylinder::new(trunk_r * 0.6, trunk_h * 0.94)
-            .mesh()
-            .resolution(6)
-            .build()
-            .translated_by(Vec3::new(-trunk_r * 0.42, trunk_h * 0.5, 0.0)),
-        lin(CACTUS_DARK),
-    ));
-    parts.push(tinted(
-        Cylinder::new(trunk_r * 0.5, trunk_h * 0.9)
-            .mesh()
-            .resolution(6)
-            .build()
-            .translated_by(Vec3::new(trunk_r * 0.46, trunk_h * 0.52, 0.05)),
-        lin(CACTUS_LIGHT),
-    ));
+    // Trunk: a slightly tapering two-segment column (fatter foot) with TRUE rib ridges —
+    // six thin vertical green ridges standing proud of the surface, alternating shadowed
+    // and sunlit, so the column reads pleated from every side (the old build faked it
+    // with two offset cylinders that only read from one angle).
+    parts.push(cyl_up(trunk_r * 1.05, trunk_h * 0.45, trunk_h * 0.225, 7, CACTUS_MID));
+    parts.push(cyl_up(trunk_r * 0.92, trunk_h * 0.60, trunk_h * 0.72, 7, CACTUS_MID));
+    for i in 0..6 {
+        let a = (i as f32 / 6.0) * TAU + 0.26;
+        let c = if i % 2 == 0 { CACTUS_LIGHT } else { CACTUS_DARK };
+        parts.push(tinted(
+            Cuboid::new(0.030, trunk_h * 0.92, 0.030)
+                .mesh()
+                .build()
+                .translated_by(Vec3::new(trunk_r * 0.92, trunk_h * 0.47, 0.0))
+                .rotated_by(Quat::from_rotation_y(a)),
+            lin(c),
+        ));
+    }
     // Rounded green cap so the trunk top isn't a flat disc.
-    parts.push(ball_at(trunk_r * 0.95, y(trunk_h), 0.85, CACTUS_MID));
+    parts.push(ball_at(trunk_r * 0.92, y(trunk_h), 0.85, CACTUS_MID));
 
-    // ── Arms: an upturned arm = a horizontal elbow stub + an upright forearm + tip.
+    // ── Arms: an upturned arm = a round elbow joint + an outward stub + an upright
+    // forearm with its own short rib ridges + a rounded lit tip.
     let add_arm = |parts: &mut Vec<Mesh>, side: f32, attach_y: f32, arm_h: f32, arm_r: f32| {
-        let elbow_len = 0.30;
+        let elbow_len = 0.28;
         let elbow_x = side * (trunk_r + elbow_len * 0.5);
+        // Ball joint where the elbow meets the trunk (hides the seam).
+        parts.push(ball_at(arm_r * 1.1, Vec3::new(side * trunk_r * 0.9, attach_y, 0.0), 0.95, CACTUS_MID));
         // Elbow reaching outward (built upright, laid toward ±X by a 90° Z rotation).
         parts.push(tinted(
             Cylinder::new(arm_r, elbow_len)
@@ -203,22 +206,25 @@ fn build_saguaro_mesh(variant: u32) -> Mesh {
                 .build()
                 .rotated_by(Quat::from_rotation_z(FRAC_PI_2))
                 .translated_by(Vec3::new(elbow_x, attach_y, 0.0)),
-            lin(CACTUS_MID),
-        ));
-        let fore_x = side * (trunk_r + elbow_len);
-        // Upright forearm rising from the elbow's outer end.
-        parts.push(cyl_up_at(arm_r, arm_h, Vec3::new(fore_x, attach_y + arm_h * 0.5, 0.0), CACTUS_MID));
-        // Shaded back rib on the forearm.
-        parts.push(tinted(
-            Cylinder::new(arm_r * 0.55, arm_h * 0.9)
-                .mesh()
-                .resolution(6)
-                .build()
-                .translated_by(Vec3::new(fore_x - side * arm_r * 0.4, attach_y + arm_h * 0.5, 0.0)),
             lin(CACTUS_DARK),
         ));
-        // Rounded lit tip cap.
+        let fore_x = side * (trunk_r + elbow_len);
+        // Round outer elbow + upright forearm rising from it.
+        parts.push(ball_at(arm_r * 1.05, Vec3::new(fore_x, attach_y, 0.0), 0.95, CACTUS_MID));
+        parts.push(cyl_up_at(arm_r, arm_h, Vec3::new(fore_x, attach_y + arm_h * 0.5, 0.0), CACTUS_MID));
+        // Two short rib ridges on the forearm (in + out faces).
+        for s in [-1.0_f32, 1.0] {
+            parts.push(tinted(
+                Cuboid::new(0.022, arm_h * 0.85, 0.022)
+                    .mesh()
+                    .build()
+                    .translated_by(Vec3::new(fore_x + s * arm_r * 0.9, attach_y + arm_h * 0.5, 0.02)),
+                lin(if s > 0.0 { CACTUS_LIGHT } else { CACTUS_DARK }),
+            ));
+        }
+        // Rounded lit tip cap + a bloom crowning the arm.
         parts.push(ball_at(arm_r * 0.95, Vec3::new(fore_x, attach_y + arm_h, 0.0), 0.85, CACTUS_LIGHT));
+        parts.push(ball_at(arm_r * 0.42, Vec3::new(fore_x, attach_y + arm_h + 0.05, 0.0), 0.6, FLOWER_PINK));
     };
 
     match v {
@@ -235,14 +241,14 @@ fn build_saguaro_mesh(variant: u32) -> Mesh {
     parts.push(ball_at(trunk_r * 0.26, y(trunk_h + 0.12), 0.6, FLOWER_YELLOW));
 
     // ── Pale spine flecks spiralling up the trunk (tiny boxes) for texture.
-    for i in 0..5 {
-        let t = (i as f32 + 0.5) / 5.0;
+    for i in 0..7 {
+        let t = (i as f32 + 0.5) / 7.0;
         let a = i as f32 * 2.399_963_2; // golden angle spread
         parts.push(tinted(
-            Cuboid::new(0.02, 0.02, 0.02)
+            Cuboid::new(0.018, 0.018, 0.018)
                 .mesh()
                 .build()
-                .translated_by(Vec3::new(a.cos() * trunk_r * 0.96, trunk_h * (0.2 + t * 0.6), a.sin() * trunk_r * 0.96)),
+                .translated_by(Vec3::new(a.cos() * trunk_r * 0.98, trunk_h * (0.15 + t * 0.7), a.sin() * trunk_r * 0.98)),
             lin(CACTUS_SPINE),
         ));
     }
@@ -265,6 +271,21 @@ fn build_barrel_mesh(variant: u32) -> Mesh {
         ball_at(r * 0.98, y(h), 0.5, CACTUS_LIGHT),  // domed lit top
         ball_at(r * 0.9, y(h * 0.28), 0.5, CACTUS_DARK), // dark shaded skirt
     ];
+
+    // Eight TRUE vertical rib ridges standing proud of the barrel, alternating lit and
+    // shadowed, so the pleats read from every angle.
+    for i in 0..8 {
+        let a = (i as f32 / 8.0) * TAU + 0.2;
+        let c = if i % 2 == 0 { CACTUS_LIGHT } else { CACTUS_DARK };
+        parts.push(tinted(
+            Cuboid::new(0.026, h * 0.88, 0.026)
+                .mesh()
+                .build()
+                .translated_by(Vec3::new(r * 0.95, h * 0.48, 0.0))
+                .rotated_by(Quat::from_rotation_y(a)),
+            lin(c),
+        ));
+    }
 
     // Pale spine flecks around the upper ribs.
     for i in 0..8 {
@@ -452,8 +473,11 @@ fn build_dry_grass_mesh() -> Mesh {
     let parts = specs
         .iter()
         .map(|&(yaw, tilt, h, c)| {
+            // 4-sided blades: the crisp facet IS the look, and dry grass is scattered
+            // by the thousand (the default 32-segment cone was ~8× the vertices).
             let mut m = Cone { radius: 0.018, height: h }
                 .mesh()
+                .resolution(4)
                 .build()
                 .translated_by(y(h / 2.0))
                 .rotated_by(Quat::from_rotation_z(tilt))
@@ -501,7 +525,11 @@ fn build_desert_litter_mesh(variant: u32) -> Mesh {
             let head_y = 0.10;
             let mut parts = vec![
                 tinted(
-                    Cone { radius: 0.008, height: head_y }.mesh().build().translated_by(y(head_y * 0.5)),
+                    Cone { radius: 0.008, height: head_y }
+                        .mesh()
+                        .resolution(5)
+                        .build()
+                        .translated_by(y(head_y * 0.5)),
                     lin(DESERT_STEM),
                 ),
                 ball_at(0.018, y(head_y), 0.7, FLOWER_RED),
@@ -803,23 +831,33 @@ fn build_palm_mesh() -> Mesh {
     }
     let top = Vec3::new(top_x, trunk_h, 0.0);
 
-    // ── Crown: drooping fronds radiating out + down from the trunk top.
-    let n_fronds = 8;
-    for i in 0..n_fronds {
-        let a = (i as f32 / n_fronds as f32) * TAU;
-        let droop = if i % 2 == 0 { 0.55 } else { 0.75 };
-        let c = if i % 2 == 0 { FROND_LIGHT } else { FROND_DARK };
-        let frond_len = 1.1;
-        // Flattened leaf box: build along +Y from origin, droop past horizontal (tilt
-        // about X), yaw around the crown, then move to the trunk top.
-        let frond = Cuboid::new(0.16, frond_len, 0.03)
+    // ── Crown: two tiers of drooping fronds radiating out + down from the trunk top.
+    // Each frond is a squashed 4-sided cone — broad at the crown, tapering to a hanging
+    // tip — so the leaf reads pointed and ribbed, not a stiff rectangle.
+    let frond = |len: f32, a: f32, droop: f32, c: u32| -> Mesh {
+        let m = Cone { radius: 0.10, height: len }
             .mesh()
+            .resolution(4)
             .build()
-            .translated_by(y(frond_len * 0.5))
+            .scaled_by(Vec3::new(1.8, 1.0, 0.35))
+            .translated_by(y(len * 0.5))
             .rotated_by(Quat::from_rotation_x(FRAC_PI_2 + droop))
             .rotated_by(Quat::from_rotation_y(a))
             .translated_by(top);
-        parts.push(tinted(frond, lin(c)));
+        tinted(m, lin(c))
+    };
+    // Lower tier: eight long fronds drooping well past horizontal.
+    for i in 0..8 {
+        let a = (i as f32 / 8.0) * TAU;
+        let droop = if i % 2 == 0 { 0.60 } else { 0.80 };
+        let c = if i % 2 == 0 { FROND_LIGHT } else { FROND_DARK };
+        parts.push(frond(1.15, a, droop, c));
+    }
+    // Upper tier: five shorter fronds lifted nearer the vertical, offset between the
+    // lower tier's gaps, crowning the head.
+    for i in 0..5 {
+        let a = (i as f32 / 5.0) * TAU + 0.4;
+        parts.push(frond(0.75, a, 0.25, FROND_LIGHT));
     }
     // Crown core lump hiding the frond roots.
     parts.push(ball_at(0.14, top, 0.8, FROND_DARK));
@@ -846,6 +884,7 @@ fn build_reed_clump_mesh() -> Mesh {
         let tilt = 0.06 + (i % 4) as f32 * 0.05;
         let stalk = Cone { radius: 0.022, height: h }
             .mesh()
+            .resolution(5)
             .build()
             .translated_by(y(h / 2.0))
             .rotated_by(Quat::from_rotation_z(tilt))

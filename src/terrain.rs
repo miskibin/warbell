@@ -84,7 +84,11 @@ pub fn make_material(
 
 // ── Detail texture (port of terrainDetail.ts; parameterised per biome) ───────────
 
-const DETAIL_PX: u32 = 256;
+// 512²: the 256 texture's grain went soft and its repeat read as a visible grid at
+// gameplay zoom; doubling the lattice resolution (with an extra macro octave below)
+// keeps the blades crisp and pushes the repetition below notice. Still a one-off
+// CPU bake per biome (≈0.26 Mpx).
+const DETAIL_PX: u32 = 512;
 
 fn hash2(ix: f32, iy: f32, seed: f32) -> f32 {
     let d = ix * 127.1 + iy * 311.7 + seed * 74.7;
@@ -130,14 +134,20 @@ fn detail_image(d: &GroundDetail) -> (Image, f32) {
         for px in 0..n {
             let u = px as f32 / n as f32;
             let v = py as f32 / n as f32;
+            let macro_ = value_noise(u, v, 3, 3, seed + 53.0); // broad worn/lush drift
             let patch = value_noise(u, v, 7, 7, seed);
             let mid = value_noise(u, v, 18, 18, seed + 11.0);
+            let mid2 = value_noise(u, v, 37, 37, seed + 71.0); // clump break-up
             let grain = value_noise(u, v, 96, 96, seed + 23.0);
             let streak = value_noise(u, v, 64, 7, seed + 37.0); // vertical blades
-            let mut t = patch * 0.55 + mid * 0.30 + grain * 0.15;
+            let mut t = macro_ * 0.18 + patch * 0.40 + mid * 0.22 + mid2 * 0.10 + grain * 0.10;
             if streak > 0.0 {
                 t += (streak - 0.5) * d.streak;
             }
+            // A second, coarser streak set at an offset phase so the blade pattern
+            // doesn't read as one repeating comb.
+            let streak2 = value_noise(u, v, 23, 5, seed + 91.0);
+            t += (streak2 - 0.5) * d.streak * 0.4;
             let t = t.clamp(0.0, 1.0);
             let col = if t < 0.5 {
                 let s = t * 2.0;

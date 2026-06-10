@@ -101,11 +101,13 @@ fn ball_at(r: f32, off: Vec3, squash: f32, c: u32) -> Mesh {
 }
 
 /// A thin flat-shaded cone blade rooted at y≈0, leaned outward by `tilt` (about Z)
-/// then yawed by `yaw` (about Y) so a clump of them fans out. Flat-shaded so the blade
-/// reads as a crisp spike, not a soft round cone.
+/// then yawed by `yaw` (about Y) so a clump of them fans out. 4-sided: ground cover is
+/// scattered by the thousand, and the crisp low-poly facet IS the look — the default
+/// 32-segment cone was both soft-looking and ~8× the vertices.
 fn blade(yaw: f32, tilt: f32, h: f32, r: f32, c: u32) -> Mesh {
     let mut m = Cone { radius: r, height: h }
         .mesh()
+        .resolution(4)
         .build()
         .translated_by(y(h / 2.0))
         .rotated_by(Quat::from_rotation_z(tilt))
@@ -117,35 +119,34 @@ fn blade(yaw: f32, tilt: f32, h: f32, r: f32, c: u32) -> Mesh {
 
 // ── Grass tuft ─────────────────────────────────────────────────────────────────
 
-/// Grass tuft: 5 thin tapered cone blades fanned around the clump, ~0.26u tall, leaned
-/// + yawed out so it reads as a spiky clump (port of `Scatter.tsx` PARTS.tuft — 5 cones,
-/// radii 0.025→0.02, heights 0.26→0.17, exact offsets/rotations from the spec). Green
-/// base (#3aa044) → lighter tip (#5fc060): the two taller central blades use the base
-/// tone, the shorter outer blades the lighter tip tone, so the clump reads two-tone.
+/// Grass tuft: 8 thin tapered cone blades in two rings — a taller deep-green core fan +
+/// a shorter light-tipped outer fringe leaning well out — so the clump reads dense at
+/// the heart and feathered at the rim, ~0.28u tall. Cheaper per-blade than the old
+/// 5-blade build (4-sided blades) despite the fuller silhouette.
 pub fn build_grass_tuft_mesh() -> Mesh {
-    // (yaw, tilt, height, radius, colour) — spec blade table, with the tilt encoding
-    // each blade's lean (the spec's combined x/z euler tilts folded into one Z lean).
-    let specs = [
-        (0.0_f32, 0.00_f32, 0.26_f32, 0.025_f32, TUFT_GREEN),
-        (0.5, 0.22, 0.22, 0.022, TUFT_GREEN),
-        (-0.4, -0.20, 0.20, 0.022, TUFT_TIP),
-        (1.9, 0.15, 0.18, 0.020, TUFT_TIP),
-        (-1.7, -0.18, 0.17, 0.020, TUFT_TIP),
-    ];
-    let parts = specs
-        .iter()
-        .map(|&(yaw, tilt, h, r, c)| blade(yaw, tilt, h, r, c))
-        .collect();
+    let mut parts: Vec<Mesh> = Vec::with_capacity(8);
+    // Core fan: three tall dark blades, nearly upright, fanned by thirds.
+    for i in 0..3 {
+        let yaw = (i as f32 / 3.0) * std::f32::consts::TAU + 0.3;
+        let tilt = 0.10 + (i % 2) as f32 * 0.08;
+        parts.push(blade(yaw, tilt, 0.26 - i as f32 * 0.02, 0.024, TUFT_GREEN));
+    }
+    // Outer fringe: five lighter, shorter blades leaning out around the clump.
+    for i in 0..5 {
+        let yaw = (i as f32 / 5.0) * std::f32::consts::TAU;
+        let tilt = 0.28 + (i % 3) as f32 * 0.07;
+        parts.push(blade(yaw, tilt, 0.16 + (i % 2) as f32 * 0.04, 0.020, TUFT_TIP));
+    }
     merged(parts)
 }
 
 // ── Fern ───────────────────────────────────────────────────────────────────────
 
-/// Fern: a low spray of several angled fronds radiating from the base, deep green,
-/// ~0.3u tall. Each frond is a thin flattened box (a leaf blade) tilted up + outward;
-/// they fan around the clump in a low rosette. A short darker central stalk anchors it.
+/// Fern: a rosette of 8 tapering leaf-shaped fronds in two tiers — a low outer spray +
+/// a steeper inner ring — around a darker rachis, ~0.3u tall. Each frond is a squashed
+/// 4-sided cone (wide at the base, tapering to the tip) laid outward, so it reads as a
+/// pointed leaf blade rather than the old rectangular box.
 pub fn build_fern_mesh() -> Mesh {
-    const FROND_LEN: f32 = 0.30;
     let mut parts = vec![
         // Short central rachis (a thin upright box) so the fronds read as rooted.
         tinted(
@@ -153,24 +154,30 @@ pub fn build_fern_mesh() -> Mesh {
             lin(FERN_STEM),
         ),
     ];
-    // 6 fronds fanned around the clump: a thin flattened box, pivoted at the base, laid
-    // out almost flat (low spray) with a slight upward lift, alternating two green tones.
-    for i in 0..6 {
-        let yaw = (i as f32 / 6.0) * std::f32::consts::TAU;
-        let lift = if i % 2 == 0 { 0.62 } else { 0.50 }; // radians from horizontal
-        let c = if i % 2 == 0 { FERN_GREEN } else { FERN_TIP };
-        // Build a thin flat leaf along +Y (length FROND_LEN), shift so its base is at the
-        // origin, tilt it down toward horizontal (about X), then yaw it around the clump.
-        let frond = Cuboid::new(0.05, FROND_LEN, 0.012)
+    // A tapering frond: a 4-sided cone squashed flat (z) and widened (x), base-pivoted,
+    // tilted toward horizontal then yawed around the rosette.
+    let frond = |len: f32, yaw: f32, lift: f32, c: u32| -> Mesh {
+        let m = Cone { radius: 0.045, height: len }
             .mesh()
+            .resolution(4)
             .build()
-            .translated_by(y(FROND_LEN * 0.5))
-            // tilt away from vertical: PI/2 - lift leans it toward the ground (low spray).
+            .scaled_by(Vec3::new(1.6, 1.0, 0.30))
+            .translated_by(y(len * 0.5))
             .rotated_by(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2 - lift))
             .rotated_by(Quat::from_rotation_y(yaw))
-            // lift the whole frond a touch so it sprays from ~0.05 above ground, base ≥ 0.
             .translated_by(y(0.05));
-        parts.push(tinted(frond, lin(c)));
+        tinted(m, lin(c))
+    };
+    // Outer tier: five long fronds laid low.
+    for i in 0..5 {
+        let yaw = (i as f32 / 5.0) * std::f32::consts::TAU;
+        let c = if i % 2 == 0 { FERN_GREEN } else { FERN_TIP };
+        parts.push(frond(0.30, yaw, 0.50 + (i % 2) as f32 * 0.10, c));
+    }
+    // Inner tier: three shorter fronds rising steeper from the heart.
+    for i in 0..3 {
+        let yaw = (i as f32 / 3.0) * std::f32::consts::TAU + 0.6;
+        parts.push(frond(0.20, yaw, 0.95, FERN_TIP));
     }
     merged(parts)
 }
@@ -193,20 +200,33 @@ pub fn build_mushroom_mesh(variant: u32) -> Mesh {
     let cap_r = 0.09 * s;
 
     let mut parts = vec![
-        // Pale stem (slightly tapered look approximated with a thin cylinder).
-        cyl_at(0.034 * s, stem_h, stem_h * 0.5, MUSH_STEM),
-        // Domed cap: a squashed half-ball resting on the stem.
+        // Pale stem with a skirt bulge at the foot (amanita volva) so it roots visibly.
+        cyl_at(0.030 * s, stem_h, stem_h * 0.55, MUSH_STEM),
+        ball_at(0.042 * s, y(0.02 * s), 0.7, MUSH_STEM),
+        // Pale gill plate tucked under the cap rim (a wide squashed disc) — gives the
+        // overhanging cap a real underside instead of clipping into the stem.
+        ball_at(cap_r * 0.88, y(cap_y - 0.008 * s), 0.22, MUSH_STEM),
+        // Domed cap: a squashed half-ball overhanging the gills.
         ball_at(cap_r, y(cap_y), 0.62, cap),
     ];
-    // White speckles only on the red amanita cap (a few tiny boxes near the crown).
+    // White speckles only on the red amanita cap (tiny boxes ringing the crown).
     if red {
-        for &(dx, dz) in &[(0.045_f32, 0.02_f32), (-0.035, -0.04), (0.01, 0.05)] {
-            let spot = Cuboid::new(0.020 * s, 0.014 * s, 0.020 * s)
+        for &(dx, dz, dy) in &[
+            (0.045_f32, 0.02_f32, 0.040_f32),
+            (-0.035, -0.04, 0.042),
+            (0.01, 0.05, 0.048),
+            (-0.05, 0.025, 0.034),
+            (0.02, -0.055, 0.036),
+        ] {
+            let spot = Cuboid::new(0.018 * s, 0.012 * s, 0.018 * s)
                 .mesh()
                 .build()
-                .translated_by(Vec3::new(dx * s, cap_y + 0.045 * s, dz * s));
+                .translated_by(Vec3::new(dx * s, cap_y + dy * s, dz * s));
             parts.push(tinted(spot, lin(MUSH_DOT)));
         }
+        // A baby cap budding by the big one — amanitas grow in pairs.
+        parts.push(cyl_at(0.018 * s, 0.05 * s, 0.025 * s, MUSH_STEM).translated_by(Vec3::new(0.085 * s, 0.0, 0.04 * s)));
+        parts.push(ball_at(0.045 * s, Vec3::new(0.085 * s, 0.05 * s, 0.04 * s), 0.62, cap));
     }
     merged(parts)
 }
@@ -229,20 +249,35 @@ pub fn build_flower_mesh(variant: u32) -> Mesh {
         _ => (PETAL_WHITE, FLOWER_CENTER, 11, 0.23, 0.052, 0.016, 0.40), // daisy — tall, thin rays
     };
     let mut parts = vec![
-        // Thin green stem (a slender cone from the ground up to the bloom).
+        // Thin green stem (a slender 5-sided cone from the ground up to the bloom).
         tinted(
-            Cone { radius: 0.010, height: head_y }.mesh().build().translated_by(y(head_y * 0.5)),
+            Cone { radius: 0.010, height: head_y }
+                .mesh()
+                .resolution(5)
+                .build()
+                .translated_by(y(head_y * 0.5)),
             lin(FLOWER_STEM),
         ),
         // Centre disc (small squashed ball at the bloom).
         ball_at(0.024, y(head_y), 0.7, center),
     ];
-    // Ring of petals around the centre (small flattened balls).
+    // Two small leaf blades on the stem (flattened squashed balls leaning out) so the
+    // flower reads as a plant, not a lollipop on a stick.
+    for (a, ly) in [(0.9_f32, 0.35_f32), (3.8, 0.55)] {
+        parts.push(ball_at(
+            0.030,
+            Vec3::new(a.cos() * 0.035, head_y * ly, a.sin() * 0.035),
+            0.28,
+            FLOWER_STEM,
+        ));
+    }
+    // Ring of petals around the centre (small flattened balls), tipped slightly upward
+    // toward the centre so the bloom cups instead of lying dead flat.
     for i in 0..n {
         let a = (i as f32 / n as f32) * std::f32::consts::TAU;
         parts.push(ball_at(
             petal_r,
-            Vec3::new(a.cos() * ring_r, head_y, a.sin() * ring_r),
+            Vec3::new(a.cos() * ring_r, head_y + 0.006, a.sin() * ring_r),
             squash,
             petal,
         ));
@@ -302,17 +337,32 @@ pub fn build_floor_litter_mesh(variant: u32) -> Mesh {
 
 // ── Clover ────────────────────────────────────────────────────────────────────
 
-/// Clover: a tiny tri-leaf clump — 3 small flattened green discs in a triangle, very
-/// low to the ground (~0.06u), each on a stub. Base at y=0.
+/// Clover: a low five-leaf patch — small flattened green discs at two heights on thin
+/// stalk stubs, so it reads as a little living clump rather than three floating discs.
+/// ~0.07u tall, base at y=0.
 pub fn build_clover_mesh() -> Mesh {
-    const LEAF_Y: f32 = 0.05;
-    const RING_R: f32 = 0.04;
     let mut parts = Vec::new();
-    for i in 0..3 {
-        let a = (i as f32 / 3.0) * std::f32::consts::TAU;
-        let off = Vec3::new(a.cos() * RING_R, LEAF_Y, a.sin() * RING_R);
+    // (angle, ring radius, leaf y, leaf r) — three big outer leaves + two smaller inner.
+    let leaves: [(f32, f32, f32, f32); 5] = [
+        (0.0, 0.045, 0.050, 0.036),
+        (2.1, 0.042, 0.046, 0.034),
+        (4.2, 0.046, 0.052, 0.035),
+        (1.1, 0.020, 0.066, 0.026),
+        (3.3, 0.022, 0.062, 0.024),
+    ];
+    for (a, ring, ly, lr) in leaves {
+        let off = Vec3::new(a.cos() * ring, ly, a.sin() * ring);
+        // Thin stalk stub under the leaf.
+        parts.push(tinted(
+            Cylinder::new(0.005, ly)
+                .mesh()
+                .resolution(4)
+                .build()
+                .translated_by(Vec3::new(off.x * 0.6, ly * 0.5, off.z * 0.6)),
+            lin(FLOWER_STEM),
+        ));
         // Leaf: a small flattened (very squashed) ball — a low rounded disc.
-        parts.push(ball_at(0.035, off, 0.30, CLOVER_GREEN));
+        parts.push(ball_at(lr, off, 0.30, CLOVER_GREEN));
     }
     merged(parts)
 }

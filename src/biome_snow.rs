@@ -1,16 +1,24 @@
 //! Snow biome (key 2) — a crisp winter scene mirroring the Forest module's structure.
 //!
 //! All snow props are built **locally** in this file (self-contained — touches no other
-//! module): snow-laden conifer pines (brown stub trunk + stacked dark-green cone tiers,
-//! each boughed with a smaller WHITE snow cone), bare snowy birch (white trunk, a few
-//! bare twigs, a dab of snow), low snow-dusted shrubs / mounds (the first non-tree
-//! fallback class), and frost boulders (blue-grey rock with a white snow cap). Ground
-//! cover is tiny snow tufts + ice glints. Particle: drifting snow. Backdrop: tall
-//! white-capped peaks over a dark conifer treeline, land on one side, no ocean.
+//! module). Conifer pines stack off-axis green cone tiers (a zig-zag silhouette, three
+//! variants incl. a tall slim spire) and drape snow PER TIER — a short skirt cone plus
+//! squashed blobs piled on the rim, sunlit-white on top, ice-blue in shade. Bare birches
+//! get a kinked two-segment trunk and a two-storey twig fan. The mound class is three
+//! variants: a wind-sculpted drift, a frost-tipped frozen shrub, and a snow-capped stump
+//! + fallen log. Boulders are angular tilted rock chunks over dark exposed footings,
+//! draped with snow and hung with icicles under their overhangs. Plus the rare snowman
+//! centrepiece. Ground cover: snow tufts with dry winter grass poking through, angular
+//! ice glints, and litter (holly sprig / toppled pinecone / ice shards / frosted twig).
+//! Every prop gets `bake_facet_shading`: down-facing facets darken and cool toward blue
+//! (shadowed snow reads blue, not grey), up-facing facets brighten — baked light/shadow
+//! contrast that realtime fill alone can't produce (see trees.rs for the rationale).
+//! Particle: drifting snow. Backdrop: tall white-capped peaks over a dark conifer
+//! treeline, land on one side, no ocean.
 //!
 //! Landmark: a frozen pond — a low-roughness pale-blue ice disc sitting just above y=0
-//! (reflects the sky via IBL) ringed by a couple of snow-laden dead trees + a small
-//! rock cairn.
+//! (reflects the sky via IBL) with a frosted rim, ringed by snow-laden dead trees,
+//! shoreline ice-shard clumps, a drift tongue, and an angular snow-capped stone cairn.
 //!
 //! CONTRACT (mirrors trees.rs / props.rs / decor.rs): every prop is ONE merged,
 //! vertex-coloured `Mesh` with its base at y=0, tinted into `ATTRIBUTE_COLOR` (the
@@ -67,6 +75,11 @@ const HOLLY_LEAF: u32 = 0x2f6b3a; // dark holly-leaf green
 const HOLLY_BERRY: u32 = 0xcc2a2a; // bright red holly berry
 const PINECONE_BROWN: u32 = 0x6e5038; // brown pinecone scales
 
+// Stumps / logs / winter grass — the warm accents poking through the snowfield.
+const STUMP_WOOD: u32 = 0x584234; // weathered stump / log bark
+const STUMP_CUT: u32 = 0xa8896a; // pale sawn cut-face ring
+const GRASS_DRY: u32 = 0xb3a274; // dry straw-yellow winter grass
+
 // Frozen-pond ice (FrozenSpire family): pale crystal blue.
 const ICE_PALE: u32 = 0xbfe0f4; // pale ice surface tint
 const ICE_RIM: u32 = 0x9cc3e0; // darker frosted rim
@@ -109,6 +122,43 @@ fn flat_shaded(mut m: Mesh) -> Mesh {
     m
 }
 
+/// Bake painterly facet shading into the vertex colours (call AFTER `flat_shaded`, so the
+/// per-face normals exist and every facet shades uniformly): down-facing facets darken AND
+/// cool toward blue (shadowed snow reads blue, not grey), up-facing facets brighten toward
+/// sunlit white, plus a mild base→crown lift. Gentler factors than the trees.rs bake and
+/// clamped at 1.0 so the near-white snow tones never blow out / bloom.
+fn bake_facet_shading(mut m: Mesh) -> Mesh {
+    use bevy::mesh::VertexAttributeValues as V;
+    let Some(V::Float32x3(pos)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { return m };
+    let (mut y_min, mut y_max) = (f32::MAX, f32::MIN);
+    for p in pos {
+        y_min = y_min.min(p[1]);
+        y_max = y_max.max(p[1]);
+    }
+    let span = (y_max - y_min).max(1e-4);
+    let ys: Vec<f32> = pos.iter().map(|p| p[1]).collect();
+    let Some(V::Float32x3(ns)) = m.attribute(Mesh::ATTRIBUTE_NORMAL) else { return m };
+    let nys: Vec<f32> = ns.iter().map(|n| n[1]).collect();
+    if let Some(V::Float32x4(cols)) = m.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+        for (c, (ny, y)) in cols.iter_mut().zip(nys.iter().zip(&ys)) {
+            let up = ny * 0.5 + 0.5; // 0 facing down … 1 facing up
+            let h = (y - y_min) / span; // 0 base … 1 crown
+            let f = (0.76 + 0.36 * up) * (0.90 + 0.16 * h);
+            // The deeper the shadow, the bluer it gets (snow bounce light is sky-blue).
+            let cool = (1.0 - f).max(0.0) * 0.35;
+            c[0] = (c[0] * f).min(1.0);
+            c[1] = (c[1] * (f + cool * 0.3)).min(1.0);
+            c[2] = (c[2] * (f + cool)).min(1.0);
+        }
+    }
+    m
+}
+
+/// The standard finish for every snow prop: flat-shade, then bake the facet shading.
+fn shaded(m: Mesh) -> Mesh {
+    bake_facet_shading(flat_shaded(m))
+}
+
 fn y(v: f32) -> Vec3 {
     Vec3::new(0.0, v, 0.0)
 }
@@ -118,15 +168,15 @@ fn cyl_up(r: f32, h: f32, cy: f32, res: u32, c: u32) -> Mesh {
     tinted(Cylinder::new(r, h).mesh().resolution(res).build().translated_by(y(cy)), lin(c))
 }
 
-/// A cone tier sitting with its base at `base_y` (cones are centre-anchored, so lift by
-/// `h/2 + base_y`). `res` = radial sides.
-fn cone_at(r: f32, h: f32, base_y: f32, res: u32, c: u32) -> Mesh {
+/// A cone with its base-circle centre at `at` (cones are centre-anchored, so lift by
+/// `h/2`). `res` = radial sides.
+fn cone_at(r: f32, h: f32, at: Vec3, res: u32, c: u32) -> Mesh {
     tinted(
         Cone { radius: r, height: h }
             .mesh()
             .resolution(res)
             .build()
-            .translated_by(y(h * 0.5 + base_y)),
+            .translated_by(at + y(h * 0.5)),
         lin(c),
     )
 }
@@ -144,158 +194,349 @@ fn ball_at(r: f32, off: Vec3, squash: f32, c: u32) -> Mesh {
     )
 }
 
+/// An angular rock chunk: an icosphere squashed non-uniformly THEN tilted, so its facets
+/// skew into a fractured-block read instead of a pebble. `detail` 0 (20 tris) or 1 (80).
+fn chunk_at(r: f32, off: Vec3, scale: Vec3, yaw: f32, pitch: f32, detail: u32, c: u32) -> Mesh {
+    tinted(
+        Sphere::new(r)
+            .mesh()
+            .ico(detail)
+            .expect("ico detail in range")
+            .scaled_by(scale)
+            .rotated_by(Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch))
+            .translated_by(off),
+        lin(c),
+    )
+}
+
+/// An icicle — a slim pale-blue cone hanging point-DOWN, its root (base disc) at `root`,
+/// tip reaching `root.y - len`. Callers must hang them from ledges with `root.y > len`
+/// so nothing pokes below y=0.
+fn icicle(r: f32, len: f32, root: Vec3) -> Mesh {
+    tinted(
+        Cone { radius: r, height: len }
+            .mesh()
+            .resolution(4)
+            .build()
+            .rotated_by(Quat::from_rotation_x(std::f32::consts::PI)) // flip apex down
+            .translated_by(root - y(len * 0.5)),
+        lin(ICE_PALE),
+    )
+}
+
 // ── Snow-laden conifer pine ──────────────────────────────────────────────────────
 //
-// A brown stub trunk + 3 stacked dark→light green cone tiers (wide low, narrow high),
-// each capped with a smaller WHITE snow cone sitting on its boughs, plus a snow tip on
-// the crown. ~1.4u tall before TREE_SCALE. Two snow-load variants (heavier vs lighter).
-fn build_pine_mesh(snowy: bool) -> Mesh {
+// A brown trunk (with a root flare) + a stack of dark→light green cone tiers, every tier
+// nudged off-axis so the silhouette zig-zags instead of reading as a perfect kebab. Snow
+// is DRAPED per tier: a short wide skirt cone over the rim plus 3 squashed blobs piled on
+// the boughs — sunlit-white / body / ice-blue shaded lobes. Crown carries a green spike
+// + a white snow tip; a drift banks against the trunk. `bake_facet_shading` then darkens
+// the bough undersides. Variants: 0 = broad + heavy load, 1 = standard + light dusting,
+// 2 = tall slim 5-tier spire. ~1.7u tall before TREE_SCALE.
+fn build_pine_mesh(variant: u32) -> Mesh {
+    // (tier count, base tier radius, base tier height, heavy snow load?)
+    let (tiers_n, r0, h0, heavy) = match variant % 3 {
+        0 => (4, 0.58, 0.50, true),
+        1 => (4, 0.53, 0.48, false),
+        _ => (5, 0.43, 0.42, true),
+    };
+
     let mut parts = vec![
-        // Stub trunk poking out of the snow.
-        cyl_up(0.07, 0.30, 0.15, 6, PINE_TRUNK),
+        // Trunk poking out of the snow + a wider root flare at the base.
+        cyl_up(0.075, 0.36, 0.18, 6, PINE_TRUNK),
+        cyl_up(0.105, 0.10, 0.05, 6, PINE_TRUNK),
     ];
 
-    // Three green cone tiers + a white snow cone capping each bough ring. Tiers shrink
-    // and rise; the snow cone is shorter & wider so it reads as snow piled on the boughs.
-    // (base_y, tier_radius, tier_height, green-tone)
-    let tiers = [
-        (0.22, 0.55, 0.62, PINE_DARK),
-        (0.58, 0.44, 0.56, PINE_MID),
-        (0.94, 0.32, 0.48, PINE_LIGHT),
-    ];
-    for (base_y, r, h, green) in tiers {
-        // The dark-green bough tier.
-        parts.push(cone_at(r, h, base_y, 7, green));
-        // A WHITE snow cone resting on the boughs: a hair wider at the rim, much shorter,
-        // sitting at the same base so its skirt drapes over the green tier's shoulders.
-        let snow_c = if snowy { SNOW_CAP_HI } else { SNOW_CAP };
-        parts.push(cone_at(r * 1.04, h * 0.42, base_y + 0.015, 7, snow_c));
-        // A faint blue snow-shade lobe under the snow skirt for depth (one side).
-        parts.push(ball_at(r * 0.34, Vec3::new(r * 0.5, base_y + h * 0.12, 0.0), 0.45, SNOW_SHADE));
+    let tau = std::f32::consts::TAU;
+    let mut base_y = 0.22;
+    let mut top = base_y;
+    for k in 0..tiers_n {
+        let t = k as f32 / (tiers_n - 1) as f32;
+        let r = r0 * (1.0 - 0.55 * t);
+        let h = h0 * (1.0 - 0.16 * t);
+        // Off-axis nudge, strongest low, fading toward the crown → a zig-zag silhouette.
+        let wob = 0.055 * (1.0 - t * 0.7);
+        let at = Vec3::new(
+            (k as f32 * 2.3 + variant as f32 * 1.7).sin() * wob,
+            base_y,
+            (k as f32 * 1.6 + variant as f32).cos() * wob,
+        );
+        // Green bough tier: shadowed dark low boughs → lit upper tiers.
+        let green = if t < 0.34 {
+            PINE_DARK
+        } else if t < 0.75 {
+            PINE_MID
+        } else {
+            PINE_LIGHT
+        };
+        parts.push(cone_at(r, h, at, 7, green));
+        // Snow skirt draped over the tier's shoulders: a hair wider at the rim, much
+        // shorter, so its hem drapes over the green tier's boughs.
+        let skirt_h = if heavy { h * 0.40 } else { h * 0.30 };
+        parts.push(cone_at(r * 1.05, skirt_h, at + y(0.015), 7, if heavy { SNOW_CAP } else { SNOW_SHADE }));
+        // Three snow blobs piled around the rim — sunlit / body / ice-blue shaded lobes
+        // walking around the tree per tier so no two tiers load the same side.
+        let blob_r = r * if heavy { 0.34 } else { 0.26 };
+        for (j, tone) in [SNOW_CAP_HI, SNOW_CAP, SNOW_SHADE].into_iter().enumerate() {
+            let a = j as f32 / 3.0 * tau + k as f32 * 0.9 + variant as f32 * 0.5;
+            let p = at + Vec3::new(a.cos() * r * 0.62, h * 0.26, a.sin() * r * 0.62);
+            parts.push(ball_at(blob_r, p, 0.5, tone));
+        }
+        base_y += h * 0.58;
+        top = at.y + h;
     }
 
-    // Snow-capped crown tip (a small white cone on the very top).
-    parts.push(cone_at(0.16, 0.30, 1.30, 7, SNOW_CAP_HI));
-    // A couple of clinging snow dabs on lower boughs for irregularity.
-    parts.push(ball_at(0.12, Vec3::new(-0.30, 0.40, 0.10), 0.5, SNOW_CAP));
-    parts.push(ball_at(0.10, Vec3::new(0.24, 0.74, -0.12), 0.5, SNOW_CAP));
+    // Crown: a green spike + a white snow tip wrapping it + a clinging dab just below.
+    parts.push(cone_at(0.13, 0.26, y(top - 0.10), 7, PINE_LIGHT));
+    parts.push(cone_at(0.10, 0.20, y(top + 0.06), 6, SNOW_CAP_HI));
+    parts.push(ball_at(0.085, Vec3::new(0.06, top - 0.04, -0.04), 0.55, SNOW_CAP));
+    // Drift banked against the trunk base (bright lee side / blue windward side).
+    parts.push(ball_at(0.16, Vec3::new(0.10, 0.05, 0.06), 0.4, SNOW_CAP));
+    parts.push(ball_at(0.13, Vec3::new(-0.13, 0.04, -0.05), 0.4, SNOW_SHADE));
 
-    flat_shaded(merged(parts))
+    shaded(merged(parts))
 }
 
 // ── Bare snowy birch ───────────────────────────────────────────────────────────
 //
-// A pale white trunk + 2 dark bark marks + a few bare grey-brown twigs fanning from the
-// top + a dab of snow caught in the crook. No foliage (winter-bare). ~1.3u tall.
+// A kinked two-segment pale trunk (lower upright + upper segment leaning a touch) + four
+// peeling-bark scar boxes + a two-storey fan of bare twigs from the crook — long mains
+// with forking twiglets — snow dabs caught in the crooks, a frost ledge clinging to the
+// trunk's lee side, and a drift collar at the base. No foliage (winter-bare). ~1.3u tall.
 fn build_birch_mesh() -> Mesh {
+    let kink = 0.10; // upper-trunk lean (radians)
     let mut parts = vec![
-        // Pale trunk (slightly tapered look via a slim cylinder).
-        cyl_up(0.055, 1.05, 0.525, 6, BIRCH_TRUNK),
-        // Two dark bark-mark boxes (peeling-bark stripes).
+        // Lower trunk + the slightly leaning upper segment → a gentle kink, not a pole.
+        cyl_up(0.060, 0.62, 0.31, 6, BIRCH_TRUNK),
         tinted(
-            Cuboid::new(0.006, 0.05, 0.10)
+            Cylinder::new(0.048, 0.55)
                 .mesh()
+                .resolution(6)
                 .build()
-                .translated_by(Vec3::new(0.055, 0.70, 0.0)),
-            lin(BIRCH_MARK),
-        ),
-        tinted(
-            Cuboid::new(0.006, 0.04, 0.08)
-                .mesh()
-                .build()
-                .translated_by(Vec3::new(-0.055, 0.42, 0.03)),
-            lin(BIRCH_MARK),
+                .translated_by(y(0.275))
+                .rotated_by(Quat::from_rotation_z(kink))
+                .translated_by(y(0.58)),
+            lin(BIRCH_TRUNK),
         ),
     ];
 
-    // A fan of bare twigs from the upper trunk: slim cones leaning out, alternating two
-    // lengths. Build upright, lean (Z), yaw around the trunk, then lift to the branch crook.
-    let twigs = [
-        (0.0_f32, 0.5_f32, 0.40_f32),
-        (1.3, 0.7, 0.34),
-        (2.6, 0.45, 0.36),
-        (3.9, 0.8, 0.30),
-        (5.2, 0.55, 0.33),
+    // Peeling-bark scar boxes wrapped at varying heights and alternating sides.
+    let marks = [
+        (0.060_f32, 0.70_f32, 0.0_f32, 0.05_f32, 0.10_f32),
+        (-0.060, 0.42, 0.03, 0.04, 0.08),
+        (0.052, 0.94, -0.02, 0.04, 0.07),
+        (-0.048, 0.20, -0.03, 0.035, 0.09),
     ];
-    for (yaw, tilt, len) in twigs {
+    for (mx, my, mz, mh, md) in marks {
+        parts.push(tinted(
+            Cuboid::new(0.008, mh, md).mesh().build().translated_by(Vec3::new(mx, my, mz)),
+            lin(BIRCH_MARK),
+        ));
+    }
+
+    // Two-storey twig fan from the crook (top of the leaning segment): six slim mains
+    // alternating length/pitch; every third forks a twiglet at its elbow; every other
+    // catches a snow dab where it meets the trunk.
+    let crook = Vec3::new(-0.05, 1.06, 0.0);
+    let twigs = [
+        (0.0_f32, 0.55_f32, 0.42_f32),
+        (1.1, 0.75, 0.34),
+        (2.2, 0.45, 0.38),
+        (3.3, 0.85, 0.30),
+        (4.4, 0.60, 0.35),
+        (5.4, 0.40, 0.28),
+    ];
+    for (i, (yaw, tilt, len)) in twigs.into_iter().enumerate() {
+        let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_z(tilt);
         let twig = Cone { radius: 0.016, height: len }
             .mesh()
-            .resolution(5)
+            .resolution(4)
             .build()
             .translated_by(y(len * 0.5))
-            .rotated_by(Quat::from_rotation_z(tilt))
-            .rotated_by(Quat::from_rotation_y(yaw))
-            .translated_by(y(0.92));
+            .rotated_by(rot)
+            .translated_by(crook);
         parts.push(tinted(twig, lin(BIRCH_TWIG)));
+        if i % 3 == 0 {
+            // A forking twiglet splayed off this main's elbow.
+            let elbow = crook + rot * y(len * 0.6);
+            let frot = rot * Quat::from_rotation_z(0.55);
+            let f = Cone { radius: 0.010, height: len * 0.45 }
+                .mesh()
+                .resolution(4)
+                .build()
+                .translated_by(y(len * 0.225))
+                .rotated_by(frot)
+                .translated_by(elbow);
+            parts.push(tinted(f, lin(BIRCH_TWIG)));
+        }
+        if i % 2 == 0 {
+            // Snow dab caught where the twig leaves the trunk.
+            parts.push(ball_at(0.05, crook + rot * y(len * 0.22), 0.55, SNOW_CAP_HI));
+        }
     }
 
-    // Dabs of snow: one on the crook, one near the trunk base.
-    parts.push(ball_at(0.10, y(0.98), 0.45, SNOW_CAP_HI));
-    parts.push(ball_at(0.13, Vec3::new(0.05, 0.06, 0.0), 0.4, SNOW_CAP));
+    // Snow in the main crook, a frost ledge on the trunk's lee side, drift collar at the
+    // base (bright + blue-shaded lobes).
+    parts.push(ball_at(0.09, crook + y(0.02), 0.5, SNOW_CAP_HI));
+    parts.push(ball_at(0.045, Vec3::new(0.058, 0.55, 0.01), 0.4, SNOW_CAP));
+    parts.push(ball_at(0.14, Vec3::new(0.06, 0.05, 0.02), 0.42, SNOW_CAP));
+    parts.push(ball_at(0.10, Vec3::new(-0.10, 0.04, -0.05), 0.42, SNOW_SHADE));
 
-    flat_shaded(merged(parts))
+    shaded(merged(parts))
 }
 
-// ── Snow-dusted shrub / mound (the first non-tree fallback class) ────────────────
+// ── Snow shrub / drift / stump (the first non-tree fallback class) ───────────────
 //
-// A low cluster of white-blue snow blobs — a buried shrub or a wind-packed drift. Base
-// flush at y=0; ~0.4u tall. Three tiers (blue-shade skirt → snow body → bright crown) so
-// it reads 3D, never a flat sphere. Two variants vary the lump count.
+// Three low winter set-dressing variants, all base-flush and ≤ ~0.45u tall:
+//   0 — wind-sculpted drift: a tapering line of snow lumps kicking into a tail, bright
+//       wind-packed crest on top, blue-shadowed windward skirt (reads directional);
+//   1 — frozen shrub: a dark evergreen tuft buried to its shoulders, frost-tipped bare
+//       twigs poking through, snow banked around it;
+//   2 — snow-covered stump + fallen log: sawn cut-face ring, snow capping both.
 fn build_mound_mesh(variant: u32) -> Mesh {
-    let mut parts = vec![
-        // Bluish snow-shade skirt (grounded spread).
-        ball_at(0.30, y(0.13), 0.62, SNOW_SHADE),
-        ball_at(0.22, Vec3::new(0.22, 0.11, 0.06), 0.62, SNOW_SHADE),
-        ball_at(0.20, Vec3::new(-0.20, 0.10, 0.10), 0.62, SNOW_SHADE),
-        // Snow body.
-        ball_at(0.24, y(0.22), 0.66, SNOW_CAP),
-        ball_at(0.17, Vec3::new(0.15, 0.24, -0.13), 0.66, SNOW_CAP),
-        // Bright sunlit crown.
-        ball_at(0.18, y(0.32), 0.7, SNOW_CAP_HI),
-        ball_at(0.12, Vec3::new(-0.10, 0.35, 0.07), 0.7, SNOW_CAP_HI),
-    ];
-    if variant % 2 == 1 {
-        // A second hump beside the first → a longer drift.
-        parts.push(ball_at(0.20, Vec3::new(0.36, 0.14, -0.10), 0.62, SNOW_CAP));
-        parts.push(ball_at(0.14, Vec3::new(0.40, 0.24, -0.12), 0.7, SNOW_CAP_HI));
+    match variant % 3 {
+        // Wind-sculpted drift.
+        0 => shaded(merged(vec![
+            // Head → tail lumps along +X, the tail kicking into -Z.
+            ball_at(0.28, Vec3::new(-0.12, 0.15, 0.0), 0.62, SNOW_CAP),
+            ball_at(0.22, Vec3::new(0.14, 0.12, -0.05), 0.60, SNOW_CAP),
+            ball_at(0.15, Vec3::new(0.36, 0.09, -0.10), 0.58, SNOW_CAP),
+            ball_at(0.09, Vec3::new(0.52, 0.05, -0.14), 0.55, SNOW_CAP),
+            // Bright wind-packed crest.
+            ball_at(0.18, Vec3::new(-0.10, 0.25, 0.0), 0.6, SNOW_CAP_HI),
+            ball_at(0.12, Vec3::new(0.14, 0.19, -0.05), 0.6, SNOW_CAP_HI),
+            // Blue-shadowed windward skirt.
+            ball_at(0.22, Vec3::new(-0.26, 0.09, 0.06), 0.5, SNOW_SHADE),
+            ball_at(0.14, Vec3::new(0.05, 0.07, 0.12), 0.5, SNOW_SHADE),
+        ])),
+        // Frozen shrub with frost tips.
+        1 => {
+            let mut parts = vec![
+                // Snow banked around the buried shrub.
+                ball_at(0.26, y(0.10), 0.52, SNOW_CAP),
+                ball_at(0.18, Vec3::new(0.20, 0.08, 0.10), 0.5, SNOW_SHADE),
+                ball_at(0.16, Vec3::new(-0.18, 0.08, -0.08), 0.5, SNOW_CAP_HI),
+                // Dark evergreen tuft poking through.
+                ball_at(0.19, y(0.22), 0.75, PINE_DARK),
+                ball_at(0.13, Vec3::new(0.10, 0.30, -0.06), 0.75, PINE_MID),
+            ];
+            // Bare twigs leaning out of the tuft, each tipped with a frost crystal.
+            let tau = std::f32::consts::TAU;
+            for i in 0..4 {
+                let a = i as f32 / 4.0 * tau + 0.6;
+                let rot = Quat::from_rotation_y(a) * Quat::from_rotation_z(0.55);
+                let len = 0.20 + (i % 2) as f32 * 0.06;
+                let root = Vec3::new(a.cos() * 0.06, 0.24, a.sin() * 0.06);
+                let twig = Cone { radius: 0.012, height: len }
+                    .mesh()
+                    .resolution(4)
+                    .build()
+                    .translated_by(y(len * 0.5))
+                    .rotated_by(rot)
+                    .translated_by(root);
+                parts.push(tinted(twig, lin(BIRCH_TWIG)));
+                parts.push(ball_at(0.030, root + rot * y(len), 0.8, SNOW_CAP_HI));
+            }
+            // Frost dabs sitting on the evergreen crown.
+            parts.push(ball_at(0.09, y(0.35), 0.5, SNOW_CAP_HI));
+            parts.push(ball_at(0.06, Vec3::new(0.11, 0.36, -0.06), 0.5, SNOW_CAP));
+            shaded(merged(parts))
+        }
+        // Snow-covered stump + fallen log.
+        _ => {
+            let mut parts = vec![
+                // Stump: bark drum + root flare + pale sawn cut-face ring + a snow cap.
+                cyl_up(0.125, 0.24, 0.12, 7, STUMP_WOOD),
+                cyl_up(0.155, 0.06, 0.03, 7, STUMP_WOOD),
+                cyl_up(0.110, 0.035, 0.255, 7, STUMP_CUT),
+                ball_at(0.105, y(0.295), 0.45, SNOW_CAP_HI),
+                // Snow banked against the stump's foot.
+                ball_at(0.13, Vec3::new(0.14, 0.05, 0.08), 0.45, SNOW_CAP),
+            ];
+            // Fallen log alongside (lying cylinder, yawed) with a snow ridge on top.
+            let lyaw = 0.5_f32;
+            let log = Cylinder::new(0.075, 0.52)
+                .mesh()
+                .resolution(7)
+                .build()
+                .rotated_by(Quat::from_rotation_z(FRAC_PI_2)) // lie the axis along X
+                .rotated_by(Quat::from_rotation_y(lyaw))
+                .translated_by(Vec3::new(0.05, 0.075, -0.30));
+            parts.push(tinted(log, lin(STUMP_WOOD)));
+            // Three snow lumps along the log's upper flank (bright in the middle).
+            let along = Vec3::new(lyaw.cos(), 0.0, -lyaw.sin());
+            for i in 0..3 {
+                let t = i as f32 - 1.0;
+                parts.push(ball_at(
+                    0.07 - (t * t) * 0.015,
+                    Vec3::new(0.05, 0.145, -0.30) + along * (t * 0.16),
+                    0.5,
+                    if i == 1 { SNOW_CAP_HI } else { SNOW_CAP },
+                ));
+            }
+            shaded(merged(parts))
+        }
     }
-    flat_shaded(merged(parts))
 }
 
 // ── Frost boulder ────────────────────────────────────────────────────────────────
 //
-// A faceted blue-grey rock (dark base + lit facet) topped with a WHITE snow cap, plus a
-// side cobble. Base flush at y=0. Two variants vary the proportions.
+// Angular fractured stone, not pebbles: non-uniformly squashed + tilted icosphere chunks
+// stacked over a DARK exposed footing (the shadowed stone under the snowline), draped
+// with squashed snow blobs (bright crown / body / ice-blue shade lobes) and hung with
+// icicles under the overhang lips. Base flush at y=0. Three silhouettes:
+//   0 — broad tilted slab with a +X overhang (two icicles) and a side cobble;
+//   1 — tall split tor: two counter-tilted blocks, one long icicle under the upper lip;
+//   2 — low huddle of three cobbles bridged by a snow blanket.
 fn build_boulder_mesh(variant: u32) -> Mesh {
-    match variant % 2 {
+    match variant % 3 {
         0 => {
-            let r = 0.34;
-            flat_shaded(merged(vec![
-                // Body — wide squashed lump, darker base tone.
-                ball_at(r, y(r * 0.74), 0.78, ROCK_DARK),
-                // Lit facet catching the light.
-                ball_at(r * 0.6, Vec3::new(r * 0.12, r * 1.0, -r * 0.1), 0.72, ROCK_BODY),
-                // Side cobble.
-                ball_at(r * 0.5, Vec3::new(-r * 0.85, r * 0.4, r * 0.2), 0.82, ROCK_LIGHT),
-                // White snow cap draped over the crown.
-                ball_at(r * 0.78, y(r * 1.26), 0.5, SNOW_CAP_HI),
-                ball_at(r * 0.42, Vec3::new(r * 0.4, r * 1.05, r * 0.2), 0.5, SNOW_CAP),
-            ]))
+            let mut parts = vec![
+                // Dark buried under-stone (the exposed shadowed footing).
+                chunk_at(0.30, y(0.12), Vec3::new(1.35, 0.55, 1.1), 0.2, 0.0, 0, ROCK_DARK),
+                // Main tilted slab — the tilt opens an overhang lip on the +X side.
+                chunk_at(0.34, y(0.30), Vec3::new(1.25, 0.72, 1.0), 0.45, 0.18, 1, ROCK_BODY),
+                // Lit crown facet + a side cobble huddled against the slab.
+                chunk_at(0.20, Vec3::new(-0.06, 0.46, -0.05), Vec3::new(1.2, 0.6, 1.0), 0.9, -0.1, 0, ROCK_LIGHT),
+                chunk_at(0.15, Vec3::new(-0.34, 0.12, 0.18), Vec3::new(1.1, 0.85, 1.0), 1.4, 0.2, 0, ROCK_BODY),
+                // Snow draped over the crown — bright top + body + ice-blue shade lobes.
+                ball_at(0.22, y(0.52), 0.45, SNOW_CAP_HI),
+                ball_at(0.15, Vec3::new(0.16, 0.46, 0.12), 0.45, SNOW_CAP),
+                ball_at(0.13, Vec3::new(-0.18, 0.44, -0.14), 0.45, SNOW_SHADE),
+                ball_at(0.08, Vec3::new(-0.36, 0.22, 0.18), 0.5, SNOW_CAP),
+            ];
+            // Icicles hanging off the overhang lip (+X side); tips stay well above y=0.
+            parts.push(icicle(0.022, 0.13, Vec3::new(0.40, 0.26, 0.04)));
+            parts.push(icicle(0.016, 0.09, Vec3::new(0.36, 0.24, -0.10)));
+            shaded(merged(parts))
         }
-        _ => {
-            let r = 0.30;
-            flat_shaded(merged(vec![
-                // Lower block.
-                ball_at(r, y(r * 0.82), 0.9, ROCK_DARK),
-                // Upper split block.
-                ball_at(r * 0.72, Vec3::new(r * 0.3, r * 1.55, -r * 0.1), 0.9, ROCK_BODY),
-                // Lit chip.
-                ball_at(r * 0.4, Vec3::new(-r * 0.55, r * 0.7, r * 0.3), 0.85, ROCK_LIGHT),
-                // Snow cap on the peak + a side dab.
-                ball_at(r * 0.64, Vec3::new(r * 0.25, r * 2.0, -r * 0.08), 0.46, SNOW_CAP_HI),
-                ball_at(r * 0.36, Vec3::new(-r * 0.5, r * 0.95, r * 0.3), 0.46, SNOW_CAP),
-            ]))
+        1 => {
+            let mut parts = vec![
+                // Lower block (dark) + counter-tilted upper block → the split-tor profile.
+                chunk_at(0.28, y(0.24), Vec3::new(1.15, 0.95, 1.05), 0.1, 0.1, 1, ROCK_DARK),
+                chunk_at(0.21, Vec3::new(0.08, 0.58, -0.04), Vec3::new(1.2, 0.85, 0.95), 0.8, -0.22, 1, ROCK_BODY),
+                // Lit chip wedged in the split.
+                chunk_at(0.12, Vec3::new(-0.16, 0.50, 0.10), Vec3::new(1.0, 0.7, 1.1), 1.9, 0.15, 0, ROCK_LIGHT),
+                // Snow: bright peak cap + a dab on each shoulder + a shade lobe low.
+                ball_at(0.14, Vec3::new(0.08, 0.74, -0.04), 0.45, SNOW_CAP_HI),
+                ball_at(0.10, Vec3::new(-0.14, 0.56, 0.10), 0.45, SNOW_CAP),
+                ball_at(0.09, Vec3::new(0.20, 0.40, 0.14), 0.45, SNOW_SHADE),
+            ];
+            // One long icicle under the upper block's lip.
+            parts.push(icicle(0.020, 0.16, Vec3::new(0.26, 0.46, -0.06)));
+            shaded(merged(parts))
         }
+        _ => shaded(merged(vec![
+            // Three huddled cobbles, a snow blanket bridging their tops.
+            chunk_at(0.26, Vec3::new(-0.08, 0.16, 0.02), Vec3::new(1.2, 0.7, 1.0), 0.3, 0.1, 1, ROCK_BODY),
+            chunk_at(0.17, Vec3::new(0.24, 0.12, -0.12), Vec3::new(1.1, 0.75, 1.0), 1.1, -0.1, 0, ROCK_DARK),
+            chunk_at(0.13, Vec3::new(0.12, 0.10, 0.22), Vec3::new(1.0, 0.8, 1.1), 2.0, 0.12, 0, ROCK_LIGHT),
+            // Snow blanket draped across the tops + a shade lobe in the crevice.
+            ball_at(0.19, Vec3::new(-0.06, 0.30, 0.02), 0.42, SNOW_CAP_HI),
+            ball_at(0.13, Vec3::new(0.20, 0.22, -0.10), 0.42, SNOW_CAP),
+            ball_at(0.10, Vec3::new(0.10, 0.18, 0.18), 0.45, SNOW_CAP),
+            ball_at(0.09, Vec3::new(0.04, 0.16, -0.18), 0.5, SNOW_SHADE),
+        ])),
     }
 }
 
@@ -303,9 +544,10 @@ fn build_boulder_mesh(variant: u32) -> Mesh {
 //
 // The charming centrepiece: three stacked bright-snow balls (big → mid → head), a coal
 // face (two eyes + an arc-of-coal smile), an orange carrot nose, two bare twig arms
-// fanning up-and-out, a red scarf wound at the neck with a hanging tail, and a dark
-// bucket hat. Base flush at y=0, ~1.15u tall (incl. hat) before the scatter scales it.
-// Built facing +Z; the scatter gives it a random yaw. Single merged vertex-coloured mesh.
+// fanning up-and-out, a red scarf wound at the neck with a hanging tail, a dark bucket
+// hat with a red knitted band, and a drift skirt banked against his base (hides the
+// ball/ground seam). Base flush at y=0, ~1.15u tall (incl. hat) before the scatter
+// scales it. Built facing +Z; the scatter gives it a random yaw. Single merged mesh.
 fn build_snowman_mesh() -> Mesh {
     let mut parts: Vec<Mesh> = Vec::new();
 
@@ -317,6 +559,10 @@ fn build_snowman_mesh() -> Mesh {
     parts.push(ball_at(0.225, y(mid_cy), 0.96, SNOWMAN_BODY));
     let head_cy = 0.84;
     parts.push(ball_at(0.165, y(head_cy), 0.97, SNOWMAN_BODY));
+
+    // ── Drift skirt banked against the base (bright lee lobe / blue windward lobe).
+    parts.push(ball_at(0.20, Vec3::new(0.16, 0.05, 0.14), 0.45, SNOW_CAP));
+    parts.push(ball_at(0.17, Vec3::new(-0.20, 0.04, -0.08), 0.45, SNOW_SHADE));
 
     // ── Face (on the +Z front of the head): two coal eyes + a carrot nose + a coal smile.
     let face_z = 0.135;
@@ -382,112 +628,238 @@ fn build_snowman_mesh() -> Mesh {
         lin(SCARF),
     ));
 
-    // ── Dark bucket hat on the crown: a wide thin brim + a tapered crown drum.
+    // ── Dark bucket hat on the crown: a wide thin brim + a tapered crown drum + a red
+    // knitted band wrapping the crown's base (matches the scarf).
     let head_top = head_cy + 0.165 * 0.97;
     parts.push(cyl_up(0.205, 0.035, head_top - 0.01, 12, HAT)); // brim
     parts.push(cyl_up(0.135, 0.20, head_top + 0.10, 10, HAT)); // crown
+    parts.push(cyl_up(0.142, 0.045, head_top + 0.035, 10, SCARF)); // band
 
-    flat_shaded(merged(parts))
+    shaded(merged(parts))
 }
 
 // ── Ground cover: snow tuft + ice glint ─────────────────────────────────────────
 
-/// A tiny snow tuft — a low cluster of three white-blue specks (wind-packed snow nub).
+/// A tiny snow tuft — wind-packed snow specks with three dry straw-yellow winter grass
+/// blades poking through (the sparse grass surviving under the snow), the tallest blade
+/// carrying a frost crystal at its tip.
 fn build_snow_tuft_mesh() -> Mesh {
-    flat_shaded(merged(vec![
+    let mut parts = vec![
         ball_at(0.05, y(0.03), 0.5, SNOW_CAP),
         ball_at(0.04, Vec3::new(0.05, 0.03, 0.02), 0.5, SNOW_CAP_HI),
         ball_at(0.035, Vec3::new(-0.04, 0.025, -0.03), 0.5, SNOW_SHADE),
-    ]))
+    ];
+    let blades = [(0.4_f32, 0.30_f32, 0.11_f32), (2.5, -0.40, 0.14), (4.6, 0.25, 0.09)];
+    for (i, (yaw, tilt, len)) in blades.into_iter().enumerate() {
+        let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_z(tilt);
+        let at = Vec3::new(yaw.cos() * 0.03, 0.0, yaw.sin() * 0.03);
+        let b = Cone { radius: 0.010, height: len }
+            .mesh()
+            .resolution(4)
+            .build()
+            .translated_by(y(len * 0.5))
+            .rotated_by(rot)
+            .translated_by(at);
+        parts.push(tinted(b, lin(GRASS_DRY)));
+        if i == 1 {
+            // Frost crystal clinging to the tallest blade's tip.
+            parts.push(ball_at(0.016, at + rot * y(len), 0.9, SNOW_CAP_HI));
+        }
+    }
+    shaded(merged(parts))
 }
 
-/// An ice glint — a tiny flat pale-blue ice shard catching the light (a low faceted disc
-/// nub). Sits essentially flat at y≈0.
+/// An ice glint — a low angular ice slab (tilted squashed chunk) with two tiny shard
+/// spikes leaning off it and a bright sparkle nub. Sits essentially flat at y≈0.
 fn build_ice_glint_mesh() -> Mesh {
-    flat_shaded(merged(vec![
-        ball_at(0.06, y(0.012), 0.18, ICE_PALE),
-        ball_at(0.035, Vec3::new(0.04, 0.02, 0.0), 0.3, SNOW_CAP_HI),
-    ]))
+    let mut parts = vec![
+        chunk_at(0.06, y(0.015), Vec3::new(1.3, 0.3, 1.0), 0.7, 0.0, 0, ICE_PALE),
+        ball_at(0.022, Vec3::new(0.045, 0.025, 0.01), 0.6, SNOW_CAP_HI),
+    ];
+    for (a, h) in [(0.9_f32, 0.07_f32), (3.8, 0.05)] {
+        let shard = Cone { radius: 0.014, height: h }
+            .mesh()
+            .resolution(4)
+            .build()
+            .translated_by(y(h * 0.5))
+            .rotated_by(Quat::from_rotation_y(a) * Quat::from_rotation_z(0.25))
+            .translated_by(Vec3::new(a.cos() * 0.035, 0.0, a.sin() * 0.035));
+        parts.push(tinted(shard, lin(ICE_RIM)));
+    }
+    shaded(merged(parts))
 }
 
-/// Winter ground litter (cover). `variant`: 0 = a holly sprig (dark leaves + red berries +
-/// a snow dab), 1 = a snow-capped pinecone, 2 = a tiny pale-blue ice-shard cluster. Very
-/// low (≤0.13u), base at y=0 — the colourful little touches that dress the snowfield.
+/// Winter ground litter (cover). `variant`: 0 = a holly sprig (angular dark leaves + red
+/// berries + a snow dab), 1 = a toppled snow-dusted pinecone with a ring of scales, 2 = a
+/// pale-blue ice-shard cluster (one shard catching the light), 3 = a frosted fallen twig.
+/// Very low (≤0.15u), base at y=0 — the colourful little touches dressing the snowfield.
 fn build_winter_litter_mesh(variant: u32) -> Mesh {
     let tau = std::f32::consts::TAU;
-    match variant % 3 {
-        // Holly sprig — four dark flattened leaves around a few red berries + a snow dab.
+    match variant % 4 {
+        // Holly sprig — five angular tip-tilted leaves fanned around four berries.
         0 => {
             let mut parts: Vec<Mesh> = Vec::new();
-            for i in 0..4 {
-                let a = (i as f32 / 4.0) * tau;
-                parts.push(ball_at(0.05, Vec3::new(a.cos() * 0.06, 0.03, a.sin() * 0.06), 0.28, HOLLY_LEAF));
+            for i in 0..5 {
+                let a = i as f32 / 5.0 * tau;
+                parts.push(chunk_at(
+                    0.045,
+                    Vec3::new(a.cos() * 0.06, 0.032, a.sin() * 0.06),
+                    Vec3::new(1.5, 0.30, 0.8), // long flat leaf blade
+                    -a,
+                    0.25, // tips tilt up out of the snow
+                    0,
+                    HOLLY_LEAF,
+                ));
             }
-            parts.push(ball_at(0.022, y(0.05), 0.9, HOLLY_BERRY));
-            parts.push(ball_at(0.020, Vec3::new(0.03, 0.05, 0.0), 0.9, HOLLY_BERRY));
-            parts.push(ball_at(0.020, Vec3::new(-0.02, 0.05, 0.025), 0.9, HOLLY_BERRY));
-            parts.push(ball_at(0.04, Vec3::new(0.05, 0.02, -0.04), 0.4, SNOW_CAP_HI));
-            flat_shaded(merged(parts))
+            for (bx, bz) in [(0.0_f32, 0.0_f32), (0.032, -0.01), (-0.02, 0.026), (0.005, -0.034)] {
+                parts.push(ball_at(0.020, Vec3::new(bx, 0.055, bz), 0.9, HOLLY_BERRY));
+            }
+            parts.push(ball_at(0.04, Vec3::new(0.055, 0.02, -0.045), 0.4, SNOW_CAP_HI));
+            shaded(merged(parts))
         }
-        // Snow-capped pinecone — a stack of brown balls with a bright snow tip.
-        1 => flat_shaded(merged(vec![
-            ball_at(0.045, y(0.04), 1.15, PINECONE_BROWN),
-            ball_at(0.036, y(0.085), 1.15, PINECONE_BROWN),
-            ball_at(0.026, y(0.115), 1.1, SNOW_CAP_HI),
-        ])),
-        // Ice-shard cluster — a few small pale-blue pointed cones poking up.
-        _ => {
+        // Toppled pinecone — a fat lying cone (tip +X) ringed by scale-balls at the butt,
+        // snow piled along its upper flank.
+        1 => {
+            let mut parts = vec![tinted(
+                Cone { radius: 0.045, height: 0.13 }
+                    .mesh()
+                    .resolution(6)
+                    .build()
+                    .rotated_by(Quat::from_rotation_z(-FRAC_PI_2)) // tip the apex to +X
+                    .translated_by(y(0.045)),
+                lin(PINECONE_BROWN),
+            )];
+            for i in 0..5 {
+                let a = i as f32 / 5.0 * tau + 0.3;
+                parts.push(ball_at(
+                    0.020,
+                    Vec3::new(-0.035, 0.045 + a.sin() * 0.034, a.cos() * 0.034),
+                    0.9,
+                    PINECONE_BROWN,
+                ));
+            }
+            parts.push(ball_at(0.030, Vec3::new(0.0, 0.085, 0.0), 0.5, SNOW_CAP_HI));
+            parts.push(ball_at(0.024, Vec3::new(-0.055, 0.06, 0.01), 0.6, SNOW_CAP));
+            shaded(merged(parts))
+        }
+        // Ice-shard cluster — four leaning pointed cones, one bright (catching the sun).
+        2 => {
             let mut parts: Vec<Mesh> = Vec::new();
-            for i in 0..3 {
-                let a = (i as f32 / 3.0) * tau + 0.4;
-                let h = 0.10 + (i % 2) as f32 * 0.05;
-                let shard = Cone { radius: 0.022, height: h }
+            for i in 0..4 {
+                let a = i as f32 / 4.0 * tau + 0.4;
+                let h = 0.09 + (i % 2) as f32 * 0.06;
+                let shard = Cone { radius: 0.020, height: h }
+                    .mesh()
+                    .resolution(4)
+                    .build()
+                    .translated_by(y(h * 0.5))
+                    .rotated_by(Quat::from_rotation_y(a) * Quat::from_rotation_z(0.22))
+                    .translated_by(Vec3::new(a.cos() * 0.04, 0.0, a.sin() * 0.04));
+                parts.push(tinted(shard, lin(if i == 0 { SNOW_CAP_HI } else { ICE_PALE })));
+            }
+            parts.push(ball_at(0.035, y(0.02), 0.4, SNOW_CAP_HI));
+            shaded(merged(parts))
+        }
+        // Frosted fallen twig — a thin lying branch with one stub fork, snow dusted along
+        // its top.
+        _ => {
+            let lyaw = 0.7_f32;
+            let dir = Vec3::new(lyaw.cos(), 0.0, -lyaw.sin());
+            let mut parts = vec![tinted(
+                Cylinder::new(0.013, 0.26)
                     .mesh()
                     .resolution(5)
                     .build()
-                    .translated_by(y(h * 0.5))
-                    .rotated_by(Quat::from_rotation_z(0.2 * (i as f32 - 1.0)))
-                    .translated_by(Vec3::new(a.cos() * 0.04, 0.0, a.sin() * 0.04));
-                parts.push(tinted(shard, lin(ICE_PALE)));
+                    .rotated_by(Quat::from_rotation_z(FRAC_PI_2)) // lie the axis flat
+                    .rotated_by(Quat::from_rotation_y(lyaw))
+                    .translated_by(y(0.013)),
+                lin(BIRCH_TWIG),
+            )];
+            let fork = Cone { radius: 0.010, height: 0.09 }
+                .mesh()
+                .resolution(4)
+                .build()
+                .translated_by(y(0.045))
+                .rotated_by(Quat::from_rotation_y(lyaw + 0.5) * Quat::from_rotation_z(1.05))
+                .translated_by(dir * 0.05 + y(0.012));
+            parts.push(tinted(fork, lin(BIRCH_TWIG)));
+            for t in [-0.08_f32, 0.0, 0.09] {
+                parts.push(ball_at(0.016, dir * t + y(0.028), 0.6, SNOW_CAP_HI));
             }
-            parts.push(ball_at(0.03, y(0.02), 0.4, SNOW_CAP_HI));
-            flat_shaded(merged(parts))
+            shaded(merged(parts))
         }
     }
 }
 
 // ── A snow-laden bare dead tree for the pond ring ────────────────────────────────
 //
-// A grey-brown bare trunk + a few up-angled broken branches, each carrying a snow dab.
-// Base at y=0. ~1.3u tall.
+// A kinked grey two-segment trunk snapped off in a splintered tip spike, a dark hollow
+// scar low on the bole, five up-angled broken branches each loaded with two snow dabs,
+// one icicle hanging from the lowest branch's elbow, and a drift banked around the
+// roots. Base at y=0. ~1.35u tall.
 fn build_dead_snow_tree_mesh() -> Mesh {
-    let mut parts = vec![cyl_up(0.07, 1.10, 0.55, 6, BIRCH_TWIG)];
-
-    // Four angled bare branches with a snow dab near each tip.
-    let branches = [
-        (0.0_f32, -0.8_f32, 0.46_f32, Vec3::new(0.18, 0.80, 0.06)),
-        (1.6, 0.7, 0.40, Vec3::new(-0.16, 0.92, -0.04)),
-        (3.0, 0.5, 0.34, Vec3::new(0.06, 1.05, 0.12)),
-        (4.5, -0.55, 0.30, Vec3::new(-0.10, 1.10, -0.10)),
+    let mut parts = vec![
+        cyl_up(0.075, 0.66, 0.33, 6, BIRCH_TWIG),
+        // Leaning upper segment + the splintered snapped-off tip.
+        tinted(
+            Cylinder::new(0.058, 0.46)
+                .mesh()
+                .resolution(6)
+                .build()
+                .translated_by(y(0.23))
+                .rotated_by(Quat::from_rotation_z(-0.14))
+                .translated_by(y(0.62)),
+            lin(BIRCH_TWIG),
+        ),
+        tinted(
+            Cone { radius: 0.055, height: 0.22 }
+                .mesh()
+                .resolution(5)
+                .build()
+                .translated_by(y(0.11))
+                .rotated_by(Quat::from_rotation_z(-0.14))
+                .translated_by(Vec3::new(0.064, 1.07, 0.0)),
+            lin(BIRCH_TWIG),
+        ),
+        // Dark hollow scar low on the bole.
+        tinted(
+            Cuboid::new(0.012, 0.10, 0.06).mesh().build().translated_by(Vec3::new(0.072, 0.30, 0.01)),
+            lin(BIRCH_MARK),
+        ),
     ];
-    for (yaw, tilt, len, tip) in branches {
-        let m = Cone { radius: 0.022, height: len }
+
+    // Five angled broken branches, each loaded with two snow dabs along its upper side.
+    let branches = [
+        (0.0_f32, -0.85_f32, 0.50_f32, Vec3::new(0.07, 0.74, 0.02)),
+        (1.5, 0.70, 0.42, Vec3::new(-0.05, 0.88, -0.02)),
+        (2.9, 0.52, 0.36, Vec3::new(0.05, 0.98, 0.03)),
+        (4.3, -0.60, 0.32, Vec3::new(0.02, 1.06, -0.03)),
+        (5.5, 0.78, 0.26, Vec3::new(0.06, 0.55, 0.0)),
+    ];
+    for (i, (byaw, tilt, len, root)) in branches.into_iter().enumerate() {
+        let rot = Quat::from_rotation_y(byaw) * Quat::from_rotation_z(tilt);
+        let m = Cone { radius: 0.024, height: len }
             .mesh()
             .resolution(5)
             .build()
             .translated_by(y(len * 0.5))
-            .rotated_by(Quat::from_rotation_z(tilt))
-            .rotated_by(Quat::from_rotation_y(yaw))
-            .translated_by(tip);
+            .rotated_by(rot)
+            .translated_by(root);
         parts.push(tinted(m, lin(BIRCH_TWIG)));
-        // Snow dab clinging to the branch.
-        parts.push(ball_at(0.07, tip + y(len * 0.18), 0.5, SNOW_CAP_HI));
+        parts.push(ball_at(0.06, root + rot * y(len * 0.45), 0.5, SNOW_CAP_HI));
+        parts.push(ball_at(0.045, root + rot * y(len * 0.8), 0.5, SNOW_CAP));
+        if i == 4 {
+            // An icicle hanging from the lowest branch's elbow (tip stays well above y=0).
+            parts.push(icicle(0.016, 0.12, root + rot * y(len * 0.5) - y(0.02)));
+        }
     }
-    // Snow piled at the base.
-    parts.push(ball_at(0.16, y(0.06), 0.4, SNOW_CAP));
-    parts.push(ball_at(0.11, Vec3::new(0.18, 0.05, 0.05), 0.4, SNOW_CAP_HI));
 
-    flat_shaded(merged(parts))
+    // Drift banked around the roots + snow caught on the snapped tip.
+    parts.push(ball_at(0.18, Vec3::new(0.06, 0.06, 0.02), 0.42, SNOW_CAP));
+    parts.push(ball_at(0.12, Vec3::new(-0.16, 0.05, -0.06), 0.42, SNOW_SHADE));
+    parts.push(ball_at(0.07, Vec3::new(0.066, 1.27, 0.0), 0.5, SNOW_CAP_HI));
+
+    shaded(merged(parts))
 }
 
 // ── config() ─────────────────────────────────────────────────────────────────────
@@ -526,11 +898,12 @@ pub fn config() -> BiomeConfig {
         seed: 4127,
         tree_min_dist: 2.9,
         classes: vec![
-            // Trees: 78% snow-laden conifer (two snow loads) / 22% bare snowy birch.
+            // Trees: 78% snow-laden conifer (heavy / light / tall-spire) / 22% bare birch.
             PropClass {
                 variants: vec![
-                    (build_pine_mesh(false), 0.46),
-                    (build_pine_mesh(true), 0.32),
+                    (build_pine_mesh(0), 0.30), // broad, heavy snow load
+                    (build_pine_mesh(1), 0.26), // standard, light dusting
+                    (build_pine_mesh(2), 0.22), // tall slim 5-tier spire
                     (build_birch_mesh(), 0.22),
                 ],
                 chance: 0.072,
@@ -538,17 +911,18 @@ pub fn config() -> BiomeConfig {
                 tree: true,
                 block_radius: 0.0,
             },
-            // Snow shrub / mound — FIRST non-tree class (the tree-too-close fallback).
+            // Snow drift / frozen shrub / stump+log — FIRST non-tree class (the
+            // tree-too-close fallback).
             PropClass {
-                variants: vec![(build_mound_mesh(0), 1.0), (build_mound_mesh(1), 1.0)],
+                variants: (0..3).map(|v| (build_mound_mesh(v), 1.0)).collect(),
                 chance: 0.055,
                 scale: (0.8, 1.45),
                 tree: false,
                 block_radius: 0.0,
             },
-            // Frost boulders.
+            // Frost boulders (slab / split tor / low huddle).
             PropClass {
-                variants: vec![(build_boulder_mesh(0), 1.0), (build_boulder_mesh(1), 1.0)],
+                variants: (0..3).map(|v| (build_boulder_mesh(v), 1.0)).collect(),
                 chance: 0.028,
                 scale: (0.6, 1.5),
                 tree: false,
@@ -565,7 +939,7 @@ pub fn config() -> BiomeConfig {
             },
         ],
         cover: vec![
-            // Snow tufts everywhere; sparser ice glints.
+            // Snow tufts (with winter grass) everywhere; sparser ice glints.
             PropClass {
                 variants: vec![(build_snow_tuft_mesh(), 1.0)],
                 chance: 0.34,
@@ -580,9 +954,9 @@ pub fn config() -> BiomeConfig {
                 tree: false,
                 block_radius: 0.0,
             },
-            // Winter litter — holly berries, snow-capped pinecones, ice shards.
+            // Winter litter — holly, toppled pinecone, ice shards, frosted twig.
             PropClass {
-                variants: (0..3).map(|v| (build_winter_litter_mesh(v), 1.0)).collect(),
+                variants: (0..4).map(|v| (build_winter_litter_mesh(v), 1.0)).collect(),
                 chance: 0.09,
                 scale: (0.7, 1.3),
                 tree: false,
@@ -615,8 +989,9 @@ pub fn config() -> BiomeConfig {
 // ── landmarks() — the frozen pond ────────────────────────────────────────────────
 
 /// A frozen pond: a pale-blue low-roughness ice disc sitting just above y=0 (reflects the
-/// sky via IBL), ringed by a darker frosted rim, a couple of snow-laden dead trees, and a
-/// small rock cairn. All entities tagged `BiomeEntity` so a biome switch wipes them.
+/// sky via IBL), ringed by a darker frosted rim, snow-laden dead trees, shoreline
+/// ice-shard clumps + a drift tongue, and an angular snow-capped stone cairn. All
+/// entities tagged `BiomeEntity` so a biome switch wipes them.
 pub fn landmarks(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -657,7 +1032,8 @@ pub fn landmarks(
     ));
 
     // Frosted rim ring — a slightly larger, darker disc a hair LOWER than the ice so it
-    // peeks out as a frozen shoreline lip (uses the shared vertex-colour material).
+    // peeks out as a frozen shoreline lip (uses the shared vertex-colour material; plain
+    // flat_shaded — the bake is meaningless on a flat ground disc).
     let rim = tinted(
         Circle::new(pond_r * 1.12)
             .mesh()
@@ -693,18 +1069,49 @@ pub fn landmarks(
         ));
     }
 
-    // ── A small rock cairn beside the pond (stacked frost-rock balls, snow-capped) ──
+    // ── Shoreline dressing: ice-shard clumps cracked up through the rim ice + a
+    // wind-sculpted drift tongue spilling onto the shore (reuses the scatter builders).
+    let shard_clump = meshes.add(build_winter_litter_mesh(2));
+    for (i, &a) in [1.2_f32, 3.3, 5.0].iter().enumerate() {
+        let rr = pond_r * (0.88 + 0.06 * i as f32);
+        commands.spawn((
+            Mesh3d(shard_clump.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform {
+                translation: pond + Vec3::new(a.cos() * rr, 0.05, a.sin() * rr),
+                rotation: Quat::from_rotation_y(a * 2.1),
+                scale: Vec3::splat(1.6 - 0.2 * i as f32),
+            },
+            BiomeEntity,
+        ));
+    }
+    commands.spawn((
+        Mesh3d(meshes.add(build_mound_mesh(0))),
+        MeshMaterial3d(mat.clone()),
+        Transform {
+            translation: pond + Vec3::new(-pond_r * 0.7, 0.0, pond_r * 0.95),
+            rotation: Quat::from_rotation_y(2.3),
+            scale: Vec3::splat(1.5),
+        },
+        BiomeEntity,
+    ));
+
+    // ── A small rock cairn beside the pond — four stacked ANGULAR frost stones (tilted
+    // chunks, dark footing → lit upper), a bright snow cap on the top stone, dabs on the
+    // shoulders, and an icicle under the second stone's lip.
     let cairn = {
-        let parts = vec![
-            ball_at(0.34, y(0.26), 0.78, ROCK_DARK),
-            ball_at(0.28, y(0.62), 0.82, CAIRN_STONE),
-            ball_at(0.22, y(0.92), 0.86, ROCK_LIGHT),
-            ball_at(0.16, y(1.14), 0.9, CAIRN_STONE),
-            // Snow cap on the top stone + a dab on the shoulder.
-            ball_at(0.15, y(1.28), 0.5, SNOW_CAP_HI),
-            ball_at(0.12, Vec3::new(0.18, 0.70, 0.06), 0.5, SNOW_CAP),
+        let mut parts = vec![
+            chunk_at(0.34, y(0.24), Vec3::new(1.2, 0.8, 1.05), 0.2, 0.08, 1, ROCK_DARK),
+            chunk_at(0.27, Vec3::new(0.03, 0.60, -0.02), Vec3::new(1.15, 0.75, 1.0), 1.1, -0.12, 1, CAIRN_STONE),
+            chunk_at(0.21, Vec3::new(-0.02, 0.88, 0.03), Vec3::new(1.1, 0.7, 1.0), 2.0, 0.10, 0, ROCK_LIGHT),
+            chunk_at(0.15, Vec3::new(0.02, 1.10, 0.0), Vec3::new(1.05, 0.8, 1.0), 2.8, -0.08, 0, CAIRN_STONE),
+            // Bright snow cap on the top stone + dabs on the shoulders below.
+            ball_at(0.14, y(1.26), 0.5, SNOW_CAP_HI),
+            ball_at(0.11, Vec3::new(0.17, 0.72, 0.05), 0.5, SNOW_CAP),
+            ball_at(0.09, Vec3::new(-0.15, 0.96, -0.06), 0.5, SNOW_SHADE),
         ];
-        flat_shaded(merged(parts))
+        parts.push(icicle(0.018, 0.14, Vec3::new(0.30, 0.52, 0.05)));
+        shaded(merged(parts))
     };
     let cairn_pos = pond + Vec3::new(pond_r * 0.85, 0.0, pond_r * 0.55);
     commands.spawn((
