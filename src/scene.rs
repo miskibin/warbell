@@ -299,7 +299,7 @@ fn advance_sky(
     let night_stops = std::env::var("FOREST_NIGHT")
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
-        .unwrap_or(1.0);
+        .unwrap_or(0.7);
     for mut g in &mut grade_q {
         g.global.exposure = -night * night_stops;
     }

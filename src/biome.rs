@@ -285,6 +285,7 @@ fn apply_build(
     mut clear: ResMut<ClearColor>,
     mut fog_q: Query<&mut DistanceFog>,
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform)>,
+    mut castle_built: ResMut<crate::castle::CastleBuilt>,
 ) {
     if !pending.0 {
         return;
@@ -296,6 +297,11 @@ fn apply_build(
         commands.entity(e).despawn();
     }
     crate::blockers::reset();
+    // The reset wiped the castle's lazily-registered wall/tower/house collision boxes; clear their
+    // "already built" tracking so `sync_castle` re-registers everything currently revealed next
+    // frame. Without this the initial houses (and walls/towers, post-rebuild) read as solid in the
+    // tracker but have no blocker — you walk straight through them.
+    *castle_built = crate::castle::CastleBuilt::default();
 
     crate::worldmap::build(&mut commands, &mut meshes, &mut images, &mut std_mats, &mut terrain_mats, &mut water_mats);
     info!("view → world map");
