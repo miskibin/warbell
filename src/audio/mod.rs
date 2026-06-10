@@ -494,7 +494,10 @@ fn stop_displaced_hero_lines(
             if ends_at.is_some_and(|end| end - now <= FINISH_GRACE) {
                 continue; // almost done → let him finish the thought
             }
-            commands.entity(e).insert(HeroLineFadeOut);
+            // try_insert: the sink is `PlaybackMode::Despawn` and self-despawns the moment the
+            // clip ends (and `play_line` reaps it when a new line barges in), so it can be gone
+            // by the time this command applies.
+            commands.entity(e).try_insert(HeroLineFadeOut);
         }
     }
 }
