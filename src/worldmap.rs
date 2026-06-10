@@ -1,9 +1,10 @@
-//! The **world map** — a faithful Bevy port of the TS game's island
-//! (`src/world/tileMap.ts`) at the original BASE resolution (144×108): an elliptical
-//! island with a noisy coast, five biome blobs (snow NW, desert NE, rock E, forest SW,
-//! swamp S), a grass centre safe-zone (the castle spot), a grass frontier with
-//! scattered forest clumps, a beach ring, two carved rivers + one lake, and **terraced**
-//! stepped heights (flat tile-tops + cliff faces; snow peak 9, rock peak 15).
+//! The **world map** — a Bevy port of the TS game's island (`src/world/tileMap.ts`),
+//! generated in the original BASE space (144×108): an elliptical island with a noisy
+//! coast, five biome blobs (snow NW, desert NE, rock E, forest SW, swamp S), a grass
+//! centre safe-zone (the castle spot), a grass frontier with scattered forest clumps and
+//! rolling terraced knolls, a beach ring backed by patchy coastal mountain ridges, four
+//! carved rivers + one lake, and **terraced** stepped heights (flat tile-tops + cliff
+//! faces; snow peak 10, rock peak 15).
 //!
 //! `build` seeds the full playable island: the ground mesh plus ork-camp / castle / ore / chest
 //! placement and wildlife (single-biome views, keys 1–5, have no island layout, so none of these).
@@ -29,13 +30,13 @@ use crate::water::{WaterExt, WaterMaterial, WaterParams};
 
 // ── Map dimensions ───────────────────────────────────────────────────────────────
 /// Map enlargement vs the original base island (more tiles → more land + props).
-pub const MAP_SCALE: f32 = 1.4;
+pub const MAP_SCALE: f32 = 1.5;
 // The GRID is the enlarged resolution; GENERATION still runs in *base* space — the grid
 // loop samples `classify(ix / MAP_SCALE, …)`, so the island shape is identical, just
 // drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
 // `GX/GZ` are the GRID centre used for world placement + tile-cache indexing.
-pub const COLS: i32 = 202; // round(144 * 1.4)
-pub const ROWS: i32 = 151; // round(108 * 1.4)
+pub const COLS: i32 = 216; // 144 * 1.5
+pub const ROWS: i32 = 162; // 108 * 1.5
 const CX: f32 = 72.0; // base COLS/2 — generation centre
 const CZ: f32 = 54.0;
 /// Grid centre (enlarged) — world placement recentres the map onto the origin here.
@@ -90,9 +91,9 @@ struct Region {
 }
 
 const REGIONS: [Region; 5] = [
-    Region { x: 26.0, z: 24.0, r: 26.0, biome: TB::Snow, peak: 9 }, // NW snow massif
+    Region { x: 26.0, z: 24.0, r: 31.0, biome: TB::Snow, peak: 10 }, // NW snow massif
     Region { x: 112.0, z: 28.0, r: 34.0, biome: TB::Desert, peak: 0 }, // NE dunes
-    Region { x: 122.0, z: 58.0, r: 22.0, biome: TB::Rock, peak: 15 }, // E rock range
+    Region { x: 122.0, z: 58.0, r: 28.0, biome: TB::Rock, peak: 15 }, // E rock range
     Region { x: 32.0, z: 80.0, r: 34.0, biome: TB::Forest, peak: 0 }, // SW forest
     Region { x: 72.0, z: 92.0, r: 32.0, biome: TB::Swamp, peak: 0 }, // S swamp
 ];
@@ -103,8 +104,12 @@ struct Plateau {
     r: f32,
     peak: i32,
 }
-const PLATEAUS: [Plateau; 2] =
-    [Plateau { x: 98.0, z: 72.0, r: 9.0, peak: 5 }, Plateau { x: 52.0, z: 50.0, r: 7.0, peak: 4 }];
+const PLATEAUS: [Plateau; 4] = [
+    Plateau { x: 98.0, z: 72.0, r: 9.0, peak: 5 },
+    Plateau { x: 52.0, z: 50.0, r: 7.0, peak: 4 },
+    Plateau { x: 90.0, z: 36.0, r: 7.0, peak: 5 }, // NE mesa on the desert fringe
+    Plateau { x: 20.0, z: 62.0, r: 7.0, peak: 4 }, // W forest highland
+];
 
 const DELIBERATE_LAKE: (f32, f32, f32, f32) = (92.0, 80.0, 5.0, 3.0); // x,z,rx,rz
 
@@ -151,6 +156,15 @@ fn river_x(z: f32) -> f32 {
 fn river_z(x: f32) -> f32 {
     20.0 + (x * 0.13 + 0.7).sin() * 4.0
 }
+/// Southern stream: rises near the castle safe-zone and winds south through the forest to the
+/// coast (the safe-zone test in `is_river` clips its head).
+fn river_x2(z: f32) -> f32 {
+    56.0 + (z * 0.15 + 2.0).sin() * 4.0 + (z * 0.06).sin() * 2.5
+}
+/// Southern crossways river: spans the island below the castle through forest + swamp.
+fn river_z2(x: f32) -> f32 {
+    86.0 + (x * 0.11 + 1.0).sin() * 4.0
+}
 fn in_mountain(x: f32, z: f32) -> bool {
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     REGIONS.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 2.0)
@@ -167,11 +181,21 @@ fn is_river(x: f32, z: f32) -> bool {
     if (x - cx).abs() < w {
         return true;
     }
-    if x > 46.0 && x < COLS as f32 - 10.0 {
+    // Northern crossways branch (base-space bound — the old `COLS - 10` was grid-space and
+    // never clipped anything; the coast does the clipping anyway).
+    if x > 46.0 && x < 134.0 {
         let cz = river_z(x);
         if (z - cz).abs() < 0.7 {
             return true;
         }
+    }
+    // Southern stream toward the south coast.
+    if z > 58.0 && (x - river_x2(z)).abs() < 0.7 {
+        return true;
+    }
+    // Southern crossways river through forest + swamp.
+    if x > 14.0 && x < 126.0 && (z - river_z2(x)).abs() < 0.75 {
+        return true;
     }
     false
 }
@@ -201,6 +225,47 @@ fn region_at(x: f32, z: f32) -> Option<usize> {
         }
     }
     best
+}
+
+/// Terraced coastal ridge height class (≥2) at base `(x, z)`, or 0 for no hill. A low-frequency
+/// mask picks which stretches of coast get a mountain ring (the rest stays open beach/plain),
+/// and the height tapers to flat at both edges of the band so the nav-grid's 1-class step rule
+/// still finds ways through.
+fn coast_hill_class(x: f32, z: f32) -> i32 {
+    let d = dist_from_coast(x, z) as f32;
+    if !(2.0..=7.0).contains(&d) {
+        return 0;
+    }
+    let mask = (x * 0.045 + 1.7).sin() + (z * 0.05 - 0.6).cos() + noise_a(x * 0.5, z * 0.5) * 0.25;
+    if mask < 0.3 {
+        return 0;
+    }
+    let band = 1.0 - ((d - 4.5) / 2.5).abs().min(1.0); // peak mid-band, flat at both edges
+    let h = 1.0 + mask.min(1.6) * 2.6 * band + noise_b(x * 1.1 + 5.0, z * 1.1) * 0.7;
+    let cls = h.round().clamp(1.0, 6.0) as i32;
+    if cls >= 2 { cls } else { 0 }
+}
+
+/// Gentle terraced inland hills (height class 1..=`max`) layered over every flat part of the
+/// island — grassy knolls on the frontier, dunes in the desert, wooded rises in the forest —
+/// so the middle of the map isn't one flat sheet. Nested thresholds mean a hill always climbs
+/// through each class ring in turn, keeping every face a 1-class step the nav-grid can walk;
+/// inside `SAFE_R + 8` it stays flat so the castle approaches and siege lanes stay open.
+fn inland_hills(x: f32, z: f32, dc: f32, max: i32) -> i32 {
+    if dc <= SAFE_R + 8.0 {
+        return 1;
+    }
+    let roll = noise_a(x * 0.3 + 9.0, z * 0.3 - 5.0) + noise_b(x * 0.16 - 4.0, z * 0.16 + 8.0) * 0.6;
+    let h = if roll > 1.9 {
+        4
+    } else if roll > 1.45 {
+        3
+    } else if roll > 0.95 {
+        2
+    } else {
+        1
+    };
+    h.min(max.max(1))
 }
 
 fn plateau_height(x: f32, z: f32) -> i32 {
@@ -260,6 +325,12 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     if !is_land_shape(x, z) {
         return None;
     }
+    // Town build plots must stay flat, empty grass — a terrain step or biome props under a
+    // plot would collide with the building constructed on it. Plots are authored in world
+    // space; this runs in base space, so convert (world = base·MAP_SCALE − G).
+    if crate::town::near_build_plot(x * MAP_SCALE - GX, z * MAP_SCALE - GZ) {
+        return Some((TB::Grass, 1));
+    }
     let dc = dist_from_castle(x, z);
     if dc < SAFE_R + edge_fray(x, z).max(-4.0) {
         return Some((TB::Grass, 1));
@@ -276,9 +347,30 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     if d <= beach_w {
         return Some((TB::Sand, 1));
     }
+    // Coastal mountain ridges around the island rim (skip inside the peak regions — the snow
+    // massif / rock range own their heights there). Tall ridges read as bare rock; lower
+    // rises keep the local flat-region biome (sandy bluffs in the desert, wooded coastal
+    // hills in the forest, …) or grass.
+    if !in_mountain(x, z) {
+        let ch = coast_hill_class(x, z);
+        if ch > 0 {
+            let b = match region_at(x, z) {
+                Some(ri) if REGIONS[ri].peak == 0 => REGIONS[ri].biome,
+                _ if ch >= 4 => TB::Rock,
+                _ => TB::Grass,
+            };
+            return Some((b, ch));
+        }
+    }
     let ph = plateau_height(x, z);
     if ph > 0 {
-        return Some((TB::Grass, ph));
+        // A plateau inside a flat biome blob keeps that biome (desert mesa, forest highland);
+        // out on the frontier it's a grass plateau.
+        let b = match region_at(x, z) {
+            Some(ri) if REGIONS[ri].peak == 0 => REGIONS[ri].biome,
+            _ => TB::Grass,
+        };
+        return Some((b, ph));
     }
     if let Some(ri) = region_at(x, z) {
         let reg = &REGIONS[ri];
@@ -288,13 +380,17 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         if reg.peak > 0 {
             return Some((reg.biome, mountain_height(x, z, reg)));
         }
-        return Some((reg.biome, 1));
+        // Flat biomes still get the inland-hills field: dunes in the desert, wooded rises in
+        // the forest; the swamp stays marsh-flat.
+        let max = if reg.biome == TB::Swamp { 1 } else { 3 };
+        return Some((reg.biome, inland_hills(x, z, dc, max)));
     }
+    let h = inland_hills(x, z, dc, 4);
     let forest_n = noise_a(x, z) * noise_b(x + 7.0, z - 3.0);
-    if forest_n > 0.5 {
-        return Some((TB::Forest, 1));
+    if forest_n > 0.35 {
+        return Some((TB::Forest, h));
     }
-    Some((TB::Grass, 1))
+    Some((TB::Grass, h))
 }
 
 // ── Tile cache ──────────────────────────────────────────────────────────────────
@@ -531,7 +627,12 @@ pub fn build(
         lo,
         hi,
         false,
-        &|x, z| is_grass_world(x, z) && !crate::castle::in_footprint(x, z) && !crate::camps::in_clearing(x, z),
+        &|x, z| {
+            is_grass_world(x, z)
+                && !crate::castle::in_footprint(x, z)
+                && !crate::camps::in_clearing(x, z)
+                && !crate::town::near_build_plot(x, z)
+        },
         &|x, z| tile_top_y_world(x, z),
     );
 
