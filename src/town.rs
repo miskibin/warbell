@@ -123,6 +123,10 @@ impl Plugin for TownPlugin {
             .add_systems(Update, flame_flicker)
             // Screenshot staging (ungated): no-op unless FOREST_TOWN / FOREST_PANEL=build set.
             .add_systems(Update, (stage_town_for_shot, open_build_for_shot));
+        // Clip-only: raise the town one plot at a time for a construction timelapse.
+        if std::env::var("FOREST_DEMO").ok().as_deref() == Some("build") {
+            app.add_systems(Update, demo_build_timelapse.run_if(in_state(Modal::None)));
+        }
     }
 }
 
@@ -583,6 +587,47 @@ fn stage_town_for_shot(
         town.0.damage(0, 20.0);
         spawn_flame(&mut commands, &mut meshes, &mut materials, 0, &spots);
     }
+}
+
+/// Demo hook (`FOREST_DEMO=build`): raise the town one plot at a time so a clip films a
+/// construction timelapse instead of `FOREST_TOWN`'s instant pop-in. Builds a plot every
+/// `BUILD_EVERY` seconds until every producer plot stands. Clip-only; never wired in real play.
+#[allow(clippy::too_many_arguments)]
+fn demo_build_timelapse(
+    time: Res<Time>,
+    spots: Res<PlotSpots>,
+    mats: Option<Res<VillageMats>>,
+    mut town: ResMut<TownRes>,
+    mut bank: ResMut<Bank>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut next_at: Local<f32>,
+    mut idx: Local<usize>,
+    mut primed: Local<bool>,
+) {
+    const BUILD_EVERY: f32 = 1.3;
+    const KINDS: [BuildKind; 4] = [BuildKind::Farm, BuildKind::Lumber, BuildKind::Mine, BuildKind::Farm];
+    if spots.0.is_empty() {
+        return;
+    }
+    let Some(mats) = mats else { return };
+    if !*primed {
+        *primed = true;
+        bank.0.add_wood(500.0);
+        bank.0.add_stone(500.0);
+    }
+    let now = time.elapsed_secs();
+    if now < *next_at || *idx >= spots.0.len().min(town.0.plots.len()) {
+        return;
+    }
+    let i = *idx;
+    let kind = KINDS[i % KINDS.len()];
+    town.0.build(i, kind, &mut bank.0);
+    if town.0.plots[i].kind.is_some() {
+        spawn_building(&mut commands, &mut meshes, &mats.0, i, kind, &spots);
+    }
+    *idx += 1;
+    *next_at = now + BUILD_EVERY;
 }
 
 // ── Modal::Build panel ────────────────────────────────────────────────────────────────────

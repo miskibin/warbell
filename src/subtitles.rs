@@ -15,6 +15,9 @@ pub struct Subtitles {
     text: String,
     /// `elapsed_secs` at which the caption should be gone.
     until: f32,
+    /// Demo/clip override: once locked, ambient `say`/`say_as` calls are ignored so a scripted
+    /// caption (`force`) can't be clobbered by the audio director's barks. Never set in play.
+    locked: bool,
 }
 
 impl Subtitles {
@@ -24,6 +27,17 @@ impl Subtitles {
     }
     /// Show `text` attributed to `speaker` (renders "Name: text"); `None` = no prefix (the hero).
     pub fn say_as(&mut self, now: f32, speaker: Option<&str>, text: &str, dur: f32) {
+        if self.locked {
+            return;
+        }
+        self.set(now, speaker, text, dur);
+    }
+    /// Clip-only: pin a caption that ambient speakers can't override (locks the resource).
+    pub fn force(&mut self, now: f32, speaker: Option<&str>, text: &str, dur: f32) {
+        self.locked = true;
+        self.set(now, speaker, text, dur);
+    }
+    fn set(&mut self, now: f32, speaker: Option<&str>, text: &str, dur: f32) {
         self.text = match speaker {
             Some(name) => format!("{name}: {text}"),
             None => text.to_string(),

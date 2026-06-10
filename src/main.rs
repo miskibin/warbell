@@ -28,6 +28,7 @@ mod critters;
 mod debug_panel;
 mod debug_stats;
 mod decor;
+mod demo;
 mod defenses;
 mod dof;
 mod dying;
@@ -162,6 +163,7 @@ fn main() {
             lumberjack::LumberjackPlugin, // woodcutters fell real trees (safe zone + threat sense)
             miner::MinerPlugin, // stone miners work real boulders + cart the stone home (ranges far)
             savegame::SaveGamePlugin, // dawn autosave + Continue/New Game (one slot)
+            demo::DemoPlugin, // scripted clip scenarios (FOREST_DEMO=explore|defend; build→town.rs)
         ))
         .run();
 }
