@@ -24,7 +24,11 @@ const FLOAT_FONT: f32 = 24.0;
 /// Drop-shadow alpha at full opacity (fades with the number).
 const FLOAT_SHADOW_A: f32 = 0.85;
 /// White-flash duration on a struck ork (s).
-const HURT_FLASH_DUR: f32 = 0.09;
+const HURT_FLASH_DUR: f32 = 0.12;
+/// Peak emissive of the hurt-flash. Deliberately LOW: at the old 0.8 the model blew out to a
+/// white silhouette for the whole post-hitstop beat, strobing under rapid hits and completely
+/// masking the squash/recoil body language that sells the blow.
+const HURT_FLASH_PEAK: f32 = 0.28;
 /// Trauma shed per second (old `TRAUMA_DECAY`).
 const SHAKE_DECAY: f32 = 2.4;
 /// Camera offset (world units) at full trauma.
@@ -400,8 +404,10 @@ fn hurt_flash(
         }
         let k = (remain / HURT_FLASH_DUR).clamp(0.0, 1.0);
         if let Some(m) = mats.get_mut(&skin.0) {
-            // A subtle whiten, not a strobe — kept low so rapid hits don't blow out the model.
-            m.emissive = LinearRgba::rgb(k * 0.8, k * 0.8, k * 0.8);
+            // A subtle whiten, not a strobe — kept low so rapid hits don't blow out the model
+            // (and so the squash/recoil pose stays readable through the flash).
+            let v = k * HURT_FLASH_PEAK;
+            m.emissive = LinearRgba::rgb(v, v, v);
         }
     }
 }
@@ -433,9 +439,13 @@ impl HitSquash {
 }
 
 /// How long the squash rings (s) — under the 0.45s swing so spam-clicks read as separate pops.
-const SQUASH_DUR: f32 = 0.26;
+const SQUASH_DUR: f32 = 0.34;
 /// Peak vertical compression (fraction of rest height) at the moment of impact.
-const SQUASH_AMP: f32 = 0.16;
+const SQUASH_AMP: f32 = 0.24;
+/// Ring frequency (rad/s). Kept LOW on purpose: hit-stop freezes virtual time for the first
+/// 0.05–0.09s of the squash, so the post-freeze compression has to last several more frames to
+/// read — at the old 26 rad/s it decayed within ~2 frames and the effect was invisible.
+const SQUASH_FREQ: f32 = 14.0;
 
 /// Drive each squash: a damped cosine that starts fully compressed at impact, springs PAST rest
 /// on the rebound and settles back, with an anti-phase horizontal bulge so the body keeps
@@ -455,7 +465,7 @@ fn drive_hit_squash(
             continue;
         }
         let k = 1.0 - t / SQUASH_DUR;
-        let w = (t * 26.0).cos() * SQUASH_AMP * k * k;
+        let w = (t * SQUASH_FREQ).cos() * SQUASH_AMP * k * k;
         tf.scale = base * Vec3::new(1.0 + w * 0.7, 1.0 - w, 1.0 + w * 0.7);
     }
 }
