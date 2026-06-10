@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WiX 6 authoring for the Windows installer.
+     Build (from repo root, after `cargo build -release`):
+       wix build installer/tileworld.wxs -arch x64 -d SourceDir=$PWD -o dist/tileworld-setup.msi
+     SourceDir must be the repo root (relative Source paths resolve against the
+     authored Directory tree, not the .wxs location, so they can't be used here).
+     `Files Include` (WiX v5+) harvests the whole assets/ tree recursively, so new
+     assets are picked up on rebuild with no .wxs edits. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Tileworld"
+           Manufacturer="miskibin"
+           Version="0.1.0"
+           UpgradeCode="4932DA25-490C-49B0-B6B2-1083FCE18B2D">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Tileworld is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Tileworld">
+        <!-- Bevy resolves the asset root relative to the exe's directory, so the
+             assets/ folder must sit next to the binary. -->
+        <File Id="GameExe" Source="$(SourceDir)\target\release\tileworld_bevy_forest.exe" />
+        <Directory Id="AssetsFolder" Name="assets">
+          <Files Include="$(SourceDir)\assets\**" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="AppShortcut"
+                  Name="Tileworld"
+                  Target="[INSTALLFOLDER]tileworld_bevy_forest.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\miskibin\Tileworld"
+                       Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="CleanupShortcut" Directory="ProgramMenuFolder" On="uninstall" />
+      </Component>
+    </StandardDirectory>
+  </Package>
+</Wix>
