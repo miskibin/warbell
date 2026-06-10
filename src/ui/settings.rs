@@ -178,14 +178,14 @@ fn keys(
     }
 }
 
-fn toggle_mute(settings: &mut AudioSettings, notice: &mut Notice, now: f64) {
+pub(crate) fn toggle_mute(settings: &mut AudioSettings, notice: &mut Notice, now: f64) {
     settings.muted = !settings.muted;
     // The actual silencing happens in `sync_mute` (live `AudioSink`s) — GlobalVolume alone is
     // only sampled when a sink *starts*, so it never touches already-playing music/ambience.
     notice.push(if settings.muted { "Audio muted" } else { "Audio on" }, now);
 }
 
-fn toggle_quality(quality: &mut GraphicsQuality, notice: &mut Notice, now: f64) {
+pub(crate) fn toggle_quality(quality: &mut GraphicsQuality, notice: &mut Notice, now: f64) {
     *quality = quality.next();
     notice.push(format!("Graphics: {}", quality.label()), now);
 }
@@ -233,7 +233,7 @@ fn sync_quality_label(
     }
 }
 
-fn toggle_fullscreen(
+pub(crate) fn toggle_fullscreen(
     windows: &mut Query<&mut Window, With<PrimaryWindow>>,
     notice: &mut Notice,
     now: f64,
