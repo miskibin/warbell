@@ -4,10 +4,19 @@
 //! **Population is a flow, not a stock.** Every peasant eats; every staffed Farm feeds.
 //! The *net* food rate (production − upkeep) accumulates in a signed [`Town::growth`]
 //! meter: cross +[`SETTLE_FOOD`] with a free house slot and a peasant **settles** in;
-//! cross −[`SETTLE_FOOD`] and one **starves** away (no floor — chronic deficit can empty
-//! the town). Food is therefore never banked: it is a daily balance you keep positive,
-//! not a hoard. Houses (protected, inside the walls) set the population cap; producers
-//! (Farm, Woodcutter — exposed on the outer plots) can burn at night.
+//! cross −[`SETTLE_FOOD`] and one **starves** away. Food is therefore never banked: it is
+//! a daily balance you keep positive, not a hoard. Houses (protected, inside the walls)
+//! set the population cap; producers (Farm, Woodcutter — exposed on the outer plots) can
+//! burn at night.
+//!
+//! **The castle larder** anchors the whole flow at a bedrock pair: the first
+//! [`LARDER_POP`] peasants eat from the castle's own stores (no upkeep — they can never
+//! starve away), and while the town is below that pair the larder's surplus
+//! ([`LARDER_REGROW_RATE`]) draws settlers back in. So the starting town of
+//! [`START_POP`] = 2 isn't a magic number — it's the population the default housing
+//! (one founding house) and default food (the larder) actually support, and a town wiped
+//! out overnight regrows to the pair within a couple of minutes of dawn. Everyone
+//! *beyond* the pair must be housed by built Houses and fed by staffed Farms.
 //!
 //! Numbers are tuned for forest's 60-HP combat units and the day/night siege cadence;
 //! tweak the constants below (also exposed to the F1 debug panel).
@@ -19,15 +28,23 @@ pub const POP_PER_HOUSE: u32 = 2;
 /// House build-slots inside the walls (the castle's interior dwellings).
 pub const MAX_HOUSES: u32 = 12;
 /// Houses a fresh town starts with (→ `START_POP` peasants at cap).
-pub const START_HOUSES: u32 = 2;
+pub const START_HOUSES: u32 = 1;
 /// Peasants a fresh town starts with (= `START_HOUSES * POP_PER_HOUSE`).
 pub const START_POP: u32 = START_HOUSES * POP_PER_HOUSE;
 /// Net food (production − upkeep) that must accumulate to settle one new peasant — or,
 /// as a deficit, to starve one away. The `growth` meter is clamped to ±this.
 pub const SETTLE_FOOD: f64 = 20.0;
-/// Food eaten per peasant per second (upkeep). 4 peasants ≈ 0.16/s, so one staffed Farm
-/// (0.5/s) comfortably feeds the starting town with a growing surplus.
+/// Food eaten per peasant per second (upkeep) — by each peasant **beyond** the larder pair;
+/// the first [`LARDER_POP`] eat from the castle's stores. One staffed Farm (0.5/s) feeds a
+/// dozen paying mouths, so early growth is house-gated, not food-gated.
 pub const UPKEEP_PER_POP: f64 = 0.04;
+/// Peasants the castle larder feeds for free — the town's bedrock pair. They draw no upkeep
+/// (so the town can never starve below this), and while either place is empty the larder
+/// runs a settler-attracting surplus ([`LARDER_REGROW_RATE`]).
+pub const LARDER_POP: u32 = 2;
+/// Food surplus per second the larder runs while the town is below [`LARDER_POP`] — sized so
+/// a wiped-out town regrows its pair organically within ~2½ minutes (80 s per settler).
+pub const LARDER_REGROW_RATE: f64 = 0.25;
 /// Building HP healed per second while repairing (Prep phase).
 pub const REPAIR_PER_SEC: f64 = 8.0;
 /// Cost to raise one House (inside the walls). Houses don't burn, so this is the only gate
@@ -233,15 +250,26 @@ impl Town {
             .sum()
     }
 
-    /// Food eaten per second by the whole population.
+    /// Food eaten per second by the population — only the mouths **beyond** the larder pair
+    /// pay upkeep (the castle's stores cover the first [`LARDER_POP`]).
     pub fn upkeep_rate(&self) -> f64 {
-        self.population as f64 * UPKEEP_PER_POP
+        self.population.saturating_sub(LARDER_POP) as f64 * UPKEEP_PER_POP
     }
 
-    /// Net daily food balance (production − upkeep). Positive grows the town, negative
-    /// starves it. The HUD shows this so the player can see why population moves.
+    /// The castle larder's settler-attracting surplus: flows only while the town is below
+    /// its bedrock pair, so an emptied town regrows to [`LARDER_POP`] and then it rests.
+    pub fn larder_rate(&self) -> f64 {
+        if self.population < LARDER_POP {
+            LARDER_REGROW_RATE
+        } else {
+            0.0
+        }
+    }
+
+    /// Net daily food balance (production + larder − upkeep). Positive grows the town,
+    /// negative starves it. The HUD shows this so the player can see why population moves.
     pub fn net_food(&self) -> f64 {
-        self.food_rate() - self.upkeep_rate()
+        self.food_rate() + self.larder_rate() - self.upkeep_rate()
     }
 
     /// Progress of the settle/starve meter as a signed fraction in [-1, 1]
@@ -251,7 +279,9 @@ impl Town {
     }
 
     /// Advance the population by the net-food flow. Surplus + a free house slot settles a
-    /// peasant; a sustained deficit starves one (no floor). At most one change per call.
+    /// peasant; a sustained deficit starves one. At most one change per call. Starvation
+    /// organically floors at the larder pair: at or below [`LARDER_POP`] the net flow can't
+    /// go negative (no upkeep), so only deaths — never hunger — can empty the town.
     pub fn population_tick(&mut self, dt: f64) -> PopEvent {
         self.growth += self.net_food() * dt;
         if self.growth >= SETTLE_FOOD && self.population < self.pop_cap() {
@@ -419,12 +449,12 @@ mod tests {
 
     #[test]
     fn net_food_is_production_minus_upkeep() {
-        let mut t = Town::new(1, 4); // 4 peasants → upkeep 0.16/s
+        let mut t = Town::new(1, 4); // 4 peasants → 2 beyond the larder pair pay upkeep
         let mut bank = bank_with(50.0, 0.0, 0.0);
         t.build(0, BuildKind::Farm, &mut bank);
         t.plots[0].staffed = true;
-        // 0.5 produced − 4 × 0.04 upkeep = 0.34.
-        assert!((t.net_food() - 0.34).abs() < 1e-9);
+        // 0.5 produced − (4 − LARDER_POP) × 0.04 upkeep = 0.42 (larder rests at ≥ 2 pop).
+        assert!((t.net_food() - 0.42).abs() < 1e-9);
     }
 
     #[test]
@@ -457,8 +487,8 @@ mod tests {
         t.houses = 1; // cap = 2, population 0 → upkeep 0
         let mut bank = bank_with(50.0, 0.0, 0.0);
         t.build(0, BuildKind::Farm, &mut bank);
-        t.plots[0].staffed = true; // +0.5/s, no upkeep
-        // 0.5 × 40s = 20 = SETTLE_FOOD → one peasant settles.
+        t.plots[0].staffed = true; // +0.5/s farm + 0.25/s larder (pop < pair), no upkeep
+        // 0.75 × 40s = 30 ≥ SETTLE_FOOD → one peasant settles.
         assert_eq!(t.population_tick(40.0), PopEvent::Grew);
         assert_eq!(t.population, 1);
     }
@@ -479,29 +509,41 @@ mod tests {
 
     #[test]
     fn population_starves_on_a_food_deficit() {
-        let mut t = Town::new(0, 2); // 2 peasants, no farms → net −0.08/s
+        let mut t = Town::new(0, 4); // 2 paying mouths beyond the pair → net −0.08/s
         // −0.08 × 250s = −20 = −SETTLE_FOOD → one starves.
         assert_eq!(t.population_tick(250.0), PopEvent::Starved);
-        assert_eq!(t.population, 1);
+        assert_eq!(t.population, 3);
     }
 
     #[test]
-    fn starvation_has_no_floor_but_stops_at_zero() {
-        let mut t = Town::new(0, 1); // 1 peasant, no food
+    fn starvation_floors_at_the_larder_pair() {
+        let mut t = Town::new(0, 3); // one paying mouth, no farms
         assert_eq!(t.population_tick(600.0), PopEvent::Starved);
-        assert_eq!(t.population, 0);
-        // Empty town, nothing left to lose.
+        assert_eq!(t.population, 2);
+        // The bedrock pair eat from the castle larder — hunger can never take them.
+        assert_eq!(t.population_tick(10_000.0), PopEvent::None);
+        assert_eq!(t.population, 2);
+    }
+
+    #[test]
+    fn larder_regrows_an_emptied_town_to_the_pair() {
+        let mut t = Town::new(0, 0); // wiped out overnight, no farms at all
+        t.houses = 1; // the founding house still stands (houses are protected)
+        // 0.25/s × 80s = 20 = SETTLE_FOOD → a settler, then the second.
+        assert_eq!(t.population_tick(80.0), PopEvent::Grew);
+        assert_eq!(t.population_tick(80.0), PopEvent::Grew);
+        assert_eq!(t.population, 2);
+        // At the pair the larder rests: no farms → no further growth.
         assert_eq!(t.population_tick(600.0), PopEvent::None);
-        assert_eq!(t.population, 0);
+        assert_eq!(t.population, 2);
     }
 
     #[test]
     fn growth_fraction_tracks_the_meter() {
-        let mut t = Town::new(1, 0);
-        t.houses = 1;
+        let mut t = Town::new(1, 2); // at the larder pair: no upkeep, larder resting
         let mut bank = bank_with(50.0, 0.0, 0.0);
         t.build(0, BuildKind::Farm, &mut bank);
-        t.plots[0].staffed = true;
+        t.plots[0].staffed = true; // the staffed farm is pure surplus
         t.population_tick(20.0); // +0.5 × 20 = +10 = half of SETTLE_FOOD
         assert!((t.growth_fraction() - 0.5).abs() < 1e-9);
     }
