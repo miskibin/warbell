@@ -71,6 +71,14 @@ pub struct Villager {
     gathering: bool,
 }
 
+impl Villager {
+    /// Body centre (world XZ) + collision radius — read by the hero's body-collision pass so he
+    /// can't clip through townsfolk (the same one-way shove the orks/animals get).
+    pub fn body(&self) -> (Vec2, f32) {
+        (self.pos, self.body_r)
+    }
+}
+
 #[derive(Component)]
 struct VilPart {
     kind: PartKind,
