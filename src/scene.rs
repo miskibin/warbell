@@ -10,7 +10,7 @@ use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::{
     CascadeShadowConfigBuilder, DirectionalLightShadowMap, FogVolume, ShadowFilteringMethod,
-    SunDisk, VolumetricFog, VolumetricLight,
+    SunDisk, VolumetricFog,
 };
 use bevy::pbr::{
     Atmosphere, DistanceFog, FogFalloff, ScatteringMedium, ScreenSpaceAmbientOcclusion,
@@ -452,9 +452,12 @@ fn setup_sun(mut commands: Commands) {
             shadows_enabled: true,
             ..default()
         },
-        // Cast volumetric light shafts through the `FogVolume` below — the sun's half of the
-        // god-rays effect (the camera's `VolumetricFog` is the other half).
-        VolumetricLight,
+        // NB: no `VolumetricLight` here. The sun's half of the god-rays effect (the camera's
+        // `VolumetricFog` is the other half) is the *only* runtime switch for the volumetric pass
+        // — Bevy tears the pass down when no `VolumetricLight` exists. The God Rays graphics preset
+        // (`quality.rs`) inserts it on demand; spawning it here would run the pass for the first
+        // frame or two before `apply_quality` removes it, seeding a stale ~20 ms reading that the
+        // F2 GPU-passes table then shows forever. Default presets (High/Low) never pay for it.
         // Visible solar disk in the Atmosphere sky. Default is `SunDisk::EARTH` —
         // physically-accurate 0.0093 rad (≈0.5°), a barely-visible dot. The stylized look
         // wants a big warm ball: ~6× earth size, overexposed so Bloom halos it into a glow.

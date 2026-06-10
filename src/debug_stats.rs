@@ -218,12 +218,20 @@ fn stats_ui(
 /// heaviest pass so the bottleneck pass is obvious at a glance. Total of the listed passes is
 /// shown at the bottom.
 fn gpu_passes(ui: &mut egui::Ui, diags: &DiagnosticsStore) {
+    // A pass that stopped running (e.g. volumetric_lighting once the God Rays preset is off)
+    // keeps its last `smoothed()` value forever — the EMA only updates on a new measurement.
+    // Skip any pass whose most-recent measurement is stale, so a node that ran only during
+    // startup warmup doesn't sit at the top of the table for the rest of the session.
+    let stale = std::time::Duration::from_millis(500);
     let collect = |field: &str| -> Vec<(String, f64)> {
         let mut v: Vec<(String, f64)> = diags
             .iter()
             .filter_map(|d| {
                 let p = d.path().as_str();
                 let name = p.strip_prefix("render/")?.strip_suffix(field)?;
+                if d.measurement().is_none_or(|m| m.time.elapsed() > stale) {
+                    return None;
+                }
                 let ms = d.smoothed().filter(|m| *m > 0.0)?;
                 Some((name.trim_end_matches('/').replace('/', " › "), ms))
             })
