@@ -79,6 +79,20 @@ pub struct Juice<'w> {
     materials: ResMut<'w, Assets<StandardMaterial>>,
 }
 
+/// Townsfolk the hero can harmlessly bonk with a swing: the [`crate::villagers::Villager`] bodies
+/// (which are NOT in the damage-dealing `targets` query) plus the voice channel to make them yelp.
+/// Bundled into one [`SystemParam`] so [`player_attack`] stays under Bevy's 16-param ceiling.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Bystanders<'w, 's> {
+    speak: MessageWriter<'w, crate::audio::Speak>,
+    folk: Query<
+        'w,
+        's,
+        &'static GlobalTransform,
+        (With<crate::villagers::Villager>, Without<crate::dying::Dying>),
+    >,
+}
+
 /// Vitals attached to a hittable (ork / animal) by [`ensure_combat_health`].
 #[derive(Component)]
 pub struct Health {
@@ -258,6 +272,7 @@ pub fn player_attack(
     mut mods: crate::inventory::CombatMods,
     mut rewards: ResMut<crate::orbs::RewardBursts>,
     mut juice: Juice,
+    mut bystanders: Bystanders,
     mut commands: Commands,
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
@@ -461,6 +476,30 @@ pub fn player_attack(
                 }
             }
         }
+    }
+
+    // ── Bonking a townsperson: the same front-cone, but villagers aren't in the damage query, so
+    // a swing that clips one does NO harm — it just lands a soft thud and earns a sarcastic earful.
+    // Nearest bonked villager wins, so the line comes from whoever you actually clipped. ──
+    let mut bonk: Option<(f32, Vec3)> = None;
+    for gt in &bystanders.folk {
+        let p = gt.translation();
+        let to = Vec2::new(p.x - origin.x, p.z - origin.y);
+        let dist = to.length();
+        if dist > ATTACK_RANGE || dist < 1e-3 {
+            continue;
+        }
+        if (to / dist).dot(fwd) < ATTACK_CONE_DOT {
+            continue;
+        }
+        if bonk.is_none_or(|(bd, _)| dist < bd) {
+            bonk = Some((dist, Vec3::new(p.x, p.y + 1.6, p.z)));
+        }
+    }
+    if let Some((_, head)) = bonk {
+        bystanders.speak.write(crate::audio::Speak::at(crate::audio::Concept::HitByHero, head));
+        // A connecting bonk plays the impact thud + a light shake below, not the empty-swing whoosh.
+        hit_any = true;
     }
 
     // Juice: a connecting blow shakes the screen, punches the FOV + briefly freezes the sim
