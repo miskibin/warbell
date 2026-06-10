@@ -35,9 +35,15 @@ pub fn can_stand(x: f32, z: f32, r: f32, cur_y: f32) -> bool {
 pub fn step_clear(pos: Vec2, dir: Vec2, dist: f32, body_r: f32, cur_y: f32) -> bool {
     let np = pos + dir * dist;
     let lead = np + dir * body_r;
-    can_stand(np.x, np.y, body_r, cur_y)
-        && !crate::blockers::is_blocked(np.x, np.y)
-        && !crate::blockers::is_blocked(lead.x, lead.y)
+    if !can_stand(np.x, np.y, body_r, cur_y) {
+        return false;
+    }
+    // Already inside a blocker (e.g. a building raised over the spot the mover was standing
+    // on): waive the prop test so it can walk out — normal collision resumes once clear.
+    if crate::blockers::is_blocked(pos.x, pos.y) {
+        return true;
+    }
+    !crate::blockers::is_blocked(np.x, np.y) && !crate::blockers::is_blocked(lead.x, lead.y)
 }
 
 /// Wrap an angle to (-π, π].

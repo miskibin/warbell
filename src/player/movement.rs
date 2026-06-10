@@ -191,11 +191,17 @@ pub fn player_move(
             * dt;
         let nx = hero.pos.x + move_dir.x * step;
         let nz = hero.pos.y + move_dir.z * step;
-        if hero_can_step(nx, hero.pos.y, PLAYER_R, hero.y) && !blockers::is_blocked(nx, hero.pos.y)
+        // Already inside a blocker? (A producer cottage raises its collision box over the very
+        // plot the hero must stand on to build it, sealing him in.) Waive the prop test so he
+        // can walk out — normal collision resumes the moment he's clear.
+        let escaping = blockers::is_blocked(hero.pos.x, hero.pos.y);
+        if hero_can_step(nx, hero.pos.y, PLAYER_R, hero.y)
+            && (escaping || !blockers::is_blocked(nx, hero.pos.y))
         {
             hero.pos.x = nx;
         }
-        if hero_can_step(hero.pos.x, nz, PLAYER_R, hero.y) && !blockers::is_blocked(hero.pos.x, nz)
+        if hero_can_step(hero.pos.x, nz, PLAYER_R, hero.y)
+            && (escaping || !blockers::is_blocked(hero.pos.x, nz))
         {
             hero.pos.y = nz;
         }
