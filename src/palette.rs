@@ -27,10 +27,14 @@ pub fn lin_scaled(hex: u32, v: f32) -> [f32; 4] {
 pub const FOREST_GROUND: u32 = 0x6cb14a; // grass base (vision.ts TOP_SPECS.grass)
 
 // ── Tree foliage / trunks (forest-tree spec) ────────────────────────────────
+// Foliage nudged ~8% darker + cooler off the original spec greens (0x2f7a36 /
+// 0x3a9442 / 0x4cb358): canopy and grass sat in the same hue+value family, so the
+// forest read as one neon-green mass — the cool dark canopy is what lets the bright
+// warm meadow read against it.
 pub const TREE_TRUNK: u32 = 0x5a3a22;
-pub const FOLIAGE_DARK: u32 = 0x2f7a36;
-pub const FOLIAGE_MID: u32 = 0x3a9442;
-pub const FOLIAGE_LIGHT: u32 = 0x4cb358;
+pub const FOLIAGE_DARK: u32 = 0x2a6f3c;
+pub const FOLIAGE_MID: u32 = 0x33874a;
+pub const FOLIAGE_LIGHT: u32 = 0x43a45e;
 pub const BIRCH_TRUNK: u32 = 0xece8d8;
 pub const BIRCH_MARK: u32 = 0x2a261e;
 pub const BIRCH_DARK: u32 = 0x3a8c34;

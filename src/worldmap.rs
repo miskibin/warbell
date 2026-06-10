@@ -68,8 +68,19 @@ const COL_ROCK: u32 = 0x8d847a;
 const COL_SNOW: u32 = 0xe4ecf5;
 const COL_DESERT: u32 = 0xddc189;
 const COL_SWAMP: u32 = 0x55613a;
+/// Snow-interior mottle (see `biome_col_at`): cool drift-shadow troughs + wind-polished
+/// bright crests, so the snowfield reads as wind-shaped drifts instead of one cream sheet.
+const COL_SNOW_SHADE: u32 = 0xc9d6e8;
+const COL_SNOW_BRIGHT: u32 = 0xf4f9ff;
+/// Forest-floor mottle: dark moist loam under the canopy + dry leaf-litter patches.
+const COL_FOREST_DARK: u32 = 0x4a8136;
+const COL_FOREST_DRY: u32 = 0x79a24c;
 /// Exposed soil on grass-biome cliff faces (lip lighter, base darker).
 const COL_DIRT: u32 = 0x6b4f30;
+/// Snow-biome cliff faces: a bright snow lip over exposed blue-grey rock — the old
+/// "darken the snow colour" walls read as bare foam blocks in the same cream as the tops.
+const SNOW_CLIFF_LIP: u32 = 0xe9f0f9;
+const SNOW_CLIFF_ROCK: u32 = 0x7b8597;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TB {
@@ -486,6 +497,32 @@ fn biome_col(b: TB) -> [f32; 3] {
     })
 }
 
+/// Biome interior colour at base-space (x,z). The region blend used to mix toward one
+/// flat `biome_col` per blob, which left big biome interiors (especially the snowfield)
+/// a single unbroken tone — only the grass frontier had macro-patches. Snow and forest
+/// now carry their own interior mottle; the other biomes keep their flat base (their
+/// scatter is dense enough to break the ground up).
+fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
+    let base = biome_col(b);
+    match b {
+        TB::Snow => {
+            // Broad cool drift-shadow troughs + tighter wind-streak crests (sastrugi).
+            let drift = smoothstep(0.15, 1.25, noise_a(x * 3.2 - 7.0, z * 3.2 + 19.0));
+            let streak = smoothstep(0.55, 1.35, noise_b(x * 7.5 + 3.0, z * 2.4 - 13.0));
+            let col = mix3(base, lin3(COL_SNOW_SHADE), drift * 0.50);
+            mix3(col, lin3(COL_SNOW_BRIGHT), streak * 0.55)
+        }
+        TB::Forest => {
+            // Dark moist loam patches under the canopy + dry leaf-litter speckle.
+            let moist = smoothstep(0.20, 1.30, noise_a(x * 3.6 + 13.0, z * 3.6 - 5.0));
+            let dry = smoothstep(0.35, 1.40, noise_b(x * 8.0 - 23.0, z * 8.0 + 7.0));
+            let col = mix3(base, lin3(COL_FOREST_DARK), moist * 0.50);
+            mix3(col, lin3(COL_FOREST_DRY), dry * 0.35)
+        }
+        _ => base,
+    }
+}
+
 /// Smooth blended ground colour at tile-space (x,z): grass base, each biome blob mixed in
 /// over a soft `BLEND` band at its edge, plus a sandy coast fade.
 fn ground_color(x: f32, z: f32) -> [f32; 4] {
@@ -506,7 +543,7 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
         let d = (x - reg.x).hypot(z - reg.z) + wob + fray;
         let edge = reg.r - d; // >0 inside
         let w = smoothstep(-BLEND, BLEND, edge);
-        col = mix3(col, biome_col(reg.biome), w);
+        col = mix3(col, biome_col_at(reg.biome, x, z), w);
     }
     // Sandy coast fade.
     let dco = dist_from_coast(x, z) as f32;
@@ -634,6 +671,50 @@ pub fn build(
         },
         list: ambiences,
     });
+    // ── Snow drifts banked against terrace walls: where a snow tile abuts a higher
+    // neighbour, pile a wind-drift mound into the corner so the cliff faces rise out of
+    // drifted snow instead of standing naked on a flat field. Deterministic per tile.
+    {
+        let drift_mat = std_mats.add(StandardMaterial {
+            base_color: Color::WHITE, // vertex colour carries the hue (mesh contract)
+            perceptual_roughness: 0.62,
+            reflectance: 0.5,
+            ..default()
+        });
+        let drift_meshes: Vec<Handle<Mesh>> =
+            (0..3).map(|v| meshes.add(crate::biome_snow::build_mound_mesh(v))).collect();
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                let Some((TB::Snow, h)) = tile_at(ix, iz) else { continue };
+                let mut rng =
+                    tileworld_core::rng::Mulberry32::new((iz * COLS + ix) as u32 ^ 0x5eed_d81f);
+                for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let Some((_, nh)) = tile_at(ix + dx, iz + dz) else { continue };
+                    if nh <= h || rng.next() > 0.35 {
+                        continue;
+                    }
+                    // Pull the mound off the shared edge into THIS (lower) tile so it
+                    // leans against the wall base.
+                    let wx = ix as f32 - GX + 0.5 - dx as f32 * 0.32
+                        + (rng.next() as f32 - 0.5) * 0.3;
+                    let wz = iz as f32 - GZ + 0.5 - dz as f32 * 0.32
+                        + (rng.next() as f32 - 0.5) * 0.3;
+                    let v = (rng.next() * 3.0) as u32;
+                    commands.spawn((
+                        Mesh3d(drift_meshes[(v % 3) as usize].clone()),
+                        MeshMaterial3d(drift_mat.clone()),
+                        Transform {
+                            translation: Vec3::new(wx, (h - 1) as f32 * GROUND_STEP, wz),
+                            rotation: Quat::from_rotation_y(rng.next() as f32 * std::f32::consts::TAU),
+                            scale: Vec3::splat(0.9 + rng.next() as f32 * 0.7),
+                        },
+                        crate::biome::BiomeEntity,
+                    ));
+                }
+            }
+        }
+    }
+
     // Grass frontier cover (tufts/clover/flowers) on grass tiles.
     let grass_cfg = grass_config();
     scatter_region(
@@ -790,11 +871,23 @@ fn build_terrain_mesh() -> Mesh {
                 let j = 0.82 + 0.32 * (noise_b(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) * 0.5 + 0.5);
                 let d = lin3(COL_DIRT);
                 let top = [d[0] * j, d[1] * j, d[2] * j, 1.0];
-                let bot = [d[0] * j * 0.55, d[1] * j * 0.52, d[2] * j * 0.5, 1.0];
+                // Base lifted off the old 0.55× — in cliff shadow at low sun that
+                // multiplied down to pure black pits; shaded soil, not holes.
+                let bot = [d[0] * j * 0.68, d[1] * j * 0.64, d[2] * j * 0.60, 1.0];
                 (top, bot)
+            } else if tb == TB::Snow {
+                // Bright snow lip overhanging exposed blue-grey rock: the warm/cool value
+                // split that makes the terraces read as carved drifts over stone instead
+                // of foam blocks in the same cream as the snowfield tops.
+                let lip = lin3(SNOW_CLIFF_LIP);
+                let rock = lin3(SNOW_CLIFF_ROCK);
+                ([lip[0], lip[1], lip[2], 1.0], [rock[0], rock[1], rock[2], 1.0])
             } else {
-                let dk = [top_col[0] * 0.5, top_col[1] * 0.5, top_col[2] * 0.5, 1.0];
-                (dk, dk)
+                // Graded lip→base (was a flat 0.5× that went black at dusk): the lip keeps
+                // most of the top tone so the edge reads, the base darkens but stays lit.
+                let top = [top_col[0] * 0.80, top_col[1] * 0.78, top_col[2] * 0.76, 1.0];
+                let bot = [top_col[0] * 0.58, top_col[1] * 0.56, top_col[2] * 0.54, 1.0];
+                (top, bot)
             };
             // Wall quad corner order is [bottom, bottom, top, top].
             let wc = [wall_bot, wall_bot, wall_top, wall_top];

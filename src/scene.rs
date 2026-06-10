@@ -261,7 +261,14 @@ fn advance_sky(
         // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
         // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
         // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
-        let warm = lerp_col(Color::srgb(1.0, 0.45, 0.22), Color::srgb(1.0, 0.90, 0.70), high);
+        // The warm band opens over a WIDER elevation range than `high` (0.62 vs 0.45) so
+        // golden hour actually lingers — the sky used to say sunset while the ground was
+        // already lit like noon.
+        let warm = lerp_col(
+            Color::srgb(1.0, 0.45, 0.22),
+            Color::srgb(1.0, 0.90, 0.70),
+            smoothstep(0.0, 0.62, elev),
+        );
         light.color = lerp_col(warm, Color::srgb(0.55, 0.66, 1.0), night * 0.8);
         // Biome tint: warm the desert sun, cool the snow, etc., and nudge brightness toward
         // the biome's authored sun lux (desert brighter, swamp dimmer) — daytime only.
@@ -279,6 +286,9 @@ fn advance_sky(
     // can't compound frame-to-frame.)
     ambient.brightness = 215.0 - 75.0 * day;
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
+    // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
+    // scene catches the sunset glow instead of just the sky band.
+    ambient.color = lerp_col(ambient.color, Color::srgb(1.0, 0.80, 0.62), horizon * 0.40);
     // Biome tint on the ambient fill colour (brightness stays on the scene's tuned curve).
     if let Some(t) = tint {
         ambient.color = lerp_col(ambient.color, t.ambient_color, bw);

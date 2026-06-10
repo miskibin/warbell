@@ -393,7 +393,9 @@ fn build_birch_mesh() -> Mesh {
 //   1 — frozen shrub: a dark evergreen tuft buried to its shoulders, frost-tipped bare
 //       twigs poking through, snow banked around it;
 //   2 — snow-covered stump + fallen log: sawn cut-face ring, snow capping both.
-fn build_mound_mesh(variant: u32) -> Mesh {
+// `pub(crate)`: the world map also banks variant-0 drifts against snow-terrace cliff
+// bases (see `worldmap::build`'s drift pass), beyond this biome's own scatter.
+pub(crate) fn build_mound_mesh(variant: u32) -> Mesh {
     match variant % 3 {
         // Wind-sculpted drift.
         0 => shaded(merged(vec![
@@ -872,26 +874,27 @@ pub fn config() -> BiomeConfig {
         ground_color: SNOW_GROUND,
         ground_roughness: 0.82,
         detail: GroundDetail {
-            // Subtle, low strength so the snowfield reads broad & smooth but not dead-flat:
-            // a faint blue-grey shadow drift over a bright base.
+            // A touch stronger than the original near-flat setting: faint blue-grey
+            // shadow drift + wind streaks so the field reads broad but not dead-flat.
             scale: 0.14,
-            strength: 0.22,
+            strength: 0.30,
             variation: 0.42,
             seed: 4.0,
             dark: SNOW_GROUND_DARK,
             base: SNOW_GROUND,
             light: SNOW_GROUND_LIGHT,
             grain: 0.30,
-            streak: 0.22,
+            streak: 0.32,
         },
 
-        // Cool bright winter daylight; slightly higher ambient (snow bounces a lot of
-        // fill light) + denser cool fog so distant peaks fade into a pale haze.
+        // Bright winter daylight built on the warm/cool split that sells stylized snow:
+        // a decisively COOL blue ambient (so shadowed snow goes blue, not grey-cream)
+        // under a slightly warmer sun, + denser cool fog so peaks fade into pale haze.
         sky: 0xcedef0,
         fog_density: 0.013,
-        sun_color: 0xfff4e0,
+        sun_color: 0xffeed2,
         sun_illuminance: 11_500.0,
-        ambient_color: 0xdbe7f5,
+        ambient_color: 0xc6d9f4,
         ambient_brightness: 120.0,
         sun_pos: Vec3::new(18.0, 42.0, 12.0),
 
@@ -915,7 +918,7 @@ pub fn config() -> BiomeConfig {
             // tree-too-close fallback).
             PropClass {
                 variants: (0..3).map(|v| (build_mound_mesh(v), 1.0)).collect(),
-                chance: 0.055,
+                chance: 0.07,
                 scale: (0.8, 1.45),
                 tree: false,
                 block_radius: 0.0,
@@ -923,7 +926,7 @@ pub fn config() -> BiomeConfig {
             // Frost boulders (slab / split tor / low huddle).
             PropClass {
                 variants: (0..3).map(|v| (build_boulder_mesh(v), 1.0)).collect(),
-                chance: 0.028,
+                chance: 0.034,
                 scale: (0.6, 1.5),
                 tree: false,
                 block_radius: 0.28, // big frost boulders block; small ones walk-through
@@ -949,7 +952,7 @@ pub fn config() -> BiomeConfig {
             },
             PropClass {
                 variants: vec![(build_ice_glint_mesh(), 1.0)],
-                chance: 0.10,
+                chance: 0.13,
                 scale: (0.6, 1.2),
                 tree: false,
                 block_radius: 0.0,
@@ -957,7 +960,7 @@ pub fn config() -> BiomeConfig {
             // Winter litter — holly, toppled pinecone, ice shards, frosted twig.
             PropClass {
                 variants: (0..4).map(|v| (build_winter_litter_mesh(v), 1.0)).collect(),
-                chance: 0.09,
+                chance: 0.13,
                 scale: (0.7, 1.3),
                 tree: false,
                 block_radius: 0.0,

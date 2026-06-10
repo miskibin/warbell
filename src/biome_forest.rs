@@ -72,7 +72,22 @@ pub fn config() -> BiomeConfig {
                     v
                 },
                 chance: 0.075,
-                scale: (0.85 * TREE_SCALE, 1.3 * TREE_SCALE),
+                // Wider spread than the old (0.85, 1.3): the canopy was reading as one
+                // even-height broccoli wall — silhouette variety beats more trees.
+                scale: (0.72 * TREE_SCALE, 1.42 * TREE_SCALE),
+                tree: true,
+                block_radius: 0.0,
+            },
+            // Ancient giants — rare towering broadleafs (~2× canopy height) that break
+            // the tree-line silhouette; one every few dozen tiles reads as an
+            // old-growth relic the forest grew around.
+            PropClass {
+                variants: crate::trees::TREE_TINTS
+                    .iter()
+                    .map(|t| (crate::trees::tint_mesh(build_tree_mesh(TreeKind::Broadleaf), *t), 1.0))
+                    .collect(),
+                chance: 0.005,
+                scale: (1.75 * TREE_SCALE, 2.15 * TREE_SCALE),
                 tree: true,
                 block_radius: 0.0,
             },
