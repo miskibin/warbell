@@ -589,45 +589,100 @@ fn stage_town_for_shot(
     }
 }
 
-/// Demo hook (`FOREST_DEMO=build`): raise the town one plot at a time so a clip films a
-/// construction timelapse instead of `FOREST_TOWN`'s instant pop-in. Builds a plot every
-/// `BUILD_EVERY` seconds until every producer plot stands. Clip-only; never wired in real play.
+/// Raise one producer building on plot `i` (build + spawn its mesh).
+#[allow(clippy::too_many_arguments)]
+fn raise_plot(
+    i: usize,
+    kind: BuildKind,
+    town: &mut TownRes,
+    bank: &mut Bank,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mats: &Mats,
+    spots: &PlotSpots,
+) {
+    if i >= spots.0.len() {
+        return;
+    }
+    town.0.build(i, kind, &mut bank.0);
+    if town.0.plots[i].kind.is_some() {
+        spawn_building(commands, meshes, mats, i, kind, spots);
+    }
+}
+
+/// Demo hook (`FOREST_DEMO=build`): raise the whole stronghold one piece at a time for a
+/// construction timelapse — palisade walls, gate, watchtowers + defences (the `castle.rs` parts
+/// reveal off the live `Defenses` flags), interleaved with producer plots and dwellings. Steps off
+/// the clip's frame-locked clock and waits for recording so the warm-up doesn't burn the sequence.
+/// Clip-only; never wired in real play.
 #[allow(clippy::too_many_arguments)]
 fn demo_build_timelapse(
-    time: Res<Time>,
+    prog: Option<Res<crate::capture::ClipProgress>>,
     spots: Res<PlotSpots>,
     mats: Option<Res<VillageMats>>,
     mut town: ResMut<TownRes>,
     mut bank: ResMut<Bank>,
+    mut def: ResMut<crate::economy::Defenses>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut next_at: Local<f32>,
-    mut idx: Local<usize>,
+    mut last: Local<i32>,
     mut primed: Local<bool>,
 ) {
-    const BUILD_EVERY: f32 = 1.3;
-    const KINDS: [BuildKind; 4] = [BuildKind::Farm, BuildKind::Lumber, BuildKind::Mine, BuildKind::Farm];
+    const STEP: u32 = 24; // recorded frames between actions (~0.8s at the 30fps playback rate)
     if spots.0.is_empty() {
         return;
     }
     let Some(mats) = mats else { return };
-    if !*primed {
-        *primed = true;
-        bank.0.add_wood(500.0);
-        bank.0.add_stone(500.0);
-    }
-    let now = time.elapsed_secs();
-    if now < *next_at || *idx >= spots.0.len().min(town.0.plots.len()) {
+    let Some(prog) = prog.as_ref() else { return };
+    if !prog.recording {
         return;
     }
-    let i = *idx;
-    let kind = KINDS[i % KINDS.len()];
-    town.0.build(i, kind, &mut bank.0);
-    if town.0.plots[i].kind.is_some() {
-        spawn_building(&mut commands, &mut meshes, &mats.0, i, kind, &spots);
+    if !*primed {
+        *primed = true;
+        *last = -1;
+        bank.0.add_wood(4000.0);
+        bank.0.add_stone(4000.0);
     }
-    *idx += 1;
-    *next_at = now + BUILD_EVERY;
+    let step = (prog.frame / STEP) as i32;
+    if step <= *last {
+        return;
+    }
+    let mat = &mats.0;
+    for s in (*last + 1)..=step {
+        match s {
+            0 => def.walls = true, // palisade goes up (the bare yard gives way to the courtyard)
+            1 => raise_plot(0, BuildKind::Farm, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
+            2 => {
+                town.0.build_house(&mut bank.0);
+            }
+            3 => def.gate = true,
+            4 => raise_plot(1, BuildKind::Lumber, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
+            5 => {
+                town.0.build_house(&mut bank.0);
+            }
+            6 => def.towers = true, // four corner watchtowers
+            7 => raise_plot(2, BuildKind::Mine, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
+            8 => raise_plot(3, BuildKind::Farm, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
+            9 => {
+                def.tower_mastery = true;
+                def.keep_archers = true; // archers man the keep roof
+            }
+            10 => {
+                town.0.build_house(&mut bank.0);
+            }
+            11 => raise_plot(4, BuildKind::Lumber, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
+            12 => def.ballista = true, // ballista north of the gate
+            13 => raise_plot(5, BuildKind::Mine, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
+            14 => raise_plot(6, BuildKind::Farm, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
+            15 => {
+                def.shrine = true;
+                town.0.build_house(&mut bank.0);
+            }
+            16 => raise_plot(7, BuildKind::Lumber, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
+            _ => {}
+        }
+    }
+    *last = step;
 }
 
 // ── Modal::Build panel ────────────────────────────────────────────────────────────────────

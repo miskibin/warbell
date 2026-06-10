@@ -24,10 +24,15 @@ impl Plugin for DemoPlugin {
     fn build(&self, app: &mut App) {
         match std::env::var("FOREST_DEMO").ok().as_deref() {
             Some("explore") => {
-                app.add_systems(Update, explore_drive.run_if(in_state(crate::game_state::Modal::None)));
+                app.add_systems(Update, explore_drive.run_if(in_state(crate::game_state::Modal::None)))
+                    .add_systems(PostUpdate, mute_captions);
             }
             Some("defend") => {
-                app.add_systems(PostStartup, defend_setup);
+                app.add_systems(PostStartup, defend_setup).add_systems(PostUpdate, mute_captions);
+            }
+            Some("build") => {
+                // Build logic lives in town.rs; here we just silence ambient barks for a clean clip.
+                app.add_systems(PostUpdate, mute_captions);
             }
             Some("talk") => {
                 // PostUpdate so our chosen caption is the last write each frame — the audio
@@ -78,6 +83,7 @@ fn sample_path(path: &[Vec2], d: f32) -> (Vec2, Vec2, bool) {
 #[allow(clippy::type_complexity)]
 fn explore_drive(
     time: Res<Time>,
+    prog: Option<Res<crate::capture::ClipProgress>>,
     mut hero_q: Query<(&mut Hero, &mut Transform), Without<Camera3d>>,
     mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>)>,
     mut dist: Local<f32>,
@@ -86,16 +92,21 @@ fn explore_drive(
     let (Ok((mut hero, mut htf)), Ok(mut ctf)) = (hero_q.single_mut(), cam_q.single_mut()) else {
         return;
     };
-    *dist += EXPLORE_SPEED * dt;
+    // Hold at the start until recording begins (warm-up lets shaders/lighting settle first).
+    let rec = prog.as_ref().map_or(true, |p| p.recording);
+    if rec {
+        *dist += EXPLORE_SPEED * dt;
+    }
     let (pos, dir, arrived) = sample_path(&EXPLORE_PATH, *dist);
 
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(hero.y);
+    let walking = rec && !arrived;
     hero.pos = pos;
     hero.y = y;
     hero.facing = dir.x.atan2(dir.y);
-    hero.moving = !arrived;
-    hero.moving_amt = if arrived { 0.0 } else { 1.0 };
-    if !arrived {
+    hero.moving = walking;
+    hero.moving_amt = if walking { 1.0 } else { 0.0 };
+    if walking {
         hero.walk_phase += dt * STEP_FREQ;
     }
     let bob = hero.walk_phase.sin().abs() * 0.05 * hero.moving_amt;
@@ -122,10 +133,23 @@ const TALK_LINES: [&str; 5] = [
 ];
 const TALK_EVERY: f32 = 3.6;
 
-fn talk_drive(time: Res<Time>, mut subs: ResMut<crate::subtitles::Subtitles>) {
+fn talk_drive(
+    time: Res<Time>,
+    prog: Option<Res<crate::capture::ClipProgress>>,
+    mut subs: ResMut<crate::subtitles::Subtitles>,
+) {
     let now = time.elapsed_secs();
-    let i = ((now / TALK_EVERY) as usize) % TALK_LINES.len();
+    // Cycle on the frame-locked clock (clip elapsed-time is wall-clocked, not 1:1 with playback).
+    let f = prog.as_ref().map_or(0, |p| p.frame);
+    let per = (TALK_EVERY * 30.0) as u32; // recorded frames per line at the 30fps playback rate
+    let i = ((f / per.max(1)) as usize) % TALK_LINES.len();
     subs.force(now, Some("Townsfolk"), TALK_LINES[i], TALK_EVERY + 0.5);
+}
+
+/// Lock the caption to empty so the audio director's random ambient barks never show — for the
+/// scenery clips (explore/build/defend) that shouldn't carry stray subtitles.
+fn mute_captions(time: Res<Time>, mut subs: ResMut<crate::subtitles::Subtitles>) {
+    subs.force(time.elapsed_secs(), None, "", 0.0);
 }
 
 // ── rescue: free a caged captive — the real camp_rescue line fires ───────────────────
@@ -143,12 +167,12 @@ fn rescue_drive(
     mut hero_q: Query<(&mut Hero, &mut Transform), (Without<Camera3d>, Without<crate::orks::Ork>)>,
     mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>, Without<crate::orks::Ork>)>,
     orks: Query<(Entity, &crate::orks::Ork), Without<crate::orks::WaveInvader>>,
+    prog: Option<Res<crate::capture::ClipProgress>>,
     mut site: Local<Option<(Vec2, Vec2)>>,
     mut cleared: Local<bool>,
-    mut tick: Local<u32>,
 ) {
-    *tick += 1;
     let now = time.elapsed_secs();
+    let f = prog.as_ref().map_or(0, |p| p.frame); // frame-locked beat (0 during warm-up)
     if site.is_none() {
         // Nearest camp cage to the castle (origin).
         *site = crate::camps::cage_positions()
@@ -176,9 +200,9 @@ fn rescue_drive(
         ctf.look_at(Vec3::new(cage.x, hy + 1.0, cage.y), Vec3::Y);
     }
 
-    // After a brief beat (frame-counted — clip elapsed-time is wall-clocked, not frame-locked),
-    // fell the warband → the real camp_rescue frees the captive on the next clear.
-    if !*cleared && *tick > 36 {
+    // A beat after recording starts (frame-counted — clip elapsed-time is wall-clocked), fell the
+    // warband → the real camp_rescue frees the captive on the next clear.
+    if !*cleared && f > 36 {
         *cleared = true;
         for (e, o) in &orks {
             if o.home().distance(centre) < 6.0 {
