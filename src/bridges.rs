@@ -18,9 +18,9 @@ const DECK_HALF_Z: f32 = 1.2;
 /// Bank overhang past the water edge on each side (world units).
 const OVERHANG: f32 = 1.4;
 /// Min world-XZ gap between two bridges (so they don't cluster on one crossing).
-const MIN_SPACING: f32 = 22.0;
-/// At most this many bridges.
-const MAX_BRIDGES: usize = 3;
+const MIN_SPACING: f32 = 18.0;
+/// At most this many bridges (four rivers now cross the island — each needs crossings).
+const MAX_BRIDGES: usize = 7;
 /// Acceptable half-width of the channel being bridged (skip slivers + wide lake-like spans —
 /// a clean river crossing is a couple units across).
 const MIN_HALF: f32 = 0.6;
@@ -93,9 +93,10 @@ fn crossing_at(x: f32, z: f32) -> Option<Span> {
     }
     let end = half + OVERHANG;
     let (ex, ez) = if across_x { (end, 0.0) } else { (0.0, end) };
-    let land = |sx: f32, sz: f32| crate::worldmap::ground_at_world(sx, sz).is_some();
-    if !(land(cx + ex, cz + ez) && land(cx - ex, cz - ez)) {
-        return None; // a coast / river-mouth, not a bank-to-bank crossing
+    let ya = crate::worldmap::ground_at_world(cx + ex, cz + ez)?; // a coast / river-mouth
+    let yb = crate::worldmap::ground_at_world(cx - ex, cz - ez)?; // is not a crossing
+    if (ya - yb).abs() > 0.01 {
+        return None; // skewed banks — the deck is flat, so the high end would be a cliff step
     }
     Some(Span { cx, cz, half: end, across_x })
 }

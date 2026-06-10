@@ -133,11 +133,13 @@ Two related map systems share the ground pipeline in `biome.rs`:
 - **`biome.rs` + `biome_<name>.rs`** — the biome *framework*. Each biome exposes `config()`
   (declarative ground/atmosphere/scatter/particles) + optional `landmarks()`. Keys **1–5** swap a
   single 32×32 biome patch at runtime (despawns everything tagged `BiomeEntity`, rebuilds).
-- **`worldmap.rs`** — the actual playable island: a faithful port of the TS `tileMap.ts` at base
-  resolution scaled up by `MAP_SCALE = 1.4` (→ `COLS 202 × ROWS 151`). Elliptical island, five
-  biome blobs, grass safe-zone (castle), rivers/lake, terraced heights. `worldmap::build` also
-  seeds castle/camps/ore/chests placement. **Generation runs in base space, drawn over the enlarged
-  grid**, so the island shape is identical, just denser.
+- **`worldmap.rs`** — the actual playable island: a port of the TS `tileMap.ts` at base
+  resolution scaled up by `MAP_SCALE = 1.5` (→ `COLS 216 × ROWS 162`). Elliptical island, five
+  biome blobs, grass safe-zone (castle), four rivers + lake, coastal mountain ridges, rolling
+  terraced knolls, plateaus. `classify` force-flattens grass under every town build plot (and
+  chest/cover placement rejects `town::near_build_plot`) so nothing occupies a future building's
+  spot. `worldmap::build` also seeds castle/camps/ore/chests placement. **Generation runs in base
+  space, drawn over the enlarged grid**, so the island shape is identical, just denser.
 
 ### Pathfinding through the castle (`src/navgrid.rs`)
 

@@ -1186,12 +1186,13 @@ pub fn populate_chests(
         attempts += 1;
         let x = crate::wildlife::rng_range(&mut rng, -worldmap::GX + 6.0, worldmap::GX - 6.0);
         let z = crate::wildlife::rng_range(&mut rng, -worldmap::GZ + 6.0, worldmap::GZ - 6.0);
-        // Keep chests out of the courtyard and off water / blockers / camps.
+        // Keep chests out of the courtyard and off water / blockers / camps / build plots.
         if (x * x + z * z).sqrt() < 14.0
             || worldmap::ground_at_world(x, z).is_none()
             || crate::blockers::is_blocked(x, z)
             || crate::camps::in_clearing(x, z)
             || crate::castle::in_footprint(x, z)
+            || crate::town::near_build_plot(x, z)
         {
             continue;
         }

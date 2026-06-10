@@ -50,7 +50,11 @@ impl Grid for ForestGrid {
     fn can_step(&self, fx: i32, fz: i32, tx: i32, tz: i32) -> bool {
         let (fwx, fwz) = tile_world_centre(fx, fz);
         let (twx, twz) = tile_world_centre(tx, tz);
-        match (ground_at_world(fwx, fwz), ground_at_world(twx, twz)) {
+        // Effective walk height: terrain, or a bridge deck over the river. Without the deck
+        // fallback a bridge tile is `standable` but no step INTO it ever passes (its terrain
+        // height is `None`), so A* could never actually use a crossing.
+        let eff = |wx: f32, wz: f32| ground_at_world(wx, wz).or_else(|| crate::bridges::deck_y_at(wx, wz));
+        match (eff(fwx, fwz), eff(twx, twz)) {
             (Some(fy), Some(ty)) => (ty - fy).abs() <= GROUND_STEP + 0.1, // ≤1 height class
             _ => false,
         }

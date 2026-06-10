@@ -331,6 +331,15 @@ const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
     Vec2::new(-20.0, -8.0),  // W  — west of wall, off gate lane
 ];
 
+/// World-XZ radius around each plot centre that must stay clear so a future building has room:
+/// `worldmap::classify` forces flat grass here, and chest / ground-cover placement rejects it.
+pub const PLOT_CLEAR_R: f32 = 3.4;
+
+/// Is `(wx, wz)` inside the clear zone of any town build plot?
+pub fn near_build_plot(wx: f32, wz: f32) -> bool {
+    PLOT_OFFSETS.iter().any(|o| (wx - o.x).hypot(wz - o.y) < PLOT_CLEAR_R)
+}
+
 /// Seed the build-plot entities + their foundation pads. Called from `worldmap::build`
 /// after the castle so the safe-zone ground is final.
 pub fn populate_plots(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
