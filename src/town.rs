@@ -8,7 +8,7 @@
 //! stay ungated. Numbers live in `town_store` (test-gated).
 
 use bevy::prelude::*;
-use tileworld_core::town_store::{BuildKind, Cost, PopEvent, Town, HOUSE_COST};
+use tileworld_core::town_store::{BuildKind, Cost, PopEvent, Town, HOUSE_COST, POP_PER_HOUSE};
 
 use crate::castle::{Mats, VillageMats, M};
 use crate::villagers::{Guard, Townsfolk};
@@ -38,7 +38,7 @@ pub struct TownRes(pub Town);
 impl Default for TownRes {
     fn default() -> Self {
         let mut t = Town::new(PLOT_COUNT, 0);
-        t.reset(); // start with the founding houses + peasants (4 in 2 houses)
+        t.reset(); // the founding house + the larder pair it shelters (2 peasants)
         Self(t)
     }
 }
@@ -117,8 +117,6 @@ impl Plugin for TownPlugin {
                 Update,
                 (apply_building_damage, repair_system).run_if(in_state(Modal::None)),
             )
-            // Ungated so the night→day edge fires even while frozen (panel open at dawn).
-            .add_systems(Update, dawn_refugees)
             // Rebuild building meshes to match a loaded `TownRes` (ungated; fires on a load).
             .add_systems(Update, restore_buildings)
             // VFX (ungated): flames flicker even when frozen.
@@ -131,9 +129,9 @@ impl Plugin for TownPlugin {
 /// By day, staff each producer from the idle townsfolk reserve: pick the nearest standing guard
 /// (an unemployed `Townsfolk`) and swap its `Guard` role for a `Worker` job — it downs its weapon
 /// and walks to the field. **Farms are staffed first** (food → population is what keeps the town
-/// alive), so a thin workforce — e.g. the two dawn survivors after a massacre night
-/// ([`dawn_refugees`]) — goes to the fields before any other producer sees a worker; if every hand
-/// is already employed elsewhere, one is pulled off a non-farm plot. Skipped during a wave: nobody
+/// alive), so a thin workforce — e.g. the larder-regrown pair after a massacre night — goes to
+/// the fields before any other producer sees a worker; if every hand is already employed
+/// elsewhere, one is pulled off a non-farm plot. Skipped during a wave: nobody
 /// gets pulled off the wall mid-assault, and `muster_townsfolk` has already fired everyone back to
 /// guard duty at dusk.
 #[allow(clippy::type_complexity)]
@@ -263,37 +261,6 @@ fn population_system(
     }
 }
 
-/// The morning ALWAYS opens with at least this many townsfolk, however bloody the night.
-const MIN_DAWN_POP: u32 = 2;
-
-/// Dawn floor on the headcount: on the night→day flip (Wave→Prep), if the wave butchered the
-/// town below [`MIN_DAWN_POP`], refugees arrive to top it back up — so there is always somebody
-/// left to work the farm the next day (a wiped-out town could otherwise never grow food → never
-/// regrow population). Edge-triggered like `villagers::muster_townsfolk` and ungated, so the flip
-/// fires even while the world is frozen; [`sync_population_bodies`] grows the actual bodies, and
-/// the farm-first [`auto_assign_workers`] sends them straight to the fields.
-fn dawn_refugees(
-    siege: Option<Res<crate::siege::Siege>>,
-    mut last_wave: Local<Option<bool>>,
-    mut town: ResMut<TownRes>,
-    mut floats: ResMut<crate::combat_fx::FloatQueue>,
-) {
-    let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
-    let was_wave = last_wave.replace(wave);
-    if was_wave != Some(true) || wave {
-        return; // only on the night→day edge
-    }
-    if town.0.population >= MIN_DAWN_POP {
-        return;
-    }
-    town.0.population = MIN_DAWN_POP;
-    floats.0.push(crate::combat_fx::FloatReq {
-        world: Vec3::new(0.0, 6.5, 5.0),
-        text: "\u{1f3da} Refugees arrive to rebuild the town".into(),
-        color: Color::srgb(0.55, 1.0, 0.6),
-        scale: 1.25,
-    });
-}
 
 /// Keep the visible `Townsfolk` bodies matched to `town.population` — the single source of truth
 /// for the town's headcount (grown by food, lost to starvation, added by rescue/recruit). Moves at
@@ -337,9 +304,12 @@ fn reset_town(
 ) {
     town.0.reset();
     // Difficulty handicap: Easy seeds spare townsfolk — heirs ARE the headcount now, so the
-    // old "spare heirs" grant lands here (was `succession::reset_lives`).
+    // old "spare heirs" grant lands here. They arrive housed (a free house per pair), but only
+    // the larder pair eats free: keeping the spares fed means building farms.
     let diff = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
-    town.0.population += crate::siege::mods_for(diff).heirs_bonus;
+    let bonus = crate::siege::mods_for(diff).heirs_bonus;
+    town.0.population += bonus;
+    town.0.houses += bonus.div_ceil(POP_PER_HOUSE);
     bank.0.add_wood(START_WOOD);
     // The world map isn't rebuilt on restart, so reap last run's building meshes +
     // flames here (the empty plot pads persist; TownRes is now all-Empty, so the

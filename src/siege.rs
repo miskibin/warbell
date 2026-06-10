@@ -615,8 +615,11 @@ fn run_director(
                         player.0.add_gold(crate::economy::TAX_STIPEND);
                     }
                     // Dawn: a youth comes of age — heirs ARE townsfolk (one headcount), so the
-                    // bloodline grows by growing the town.
-                    town.0.population += 1;
+                    // bloodline grows by growing the town. Gated by housing: people aren't
+                    // conjured from nothing — no roof, no new townsperson.
+                    if town.0.population < town.0.pop_cap() {
+                        town.0.population += 1;
+                    }
                 }
                 if p == GamePhase::Victory {
                     for e in &invaders {

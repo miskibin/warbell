@@ -6,8 +6,9 @@
 //! empty ends the line — Defeat by *bloodline*, the second way to lose besides the keep falling.
 //!
 //! The pool grows however the town grows: food surplus (`town::population_system`), camp rescues,
-//! mercenary recruits, the dawn coming-of-age (+1 in `siege::run_director`), and the dawn refugee
-//! floor of 2 (`town::dawn_refugees`) that guarantees a morning workforce.
+//! mercenary recruits, the housing-gated dawn coming-of-age (`siege::run_director`), and the
+//! castle larder (core `town_store`) that organically regrows an emptied town to its bedrock
+//! pair — so the bloodline always has somewhere to come back from.
 
 use bevy::prelude::*;
 
