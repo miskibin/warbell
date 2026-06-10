@@ -60,6 +60,7 @@ impl Plugin for VerbsPlugin {
                 (
                     mine_ore,
                     chop_tree,
+                    regrow_trees,
                     forage_pickup,
                     forage_respawn,
                     apple_harvest,
@@ -157,13 +158,30 @@ fn mine_ore(
 #[derive(Component)]
 pub struct ChopTree {
     hp: f64,
+    /// The trunk-blocker radius registered at scatter time, so a regrown tree can re-block.
+    trunk_r: f32,
 }
 
 impl ChopTree {
-    /// A fresh choppable tree at full HP — added to every scattered tree in `biome::scatter_region`.
-    pub fn new() -> Self {
-        Self { hp: TREE_HP }
+    /// A fresh choppable tree at full HP — added to every scattered tree in `biome::scatter_region`,
+    /// which passes the same trunk radius it registered as the blocker.
+    pub fn new(trunk_r: f32) -> Self {
+        Self { hp: TREE_HP, trunk_r }
     }
+
+    /// Take a work swing (a woodcutter's axe — `lumberjack.rs`). True once the tree is felled.
+    pub fn work_chop(&mut self, dmg: f64) -> bool {
+        self.hp -= dmg;
+        self.hp <= 0.0
+    }
+}
+
+/// A felled tree waiting to regrow: hidden in place (the trunk blocker lifted), restored to a
+/// full [`ChopTree`] by [`regrow_trees`] — so the woodcutters can't permanently deforest the
+/// safe zone, and the player's own clear-cuts heal over too.
+#[derive(Component)]
+pub struct Stump {
+    regrow_at: f32,
 }
 
 /// Swings to fell a tree (~2 at the hero's base 25–30 dmg).
@@ -172,16 +190,60 @@ const TREE_HP: f64 = 55.0;
 const TREE_WOOD: f64 = 1.0;
 /// Tree trunk radius added to the swing reach.
 const CHOP_TREE_RADIUS: f32 = 1.0;
+/// Seconds before a felled tree grows back in place.
+const TREE_REGROW: f32 = 150.0;
+
+/// Fell `e`: bank the wood (+ float), lift the trunk blocker, and leave a hidden [`Stump`] in
+/// place to regrow. Shared by the hero's [`chop_tree`] and the woodcutter NPC (`lumberjack.rs`).
+pub fn fell_tree(
+    commands: &mut Commands,
+    e: Entity,
+    at: Vec3,
+    now: f32,
+    bank: &mut tileworld_core::resource_store::ResourceState,
+    floats: &mut crate::combat_fx::FloatQueue,
+) {
+    bank.add_wood(TREE_WOOD);
+    floats.0.push(crate::combat_fx::FloatReq {
+        world: Vec3::new(at.x, at.y + 1.6, at.z),
+        text: format!("+{} wood", TREE_WOOD as i64),
+        color: Color::srgb(0.78, 0.62, 0.36),
+        scale: 1.1,
+    });
+    crate::blockers::remove_at(at.x, at.z); // clear the trunk blocker so no ghost nub
+    commands
+        .entity(e)
+        .try_insert((Stump { regrow_at: now + TREE_REGROW }, Visibility::Hidden));
+}
+
+/// Restore each due stump to a standing, choppable tree (visible again, trunk re-blocked).
+fn regrow_trees(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut ChopTree, &Stump, &Transform, &mut Visibility)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, mut tree, stump, tf, mut vis) in &mut q {
+        if now < stump.regrow_at {
+            continue;
+        }
+        tree.hp = TREE_HP;
+        *vis = Visibility::Visible;
+        crate::blockers::add(tf.translation.x, tf.translation.z, tree.trunk_r);
+        commands.entity(e).try_remove::<Stump>();
+    }
+}
 
 /// Read each published swing; any live choppable tree in the cone takes the blow. On felling
 /// it banks 1 wood, pops a float, and despawns. Mirrors [`mine_ore`].
 fn chop_tree(
+    time: Res<Time>,
     mut swings: MessageReader<HeroSwing>,
     mut bank: ResMut<Bank>,
     mut commands: Commands,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<AudioCue>,
-    mut q: Query<(Entity, &mut ChopTree, &Transform)>,
+    mut q: Query<(Entity, &mut ChopTree, &Transform), Without<Stump>>,
 ) {
     for sw in swings.read() {
         let mut struck = false; // one chop thunk per swing, even if several trees are in the cone
@@ -201,15 +263,7 @@ fn chop_tree(
             struck = true;
             tree.hp -= sw.base_dmg as f64;
             if tree.hp <= 0.0 {
-                bank.0.add_wood(TREE_WOOD);
-                floats.0.push(crate::combat_fx::FloatReq {
-                    world: Vec3::new(p.x, p.y + 1.6, p.z),
-                    text: format!("+{} wood", TREE_WOOD as i64),
-                    color: Color::srgb(0.78, 0.62, 0.36),
-                    scale: 1.1,
-                });
-                crate::blockers::remove_at(p.x, p.z); // clear the trunk blocker so no ghost nub
-                commands.entity(e).try_despawn();
+                fell_tree(&mut commands, e, p, time.elapsed_secs(), &mut bank.0, &mut floats);
             }
         }
         if struck {
