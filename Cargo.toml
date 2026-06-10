@@ -26,3 +26,7 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 1
+# Line-tables only (not full debuginfo): keeps backtraces with file:line but shrinks the PDB so
+# the link stays under MSVC's program-database size cap (full debuginfo trips LNK1140 now that the
+# codebase has grown). Capture/clip builds can drop this entirely with CARGO_PROFILE_DEV_DEBUG=0.
+debug = 1
