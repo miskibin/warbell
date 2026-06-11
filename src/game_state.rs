@@ -492,6 +492,37 @@ fn spawn_start_screen(
                         }
                     });
                 });
+                // How to Play — secondary, but right in the menu column so new players find the
+                // guide (and the Stronghold/RTS explanation) before their first night.
+                m.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(24.0), Val::Px(9.0)),
+                        border: widgets::border(1.0),
+                        border_radius: radius(R_BTN),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                    Button,
+                    Interaction::default(),
+                    BackgroundColor(BTN_BG),
+                    BorderColor::all(GOLD_HAIRLINE),
+                    crate::ui::anim::Hoverable {
+                        rest_bg: BTN_BG,
+                        hover_bg: BTN_BG_HOVER,
+                        rest_border: GOLD_HAIRLINE,
+                        hover_border: GOLD_NOTCH,
+                        lift: 2.0,
+                    },
+                    UiTransform::IDENTITY,
+                    crate::tutorial::StartHelpButton,
+                    anim_btn(AnimKind::Rise, 0.38, 0.7),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.bold, "HOW TO PLAY", 14.0, GOLD));
+                    b.spawn(label(&fonts.semibold, "H", 11.0, KICKER));
+                });
             });
 
             // ── Lower-right controls legend ──
