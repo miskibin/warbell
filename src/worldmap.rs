@@ -737,15 +737,17 @@ pub fn build(
     ));
     let blight_ground = build_terrain_mesh(|tb| tb == TB::Blight);
     let blight_detail = GroundDetail {
-        scale: 0.30,
-        strength: 0.62,
-        variation: 0.85,
+        // Strength pulled to grass-parity (0.40): the 0.62 first pass read as a busy,
+        // over-grained sheet next to the other biomes' calmer ground.
+        scale: 0.22,
+        strength: 0.42,
+        variation: 0.75,
         seed: 7.0,
-        dark: 0x241a10,
+        dark: 0x2c2114,
         base: 0x4d3e2a,
-        light: 0x6e5f46,
-        grain: 0.95,
-        streak: 0.65,
+        light: 0x675840,
+        grain: 0.6,
+        streak: 0.5,
     };
     let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, images, terrain_mats);
     commands.spawn((
@@ -761,7 +763,7 @@ pub fn build(
     let sea = water_mats.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::srgba(0x2f as f32 / 255.0, 0x6f as f32 / 255.0, 0xae as f32 / 255.0, 0.9),
-            perceptual_roughness: 0.3,
+            perceptual_roughness: 0.24,
             reflectance: 0.5,
             alpha_mode: AlphaMode::Blend,
             cull_mode: None,
@@ -770,7 +772,7 @@ pub fn build(
         extension: WaterExt {
             params: WaterParams {
                 // x amp, y freq, z scroll, w fresnel strength.
-                params: Vec4::new(0.16, 0.45, 0.4, 0.85),
+                params: Vec4::new(0.22, 0.45, 0.4, 0.85),
                 // rgb sky tint at grazing angles, w shore-fx strength (foam collar +
                 // shallow→deep gradient in water.wgsl).
                 sky_tint: Vec4::new(0.70, 0.82, 0.93, 1.0),

@@ -2,6 +2,9 @@
 //! crossfade. All loops play continuously (no start/stop pops); we only ride their volumes:
 //!   - **Day** — a random one of the [`DAY_TRACKS`] plays, re-rolled each dawn; ducked under combat.
 //!   - **Combat** — swells over the day track while the hero is in a daytime ork fight.
+//!   - **Blight** — the ONE biome with its own theme: swells over (and mutes) the day track
+//!     while the hero stands in the Blight (Gnashfang Hold's mire). Daytime only — combat +
+//!     the night siege still take over.
 //!   - **Night dread** — the SAME track swells in every night the siege is in its `Wave` phase.
 //!   - **Boss march** — replaces the dread on the final boss wave.
 
@@ -36,6 +39,8 @@ pub(crate) enum MusicLayer {
     /// One of the [`DAY_TRACKS`] (by index) — only the per-day chosen index plays.
     Day(usize),
     Combat,
+    /// The Blight's own daytime theme — the only biome-specific music.
+    Blight,
     Night,
     Boss,
 }
@@ -59,6 +64,7 @@ pub(crate) fn setup_music(asset: Res<AssetServer>, cfg: Res<AudioConfig>, mut co
         layer(*f, if i == 0 { cfg.music_vol } else { 0.0 }, MusicLayer::Day(i));
     }
     layer("audio/music-combat.ogg", 0.0, MusicLayer::Combat); // silent until a fight
+    layer("audio/blight-music.ogg", 0.0, MusicLayer::Blight); // silent until the hero enters the Blight
     layer(NIGHT_TRACK, 0.0, MusicLayer::Night); // silent until the siege wave — always this track
     layer("audio/orc-march-tallow.ogg", 0.0, MusicLayer::Boss); // silent until the boss wave
 }
@@ -68,8 +74,10 @@ pub(crate) fn update_music(
     cfg: Res<AudioConfig>,
     state: Res<MusicState>,
     siege: Option<Res<Siege>>,
+    hero: Option<Res<crate::player::HeroState>>,
     mut heat: Local<f32>,
     mut night: Local<f32>,
+    mut blight: Local<f32>,
     mut prev_wave: Local<bool>,
     mut day_pick: Local<usize>,
     mut seed: Local<u32>,
@@ -91,18 +99,28 @@ pub(crate) fn update_music(
     }
     *prev_wave = is_wave;
 
-    // Ease the two mix scalars: combat (daytime ork fight) + night (the siege wave).
+    // Ease the mix scalars: combat (daytime ork fight), night (the siege wave), and blight
+    // (the hero standing in Gnashfang Hold's mire — the one biome with its own theme).
     let combat_target = if state.fighting { 1.0 } else { 0.0 };
     *heat += (combat_target - *heat) * (dt * COMBAT_FADE).min(1.0);
     *night += ((if is_wave { 1.0 } else { 0.0 }) - *night) * (dt * NIGHT_FADE).min(1.0);
-    let (h, n) = (*heat, *night);
+    let in_blight = hero
+        .as_deref()
+        .is_some_and(|h| h.alive && crate::ork_fortress::in_blight_world(h.pos.x, h.pos.y));
+    *blight += ((if in_blight { 1.0 } else { 0.0 }) - *blight) * (dt * NIGHT_FADE).min(1.0);
+    let (h, n, b) = (*heat, *night, *blight);
     let day = cfg.music_vol * (1.0 - n); // day tracks fade out as night rises
 
     for (layer, mut sink) in &mut q {
         let v = match layer {
-            // Only the chosen day track is audible; combat ducks it.
-            MusicLayer::Day(i) => day * (1.0 - BED_DUCK * h) * if *i == *day_pick { 1.0 } else { 0.0 },
+            // Only the chosen day track is audible; combat ducks it; the Blight theme mutes it.
+            MusicLayer::Day(i) => {
+                day * (1.0 - BED_DUCK * h) * (1.0 - b) * if *i == *day_pick { 1.0 } else { 0.0 }
+            }
             MusicLayer::Combat => day * cfg.combat_music * h,
+            // The Blight theme rides the day slot (ducked by combat, gone at night) but gated
+            // on position instead of the day-track roll — so it's the only biome music.
+            MusicLayer::Blight => day * (1.0 - BED_DUCK * h) * b,
             MusicLayer::Night => cfg.music_vol * n * if !boss { 1.0 } else { 0.0 },
             MusicLayer::Boss => cfg.music_vol * n * if boss { 1.0 } else { 0.0 },
         };

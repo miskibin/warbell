@@ -238,19 +238,20 @@ pub fn build(
 
     // Shared vertex-colour material for the ORKS (grime on a face-sized limb is noise).
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
-    // The structural props (tents, cage, totem, banner, fire ring) carry a neutral grime-grain
-    // detail texture multiplied over their vertex colours — same trick as Gnashfang Hold, so
-    // the camps read rough/dirty instead of flat-shaded clean. One extra batch.
+    // The structural props (tents, cage, totem, banner, fire ring) carry a FAINT grime-grain
+    // detail texture multiplied over their vertex colours — same trick as Gnashfang Hold, but
+    // kept subtle (`strength` 0.3) so the camps don't read over-textured against the other
+    // biomes' clean flat-shaded props. One extra batch.
     let grime = crate::biome::GroundDetail {
         scale: 1.0,
-        strength: 0.9,
+        strength: 0.30,
         variation: 0.5,
         seed: 13.0,
-        dark: 0x8e887e,
+        dark: 0x9c968c,
         base: 0xc2bcb0,
-        light: 0xf2ece0,
-        grain: 0.9,
-        streak: 0.7,
+        light: 0xe6e0d4,
+        grain: 0.6,
+        streak: 0.5,
     };
     let (grime_img, _) = crate::terrain::detail_image(&grime);
     let grime_tex = images.add(grime_img);

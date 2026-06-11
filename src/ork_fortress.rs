@@ -334,9 +334,10 @@ pub fn build(
 
     // Three shared vertex-colour prop materials — same batching contract as the camps, but
     // each with its own neutral detail texture multiplied over the vertex colours (the
-    // primitives' own UVs sample it), so timber, hide and bone-clutter read as DIFFERENT
-    // rough materials instead of one flat shade. Textures stay neutral-bright so the mesh
-    // colours survive the multiply; three materials = three batches, still cheap.
+    // primitives' own UVs sample it), so timber, hide and bone-clutter read as slightly
+    // DIFFERENT materials. Kept SUBTLE (`strength` ~0.3): the other biomes' props are clean
+    // flat vertex-colour, so a heavy grime made the hold read over-textured next to them —
+    // this is just a faint tooth, not a wallpaper. Three materials = three batches, cheap.
     let make_prop_mat = |d: &GroundDetail,
                          rough: f32,
                          images: &mut Assets<Image>,
@@ -354,14 +355,14 @@ pub fn build(
     let mat = make_prop_mat(
         &GroundDetail {
             scale: 1.0,
-            strength: 0.9,
+            strength: 0.30,
             variation: 0.5,
             seed: 13.0,
-            dark: 0x8e887e,
+            dark: 0x9c968c,
             base: 0xc2bcb0,
-            light: 0xf2ece0,
-            grain: 0.9,
-            streak: 0.7,
+            light: 0xe6e0d4,
+            grain: 0.6,
+            streak: 0.5,
         },
         0.95,
         images,
@@ -371,14 +372,14 @@ pub fn build(
     let timber_mat = make_prop_mat(
         &GroundDetail {
             scale: 1.5,
-            strength: 1.0,
+            strength: 0.32,
             variation: 0.45,
             seed: 21.0,
-            dark: 0x8a8074,
+            dark: 0x9a9084,
             base: 0xc6beb0,
-            light: 0xf2eadc,
-            grain: 0.5,
-            streak: 1.0,
+            light: 0xe8e0d2,
+            grain: 0.4,
+            streak: 0.85,
         },
         0.92,
         images,
@@ -388,13 +389,13 @@ pub fn build(
     let hide_mat = make_prop_mat(
         &GroundDetail {
             scale: 2.1,
-            strength: 1.0,
-            variation: 0.85,
+            strength: 0.32,
+            variation: 0.7,
             seed: 33.0,
-            dark: 0x95887a,
+            dark: 0xa89c8c,
             base: 0xc8bcaa,
-            light: 0xeee2d0,
-            grain: 1.0,
+            light: 0xe2d6c4,
+            grain: 0.7,
             streak: 0.2,
         },
         0.97,
