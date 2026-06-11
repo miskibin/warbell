@@ -32,8 +32,10 @@ const CAMP_AVOID: f32 = 22.0;
 const DANGER_R: f32 = 12.0;
 /// Boulders this near a remembered scare are off-limits while it lasts.
 const DANGER_BLACKLIST_R: f32 = 16.0;
-/// How long a scare keeps its ground blacklisted (s).
-const DANGER_TTL: f32 = 120.0;
+/// How long a scare keeps its ground blacklisted (s). Matches the woodcutter's tuned value —
+/// the old 120s (×16u radius, in the SHARED `DangerSpots`) let one passing wolf shut down a
+/// whole ore field for two minutes, which read as the miner "refusing to work".
+const DANGER_TTL: f32 = 45.0;
 /// Pick damage per work swing — with ore's `ORE_HP` 354, ~7 swings (≈15s) to deplete a boulder.
 const PICK_DMG: f64 = 50.0;
 /// Seconds between work swings — matches the overhead-swing work loop in `villager_limbs` (~2.1s).
@@ -49,6 +51,11 @@ const RETRY_SECS: f32 = 3.0;
 const FLEE_SECS: f32 = 9.0;
 /// No steering progress toward the boulder for this long → wedged; abandon + blacklist briefly.
 const STALL_SECS: f32 = 4.0;
+/// Time allowed inside the direct-steer ring (≤6u of the boulder) without actually reaching it.
+/// A reachable rock is reached from 6u out in ~3–4s; a rock one terrace UP keeps the miner
+/// wall-following along the cliff face — `moving` stays true, so [`STALL_SECS`] never trips and
+/// he paces under the unreachable rock forever. This caps that: bail + blacklist, pick another.
+const CLOSE_GIVEUP_SECS: f32 = 8.0;
 /// Pick SFX is only audible this near the hero (the guards' small-earshot convention).
 const SFX_EARSHOT: f32 = 16.0;
 /// Close enough to the yard to dump the cart on the pile (matches `worker_steer`'s post reach).
@@ -68,6 +75,9 @@ pub struct MineJob {
     atk_cd: f32,
     /// Seconds without steering progress (wedged on a river/prop) — bail at [`STALL_SECS`].
     stall: f32,
+    /// Seconds spent inside the direct-steer ring without reaching the rock — catches cliff
+    /// pacing under a boulder one terrace up; bail at [`CLOSE_GIVEUP_SECS`].
+    close: f32,
 }
 
 /// A loaded stone cart trailing the miner: haul it back to the Stone Miner yard — the stone is
@@ -181,7 +191,7 @@ fn assign_ore(
             }
         }
         if let Some((oe, _)) = best {
-            commands.entity(e).try_insert(MineJob { ore: oe, atk_cd: 0.0, stall: 0.0 });
+            commands.entity(e).try_insert(MineJob { ore: oe, atk_cd: 0.0, stall: 0.0, close: 0.0 });
         }
     }
 }
@@ -225,6 +235,7 @@ fn pick_work(
             worker.at_post = true;
             v.moving = false;
             job.stall = 0.0;
+            job.close = 0.0;
             let to = op - v.pos;
             if to.length_squared() > 1e-4 {
                 v.facing = to.x.atan2(to.y);
@@ -256,6 +267,7 @@ fn pick_work(
             // (failed) path re-runs the full A* every frame.
             worker.at_post = false;
             let step_target = if d > 6.0 {
+                job.close = 0.0;
                 if now >= path.next_replan || path.goal_cached.distance(op) > 2.0 {
                     path.waypoints = crate::navgrid::path_to_budget(v.pos, op, NAV_NODES);
                     path.cursor = 0;
@@ -277,6 +289,16 @@ fn pick_work(
                 }
                 path.waypoints.get(path.cursor).copied().unwrap_or(op)
             } else {
+                // Direct steer at close range — but a rock one terrace UP is in reach on the
+                // flat (XZ) and unreachable on foot: the steering fan wall-follows the cliff
+                // face, `moving` stays true, and the stall never fires. Cap the time spent
+                // this close without arriving; on the cap, shun the rock and pick another.
+                job.close += dt;
+                if job.close > CLOSE_GIVEUP_SECS {
+                    danger.0.push((op, now + 45.0));
+                    commands.entity(self_e).try_remove::<MineJob>();
+                    continue;
+                }
                 path.waypoints.clear();
                 path.cursor = 0;
                 op

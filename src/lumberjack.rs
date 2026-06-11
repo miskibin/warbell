@@ -58,10 +58,20 @@ const CHOP_REACH_PAD: f32 = 0.45;
 const RETRY_SECS: f32 = 3.0;
 /// A flight home gives up after this long even if the walls weren't reached.
 const FLEE_SECS: f32 = 9.0;
+/// A hauler making no real progress home for this long (across however many replans) is treated
+/// as truly wedged: it banks the log on the spot and frees up, rather than looping replans forever
+/// in a dead corner. Generous vs [`STALL_SECS`] so a normal jam (one replan past a prop) recovers
+/// without ever tripping this.
+const HAUL_GIVEUP_SECS: f32 = 12.0;
 /// Reaching this close to the castle origin counts as "safe — stop running".
 const FLEE_HOME_R: f32 = 14.0;
 /// No steering progress toward the tree for this long → wedged; abandon + blacklist briefly.
 const STALL_SECS: f32 = 4.0;
+/// Time allowed inside the direct-steer ring (≤6u of the tree) without actually reaching it.
+/// A reachable tree is reached from 6u out in ~3–4s; a tree up a terrace lip keeps the cutter
+/// wall-following along the cliff face — `moving` stays true, so [`STALL_SECS`] never trips and
+/// he paces under the unreachable tree forever. This caps that: bail + blacklist, pick another.
+const CLOSE_GIVEUP_SECS: f32 = 8.0;
 /// Chop SFX is only audible this near the hero (the guards' small-earshot convention).
 const SFX_EARSHOT: f32 = 16.0;
 /// Close enough to the yard to dump the log on the pile (matches `worker_steer`'s post reach).
@@ -74,6 +84,9 @@ pub struct ChopJob {
     atk_cd: f32,
     /// Seconds without steering progress (wedged on a river/prop) — bail at [`STALL_SECS`].
     stall: f32,
+    /// Seconds spent inside the direct-steer ring without reaching the tree — catches cliff
+    /// pacing under a tree up a terrace lip; bail at [`CLOSE_GIVEUP_SECS`].
+    close: f32,
 }
 
 /// A felled log on the woodcutter's shoulder: walk it back to the Lumber yard — the wood is
@@ -84,6 +97,11 @@ pub struct Hauling {
     log: Option<Entity>,
     /// Seconds without steering progress on the way home — force a replan past [`STALL_SECS`].
     stall: f32,
+    /// Total time genuinely wedged, NOT reset by a replan (only by real forward progress). Past
+    /// [`HAUL_GIVEUP_SECS`] the hauler dumps the log where it stands and frees up — a worker
+    /// pinned in a corner A* can't route out of would otherwise loop replans forever and read as
+    /// "stuck holding wood".
+    stuck: f32,
 }
 
 /// A working NPC running for the castle after its threat sense fired (or it was attacked and
@@ -206,7 +224,7 @@ fn assign_tree(
             }
         }
         if let Some((te, _)) = best {
-            commands.entity(e).try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0 });
+            commands.entity(e).try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0, close: 0.0 });
         }
     }
 }
@@ -252,6 +270,7 @@ fn chop_work(
             worker.at_post = true;
             v.moving = false;
             job.stall = 0.0;
+            job.close = 0.0;
             let to = tp - v.pos;
             if to.length_squared() > 1e-4 {
                 v.facing = to.x.atan2(to.y);
@@ -270,7 +289,12 @@ fn chop_work(
                     commands
                         .entity(self_e)
                         .try_remove::<ChopJob>()
-                        .try_insert(Hauling { amount: crate::verbs::TREE_WOOD, log: None, stall: 0.0 });
+                        .try_insert(Hauling {
+                            amount: crate::verbs::TREE_WOOD,
+                            log: None,
+                            stall: 0.0,
+                            stuck: 0.0,
+                        });
                 } else {
                     // The same chop juice the hero's swings get: the trunk shudders under the
                     // axe and sheds chips/leaves (visual-only, so no earshot gate).
@@ -286,6 +310,7 @@ fn chop_work(
             // March to the tree: A* when far (thread the gates/river), direct steer when close.
             worker.at_post = false;
             let step_target = if d > 6.0 {
+                job.close = 0.0;
                 if path.cursor >= path.waypoints.len()
                     || now >= path.next_replan
                     || path.goal_cached.distance(tp) > 2.0
@@ -302,6 +327,16 @@ fn chop_work(
                 }
                 path.waypoints.get(path.cursor).copied().unwrap_or(tp)
             } else {
+                // Direct steer at close range — but a tree up a terrace lip is in reach on the
+                // flat (XZ) and unreachable on foot: the steering fan wall-follows the cliff
+                // face, `moving` stays true, and the stall never fires. Cap the time spent
+                // this close without arriving; on the cap, shun the tree and pick another.
+                job.close += dt;
+                if job.close > CLOSE_GIVEUP_SECS {
+                    danger.0.push((tp, now + 45.0));
+                    commands.entity(self_e).try_remove::<ChopJob>();
+                    continue;
+                }
                 path.waypoints.clear();
                 path.cursor = 0;
                 tp
@@ -409,10 +444,31 @@ fn haul_home(
                 v.facing = s.facing;
                 v.moving = true;
                 hauling.stall = 0.0;
+                hauling.stuck = 0.0;
             }
             _ => {
                 v.moving = false;
                 hauling.stall += dt;
+                hauling.stuck += dt;
+                if hauling.stuck > HAUL_GIVEUP_SECS {
+                    // Truly wedged — replanning hasn't moved it for a long while. Dump the log
+                    // where it stands (bank the wood; don't strand the town's only income) and
+                    // free the worker so `assign_tree` hands it a fresh job, instead of looping
+                    // replans forever in a corner A* can't escape.
+                    bank.0.add_wood(hauling.amount);
+                    floats.0.push(crate::combat_fx::FloatReq {
+                        world: Vec3::new(v.pos.x, tf.translation.y + 1.6, v.pos.y),
+                        text: format!("+{} wood", hauling.amount as i64),
+                        color: Color::srgb(0.78, 0.62, 0.36),
+                        scale: 1.1,
+                    });
+                    if let Some(log) = hauling.log {
+                        commands.entity(log).try_despawn();
+                    }
+                    commands.entity(self_e).try_remove::<Hauling>();
+                    v.moving = false;
+                    continue;
+                }
                 if hauling.stall > STALL_SECS {
                     // Wedged on the way home — drop the cached route and replan now.
                     path.waypoints.clear();
