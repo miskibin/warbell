@@ -582,6 +582,15 @@ fn stage_town_for_shot(
     town.0.build(2, BuildKind::Farm, &mut bank.0);
     town.0.build(3, BuildKind::Lumber, &mut bank.0);
     town.0.build_house(&mut bank.0); // raise one extra dwelling (castle reveals it)
+    // `FOREST_TOWN=full`: raise every dwelling slot so a shot shows all twelve house
+    // archetypes (and the house-gated dressing — laundry, gardens, woodpiles).
+    if mode == "full" {
+        bank.0.add_wood(600.0);
+        bank.0.add_stone(600.0);
+        for _ in 0..11 {
+            town.0.build_house(&mut bank.0);
+        }
+    }
     for idx in [0usize, 1, 2, 3] {
         if let Some(kind) = town.0.plots[idx].kind {
             spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
@@ -928,13 +937,13 @@ fn spawn_building(
 ) {
     let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
     spawn_textured(commands, meshes, mats, BuildingMesh { idx }, building_parts(kind), pos);
-    // Solid cottage: register a collision box over the dwelling (the −X side of the plot) so the
-    // hero + orks route around it. (The crop field / log yard on the +X side stays walkable.)
+    // Solid structure: register a collision box over the trade's building (the −X side of the
+    // plot) so the hero + orks route around it. (The working yard on the +X side stays walkable.)
     crate::blockers::add_box(pos.x - 0.95, pos.y, 1.05, 0.95);
 }
 
-/// The textured parts for a producer — both are a shared plaster cottage (matching the keep's
-/// houses) plus the trade's own yard. Live in `town_meshes`.
+/// The textured parts for a producer — each trade has its own structure (barn / saw shed /
+/// pit-head) plus its working yard. Live in `town_meshes`.
 fn building_parts(kind: BuildKind) -> Vec<(Mesh, M)> {
     match kind {
         BuildKind::Farm => crate::town_meshes::farm_parts(),

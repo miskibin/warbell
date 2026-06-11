@@ -24,6 +24,7 @@ mod boats;
 mod camps;
 mod capture;
 mod castle;
+mod castle_decor;
 mod combat_fx;
 mod controls;
 mod critters;
@@ -179,6 +180,7 @@ fn main() {
             savegame::SaveGamePlugin, // dawn autosave + Continue/New Game (one slot)
             demo::DemoPlugin, // scripted clip scenarios (FOREST_DEMO=explore|defend; build→town.rs)
             separation::SeparationPlugin, // orks + townsfolk shove apart so bodies don't interpenetrate
+            castle_decor::CastleDecorPlugin, // courtyard dressing + upgrade-bought set pieces
         ))
         .run();
 }

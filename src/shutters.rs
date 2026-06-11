@@ -54,9 +54,11 @@ fn drive_shutters(
 }
 
 /// Spawn a pair of shutters over one house's front window. `(x, z)` is the house's world plot,
-/// `face` its facing yaw, `kind` its reveal tag (so the shutters appear with the house). The two
-/// leaf meshes (built once by the caller against the castle's shared material) are baked at world
-/// size, so the house's non-uniform scale folds into the placement here, not the geometry.
+/// `face` its facing yaw, `kind` its reveal tag (so the shutters appear with the house), and
+/// `window_local` the archetype's pre-scale front-window centre (`castle::house_window` — the
+/// four dwelling silhouettes hang their glass at different spots). The two leaf meshes (built
+/// once by the caller against the castle's shared material) are baked at world size, so the
+/// house's non-uniform scale folds into the placement here, not the geometry.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_house_shutters(
     commands: &mut Commands,
@@ -67,11 +69,13 @@ pub fn spawn_house_shutters(
     z: f32,
     face: f32,
     kind: CastleKind,
+    window_local: Vec3,
 ) {
-    // Window centre in world: house-local (0.5, H_FOUND+0.9, HD/2) × the house scale (0.9, 0.74,
-    // 0.9), nudged proud of the glass, then oriented to the house front.
+    // Window centre in world: the archetype's local window × the house scale (0.9, 0.74, 0.9),
+    // nudged proud of the glass, then oriented to the house front.
     let rot = Quat::from_rotation_y(face);
-    let centre = Vec3::new(x, 0.0, z) + rot * Vec3::new(0.5 * 0.9, 1.08 * 0.74, 1.0 * 0.9 + 0.05);
+    let centre = Vec3::new(x, 0.0, z)
+        + rot * Vec3::new(window_local.x * 0.9, window_local.y * 0.74, window_local.z * 0.9 + 0.05);
     let vis = if matches!(kind, CastleKind::Always) { Visibility::Inherited } else { Visibility::Hidden };
     let parent = commands
         .spawn((Transform { translation: centre, rotation: rot, scale: Vec3::ONE }, vis, CastlePart { kind }, BiomeEntity))

@@ -133,7 +133,10 @@ fn debug_enable_defenses(mut defenses: ResMut<Defenses>) {
             keep_archers: true,
             ballista: true,
             shrine: true,
-            ..default()
+            // Visual-only in the harness: stage the armory corner + the mason's scaffold
+            // (castle_decor) so a defended shot shows the full courtyard.
+            reinforced: true,
+            villager_arms_tier: 2,
         };
     }
 }

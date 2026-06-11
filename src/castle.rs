@@ -44,6 +44,10 @@ const STRAW: u32 = 0xcaa84e; // hay bales / thatched sacks
 const HEN: u32 = 0xe7e2d6; // courtyard fowl (off-white plumage)
 const H_WALL: u32 = 0xd3b78b;
 const H_ROOF: u32 = 0x6b3322;
+const H_ROOF2: u32 = 0x6e6256; // weathered grey-brown shingle (house variety)
+const THATCH: u32 = 0xb89b4f; // bound-straw roofing (huts, the farm barn)
+const IRON: u32 = 0x6a6e72; // arms & armour (racks, blades, helms)
+const PARCHMENT: u32 = 0xe6d9b5; // notice/bounty-board paper
 const H_STONE: u32 = 0x6e6e76;
 const WINDOW_GLOW: u32 = 0xffd58c;
 const BRONZE: u32 = 0xb9892f;
@@ -74,6 +78,14 @@ pub(crate) enum M {
     Beam,
     Roof,
     HouseRoof,
+    /// Weathered grey-brown shingle — the second roof hue that breaks up the dwelling rows.
+    HouseRoof2,
+    /// Bound straw — hut + barn roofing.
+    Thatch,
+    /// Dull arms-and-armour metal (rack blades, helms, strongbox bands).
+    Iron,
+    /// Paper pinned to the notice / bounty boards.
+    Parchment,
     Soil,
     Cobble,
     Packed,
@@ -274,6 +286,26 @@ fn tex_shingle(hex: u32) -> Image {
     cv.into_image()
 }
 
+/// Thatch — bound straw courses (horizontal rows, stalk streaks, a shadow line per course).
+fn tex_thatch(hex: u32) -> Image {
+    let c = rgb(hex);
+    let mut cv = Canvas::new(shade(c, -0.04));
+    let mut r = Rng(0x7a7 ^ hex);
+    let rows = 8usize;
+    let rh = TN as f32 / rows as f32;
+    for ry in 0..rows {
+        let y = ry as f32 * rh;
+        cv.rect(0.0, y, TN as f32, rh - 1.5, shade(c, (r.f() - 0.5) * 0.10));
+        cv.rect(0.0, y + rh - 1.5, TN as f32, 1.5, shade(c, -0.22)); // course shadow
+        for _ in 0..26 {
+            let x = r.f() * TN as f32;
+            cv.rect(x, y + r.f() * 2.0, 1.0, rh - 2.0 - r.f() * 3.0, shade(c, (r.f() - 0.5) * 0.16)); // stalks
+        }
+    }
+    speckle(&mut cv, &mut r, 300, c);
+    cv.into_image()
+}
+
 /// Cobbles — courtyard paving (jittered running-bond stones + bevels).
 fn tex_cobble(hex: u32) -> Image {
     let c = rgb(hex);
@@ -384,18 +416,19 @@ fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial
     tex(tex_wood(BEAM, 4), 1.0, M::Beam);
     tex(tex_shingle(ROOF), 0.85, M::Roof);
     tex(tex_shingle(H_ROOF), 0.85, M::HouseRoof);
+    tex(tex_shingle(H_ROOF2), 0.88, M::HouseRoof2);
+    tex(tex_thatch(THATCH), 1.0, M::Thatch);
     tex(tex_soil(SOIL), 1.0, M::Soil);
 
-    // Yard grounds (Packed klepisko / Cobble courtyard) alpha-blend: their `worn_slab`
-    // mesh fades vertex alpha across a noisy rim band, so the surface dissolves
-    // irregularly into the lawn instead of ending on a hard rectangle edge.
+    // Yard grounds (Packed klepisko / Cobble courtyard): fully OPAQUE — `worn_slab` cuts the
+    // ragged rim into the geometry itself. (Alpha-Blend rims rendered as a washed-out film at
+    // grazing angles; alpha-Mask fought the depth prepass. See `worn_slab`.)
     let mut ground_tex = |img: Image, rough: f32, m: M| {
         let t = images.add(img);
         h.insert(m as u8, std_mats.add(StandardMaterial {
             base_color: Color::WHITE,
             base_color_texture: Some(t),
             perceptual_roughness: rough,
-            alpha_mode: AlphaMode::Blend,
             cull_mode: None,
             double_sided: true,
             ..default()
@@ -415,6 +448,8 @@ fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial
         }));
     };
     solid(STRAW, 0.95, 0.0, M::Straw);
+    solid(IRON, 0.42, 0.78, M::Iron);
+    solid(PARCHMENT, 0.95, 0.0, M::Parchment);
     solid(HEN, 0.9, 0.0, M::Hen);
     solid(BANNER, 0.8, 0.0, M::Banner);
     solid(BRONZE, 0.45, 0.7, M::Bronze);
@@ -456,7 +491,7 @@ pub(crate) fn bx(w: f32, h: f32, d: f32, x: f32, y: f32, z: f32) -> Mesh {
     scale_uv(Mesh::from(Cuboid::new(w, h, d)), horiz, vert).translated_by(Vec3::new(x, y, z))
 }
 
-fn flat(mut m: Mesh) -> Mesh {
+pub(crate) fn flat(mut m: Mesh) -> Mesh {
     m.duplicate_vertices();
     m.compute_flat_normals();
     m
@@ -473,12 +508,12 @@ fn pyramid(r: f32, h: f32, base_y: f32) -> Mesh {
     flat(scale_uv(m, r / TILE, h / TILE))
 }
 
-fn cyl(r: f32, h: f32, x: f32, y: f32, z: f32) -> Mesh {
+pub(crate) fn cyl(r: f32, h: f32, x: f32, y: f32, z: f32) -> Mesh {
     Cylinder::new(r, h).mesh().resolution(12).build().translated_by(Vec3::new(x, y, z))
 }
 
 /// Tapered 12-gon frustum (bell body): top radius `rt`, bottom `rb`.
-fn taper(rt: f32, rb: f32, h: f32, y: f32) -> Mesh {
+pub(crate) fn taper(rt: f32, rb: f32, h: f32, y: f32) -> Mesh {
     let seg = 12usize;
     let mut pos: Vec<[f32; 3]> = Vec::new();
     let mut idx: Vec<u32> = Vec::new();
@@ -539,12 +574,15 @@ fn wear_noise(x: f32, z: f32) -> f32 {
         + (x * 2.70 - z * 2.20 + 0.8).sin() * 0.25
 }
 
-/// The yard ground sheet — a vertex grid whose rim ALPHA-fades into the grass over a noisy
-/// `fray`-wide wear band (trodden fingers of dirt reach into the lawn and grass bites back
-/// into the yard — no hard rectangle edge), and whose interior carries a low-frequency
-/// brightness mottle in the vertex colour so the tiling texture stops reading as a grid.
-/// Drawn with the alpha-blended ground materials (see `build_mats`). `noise_amp` scales how
-/// ragged the rim is; `mottle` the interior value drift.
+/// The yard ground sheet — a vertex grid whose rim is CUT BY THE NOISE FIELD: grid cells whose
+/// wear value falls below the threshold are simply not emitted, so trodden fingers of paving
+/// reach into the lawn and grass bites back into the yard along a crisp ragged outline (no
+/// hard rectangle edge). Fully opaque — earlier versions faded the rim with vertex ALPHA, but
+/// blended rims render as a washed-out translucent film at grazing angles, and alpha-Mask
+/// fights the depth prepass (whose cutoff ignores vertex alpha → sky-coloured holes). Geometry
+/// can't lie. The interior carries a low-frequency brightness mottle in the vertex colour so
+/// the tiling texture stops reading as a grid. `noise_amp` scales how ragged the rim is;
+/// `mottle` the interior value drift.
 fn worn_slab(w: f32, d: f32, y: f32, fray: f32, noise_amp: f32, mottle: f32) -> Mesh {
     let hw = w / 2.0 + fray;
     let hd = d / 2.0 + fray;
@@ -555,6 +593,7 @@ fn worn_slab(w: f32, d: f32, y: f32, fray: f32, noise_amp: f32, mottle: f32) -> 
     let mut nrm: Vec<[f32; 3]> = Vec::with_capacity(pos.capacity());
     let mut uv: Vec<[f32; 2]> = Vec::with_capacity(pos.capacity());
     let mut col: Vec<[f32; 4]> = Vec::with_capacity(pos.capacity());
+    let mut wear: Vec<f32> = Vec::with_capacity(pos.capacity());
     for iz in 0..=nz {
         for ix in 0..=nx {
             // Spread the grid exactly across [-hw, hw] (no clamped duplicate columns).
@@ -563,9 +602,6 @@ fn worn_slab(w: f32, d: f32, y: f32, fray: f32, noise_amp: f32, mottle: f32) -> 
             // Distance inside the OUTER rect; the wear band spans ~2×fray of it.
             let d_in = (hw - x.abs()).min(hd - z.abs());
             let t = d_in / (fray * 2.0) + wear_noise(x, z) * noise_amp - 0.5 * noise_amp;
-            let mut a = (t.clamp(0.0, 1.0) * t.clamp(0.0, 1.0) * (3.0 - 2.0 * t.clamp(0.0, 1.0))).clamp(0.0, 1.0);
-            // Guarantee full transparency AT the mesh edge (noise can't push it back up).
-            a *= (d_in / 0.8).clamp(0.0, 1.0);
             // Low-frequency brightness drift breaks the texture's tile repetition.
             let b = 1.0
                 + mottle * (x * 0.37 + 1.1).sin() * (z * 0.41 - 0.6).cos()
@@ -573,7 +609,8 @@ fn worn_slab(w: f32, d: f32, y: f32, fray: f32, noise_amp: f32, mottle: f32) -> 
             pos.push([x, y, z]);
             nrm.push([0.0, 1.0, 0.0]);
             uv.push([x / TILE, z / TILE]);
-            col.push([b, b, b, a]);
+            col.push([b, b, b, 1.0]);
+            wear.push(t);
         }
     }
     let mut idx: Vec<u32> = Vec::with_capacity(nx * nz * 6);
@@ -582,6 +619,12 @@ fn worn_slab(w: f32, d: f32, y: f32, fray: f32, noise_amp: f32, mottle: f32) -> 
         for ix in 0..nx as u32 {
             let i0 = iz * row + ix;
             let (i1, i2, i3) = (i0 + 1, i0 + row + 1, i0 + row);
+            // Keep the cell only where the worn surface survives (mean corner wear above the
+            // cut) — the rim outline follows the noise, half-cell crisp.
+            let mean = (wear[i0 as usize] + wear[i1 as usize] + wear[i2 as usize] + wear[i3 as usize]) / 4.0;
+            if mean < 0.5 {
+                continue;
+            }
             // Same up-facing winding as `slab`.
             idx.extend_from_slice(&[i0, i2, i1, i0, i3, i2]);
         }
@@ -747,16 +790,91 @@ fn gate_parts(width: f32) -> Vec<(Mesh, M)> {
     v
 }
 
-// House.
+// House (the standard cottage's dims — other archetypes carry their own).
 const HW: f32 = 2.6;
 const HH: f32 = 1.15;
 const HD: f32 = 2.0;
 const H_FOUND: f32 = 0.18;
 
-/// The textured village house (plaster walls, half-timbered posts, shingle gable, glowing window,
-/// stone chimney). Shared by the castle's dwellings AND the town's producer buildings, so a Farm
-/// or Woodcutter reads as the same kind of cottage as the keep's houses.
-pub(crate) fn house_parts() -> Vec<(Mesh, M)> {
+/// Four dwelling silhouettes spread across the twelve slots (3 huts, 4 cottages, 3 townhouses,
+/// 2 longhouses) so the rows read as a grown village instead of barracks. All archetypes keep
+/// the shared conventions: local origin, base at y=0, FRONT facing +Z, spawned at the same
+/// (0.9, 0.74, 0.9) scale — the accessors below feed the per-slot blocker / shutter / smoke
+/// wiring that used to assume one cottage.
+#[derive(Clone, Copy, PartialEq)]
+enum HouseStyle {
+    Hut,
+    Cottage,
+    Townhouse,
+    Longhouse,
+}
+
+/// Style per dwelling slot (indexes `houses()`); reveal order is unchanged, so even the early
+/// settlement mixes a hut, cottages and a townhouse rather than clones.
+const HOUSE_STYLES: [HouseStyle; 12] = [
+    HouseStyle::Hut, HouseStyle::Cottage, HouseStyle::Townhouse, HouseStyle::Cottage, // N row
+    HouseStyle::Cottage, HouseStyle::Longhouse, HouseStyle::Cottage, HouseStyle::Hut, // S row
+    HouseStyle::Townhouse, HouseStyle::Hut, HouseStyle::Longhouse, HouseStyle::Townhouse, // E/W
+];
+
+/// Roof material per slot — huts thatch; the rest alternate warm vs weathered shingle.
+fn house_roof(i: usize) -> M {
+    match HOUSE_STYLES[i] {
+        HouseStyle::Hut => M::Thatch,
+        _ => {
+            if i % 2 == 0 {
+                M::HouseRoof
+            } else {
+                M::HouseRoof2
+            }
+        }
+    }
+}
+
+/// Local (pre-scale) footprint (w, d) — feeds the per-slot collision blocker.
+fn house_dims(style: HouseStyle) -> (f32, f32) {
+    match style {
+        HouseStyle::Hut => (2.0, 1.7),
+        HouseStyle::Cottage => (HW, HD),
+        HouseStyle::Townhouse => (2.3, 1.9),
+        HouseStyle::Longhouse => (3.6, 1.8),
+    }
+}
+
+/// Local (pre-scale) front-window centre — where the curfew shutters hang.
+fn house_window(style: HouseStyle) -> Vec3 {
+    match style {
+        HouseStyle::Hut => Vec3::new(0.45, 0.76, 0.85),
+        HouseStyle::Cottage => Vec3::new(0.5, H_FOUND + 0.9, HD / 2.0),
+        HouseStyle::Townhouse => Vec3::new(0.45, 1.8, 1.03), // the upstairs pane
+        HouseStyle::Longhouse => Vec3::new(1.05, 0.78, 0.9),
+    }
+}
+
+/// Local (pre-scale) chimney spot + stack-top height, for the smoke column. Huts vent
+/// through the thatch — no chimney, no smoke.
+fn house_chimney(style: HouseStyle) -> Option<(Vec2, f32)> {
+    match style {
+        HouseStyle::Hut => None,
+        HouseStyle::Cottage => Some((Vec2::new(HW / 2.0 - 0.4, 0.25), H_FOUND + HH + 0.74)),
+        HouseStyle::Townhouse => Some((Vec2::new(0.75, 0.2), 2.98)),
+        HouseStyle::Longhouse => Some((Vec2::new(-1.2, 0.25), 1.94)),
+    }
+}
+
+fn house_parts_for(i: usize) -> Vec<(Mesh, M)> {
+    let roof = house_roof(i);
+    match HOUSE_STYLES[i] {
+        HouseStyle::Hut => hut_parts(),
+        HouseStyle::Cottage => house_parts(roof),
+        HouseStyle::Townhouse => townhouse_parts(roof),
+        HouseStyle::Longhouse => longhouse_parts(roof),
+    }
+}
+
+/// The textured village cottage (plaster walls, half-timbered posts, shingle gable, glowing
+/// window, stone chimney) — the baseline dwelling the other archetypes riff on.
+fn house_parts(roof: M) -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
     let wall_top = H_FOUND + HH;
     v.push((bx(HW + 0.2, H_FOUND, HD + 0.2, 0.0, H_FOUND / 2.0, 0.0), M::HouseStone));
@@ -778,7 +896,95 @@ pub(crate) fn house_parts() -> Vec<(Mesh, M)> {
     v.push((bx(0.42, 0.42, 0.04, 0.5, H_FOUND + 0.9, HD / 2.0 + 0.02), M::Window));
     v.push((bx(0.52, 0.06, 0.06, 0.5, H_FOUND + 1.13, HD / 2.0 + 0.03), M::Beam)); // window lintel
     // Gable roof — ridge along X (width), slopes facing ±Z.
-    v.push((gable(HW + 0.3, HD + 0.3, 0.6, wall_top), M::HouseRoof));
+    v.push((gable(HW + 0.3, HD + 0.3, 0.6, wall_top), roof));
+    v
+}
+
+/// The smallest dwelling: one plaster room under a deep-eaved thatch gable.
+fn hut_parts() -> Vec<(Mesh, M)> {
+    let (w, h, d, f) = (2.0, 0.95, 1.7, 0.14);
+    let top = f + h;
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    v.push((bx(w + 0.16, f, d + 0.16, 0.0, f / 2.0, 0.0), M::HouseStone));
+    v.push((bx(w, h, d, 0.0, f + h / 2.0, 0.0), M::Plaster));
+    for sx in [-1.0_f32, 1.0] {
+        for sz in [-1.0_f32, 1.0] {
+            v.push((bx(0.14, h, 0.14, sx * (w / 2.0), f + h / 2.0, sz * (d / 2.0)), M::Beam));
+        }
+    }
+    v.push((bx(0.42, 0.78, 0.06, -0.45, f + 0.42, d / 2.0 + 0.02), M::Wood)); // door
+    v.push((bx(0.52, 0.09, 0.08, -0.45, f + 0.86, d / 2.0 + 0.03), M::Beam));
+    v.push((bx(0.42, 0.36, 0.04, 0.45, 0.76, d / 2.0 + 0.02), M::Window));
+    v.push((bx(0.5, 0.06, 0.06, 0.45, 0.98, d / 2.0 + 0.03), M::Beam));
+    v.push((gable(w + 0.55, d + 0.6, 0.8, top), M::Thatch)); // deep eaves
+    v
+}
+
+/// Two-story jettied townhouse: stone ground floor, timber-framed plaster upper that juts
+/// past it, glowing pane upstairs, tall gable. The vertical accent in each row.
+fn townhouse_parts(roof: M) -> Vec<(Mesh, M)> {
+    let (w, d, f) = (2.3, 1.9, 0.18);
+    let h1 = 1.0; // stone ground floor
+    let h2 = 0.85; // jettied upper floor
+    let up0 = f + h1 + 0.12; // upper-floor base (above the jetty band)
+    let top = up0 + h2;
+    let (uw, ud) = (w + 0.16, d + 0.16); // the jetty overhang
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    v.push((bx(w + 0.2, f, d + 0.2, 0.0, f / 2.0, 0.0), M::HouseStone));
+    v.push((bx(w, h1, d, 0.0, f + h1 / 2.0, 0.0), M::HouseStone));
+    v.push((bx(uw + 0.08, 0.12, ud + 0.08, 0.0, f + h1 + 0.06, 0.0), M::Beam)); // jetty band
+    v.push((bx(uw, h2, ud, 0.0, up0 + h2 / 2.0, 0.0), M::Plaster));
+    for sx in [-1.0_f32, 1.0] {
+        for sz in [-1.0_f32, 1.0] {
+            v.push((bx(0.14, h2, 0.14, sx * (uw / 2.0), up0 + h2 / 2.0, sz * (ud / 2.0)), M::Beam));
+        }
+    }
+    v.push((bx(0.46, 0.95, 0.06, -0.5, f + 0.5, d / 2.0 + 0.02), M::Wood)); // door
+    v.push((bx(0.56, 0.1, 0.08, -0.5, f + 1.0, d / 2.0 + 0.03), M::Beam));
+    v.push((bx(0.38, 0.3, 0.04, 0.55, f + 0.62, d / 2.0 + 0.02), M::Slit)); // dark ground pane
+    v.push((bx(0.42, 0.42, 0.04, 0.45, 1.8, ud / 2.0 + 0.02), M::Window)); // upstairs glow
+    v.push((bx(0.52, 0.06, 0.06, 0.45, 2.05, ud / 2.0 + 0.03), M::Beam));
+    v.push((bx(0.26, 0.9, 0.26, 0.75, top + 0.4, 0.2), M::HouseStone)); // chimney
+    v.push((bx(0.32, 0.08, 0.32, 0.75, top + 0.83, 0.2), M::Beam));
+    v.push((gable(uw + 0.3, ud + 0.34, 0.72, top), roof));
+    v
+}
+
+/// A long single-ridge hall: the widest dwelling, mid-posts pacing the long wall, two glowing
+/// windows flanking a centre door, gable-end chimney, firewood stacked against the end wall.
+fn longhouse_parts(roof: M) -> Vec<(Mesh, M)> {
+    let (w, h, d, f) = (3.6, 1.0, 1.8, 0.16);
+    let top = f + h;
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    v.push((bx(w + 0.2, f, d + 0.2, 0.0, f / 2.0, 0.0), M::HouseStone));
+    v.push((bx(w, h, d, 0.0, f + h / 2.0, 0.0), M::Plaster));
+    // Corner + mid posts give the long wall its half-timber rhythm.
+    for sx in [-w / 2.0, -w / 6.0, w / 6.0, w / 2.0] {
+        for sz in [-1.0_f32, 1.0] {
+            v.push((bx(0.15, h, 0.15, sx, f + h / 2.0, sz * (d / 2.0)), M::Beam));
+        }
+    }
+    v.push((bx(0.5, 0.92, 0.06, 0.0, f + 0.48, d / 2.0 + 0.02), M::Wood)); // centre door
+    v.push((bx(0.6, 0.1, 0.08, 0.0, f + 0.98, d / 2.0 + 0.03), M::Beam));
+    for sx in [-1.05_f32, 1.05] {
+        v.push((bx(0.42, 0.4, 0.04, sx, 0.78, d / 2.0 + 0.02), M::Window));
+        v.push((bx(0.5, 0.06, 0.06, sx, 1.02, d / 2.0 + 0.03), M::Beam));
+    }
+    v.push((bx(0.28, 0.75, 0.28, -1.2, top + 0.34, 0.25), M::HouseStone)); // gable-end chimney
+    v.push((bx(0.34, 0.08, 0.34, -1.2, top + 0.74, 0.25), M::Beam));
+    v.push((gable(w + 0.4, d + 0.5, 0.62, top), roof));
+    // Firewood against the −X gable wall (cylinder axis turned to lie along Z).
+    for (y, kz) in [(0.11_f32, -0.13_f32), (0.11, 0.13), (0.3, 0.0)] {
+        v.push((
+            Cylinder::new(0.1, 0.7)
+                .mesh()
+                .resolution(8)
+                .build()
+                .rotated_by(Quat::from_rotation_x(HALF_PI))
+                .translated_by(Vec3::new(-w / 2.0 - 0.24, y, kz)),
+            M::Wood,
+        ));
+    }
     v
 }
 
@@ -807,15 +1013,18 @@ fn torch_parts() -> Vec<(Mesh, M)> {
     v
 }
 
-// ── Pre-wall rustic yard clutter ─────────────────────────────────────────────────
-// Small, sparse work-yard props that dress the bare keep before the walls go up (all tagged
-// `PreWalls`, so they vanish once you cobble the courtyard). Built at local origin, base at y=0;
-// the `build()` spawn closure bakes each cluster to its courtyard spot. Decorative only — they
-// register NO collision (blockers are append-only and can't be cleanly removed), and they sit out
-// at the courtyard corners (±10, ±6), clear of the keep, the bell, the gates and every house slot.
+// ── Rustic yard clutter ──────────────────────────────────────────────────────────
+// Small work-yard props that dress the courtyard corners. Tagged `Always` — they used to be
+// `PreWalls`, which meant buying the Palisade Walls DELETED every sign of life and left bare
+// paving; now the settlement's working corners stay through the whole game. Built at local
+// origin, base at y=0; the `build()` spawn closure bakes each cluster to its courtyard spot.
+// Decorative only — they register NO collision (blockers are append-only and can't be cleanly
+// removed), and they sit at the courtyard corners (±10, ±6), clear of the keep, the bell, the
+// gates and every house slot. (More set dressing — and the upgrade-bought set pieces — live in
+// `castle_decor.rs`.)
 
 /// A log lying along the X axis (for stacked woodpiles / windlass rollers).
-fn log_x(r: f32, len: f32, y: f32, z: f32) -> Mesh {
+pub(crate) fn log_x(r: f32, len: f32, y: f32, z: f32) -> Mesh {
     Cylinder::new(r, len)
         .mesh()
         .resolution(8)
@@ -913,6 +1122,25 @@ fn hen_parts() -> Vec<(Mesh, M)> {
 }
 
 // ── Layout (parametric perimeter) ────────────────────────────────────────────────
+
+/// The worn route network `(cx, cz, w, d)`: [0] the keep/bell/muster plaza, then the four
+/// gate paths. Drawn as packed earth pre-walls and cobble after (see `build`); also used to
+/// keep grass sprigs off the paving.
+const PATH_RECTS: [(f32, f32, f32, f32); 5] = [
+    (0.0, 2.0, 13.0, 13.0),   // plaza: keep + bell + muster yard
+    (0.0, -8.25, 3.4, 7.5),   // north gate → plaza
+    (0.0, 10.25, 3.4, 3.5),   // south gate → plaza
+    (-11.75, 0.0, 10.5, 3.4), // west gate → plaza
+    (11.75, 0.0, 10.5, 3.4),  // east gate → plaza
+];
+
+/// Is `(wx, wz)` on (or hard against) the plaza/path paving? Used to keep grass off the routes.
+fn on_paving(wx: f32, wz: f32) -> bool {
+    PATH_RECTS
+        .iter()
+        .any(|(cx, cz, w, d)| (wx - cx).abs() < w / 2.0 + 0.5 && (wz - cz).abs() < d / 2.0 + 0.5)
+}
+
 fn wall_segments() -> [(f32, f32, f32, f32); 8] {
     let g = GATE_GAP / 2.0;
     let seg_x = HALF_X - g;
@@ -1008,26 +1236,30 @@ pub fn build(
         }
     };
 
-    // Ground: a bare packed-earth yard ("klepisko") while the keep stands wall-less, swapped for the
-    // cobbled courtyard the moment the Palisade Walls go up. The two sheets share the footprint but
-    // are mutually exclusive (PreWalls vs Walls), so they never z-fight. Both are `worn_slab`s —
-    // their rims alpha-dissolve into the lawn instead of cutting a hard rectangle: the bare yard
-    // gets a wide ragged wear band (trodden earth fading out where feet stop passing), the cobbled
-    // court a tighter fringe (built paving, but its edge stones still sink into the turf).
-    spawn(
-        vec![(worn_slab((HALF_X - 1.2) * 2.0, (HALF_Z - 1.2) * 2.0, 0.02, 2.6, 0.38, 0.06), M::Packed)],
-        Vec3::ZERO,
-        0.0,
-        Vec3::ONE,
-        CastleKind::PreWalls,
-    );
-    spawn(
-        vec![(worn_slab((HALF_X - 0.9) * 2.0, (HALF_Z - 0.9) * 2.0, 0.02, 1.0, 0.16, 0.035), M::Cobble)],
-        Vec3::ZERO,
-        0.0,
-        Vec3::ONE,
-        CastleKind::Walls,
-    );
+    // Ground: NOT one big sheet — that read as a repeating carpet wall-to-wall. Instead a worn
+    // route network: a plaza under the keep + bell + muster yard, and four paths running to the
+    // gates, with the courtyard lawn showing everywhere between. Day one the routes are trodden
+    // packed earth (the feet of the settlement wrote them); raising the Palisade Walls paves the
+    // SAME network in cobble — paving as progression, never a full-courtyard slab again. Both
+    // variants are `worn_slab`s (rims alpha-dissolve into the lawn); paths sit 1.5cm above the
+    // plaza sheet so their frayed overlaps at the junctions can't z-fight.
+    for (i, (px, pz, w, d)) in PATH_RECTS.into_iter().enumerate() {
+        let y = if i == 0 { 0.02 } else { 0.035 };
+        spawn(
+            vec![(worn_slab(w, d, y, 1.1, 0.18, 0.07), M::Packed)],
+            Vec3::new(px, 0.0, pz),
+            0.0,
+            Vec3::ONE,
+            CastleKind::PreWalls,
+        );
+        spawn(
+            vec![(worn_slab(w, d, y + 0.005, 0.7, 0.12, 0.04), M::Cobble)],
+            Vec3::new(px, 0.0, pz),
+            0.0,
+            Vec3::ONE,
+            CastleKind::Walls,
+        );
+    }
 
     // Keep (centre) — always present.
     spawn(keep_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88), CastleKind::Always);
@@ -1041,7 +1273,7 @@ pub fn build(
         spawn(gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.8, 1.0), CastleKind::Gate);
     }
     for (i, (x, z)) in houses().into_iter().enumerate() {
-        spawn(house_parts(), Vec3::new(x, 0.0, z), face_center(x, z), Vec3::new(0.9, 0.74, 0.9), CastleKind::House(i as u8));
+        spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_center(x, z), Vec3::new(0.9, 0.74, 0.9), CastleKind::House(i as u8));
     }
     spawn(bell_parts(), Vec3::new(0.0, 0.0, 6.0), 0.0, Vec3::ONE, CastleKind::Always);
 
@@ -1057,13 +1289,13 @@ pub fn build(
         spawn(torch_parts(), Vec3::new(sx, 0.0, 3.4), 0.0, Vec3::ONE, CastleKind::Always);
     }
 
-    // Pre-wall atmosphere: a sparse rustic work-yard framing the bare keep. All `PreWalls`, so
-    // raising the Palisade Walls clears the yard for the cobbled courtyard. Tucked into the four
-    // courtyard corners (±10, ±6), clear of the gates, the bell, and every house slot.
-    spawn(wood_yard_parts(), Vec3::new(-10.0, 0.0, 6.0), 0.6, Vec3::ONE, CastleKind::PreWalls);
-    spawn(hay_corner_parts(), Vec3::new(10.0, 0.0, 6.0), -0.5, Vec3::ONE, CastleKind::PreWalls);
-    spawn(cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::PreWalls);
-    spawn(well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::PreWalls);
+    // The settlement's working corners: woodpile, hay store, cart, draw-well. Permanent (`Always`)
+    // — the courtyard never goes blank, walls or no walls. Tucked into the four courtyard corners
+    // (±10, ±6), clear of the gates, the bell, the paths and every house slot.
+    spawn(wood_yard_parts(), Vec3::new(-10.0, 0.0, 6.0), 0.6, Vec3::ONE, CastleKind::Always);
+    spawn(hay_corner_parts(), Vec3::new(10.0, 0.0, 6.0), -0.5, Vec3::ONE, CastleKind::Always);
+    spawn(cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::Always);
+    spawn(well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::Always);
 
     // Pooled flicker-lights at each torch flame — the `torch_parts` geometry is emissive-only, so
     // the gates/keep door read flat in the dark without these. Tagged with the SAME `CastlePart`
@@ -1110,6 +1342,7 @@ pub fn build(
             hz,
             face_center(hx, hz),
             CastleKind::House(i as u8),
+            house_window(HOUSE_STYLES[i]),
         );
     }
 
@@ -1136,9 +1369,8 @@ pub fn build(
         ));
     }
 
-    // Grass biting back through the yard rim — sparse tufts + clover scattered over the wear
-    // band (and a few worn survivor patches inside the yard) so the trodden earth reads as
-    // walked-over lawn, not a stamped-out shape. PreWalls: the cobbled court replaces them.
+    // Grass tufts + clover round the courtyard rim and scattered through the lawn (off the
+    // paving) — the courtyard floor is living ground now, not a stamped sheet. Permanent.
     {
         let cover_mat = std_mats.add(StandardMaterial {
             base_color: Color::WHITE, // vertex colour carries the hue (groundcover contract)
@@ -1159,7 +1391,7 @@ pub fn build(
                     scale: Vec3::splat(s),
                 },
                 bevy::light::NotShadowCaster,
-                CastlePart { kind: CastleKind::PreWalls },
+                CastlePart { kind: CastleKind::Always },
                 BiomeEntity,
             ));
         };
@@ -1182,12 +1414,13 @@ pub fn build(
             let s = 0.45 + r.f() * 0.45;
             sprig(x, z, mesh, s, &mut r, commands);
         }
-        // Survivor patches inside the yard — small, sparse, low ("gdzie niegdzie").
+        // Lawn patches inside the courtyard — small, sparse, low ("gdzie niegdzie"), and
+        // never poking up through the plaza/path paving.
         for _ in 0..14 {
             let x = (r.f() - 0.5) * 2.0 * (bx_ - 2.0);
             let z = (r.f() - 0.5) * 2.0 * (bz_ - 2.0);
-            if x.abs() < 4.5 && z.abs() < 4.0 {
-                continue; // keep the keep's doorstep bare
+            if on_paving(x, z) {
+                continue;
             }
             let mesh = if r.f() < 0.35 { &tuft } else { &clover };
             let s = 0.35 + r.f() * 0.3;
@@ -1204,10 +1437,12 @@ pub fn build(
     });
     let puff = meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap());
     for (hi, (hx, hz)) in houses().into_iter().enumerate() {
+        // Smoke rises from the archetype's own stack; huts have none (they vent through thatch).
+        let Some((ch, ch_top)) = house_chimney(HOUSE_STYLES[hi]) else { continue };
         let rot = face_center(hx, hz);
-        let local = Quat::from_rotation_y(rot) * Vec3::new((HW / 2.0 - 0.4) * 0.9, 0.0, 0.25 * 0.9);
+        let local = Quat::from_rotation_y(rot) * Vec3::new(ch.x * 0.9, 0.0, ch.y * 0.9);
         let (cx, cz) = (hx + local.x, hz + local.z);
-        let base_y = (H_FOUND + HH + 0.74) * 0.74 + 0.2;
+        let base_y = ch_top * 0.74 + 0.2;
         for i in 0..3 {
             commands.spawn((
                 Mesh3d(puff.clone()),
@@ -1222,8 +1457,8 @@ pub fn build(
     }
 
     // A few hens pecking in the dirt by the wood yard + well (one shared, batched mesh set; each is
-    // a moving root parented to its parts, so `peck_hens` can bob the whole bird). PreWalls — they
-    // clear out with the rest of the yard once the walls go up.
+    // a moving root parented to its parts, so `peck_hens` can bob the whole bird). Permanent — the
+    // courtyard keeps its fowl whatever gets built.
     let hen_meshes: Vec<(Handle<Mesh>, M)> =
         hen_parts().into_iter().map(|(m, slot)| (meshes.add(m), slot)).collect();
     for (i, (hx, hz, yaw, sp)) in [
@@ -1240,7 +1475,7 @@ pub fn build(
             .spawn((
                 Transform::from_xyz(hx, 0.0, hz).with_rotation(base_yaw),
                 Visibility::Inherited,
-                CastlePart { kind: CastleKind::PreWalls },
+                CastlePart { kind: CastleKind::Always },
                 Hen { base_yaw, phase: i as f32 * 1.3, speed: sp },
                 BiomeEntity,
             ))
@@ -1251,6 +1486,10 @@ pub fn build(
             }
         });
     }
+
+    // Courtyard set dressing + the upgrade-bought set pieces (armory, tax booth, shrine, …) —
+    // a separate module so the structures stay readable here.
+    crate::castle_decor::build(commands, meshes, &mats);
 
     // Only the always-present keep is solid from the start; the gated structures register their
     // blockers when their upgrade reveals them (see `sync_castle`), so the courtyard is open
@@ -1287,11 +1526,12 @@ fn register_towers_blockers() {
     }
 }
 
-/// One house's blocker (registered when that district is built).
+/// One house's blocker (registered when that district is built) — sized to its archetype.
 fn register_house_blocker(i: usize) {
     let p = COLLISION_PAD;
     let (x, z) = houses()[i];
-    let (hx, hz) = (HW * 0.9 / 2.0 + p, HD * 0.9 / 2.0 + p);
+    let (w, d) = house_dims(HOUSE_STYLES[i]);
+    let (hx, hz) = (w * 0.9 / 2.0 + p, d * 0.9 / 2.0 + p);
     let (hw, hd) = if (face_center(x, z).abs() - HALF_PI).abs() < 0.1 { (hz, hx) } else { (hx, hz) };
     crate::blockers::add_box(x, z, hw, hd);
 }
@@ -1319,8 +1559,8 @@ struct Hen {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CastleKind {
     Always,
-    /// Shown ONLY before the Palisade Walls go up — the bare packed-earth yard + rustic clutter of
-    /// the young settlement. Buying Walls hides it (and reveals the cobbled courtyard instead).
+    /// Shown ONLY before the Palisade Walls go up — the trodden packed-earth route network of the
+    /// young settlement. Buying Walls hides it (the same routes re-appear paved in cobble).
     PreWalls,
     Walls,
     Gate,
