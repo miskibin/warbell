@@ -1075,7 +1075,7 @@ fn siege_clip_refill(
     mut commands: Commands,
     mut ring: Local<u32>,
 ) {
-    const TARGET: usize = 18;
+    const TARGET: usize = 36;
     let Some(arm) = armory.as_deref() else { return };
     siege.phase = GamePhase::Wave;
     keep.hp = keep.hp.max(keep.max * 0.15);
