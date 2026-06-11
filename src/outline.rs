@@ -72,8 +72,9 @@ pub fn default_outline() -> Outline {
 
 /// Ease the outline off as the camera turns into the sun: against the bright sky every prop is
 /// already a high-contrast backlit silhouette, and stacking the full edge-darkening on top reads
-/// cartoony (user feedback). No effect below ~37° off-sun (cos 0.80), eases to 30% strength when
-/// staring straight at it. Runs ungated (pure view cosmetics, like the other render systems).
+/// cartoony (user feedback, twice — the band is wide and the floor low on purpose). Starts at
+/// ~45° off-sun (cos 0.70), down to 15% strength when staring straight at it. Runs ungated
+/// (pure view cosmetics, like the other render systems).
 fn fade_outline_toward_sun(
     sun: Query<&GlobalTransform, With<crate::scene::Sun>>,
     mut cams: Query<(&GlobalTransform, &mut Outline)>,
@@ -85,8 +86,8 @@ fn fade_outline_toward_sun(
     for (cam_tf, mut o) in cams.iter_mut() {
         let fwd = cam_tf.rotation() * Vec3::NEG_Z;
         let align = fwd.dot(to_sun).max(0.0);
-        let t = ((align - 0.80) / (0.97 - 0.80)).clamp(0.0, 1.0);
-        let fade = 1.0 - 0.7 * (t * t * (3.0 - 2.0 * t)); // smoothstep ease
+        let t = ((align - 0.70) / (0.95 - 0.70)).clamp(0.0, 1.0);
+        let fade = 1.0 - 0.85 * (t * t * (3.0 - 2.0 * t)); // smoothstep ease
         if (o.sun_fade - fade).abs() > 1e-3 {
             o.sun_fade = fade;
         }
