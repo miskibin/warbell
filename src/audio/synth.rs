@@ -20,13 +20,10 @@ pub enum Sting {
     ShopBuy,
     CampRescue,
     LowHp,
-    /// Ork war-horn blast — the fortress (`ork_fortress.rs`) sounds it when the hero
-    /// crosses Gnashfang Hold's outer threshold.
-    WarHorn,
 }
 
 impl Sting {
-    pub const ALL: [Sting; 8] = [
+    pub const ALL: [Sting; 7] = [
         Sting::OreShatter,
         Sting::ChestOpen,
         Sting::LevelUp,
@@ -34,7 +31,6 @@ impl Sting {
         Sting::ShopBuy,
         Sting::CampRescue,
         Sting::LowHp,
-        Sting::WarHorn,
     ];
     /// Per-sting output gain (mirrors the old game's category levels).
     pub fn volume(self) -> f32 {
@@ -46,7 +42,6 @@ impl Sting {
             Sting::ShopBuy => 0.40,
             Sting::CampRescue => 0.50,
             Sting::LowHp => 0.45,
-            Sting::WarHorn => 0.60,
         }
     }
 }
@@ -242,16 +237,8 @@ fn synth(s: Sting) -> Vec<f32> {
             y.tone(Wave::Square, 330.0, 0.0, 0.10, 0.12, Some(220.0));
             y.tone(Wave::Square, 330.0, 0.16, 0.10, 0.12, Some(220.0));
         }
-        Sting::WarHorn => {
-            // Crude ork war-horn: a ragged low blat sagging flat. The shared envelope has a
-            // fixed 8 ms attack, so three staggered onsets fake the swell; a sub growl sits
-            // underneath and band-passed breath noise roughens the bore.
-            y.tone(Wave::Square, 98.0, 0.00, 1.30, 0.10, Some(91.0));
-            y.tone(Wave::Square, 116.5, 0.10, 1.15, 0.08, Some(109.0));
-            y.tone(Wave::Triangle, 196.0, 0.18, 1.00, 0.07, Some(182.0));
-            y.tone(Wave::Sine, 49.0, 0.0, 1.35, 0.12, Some(45.5));
-            y.noise(0.0, 1.2, 0.05, Filter::Band, 900.0, 480.0);
-        }
+        // (The old synth WarHorn sting is gone — the fortress horn is a real recording now,
+        //  `assets/audio/war-horn.ogg`, loaded by `sfx::SfxBank`.)
     }
     y.finish()
 }

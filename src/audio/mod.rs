@@ -107,9 +107,13 @@ pub enum AudioCue {
     CampRescue,
     /// Hero HP crossed the low threshold.
     LowHp,
-    /// The ork fortress sounds its war-horn (synth `Sting::WarHorn`, spatial at the gate) —
-    /// the hero crossed Gnashfang Hold's outer threshold (`ork_fortress.rs`).
+    /// The ork fortress sounds its war-horn (sampled `war-horn.ogg` — a sharp wood crack,
+    /// then a deep blast; spatial at the gate) — the hero crossed Gnashfang Hold's outer
+    /// threshold (`ork_fortress.rs`).
     FortressHorn(Vec3),
+    /// A green warp bolt leaves a shaman's staff or a fortress watchtower (sampled
+    /// `warp-cast.ogg` — a sharp magical release; spatial at the muzzle).
+    WarpCast(Vec3),
 }
 
 /// Per-run gates for the "once" event voice lines (the old game's `spoken` key-set). Reset on

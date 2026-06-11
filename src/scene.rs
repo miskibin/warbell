@@ -34,7 +34,7 @@ const SKY: Color = Color::srgb(0.70, 0.82, 0.93);
 /// milky white-out across the whole frame, a warm haze reads as sunlit atmosphere).
 const FOG_DAY: Color = Color::srgb(0.85, 0.80, 0.66);
 const FOG_DENSITY: f32 = 0.009;
-const IBL_INTENSITY: f32 = 430.0;
+const IBL_INTENSITY: f32 = 520.0;
 
 /// How strongly the hero's current biome tints the DAYTIME light's mood (0 = none, 1 = the
 /// biome's authored colour fully). Scaled by `day`, so night stays the tuned moonlit look.
@@ -327,10 +327,11 @@ fn advance_sky(
 
     // Ambient: night floor trimmed to ≈240 (was 270) — the moonlight key above is now the
     // night's main light, and ambient is just the shadow-side fill (too much of it was half
-    // the night flatness). By DAY the ambient *dips* (≈140): the sun is the day's fill, and a
-    // strong cool ambient was flattening the lit/shadow contrast into the washed look.
+    // the night flatness). By DAY the ambient *dips* (≈195, was 140): the sun is the day's
+    // fill, but dropping ambient too far left day shadows reading pitch-black (player
+    // feedback) — a higher floor softens the shadow side while the sun still keys the contrast.
     // (Computed from `day`, never read-back, so it can't compound frame-to-frame.)
-    ambient.brightness = 240.0 - 100.0 * day;
+    ambient.brightness = 240.0 - 45.0 * day;
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.

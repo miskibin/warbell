@@ -44,6 +44,10 @@ pub(crate) struct SfxBank {
     foot_stone: Handle<AudioSource>,
     ork_grunts: Vec<Handle<AudioSource>>,
     ork_roars: Vec<Handle<AudioSource>>,
+    /// Gnashfang Hold's war-horn (`war-horn.ogg` — wood crack, then a deep horn blast).
+    war_horn: Handle<AudioSource>,
+    /// Warp-bolt release (`warp-cast.ogg`) — shaman staff casts + fortress tower fire.
+    warp_cast: Handle<AudioSource>,
     /// Aggressive beast snarls played when a wild predator bites the hero (Wolf/Boar/Scorpion/
     /// BogCroc have no recorded voice, so they share these). Pitch-jittered per bite.
     beast_snarls: Vec<Handle<AudioSource>>,
@@ -80,6 +84,8 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .map(|f| asset.load(*f))
             .collect(),
         ork_roars: ["audio/ork-roar.ogg", "audio/wave-start-roar.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        war_horn: asset.load("audio/war-horn.ogg"),
+        warp_cast: asset.load("audio/warp-cast.ogg"),
         beast_snarls: ["audio/monster-snarl.ogg", "audio/monster-growl.ogg", "audio/bear-growl.ogg"]
             .iter()
             .map(|f| asset.load(*f))
@@ -225,12 +231,14 @@ pub(crate) fn play_cues(
                     one_shot(&mut commands, h, sting.volume() * sfx, jitter(&mut seed, 0.05));
                 }
             }
-            // The fortress war-horn — the one *spatial* synth sting (it blares from the
-            // hold's gate, not the hero's ear), pitch jitter tiny so a horn stays a horn.
+            // The fortress war-horn — spatial (it blares from the hold's gate, not the
+            // hero's ear), pitch jitter tiny so a horn stays a horn.
             AudioCue::FortressHorn(pos) => {
-                if let Some(h) = stings.handle(Sting::WarHorn) {
-                    spatial_shot(&mut commands, h, Sting::WarHorn.volume() * sfx, jitter(&mut seed, 0.03), pos);
-                }
+                spatial_shot(&mut commands, bank.war_horn.clone(), 0.70 * sfx, jitter(&mut seed, 0.03), pos);
+            }
+            // A warp bolt leaving a shaman staff / fortress tower — short magical release.
+            AudioCue::WarpCast(pos) => {
+                spatial_shot(&mut commands, bank.warp_cast.clone(), 0.55 * sfx, jitter(&mut seed, 0.12), pos);
             }
             // Hero-mouth cues (grunts / jump / hurt / death / lines) are handled by `voice.rs`.
             _ => {}

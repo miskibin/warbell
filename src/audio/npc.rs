@@ -11,14 +11,16 @@
 use bevy::prelude::*;
 
 use crate::player::Hero;
-use crate::villagers::Villager;
+use crate::villagers::{Townsfolk, Villager};
 
 use super::director::{Speak, VoiceManager};
 use super::frand;
 use super::lines::Concept;
 
 /// Minimum gap between ANY two ambient (proximity) villager lines, so the town isn't a babble.
-const AMBIENT_GAP: f32 = 20.0;
+/// Lowered from 20→14 so townsfolk speak a little more often — half the catalog was going
+/// unheard, partly because guards never chattered (see [`detect_villager_ambient`]).
+const AMBIENT_GAP: f32 = 14.0;
 /// Chance a villager actually speaks once the gap clears and one's in range — high, so the town
 /// feels chatty and alive. A miss burns a full gap; the per-line floor stops repeats.
 const SPEAK_CHANCE: f32 = 0.9;
@@ -87,16 +89,19 @@ fn nearest_villager<F: bevy::ecs::query::QueryFilter>(
     best.map(|(e, t, _)| (e, t))
 }
 
-/// Occasional proximity chatter: when the hero lingers near a **working** townsperson and the
-/// throttle has cleared, emit a `Speak` for a `Greeting` (or `VillagerArmedJab` when armed).
-/// The director enforces one mouth at a time and selects the actual clip from the catalog.
+/// Occasional proximity chatter: when the hero lingers near a townsperson and the throttle has
+/// cleared, emit a `Speak` for a `Greeting` (or `VillagerArmedJab` when armed). The pool is the
+/// whole `Townsfolk` militia — **guards as well as workers** — so the chatter doesn't dry up at
+/// night (when every worker is mustered to a guard post) or near a posted guard by day. Before,
+/// only `Worker`s spoke, so half the catalog went unheard. The director enforces one mouth at a
+/// time and selects the actual clip from the catalog.
 pub(crate) fn detect_villager_ambient(
     time: Res<Time>,
     mut t: ResMut<VillagerTrigger>,
     mgr: Res<VoiceManager>,
     inv: Res<crate::inventory::Inventory>,
     hero: Query<&Hero>,
-    workers: Query<(Entity, &GlobalTransform), (With<Villager>, With<crate::town::Worker>)>,
+    townsfolk: Query<(Entity, &GlobalTransform), (With<Villager>, With<Townsfolk>)>,
     mut speak: MessageWriter<Speak>,
 ) {
     let now = time.elapsed_secs();
@@ -108,7 +113,7 @@ pub(crate) fn detect_villager_ambient(
         return;
     }
     let Ok(hero) = hero.single() else { return };
-    let Some((_who, pos)) = nearest_villager(hero.pos, &workers, NEAR_DIST) else { return };
+    let Some((_who, pos)) = nearest_villager(hero.pos, &townsfolk, NEAR_DIST) else { return };
     // Mostly stay quiet even when eligible — a miss burns a full gap, not an instant retry.
     if frand(&mut t.rng) >= SPEAK_CHANCE {
         t.next_ambient = now + AMBIENT_GAP;

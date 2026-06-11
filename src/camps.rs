@@ -192,9 +192,9 @@ fn site_ok(cx: f32, cz: f32, biome: Biome, placed: &[CampSite]) -> bool {
     if crate::castle::in_footprint(cx, cz) || Vec2::new(cx, cz).length() < 24.0 {
         return false;
     }
-    // The fortress causeway is new flat land — without this the swamp camp can reject-sample
-    // onto the gate approach and squat in Gnashfang Hold's line of fire.
-    if crate::ork_fortress::on_neck_world(cx, cz) {
+    // The Blight is Gnashfang Hold's own ground (it reads as Swamp to `biome_at_world`) —
+    // without this the swamp camp can reject-sample into the fortress's territory.
+    if crate::ork_fortress::in_blight_world(cx, cz) {
         return false;
     }
     let on_biome = worldmap::biome_at_world(cx, cz) == Some(biome);
@@ -271,14 +271,16 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
         let place = |local: Vec3| centre3 + rot_q * local;
 
         // Static props: (mesh, camp-local pos, local yaw, footprint half-extents (hw,hd) in the
-        // prop's own frame; (0,0) = no collision). One big tent now, set right beside the cage and
-        // SOLID — it registers a blocker box, so the hero and the warband route around it.
-        let (ta, tb) = tent_cols(site.faction);
+        // prop's own frame; (0,0) = no collision). The tent + cage are the FORTRESS models
+        // (`ork_fortress::tent_mesh`/`cage_mesh`) so every warband pitches the same gear as
+        // Gnashfang Hold; both are SOLID — they register blocker boxes, so the hero and the
+        // warband route around them.
+        let mut prop_rng = site.seed | 1;
         let solids = vec![
-            (tent_mesh(ta, tb), v(-2.4, 0.0, 0.0), 0.0_f32, (1.0_f32, 1.0_f32)),
+            (crate::ork_fortress::tent_mesh(0.85, &mut prop_rng), v(-2.4, 0.0, 0.0), 0.0_f32, (1.65_f32, 1.4_f32)),
             (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.25, 0.25)),
             (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
-            (cage_mesh(), v(-2.2, 0.0, 2.2), 0.6, (0.95, 0.95)),
+            (crate::ork_fortress::cage_mesh(), v(-2.2, 0.0, 2.2), 0.6, (1.2, 1.2)),
             (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.55, 0.55)),
         ];
         for (idx, (m, local, lyaw, (hw, hd))) in solids.into_iter().enumerate() {
@@ -433,28 +435,9 @@ const STONE: u32 = 0x6e6e76;
 const LOG_LIGHT: u32 = 0x7a4a26;
 const LOG_DARK: u32 = 0x3a2a1a;
 
-fn tent_cols(f: Faction) -> ([f32; 4], [f32; 4]) {
-    match f {
-        Faction::Blue => (lin(0x3a4a6a), lin(0x2e3a56)),
-        Faction::Red => (lin(0x5a4a38), lin(0x4a3a26)),
-    }
-}
-
-/// The camp's big ridge tent — two slanted canvas slopes forming an A-frame + a ridge pole, with
-/// a closed rear gable so it reads as a real, *solid* tent (it registers a collision box now — you
-/// walk around it, not through it). Each slope is a thin box, long axis Y (len 1.65), tilted about
-/// Z so its top leans inward and the two meet at the apex (~y 1.31). `from_rotation_z(+θ)` tilts a
-/// box's top toward −X, so the LEFT slope (base at −X) uses −θ to lean its top toward centre (+X),
-/// and the right slope +θ. ~1.4× the old per-camp tents (there are two no more — one larger one).
-fn tent_mesh(canvas: [f32; 4], back: [f32; 4]) -> Mesh {
-    let ang = 0.635; // atan2(0.7, 0.95)
-    group(vec![
-        bxr(0.06, 1.65, 1.96, v(-0.46, 0.65, 0.0), rz(-ang), canvas), // left slope
-        bxr(0.06, 1.65, 1.96, v(0.46, 0.65, 0.0), rz(ang), canvas),   // right slope
-        cyl(0.035, 2.1, v(0.0, 1.31, 0.0), rx(FRAC_PI_2), lin(POLE)),  // ridge pole along Z
-        bx(0.8, 0.55, 0.06, v(0.0, 0.34, -0.95), back),                // closed rear gable flap
-    ])
-}
+// (The camps' bespoke A-frame tent + faction tent colours are gone — every warband now
+//  pitches the fortress hide tent, `ork_fortress::tent_mesh`; the banner + totem carry the
+//  faction colour instead.)
 
 /// Warband banner pole — the faction-coloured flag itself is a fluttering cloth entity
 /// (banner.rs), spawned alongside the solids in [`build`].
@@ -514,44 +497,13 @@ fn spikes_mesh() -> Mesh {
     group(parts)
 }
 
-/// Prison cage (`CampCage.tsx`) — kept shut, with two huddled captives inside.
-fn cage_mesh() -> Mesh {
-    const W: f32 = 1.7;
-    const H: f32 = 1.5;
-    const HW: f32 = W / 2.0;
-    let wood = lin(WOOD);
-    let dark = lin(WOOD_DARK);
-    let bar = lin(BAR);
-    let mut p: Vec<Mesh> = Vec::new();
-    // Plank floor.
-    p.push(bx(W + 0.12, 0.12, W + 0.12, v(0.0, 0.06, 0.0), dark));
-    // Corner posts.
-    for (sx, sz) in [(-HW, -HW), (HW, -HW), (-HW, HW), (HW, HW)] {
-        p.push(bx(0.14, H, 0.14, v(sx, H / 2.0, sz), wood));
-    }
-    // Top rim rails (4 sides).
-    p.push(bx(W, 0.1, 0.1, v(0.0, H - 0.05, -HW), wood));
-    p.push(bx(W, 0.1, 0.1, v(0.0, H - 0.05, HW), wood));
-    p.push(bx(0.1, 0.1, W, v(-HW, H - 0.05, 0.0), wood));
-    p.push(bx(0.1, 0.1, W, v(HW, H - 0.05, 0.0), wood));
-    // Vertical bars on all four sides (a closed cage).
-    for o in [-0.45f32, 0.0, 0.45] {
-        p.push(bx(0.07, H - 0.06, 0.07, v(o, H / 2.0, -HW), bar)); // north
-        p.push(bx(0.07, H - 0.06, 0.07, v(o, H / 2.0, HW), bar)); // south
-        p.push(bx(0.07, H - 0.06, 0.07, v(-HW, H / 2.0, o), bar)); // west
-        p.push(bx(0.07, H - 0.06, 0.07, v(HW, H / 2.0, o), bar)); // east (shut door)
-    }
-    // Two captives huddled inside.
-    for (cx, cz) in [(-0.25f32, 0.15f32), (0.3, -0.2)] {
-        p.push(bx(0.32, 0.56, 0.22, v(cx, 0.32, cz), lin(CAPTIVE_BODY)));
-        p.push(bx(0.22, 0.22, 0.22, v(cx, 0.74, cz), lin(CAPTIVE_HEAD)));
-    }
-    group(p)
-}
+// (The camps' bespoke closed cage is gone too — the closed state is the fortress cage,
+//  `ork_fortress::cage_mesh` (W 2.2 / H 1.8); only the opened husk below remains local,
+//  scaled up at spawn to match the bigger closed cage it replaces.)
 
-/// The OPENED cage — same frame as `cage_mesh`, but the east-face bars are gone (door swung
-/// out) and there are no captives inside. Spawned in place of the closed cage on a rescue, so it
-/// reads as the cage *opening* rather than vanishing.
+/// The OPENED cage — the fortress cage's frame proportions, the east-face bars gone (door
+/// swung out) and no captives inside. Spawned in place of the closed cage on a rescue, so
+/// it reads as the cage *opening* rather than vanishing.
 fn cage_open_mesh() -> Mesh {
     const W: f32 = 1.7;
     const H: f32 = 1.5;
@@ -587,6 +539,9 @@ pub fn open_cage(
     at: Transform,
 ) {
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
+    // ×1.25: the open husk is authored at the OLD cage size (W 1.7); the closed cage it
+    // replaces is now the fortress one (W 2.2), so scale up to swing open at the same bulk.
+    let at = Transform { scale: at.scale * 1.25, ..at };
     commands.spawn((Mesh3d(meshes.add(cage_open_mesh())), MeshMaterial3d(mat), at, BiomeEntity));
 }
 

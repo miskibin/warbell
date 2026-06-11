@@ -1,28 +1,28 @@
-//! **Gnashfang Hold** — the ork seat of power, on its own islet beyond the swamp coast,
-//! SOUTH of the playable grid. Pure world-dressing with one gameplay tooth: the watchtowers
-//! fire real (blockable) warp bolts at a hero who walks the causeway up to the gate.
+//! **Gnashfang Hold + the Blight** — the ork seat of power and the poisoned mire around it,
+//! a WALKABLE southern extension of the world grid (the shape + heights are exported to
+//! `worldmap::classify` via [`blight_class_base`]). The Blight reads as swamp to gameplay —
+//! poison ticks + slow from `player::movement`, swamp ambience — with its own trampled-mud
+//! ground, dead-wood scatter, fume vents and sickly pools.
 //!
 //! Spec: `docs/superpowers/specs/2026-06-11-ork-fortress-design.md`. The hold is a crude
 //! timber stronghold — low spiked palisade (~1.5× hero height, so the camera reads the
-//! interior over it), five leaning watchtowers, a shut gate with broken-bridge stubs across
-//! the strait, a hulking great hall and a crooked spire crowned in iron with a green warp
-//! brazier — peopled by decorative orks (no [`crate::orks::Ork`] brain: untargetable, never
-//! leave) and an oversized pacing warlord.
-//!
-//! Containment is free: `player::movement::footing()` is `None` off-grid, so the sea strait
-//! and the islet itself are unwalkable; the only land approach is the causeway carved by
-//! [`neck_land_base`] into `worldmap::classify`, and the gate wall (with real blockers)
-//! stands exactly at the walkable boundary as the physical excuse.
+//! interior over it; full-perimeter blockers keep the hero OUT), seven leaning watchtowers,
+//! a shut gate, hide tents, longhouses, a forge, a boar pen, war drums, a hulking great hall
+//! and a crooked spire crowned in iron with a green warp brazier — peopled by decorative
+//! orks (no [`crate::orks::Ork`] brain: untargetable, never leave) and an oversized pacing
+//! warlord. Outside the walls, three REAL ork patrols (full `orks.rs` combat brains, slow
+//! respawn) prowl the mire, and the watchtowers fire real (blockable) warp bolts at a hero
+//! who presses up close.
 //!
 //! Audio rides existing rails: the bonfire is tagged `camps::Flicker`, so the ambience
 //! module hangs its spatial campfire loop + war-drum sink on it automatically; the war-horn
-//! is a baked synth sting (`Sting::WarHorn`) blared spatially from the gate on the hero's
-//! first close approach. During a night wave every fortress fire flares hotter.
+//! (`war-horn.ogg`) blares spatially from the gate on the hero's first close approach, and
+//! every tower shot cracks a `warp-cast.ogg` release. During a night wave every fortress
+//! fire flares hotter.
 
-use std::f32::consts::{FRAC_PI_2, PI, TAU};
+use std::f32::consts::{FRAC_PI_2, TAU};
 
-use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, MeshBuilder, PrimitiveTopology};
+use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::biome::{BiomeEntity, GroundDetail};
@@ -34,26 +34,26 @@ use crate::palette::lin;
 use crate::player::{HeroState, PendingHeroDamage};
 use crate::projectile::{advance_bolt, BoltStep};
 use crate::quality::GraphicsQuality;
-use crate::worldmap::{self, GROUND_STEP, GX, GZ, MAP_SCALE};
+use crate::worldmap::{self, GX, GZ, MAP_SCALE};
 
-// ── Layout (world space; the grid's south edge is z = +81) ──────────────────────────
+// ── Layout (world space; the OLD grid's south edge was z = +81 — the Blight extends it) ──
 
-/// Fortress centre — the islet blob and the "inside the walls" tests key off this.
+/// Fortress centre — the hold blob and the "inside the walls" tests key off this.
 const CENTRE: Vec2 = Vec2::new(12.0, 103.0);
-/// Islet blob radii (wobbled ellipse around [`CENTRE`]) — generously larger than the wall
-/// ring so the hold sits on a real landmass (a wooded dead-tree apron all around), not a
-/// dinner-plate islet.
+/// Hold blob radii (wobbled ellipse around [`CENTRE`]) — the fortress's own landmass lobe.
 const BLOB_RX: f32 = 34.0;
 const BLOB_RZ: f32 = 30.0;
-/// The gate wall line — just south of the last walkable row, straddling the grid seam so
-/// the hero's footing stops him exactly at the timber.
+/// The Blight apron — the big landmass lobe that merges the hold into the island's south
+/// swamp coast (union with the hold blob = the whole walkable Blight). Centred east enough
+/// that the south-stream's mouth (world x ≈ −24) stays open water — the stream delta dies
+/// into the mire at the Blight's west rim.
+const APRON: Vec2 = Vec2::new(24.0, 108.0);
+const APRON_RX: f32 = 58.0;
+const APRON_RZ: f32 = 50.0;
+/// The gate wall line.
 const FRONT_Z: f32 = 80.9;
 /// Gate centre (the war-horn sounds from here; the threshold test measures to it).
 const GATE: Vec2 = Vec2::new(12.0, FRONT_Z);
-/// North end of the causeway (where it merges into the swamp's own land).
-const NECK_Z0: f32 = 68.0;
-/// Mirrors `worldmap::SEA_Y` (private there) — islet cliff walls drop to the sea plane.
-const SEA_Y: f32 = -0.4;
 
 /// Hero within this of the gate → horn + the towers are in range to start punishing.
 const THRESHOLD_R: f32 = 17.0;
@@ -71,69 +71,76 @@ const BOLT_SPEED: f32 = 10.5;
 const BOLT_TTL: f32 = 3.5;
 const BOLT_MAX_RANGE: f32 = 26.0;
 
-// ── Public geometry queries (worldmap/camps call these during generation) ───────────
+// ── Public geometry queries (worldmap/camps/boats call these during generation) ─────
 
-/// BASE-space hook for `worldmap::classify`: the causeway — a flat swamp tongue from the
-/// south shore to the grid edge, x ≈ 5..19 with a frayed edge so it doesn't read stamped.
-pub fn neck_land_base(bx: f32, bz: f32) -> bool {
-    on_neck_world(bx * MAP_SCALE - GX, bz * MAP_SCALE - GZ)
+/// Signed "inside-ness" of the Blight landmass at world `(wx, wz)`, in rough world units
+/// (>0 inside, <0 out): the max of two wobbled-ellipse fields — the big apron lobe that
+/// merges into the island's south coast, and the hold's own blob.
+pub fn blight_edge_world(wx: f32, wz: f32) -> f32 {
+    let field = |c: Vec2, rx: f32, rz: f32, amp: f32| {
+        let dx = (wx - c.x) / rx;
+        let dz = (wz - c.y) / rz;
+        let r = (dx * dx + dz * dz).sqrt();
+        let ang = dz.atan2(dx);
+        let wob = (ang * 3.0 + 1.2).sin() * amp + (ang * 5.0 - 0.4).sin() * amp * 0.7;
+        (1.0 + wob - r) * rx.min(rz)
+    };
+    field(APRON, APRON_RX, APRON_RZ, 0.06).max(field(CENTRE, BLOB_RX, BLOB_RZ, 0.045))
 }
 
-/// World-space causeway test (also camps' placement exclusion).
-pub fn on_neck_world(wx: f32, wz: f32) -> bool {
-    if !(NECK_Z0..=81.01).contains(&wz) {
-        return false;
-    }
-    let fray = (wz * 0.55 + 1.0).sin() * 1.0 + (wz * 1.3 + 3.0).sin() * 0.5;
-    wx >= 5.0 + fray && wx <= 19.0 + fray * 0.5
+/// Is world `(wx, wz)` on the Blight landmass? (Placement exclusions: camps, swamp scatter.)
+pub fn in_blight_world(wx: f32, wz: f32) -> bool {
+    blight_edge_world(wx, wz) > 0.0
 }
 
-/// Scatter keep-out: the gate approach (causeway + a fringe) stays clear of swamp props so
-/// the walk up to the wall — and the towers' line of fire — reads clean.
-pub fn on_gate_approach(wx: f32, wz: f32) -> bool {
-    (3.0..=21.0).contains(&wx) && (71.5..=81.5).contains(&wz)
+/// BASE-space twin of [`blight_edge_world`] for `worldmap::ground_color`'s blend band
+/// (returns base-tile units to match `BLEND`).
+pub fn blight_edge_base(bx: f32, bz: f32) -> f32 {
+    blight_edge_world(bx * MAP_SCALE - GX, bz * MAP_SCALE - GZ) / MAP_SCALE
 }
 
-/// Water keep-out for the background sailboats: the hold's whole bay (islet + a wake
-/// margin). `boats::boat_drift` bounces a hull that would drift in here.
-pub fn boat_keepout(wx: f32, wz: f32) -> bool {
-    Vec2::new(wx, wz).distance(CENTRE) < BLOB_RX + 12.0
-}
-
-// ── Islet heightfield (the fortress's own off-grid terrain) ─────────────────────────
-
-/// Height class at world `(wx, wz)` on the islet: 1 = shore plain (y 0), 2 = the great-hall
-/// terrace (y 0.5), 3 = the spire pad (y 1.0). `None` = open sea.
-fn islet_class(wx: f32, wz: f32) -> Option<i32> {
-    let dx = (wx - CENTRE.x) / BLOB_RX;
-    let dz = (wz - CENTRE.y) / BLOB_RZ;
-    let ang = dz.atan2(dx);
-    let wob = (ang * 3.0 + 1.2).sin() * 0.045 + (ang * 5.0 - 0.4).sin() * 0.035;
-    let inside_blob = (dx * dx + dz * dz).sqrt() < 1.0 + wob;
-    // The neck corridor guarantees land under the gate wall + its towers even where the
-    // wobbled blob pulls shy of the grid seam.
-    let in_neck = (1.0..=23.0).contains(&wx) && (80.5..=88.0).contains(&wz);
-    if !inside_blob && !in_neck {
+/// BASE-space hook for `worldmap::classify`: height class of Blight land (`None` = not
+/// Blight). 1 = the mire plain, sparse noise-rolled 2-class rises out in the open; inside
+/// the hold, 2 = the great-hall terrace and 3 = the spire pad. The gate road and the wall
+/// ring stay flat so the palisade never straddles a terrace lip.
+pub fn blight_class_base(bx: f32, bz: f32) -> Option<i32> {
+    let wx = bx * MAP_SCALE - GX;
+    let wz = bz * MAP_SCALE - GZ;
+    if blight_edge_world(wx, wz) <= 0.0 {
         return None;
     }
-    let d_terrace = (wx - 12.5).hypot(wz - 108.0);
     let d_pad = (wx - 13.0).hypot(wz - 115.0);
-    Some(if d_pad < 2.8 {
-        3
-    } else if d_terrace < 10.5 {
-        2
-    } else {
-        1
-    })
+    if d_pad < 2.8 {
+        return Some(3);
+    }
+    let d_terrace = (wx - 12.5).hypot(wz - 108.0);
+    if d_terrace < 10.5 {
+        return Some(2);
+    }
+    if on_gate_approach(wx, wz) || Vec2::new(wx, wz).distance(CENTRE) < 26.0 {
+        return Some(1);
+    }
+    let n = (wx * 0.21 + 1.7).sin() * (wz * 0.19 - 2.3).cos()
+        + (wx * 0.083 + wz * 0.071 + 4.5).sin() * 0.5;
+    Some(if n > 0.85 { 2 } else { 1 })
 }
 
-fn islet_y(wx: f32, wz: f32) -> Option<f32> {
-    islet_class(wx, wz).map(|c| (c - 1) as f32 * GROUND_STEP)
+/// Scatter keep-out: the gate road (the old causeway line, now just the worn approach)
+/// stays clear of props so the walk up to the wall — and the towers' line of fire — reads
+/// clean.
+pub fn on_gate_approach(wx: f32, wz: f32) -> bool {
+    (3.0..=21.0).contains(&wx) && (65.0..=81.5).contains(&wz)
 }
 
-/// Footing for fortress denizens (islet first, then the grid — the causeway is grid land).
+/// Water keep-out for the background sailboats: the whole Blight landmass + a wake margin.
+/// `boats::boat_drift` bounces a hull that would drift in here.
+pub fn boat_keepout(wx: f32, wz: f32) -> bool {
+    blight_edge_world(wx, wz) > -10.0
+}
+
+/// Footing for fortress denizens — the Blight is real grid land now.
 fn ground_y(wx: f32, wz: f32) -> Option<f32> {
-    islet_y(wx, wz).or_else(|| worldmap::ground_at_world(wx, wz))
+    worldmap::ground_at_world(wx, wz)
 }
 
 /// Wander bound: keeps the population milling INSIDE the walls (and off the gate line).
@@ -153,7 +160,15 @@ impl Plugin for OrkFortressPlugin {
         // Sim carries the freeze gate, per the game_state contract.
         app.add_systems(
             Update,
-            (denizen_brain, tower_fire, step_warp_bolts, approach_watch, siege_flare, fortress_barks)
+            (
+                denizen_brain,
+                tower_fire,
+                step_warp_bolts,
+                approach_watch,
+                siege_flare,
+                fortress_barks,
+                patrol_respawn,
+            )
                 .run_if(in_state(Modal::None)),
         );
     }
@@ -242,7 +257,7 @@ fn setup_bolt_assets(
 // ── Build (called from `worldmap::build`; everything tagged `BiomeEntity`) ──────────
 
 /// Palisade ring corners, clockwise. The straight front run (`z = FRONT_Z`) carries the
-/// gate gap at x 9..15; everything else stands off-grid over its own islet.
+/// gate gap at x 9..15.
 const RING: [Vec2; 14] = [
     Vec2::new(2.0, FRONT_Z),
     Vec2::new(9.0, FRONT_Z), // gate gap 9..15
@@ -271,17 +286,30 @@ const TOWERS: [Vec2; 7] = [
     Vec2::new(-5.5, 89.5),
 ];
 
-/// Wattle huts: (centre, radius).
-const HUTS: [(Vec2, f32); 8] = [
-    (Vec2::new(0.0, 90.5), 2.2),
-    (Vec2::new(24.0, 92.0), 2.0),
-    (Vec2::new(28.5, 107.0), 2.4),
-    (Vec2::new(21.5, 115.0), 2.2),
-    (Vec2::new(1.0, 115.5), 2.0),
-    (Vec2::new(-5.5, 96.5), 2.2),
-    (Vec2::new(21.5, 99.5), 1.9),
-    (Vec2::new(2.5, 104.0), 2.0),
+/// Hide tents: (centre, scale). Clustered into a west camp-row and an east one.
+const TENTS: [(Vec2, f32); 6] = [
+    (Vec2::new(0.0, 90.5), 1.0),
+    (Vec2::new(24.0, 92.0), 0.9),
+    (Vec2::new(-4.5, 96.0), 1.15),
+    (Vec2::new(21.5, 99.0), 1.0),
+    (Vec2::new(3.0, 104.5), 0.9),
+    (Vec2::new(26.5, 104.0), 1.1),
 ];
+/// Timber longhouses (the warband's barracks): (centre, yaw).
+const LONGHOUSES: [(Vec2, f32); 2] = [
+    (Vec2::new(27.0, 109.5), -0.55),
+    (Vec2::new(1.0, 115.5), 0.85),
+];
+/// The forge (on the hall terrace) and the boar pen (west yard).
+const FORGE_AT: Vec2 = Vec2::new(18.5, 112.0);
+const PEN_AT: Vec2 = Vec2::new(-2.5, 102.5);
+/// War drums flanking the bonfire plaza.
+const DRUMS: [Vec2; 2] = [Vec2::new(6.0, 92.0), Vec2::new(12.5, 92.5)];
+/// Weapon racks + spoils piles (ground clutter with a story).
+const RACKS: [Vec2; 3] = [Vec2::new(15.0, 88.5), Vec2::new(24.5, 96.0), Vec2::new(-1.0, 108.0)];
+const PILES: [Vec2; 3] = [Vec2::new(8.0, 86.5), Vec2::new(16.5, 86.5), Vec2::new(22.0, 112.5)];
+/// Free-standing war-banner poles on the plaza.
+const PLAZA_BANNERS: [Vec2; 2] = [Vec2::new(5.0, 99.5), Vec2::new(19.5, 104.5)];
 
 const HALL_AT: Vec2 = Vec2::new(12.0, 107.0);
 const SPIRE_AT: Vec2 = Vec2::new(13.0, 115.0);
@@ -295,57 +323,84 @@ const SPIRE_SCALE: f32 = 1.15;
 const BANNER_FIELD: u32 = 0x5a1410;
 const BANNER_ACCENT: u32 = 0xcfc4a0;
 
-#[allow(clippy::too_many_arguments)]
 pub fn build(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     std_mats: &mut Assets<StandardMaterial>,
-    terrain_mats: &mut Assets<crate::terrain::TerrainMaterial>,
 ) {
-    // ── Islet ground: trampled black mud fading to swampy rim, terraced like the grid ──
-    let detail = GroundDetail {
-        scale: 0.24,
-        strength: 0.55,
-        variation: 0.75,
-        seed: 7.0,
-        dark: 0x2e2419,
-        base: 0x4a3b2a,
-        light: 0x6e5c40,
-        grain: 0.8,
-        streak: 0.45,
-    };
-    let ground_mat = crate::terrain::make_material(&detail, 0.97, images, terrain_mats);
-    commands.spawn((
-        Mesh3d(meshes.add(build_islet_mesh())),
-        MeshMaterial3d(ground_mat),
-        Transform::default(),
-        BiomeEntity,
-    ));
+    // (The ground itself is worldmap terrain now — `TB::Blight` tiles via
+    // `blight_class_base`; this fn only dresses it.)
 
-    // Shared vertex-colour material for every timber/bone prop — same batching contract as
-    // the camps, but with a neutral grime-grain detail texture multiplied over the vertex
-    // colours (the primitives' own UVs sample it), so the hold reads rough and dirty
-    // instead of flat-shaded clean.
-    let grain = GroundDetail {
-        scale: 1.0,
-        strength: 0.9,
-        variation: 0.5,
-        seed: 13.0,
-        dark: 0x8e887e,
-        base: 0xc2bcb0,
-        light: 0xf2ece0,
-        grain: 0.9,
-        streak: 0.7,
+    // Three shared vertex-colour prop materials — same batching contract as the camps, but
+    // each with its own neutral detail texture multiplied over the vertex colours (the
+    // primitives' own UVs sample it), so timber, hide and bone-clutter read as DIFFERENT
+    // rough materials instead of one flat shade. Textures stay neutral-bright so the mesh
+    // colours survive the multiply; three materials = three batches, still cheap.
+    let make_prop_mat = |d: &GroundDetail,
+                         rough: f32,
+                         images: &mut Assets<Image>,
+                         std_mats: &mut Assets<StandardMaterial>| {
+        let (img, _) = crate::terrain::detail_image(d);
+        let tex = images.add(img);
+        std_mats.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(tex),
+            perceptual_roughness: rough,
+            ..default()
+        })
     };
-    let (grain_img, _) = crate::terrain::detail_image(&grain);
-    let grain_tex = images.add(grain_img);
-    let mat = std_mats.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(grain_tex),
-        perceptual_roughness: 0.95,
-        ..default()
-    });
+    // Neutral grime — bones, spikes, stumps, piles, misc clutter.
+    let mat = make_prop_mat(
+        &GroundDetail {
+            scale: 1.0,
+            strength: 0.9,
+            variation: 0.5,
+            seed: 13.0,
+            dark: 0x8e887e,
+            base: 0xc2bcb0,
+            light: 0xf2ece0,
+            grain: 0.9,
+            streak: 0.7,
+        },
+        0.95,
+        images,
+        std_mats,
+    );
+    // Streaky long-grain wood — palisade, gate, towers, hall, spire, longhouses, racks.
+    let timber_mat = make_prop_mat(
+        &GroundDetail {
+            scale: 1.5,
+            strength: 1.0,
+            variation: 0.45,
+            seed: 21.0,
+            dark: 0x8a8074,
+            base: 0xc6beb0,
+            light: 0xf2eadc,
+            grain: 0.5,
+            streak: 1.0,
+        },
+        0.92,
+        images,
+        std_mats,
+    );
+    // Blotchy coarse leather — tents, drums, hide roofs.
+    let hide_mat = make_prop_mat(
+        &GroundDetail {
+            scale: 2.1,
+            strength: 1.0,
+            variation: 0.85,
+            seed: 33.0,
+            dark: 0x95887a,
+            base: 0xc8bcaa,
+            light: 0xeee2d0,
+            grain: 1.0,
+            streak: 0.2,
+        },
+        0.97,
+        images,
+        std_mats,
+    );
     // The orks themselves stay clean vertex-colour (grime on a face-sized limb is noise).
     let ork_mat = std_mats.add(StandardMaterial {
         base_color: Color::WHITE,
@@ -381,21 +436,25 @@ pub fn build(
     let at = |p: Vec2| Vec3::new(p.x, ground_y(p.x, p.y).unwrap_or(0.0), p.y);
 
     // ── Palisade ring (one merged mesh per segment run; gate gap left open) ──
+    // The Blight is walkable land all the way round now, so EVERY segment registers a real
+    // OBB blocker — the timber ring is the only thing keeping the hero (and the patrols)
+    // out of the hold. `add_obb` yaw matches `Quat::from_rotation_y`, whose +X maps to
+    // (cos, −sin) in XZ → yaw = atan2(−dz, dx).
     for i in 0..RING.len() {
         let a = RING[i];
         let b = RING[(i + 1) % RING.len()];
         if a == Vec2::new(9.0, FRONT_Z) && b == Vec2::new(15.0, FRONT_Z) {
             continue; // the gate fills this gap
         }
-        spawn_solid(commands, meshes, &mat, palisade_segment(a, b, &mut rng), Vec3::ZERO, Quat::IDENTITY);
+        spawn_solid(commands, meshes, &timber_mat, palisade_segment(a, b, &mut rng), Vec3::ZERO, Quat::IDENTITY);
+        let mid = (a + b) / 2.0;
+        let d = b - a;
+        crate::blockers::add_obb(mid.x, mid.y, d.length() / 2.0 + 0.25, 0.45, (-d.y).atan2(d.x));
     }
-    // Hero-side blockers: only the front run is reachable; the timber is the wall he feels.
-    crate::blockers::add_obb(5.5, FRONT_Z, 3.6, 0.45, 0.0);
-    crate::blockers::add_obb(18.5, FRONT_Z, 3.6, 0.45, 0.0);
     crate::blockers::add_obb(12.0, FRONT_Z, 3.2, 0.5, 0.0); // the shut gate itself
 
     // ── The shut gate ──
-    spawn_solid(commands, meshes, &mat, gate_mesh(), at(GATE), Quat::IDENTITY);
+    spawn_solid(commands, meshes, &timber_mat, gate_mesh(), at(GATE), Quat::IDENTITY);
 
     // ── Watchtowers (leaning, each its own tilt/yaw) + fire emitters + banners ──
     for (i, t) in TOWERS.iter().enumerate() {
@@ -404,7 +463,7 @@ pub fn build(
             * if next_u32(&mut rng) % 2 == 0 { 1.0 } else { -1.0 };
         let pos = at(*t);
         let rot = ry(yaw) * Quat::from_rotation_z(lean);
-        spawn_solid(commands, meshes, &mat, tower_mesh(&mut rng), pos, rot);
+        spawn_solid(commands, meshes, &timber_mat, tower_mesh(&mut rng), pos, rot);
         crate::blockers::add(t.x, t.y, 1.2);
         commands.spawn((
             WarTower {
@@ -435,7 +494,7 @@ pub fn build(
     let hall_pos = at(HALL_AT);
     commands.spawn((
         Mesh3d(meshes.add(hall_mesh(&mut rng))),
-        MeshMaterial3d(mat.clone()),
+        MeshMaterial3d(timber_mat.clone()),
         Transform::from_translation(hall_pos).with_scale(Vec3::splat(HALL_SCALE)),
         BiomeEntity,
     ));
@@ -443,7 +502,7 @@ pub fn build(
     // Doorway glow + flanking torches (warm light pooling out of the dark hall mouth).
     commands.spawn((
         Mesh3d(meshes.add(bx(2.0 * HALL_SCALE, 2.4 * HALL_SCALE, 0.05, Vec3::ZERO, lin(0xffffff)))),
-        MeshMaterial3d(glow_mat),
+        MeshMaterial3d(glow_mat.clone()),
         Transform::from_translation(hall_pos + Vec3::new(0.0, 1.45, -3.96) * HALL_SCALE),
         bevy::light::NotShadowCaster,
         BiomeEntity,
@@ -490,7 +549,7 @@ pub fn build(
     let spire_rot = ry(0.2);
     commands.spawn((
         Mesh3d(meshes.add(spire_mesh(&mut rng))),
-        MeshMaterial3d(mat.clone()),
+        MeshMaterial3d(timber_mat.clone()),
         Transform { translation: spire_pos, rotation: spire_rot, scale: Vec3::splat(SPIRE_SCALE) },
         BiomeEntity,
     ));
@@ -569,21 +628,107 @@ pub fn build(
         ));
     }
 
-    // ── Wattle huts ──
-    for (p, r) in HUTS {
-        spawn_solid(commands, meshes, &mat, hut_mesh(r, &mut rng), at(p), ry(rng_range(&mut rng, 0.0, TAU)));
-        crate::blockers::add(p.x, p.y, r + 0.3);
+    // ── Hide tents (the warband's sprawl — each its own size, yaw and patchwork) ──
+    for (p, s) in TENTS {
+        let yaw = rng_range(&mut rng, 0.0, TAU);
+        spawn_solid(commands, meshes, &hide_mat, tent_mesh(s, &mut rng), at(p), ry(yaw));
+        crate::blockers::add_obb(p.x, p.y, 2.0 * s, 1.7 * s, yaw);
+    }
+
+    // ── Longhouses (timber barracks with hide roofs) ──
+    for (p, yaw) in LONGHOUSES {
+        spawn_solid(commands, meshes, &timber_mat, longhouse_mesh(&mut rng), at(p), ry(yaw));
+        crate::blockers::add_obb(p.x, p.y, 2.1, 3.1, yaw);
+    }
+
+    // ── The forge (hall terrace): hearth + anvil + quench barrel, ember + smoke alive ──
+    let forge_pos = at(FORGE_AT);
+    spawn_solid(commands, meshes, &timber_mat, forge_mesh(&mut rng), forge_pos, ry(-0.9));
+    crate::blockers::add_obb(FORGE_AT.x, FORGE_AT.y, 1.9, 1.5, -0.9);
+    let ember = forge_pos + Vec3::new(0.0, 0.75, -0.35);
+    commands.spawn((
+        Mesh3d(meshes.add(flame_mesh(0.5))),
+        MeshMaterial3d(glow_mat.clone()),
+        Transform::from_translation(ember),
+        Wobble { phase: 4.1 },
+        PointLight {
+            color: Color::srgb(1.0, 0.62, 0.25),
+            intensity: 18_000.0,
+            range: 9.0,
+            radius: 0.15,
+            shadows_enabled: false,
+            ..default()
+        },
+        FireLight { phase: 4.1, base: 18_000.0 },
+        FortressFlame { base: 18_000.0 },
+        BiomeEntity,
+    ));
+    commands.spawn((
+        Mesh3d(smoke_puff.clone()),
+        MeshMaterial3d(smoke_mat.clone()),
+        Transform::from_translation(ember).with_scale(Vec3::splat(0.01)),
+        FortSmoke { base: ember + Vec3::Y * 0.5, phase: 0.4, speed: 0.3 },
+        BiomeEntity,
+    ));
+
+    // ── The boar pen (west yard): post-and-rail fence, churned mud, a feed trough ──
+    spawn_solid(commands, meshes, &timber_mat, pen_mesh(&mut rng), at(PEN_AT), ry(0.25));
+    crate::blockers::add_obb(PEN_AT.x, PEN_AT.y, 2.5, 2.5, 0.25);
+
+    // ── War drums + the spit roast on the bonfire plaza ──
+    for (i, p) in DRUMS.iter().enumerate() {
+        spawn_solid(commands, meshes, &hide_mat, drum_mesh(&mut rng), at(*p), ry(i as f32 * 1.7));
+        crate::blockers::add(p.x, p.y, 0.7);
+    }
+    spawn_solid(commands, meshes, &mat, spit_mesh(&mut rng), at(Vec2::new(11.5, 97.0)), ry(0.5));
+
+    // ── Weapon racks + spoils piles (plunder stacked where it was dropped) ──
+    for p in RACKS {
+        spawn_solid(commands, meshes, &timber_mat, rack_mesh(&mut rng), at(p), ry(rng_range(&mut rng, 0.0, TAU)));
+        crate::blockers::add(p.x, p.y, 0.6);
+    }
+    for p in PILES {
+        spawn_solid(commands, meshes, &mat, pile_mesh(&mut rng), at(p), ry(rng_range(&mut rng, 0.0, TAU)));
+        crate::blockers::add(p.x, p.y, 0.8);
+    }
+
+    // ── Free-standing plaza banners (pole mesh + cloth entity) ──
+    for p in PLAZA_BANNERS {
+        let base = at(p);
+        spawn_solid(
+            commands,
+            meshes,
+            &timber_mat,
+            group(vec![
+                cyl(0.07, 4.4, v(0.0, 2.2, 0.0), Quat::IDENTITY, lin(TIMBER_DARK)),
+                bx(0.2, 0.18, 0.18, v(0.0, 4.5, 0.0), lin(BONE)),
+            ]),
+            base,
+            Quat::IDENTITY,
+        );
+        crate::blockers::add(p.x, p.y, 0.3);
+        let flag = crate::banner::spawn_flag(
+            commands,
+            meshes,
+            std_mats,
+            base + Vec3::Y * 4.1,
+            0.85,
+            0.5,
+            BANNER_FIELD,
+            Some(BANNER_ACCENT),
+        );
+        commands.entity(flag).insert(BiomeEntity);
     }
 
     // ── Prisoner cage (bigger than a camp's; the hold hoards captives) ──
-    spawn_solid(commands, meshes, &mat, cage_mesh(), at(CAGE_AT), ry(0.4));
+    spawn_solid(commands, meshes, &timber_mat, cage_mesh(), at(CAGE_AT), ry(0.4));
     crate::blockers::add_obb(CAGE_AT.x, CAGE_AT.y, 1.25, 1.25, 0.4);
 
     // ── War totems: one OUTSIDE on the causeway and two inside, all glaring at the
     //    castle (the camps' "gaze points home" rule, scaled up). ──
     for tp in [Vec2::new(8.5, 77.0), Vec2::new(24.0, 90.0), Vec2::new(0.0, 118.0)] {
         let yaw = (-tp.x).atan2(-tp.y);
-        spawn_solid(commands, meshes, &mat, totem_mesh(&mut rng), at(tp), ry(yaw));
+        spawn_solid(commands, meshes, &timber_mat, totem_mesh(&mut rng), at(tp), ry(yaw));
         crate::blockers::add(tp.x, tp.y, 0.45);
     }
 
@@ -597,31 +742,32 @@ pub fn build(
         spawn_solid(commands, meshes, &mat, spikes_mesh(&mut rng), at(sp), ry(rng_range(&mut rng, 0.0, TAU)));
     }
 
-    // ── The rotted, broken bridge across the strait (nobody crosses — either way) ──
-    spawn_solid(commands, meshes, &mat, bridge_stub_mesh(3.4, &mut rng), Vec3::new(0.2, 0.0, 76.8), ry(0.08));
-    spawn_solid(commands, meshes, &mat, bridge_stub_mesh(2.2, &mut rng), Vec3::new(1.5, 0.0, 83.8), ry(PI - 0.06));
-    spawn_solid(commands, meshes, &mat, bridge_debris_mesh(), Vec3::new(0.9, 0.0, 81.2), ry(0.5));
-
     // ── Trampled-ground dressing: bones, stumps, mud pools inside the walls ──
     let keep_out: Vec<(Vec2, f32)> = TOWERS
         .iter()
         .map(|t| (*t, 2.0))
-        .chain(HUTS.iter().map(|(p, r)| (*p, r + 1.0)))
+        .chain(TENTS.iter().map(|(p, s)| (*p, 2.4 * s)))
+        .chain(LONGHOUSES.iter().map(|(p, _)| (*p, 4.2)))
+        .chain(RACKS.iter().map(|p| (*p, 1.4)))
+        .chain(PILES.iter().map(|p| (*p, 1.6)))
+        .chain(DRUMS.iter().map(|p| (*p, 1.3)))
         .chain([
             (HALL_AT, 7.0 * HALL_SCALE),
             (SPIRE_AT, 3.6),
             (BONFIRE_AT, 2.4),
             (CAGE_AT, 2.2),
+            (FORGE_AT, 2.6),
+            (PEN_AT, 3.4),
         ])
         .collect();
     let mut placed = 0;
     let mut tries = 0;
-    while placed < 34 && tries < 400 {
+    while placed < 40 && tries < 480 {
         tries += 1;
         let ang = rng_range(&mut rng, 0.0, TAU);
         let r = rng_range(&mut rng, 4.0, 20.0);
         let p = CENTRE + Vec2::new(ang.cos() * r, ang.sin() * r * 0.9);
-        if islet_class(p.x, p.y).is_none()
+        if ground_y(p.x, p.y).is_none()
             || p.y < 84.0
             || keep_out.iter().any(|(c, kr)| c.distance(p) < *kr)
         {
@@ -637,9 +783,13 @@ pub fn build(
         placed += 1;
     }
 
-    // ── The dead-wood apron: gnarled bare trees crowd the land OUTSIDE the walls, so the
-    //    hold reads as a fortress hacked out of a blighted swamp forest, not a bare disc.
-    //    Three tint variants share mesh handles so the whole stand batches. ──
+    // ── The Blight scatter: the whole landmass OUTSIDE the walls — dead trees in three
+    //    silhouettes (bare TreeKind::Dead, gnarled claw-trees, snapped snags), bones,
+    //    spikes, stumps, mud, sickly warp pools, fuming vents, and the grislier dressing
+    //    (gibbets, impaled remains, giant ribcages, scrap heaps, effigies, shroom
+    //    clusters, tar pits) — dense at the heart, thinning toward the swamp blend band
+    //    (where the swamp's own scatter takes over). Deterministic per tile; every common
+    //    shape pre-bakes a few variants so the stand batches. ──
     let tree_meshes: Vec<Handle<Mesh>> = [
         [0.85f32, 0.82, 0.75],
         [0.66, 0.62, 0.55],
@@ -653,33 +803,148 @@ pub fn build(
         ))
     })
     .collect();
-    let mut trees_placed = 0;
-    let mut tree_tries = 0;
-    while trees_placed < 140 && tree_tries < 900 {
-        tree_tries += 1;
-        let ang = rng_range(&mut rng, 0.0, TAU);
-        let rr = rng_range(&mut rng, 21.5, 34.5);
-        let p = CENTRE + Vec2::new(ang.cos() * rr * 1.12, ang.sin() * rr * 0.9);
-        // Outside the wall ring (+ margin), on islet land, clear of the causeway approach.
-        if p.y < 82.5
-            || p.distance(CENTRE) < 22.4
-            || islet_class(p.x, p.y).is_none()
-            || on_gate_approach(p.x, p.y)
-        {
-            continue;
+    let claw_meshes: Vec<Handle<Mesh>> = (0..3u32)
+        .map(|i| {
+            let mut s = 0x91ac_0001u32.wrapping_add(i * 977) | 1;
+            meshes.add(claw_tree_mesh(&mut s))
+        })
+        .collect();
+    let snag_meshes: Vec<Handle<Mesh>> = (0..2u32)
+        .map(|i| {
+            let mut s = 0x44d7_136bu32.wrapping_add(i * 1409) | 1;
+            meshes.add(snag_mesh(&mut s))
+        })
+        .collect();
+    let shroom_meshes: Vec<Handle<Mesh>> = (0..3u32)
+        .map(|i| {
+            let mut s = 0x7e55_92c1u32.wrapping_add(i * 661) | 1;
+            meshes.add(shroom_mesh(&mut s))
+        })
+        .collect();
+    // Sickly warp pools glow faintly; vents breathe green smoke (both share the warp hue).
+    // Kept DARK — a first pass at 0x4d6630 + 0.6 emissive read as bright lime lily-pads.
+    let pool_mat = std_mats.add(StandardMaterial {
+        base_color: crate::palette::srgb(0x2e3d1a),
+        emissive: crate::palette::srgb(0x3d5c20).to_linear() * 0.22,
+        perceptual_roughness: 0.25,
+        ..default()
+    });
+    let pool_mesh = meshes.add({
+        let mut m = Cylinder::new(1.0, 0.05).mesh().resolution(10).build();
+        let n = m.count_vertices();
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0, 1.0, 1.0, 1.0]; n]);
+        m
+    });
+    let fume_mat = std_mats.add(StandardMaterial {
+        base_color: Color::srgba(0.45, 0.58, 0.38, 0.34),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let mut fumes = 0;
+    for tz in 56..166 {
+        for tx in -36..84 {
+            // Per-tile hash-seeded RNG, independent of visit order (the snow-drift idiom).
+            let mut s = (tx as i64 * 73_856_093 ^ tz as i64 * 19_349_663) as u32 ^ 0x0b1a_5eed;
+            let p = Vec2::new(
+                tx as f32 + 0.5 + rng_range(&mut s, -0.35, 0.35),
+                tz as f32 + 0.5 + rng_range(&mut s, -0.35, 0.35),
+            );
+            let depth = blight_edge_world(p.x, p.y);
+            if depth <= 0.5
+                || ground_y(p.x, p.y).is_none()
+                || p.distance(CENTRE) < 25.0
+                || on_gate_approach(p.x, p.y)
+                || crate::blockers::is_blocked(p.x, p.y)
+            {
+                continue;
+            }
+            // Density ramps with depth into the Blight so the swamp edge frays naturally.
+            let f = (depth / 8.0).clamp(0.0, 1.0);
+            let roll = rng01(&mut s);
+            // Cumulative roll table — trees scale with depth, clutter mostly flat. Tree
+            // density kept SPARSE (was ~16% of heart tiles → a wall of trunks); the orks
+            // ate the forest, the mire should read open and littered, not wooded.
+            let trees = 0.075 * f;
+            if roll < 0.04 * f {
+                spawn_stand(commands, &tree_meshes, &mat, at(p), 0.9, 2.1, &mut s);
+                crate::blockers::add(p.x, p.y, 0.3);
+            } else if roll < 0.06 * f {
+                spawn_stand(commands, &claw_meshes, &mat, at(p), 0.85, 1.7, &mut s);
+                crate::blockers::add(p.x, p.y, 0.3);
+            } else if roll < trees {
+                spawn_stand(commands, &snag_meshes, &mat, at(p), 0.9, 1.5, &mut s);
+                crate::blockers::add(p.x, p.y, 0.3);
+            } else if roll < trees + 0.06 {
+                let m = match next_u32(&mut s) % 4 {
+                    0 => bone_pile_mesh(&mut s),
+                    1 => spikes_mesh(&mut s),
+                    2 => stump_mesh(&mut s),
+                    _ => mud_pool_mesh(&mut s),
+                };
+                spawn_solid(commands, meshes, &mat, m, at(p), ry(rng_range(&mut s, 0.0, TAU)));
+            } else if roll < trees + 0.08 {
+                spawn_stand(commands, &shroom_meshes, &mat, at(p), 0.8, 1.5, &mut s);
+            } else if roll < trees + 0.088 {
+                commands.spawn((
+                    Mesh3d(pool_mesh.clone()),
+                    MeshMaterial3d(pool_mat.clone()),
+                    Transform {
+                        translation: at(p) + Vec3::Y * 0.02,
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::new(rng_range(&mut s, 0.7, 1.6), 1.0, rng_range(&mut s, 0.7, 1.6)),
+                    },
+                    BiomeEntity,
+                ));
+            } else if roll < trees + 0.094 {
+                spawn_solid(commands, meshes, &mat, tar_pit_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+            } else if roll < trees + 0.104 {
+                spawn_solid(commands, meshes, &mat, scrap_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+            } else if roll < trees + 0.109 {
+                spawn_solid(commands, meshes, &mat, impale_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                crate::blockers::add(p.x, p.y, 0.25);
+            } else if roll < trees + 0.1125 {
+                spawn_solid(commands, meshes, &mat, ribcage_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                crate::blockers::add(p.x, p.y, 0.45);
+            } else if roll < trees + 0.1155 {
+                spawn_solid(commands, meshes, &timber_mat, gibbet_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                crate::blockers::add(p.x, p.y, 0.25);
+            } else if roll < trees + 0.1185 {
+                spawn_solid(commands, meshes, &hide_mat, effigy_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                crate::blockers::add(p.x, p.y, 0.25);
+            } else if roll < trees + 0.1245 && fumes < 20 {
+                fumes += 1;
+                let base = at(p);
+                spawn_solid(commands, meshes, &mat, vent_mesh(&mut s), base, ry(rng01(&mut s)));
+                for k in 0..2 {
+                    commands.spawn((
+                        Mesh3d(smoke_puff.clone()),
+                        MeshMaterial3d(fume_mat.clone()),
+                        Transform::from_translation(base).with_scale(Vec3::splat(0.01)),
+                        FortSmoke {
+                            base: base + Vec3::Y * 0.25,
+                            phase: k as f32 / 2.0 + rng01(&mut s),
+                            speed: 0.17,
+                        },
+                        BiomeEntity,
+                    ));
+                }
+            }
         }
-        let v = (next_u32(&mut rng) % 3) as usize;
-        commands.spawn((
-            Mesh3d(tree_meshes[v].clone()),
-            MeshMaterial3d(ork_mat.clone()),
-            Transform {
-                translation: at(p),
-                rotation: ry(rng_range(&mut rng, 0.0, TAU)),
-                scale: Vec3::splat(rng_range(&mut rng, 1.0, 2.0)),
-            },
-            BiomeEntity,
-        ));
-        trees_placed += 1;
+    }
+
+    // ── Wayposts flanking the gate road — the orks signpost their own front door ──
+    for (i, wp) in [
+        Vec2::new(4.5, 66.5),
+        Vec2::new(19.5, 68.0),
+        Vec2::new(4.0, 72.5),
+        Vec2::new(20.0, 74.5),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        spawn_solid(commands, meshes, &timber_mat, waypost_mesh(&mut rng), at(wp), ry(i as f32 * 1.4));
+        crate::blockers::add(wp.x, wp.y, 0.3);
     }
 
     // ── Population: a milling warband + the pacing warlord (decorative; untargetable) ──
@@ -748,7 +1013,89 @@ pub fn build(
         &mut rng,
     );
 
+    // ── The Blight patrols: three REAL warband squads (full `orks.rs` combat brains —
+    //    Idle/Patrol/Hunt/Attack, home-leashed) prowling the mire OUTSIDE the walls. The
+    //    armory is kept alive in [`BlightPatrols`] so [`patrol_respawn`] can repopulate a
+    //    wiped squad after a delay, out of the hero's sight. ──
+    let mut sites = PATROL_SITES.map(|(home, squad)| PatrolSite {
+        home,
+        squad,
+        cleared_at: None,
+        seed: next_u32(&mut rng) | 1,
+    });
+    for site in &mut sites {
+        spawn_squad(commands, &armory, site);
+    }
+    commands.insert_resource(BlightPatrols { armory, sites });
+
     info!("ork fortress: Gnashfang Hold built at {:.0},{:.0}", CENTRE.x, CENTRE.y);
+}
+
+/// Patrol homes + squad make-up (all `Faction::Red`, like the hold). West + east flanks,
+/// an ambush squad beside the gate road, and two deep-mire squads in the southern sprawl.
+const PATROL_SITES: [(Vec2, [OrkVariant; 2]); 5] = [
+    (Vec2::new(-12.0, 88.0), [OrkVariant::Grunt, OrkVariant::Scout]),
+    (Vec2::new(38.0, 100.0), [OrkVariant::Grunt, OrkVariant::Berserker]),
+    (Vec2::new(26.0, 76.0), [OrkVariant::Scout, OrkVariant::Grunt]),
+    (Vec2::new(-14.0, 122.0), [OrkVariant::Berserker, OrkVariant::Grunt]),
+    (Vec2::new(54.0, 118.0), [OrkVariant::Grunt, OrkVariant::Grunt]),
+];
+
+/// Seconds after a patrol is wiped before it can return, and how far the hero must be for
+/// the return to happen unseen (the camps' respawn manners, slower).
+const PATROL_RESPAWN_DELAY: f32 = 120.0;
+const PATROL_RESPAWN_FAR: f32 = 45.0;
+
+struct PatrolSite {
+    home: Vec2,
+    squad: [OrkVariant; 2],
+    /// `Some(t)` once the squad was observed wiped (the respawn clock).
+    cleared_at: Option<f32>,
+    seed: u32,
+}
+
+/// The kept-alive ork armory + patrol roster (see `build`).
+#[derive(Resource)]
+struct BlightPatrols {
+    armory: Armory,
+    sites: [PatrolSite; 5],
+}
+
+fn spawn_squad(commands: &mut Commands, armory: &Armory, site: &mut PatrolSite) {
+    for (k, v) in site.squad.iter().enumerate() {
+        let ang = k as f32 * 2.6 + site.home.x;
+        let pos = site.home + Vec2::new(ang.cos() * 1.7, ang.sin() * 1.7);
+        site.seed = site.seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        armory.spawn(commands, *v, Faction::Red, site.home, pos, site.seed);
+    }
+}
+
+/// Repopulate a wiped Blight patrol after [`PATROL_RESPAWN_DELAY`], only while the hero is
+/// far enough not to watch orks pop in (mirrors `camps::respawn_warbands`).
+fn patrol_respawn(
+    time: Res<Time>,
+    hero: Res<HeroState>,
+    patrols: Option<ResMut<BlightPatrols>>,
+    orks: Query<&crate::orks::Ork, Without<crate::dying::Dying>>,
+    mut commands: Commands,
+) {
+    let Some(mut patrols) = patrols else { return };
+    let now = time.elapsed_secs();
+    let BlightPatrols { armory, sites } = &mut *patrols;
+    for site in sites.iter_mut() {
+        if orks.iter().any(|o| o.home().distance(site.home) < 1.0) {
+            site.cleared_at = None;
+            continue;
+        }
+        let t0 = *site.cleared_at.get_or_insert(now);
+        if now - t0 < PATROL_RESPAWN_DELAY
+            || (hero.alive && hero.pos.distance(site.home) < PATROL_RESPAWN_FAR)
+        {
+            continue;
+        }
+        site.cleared_at = None;
+        spawn_squad(&mut commands, armory, site);
+    }
 }
 
 /// Spawn one static prop against the shared vertex-colour material (batches with the rest).
@@ -768,134 +1115,28 @@ fn spawn_solid(
     ));
 }
 
-// ── Islet terrain mesh (the worldmap's terraced-quads recipe over the local field) ───
-
-const MUD_HEART: u32 = 0x403425;
-const MUD_MID: u32 = 0x53432e;
-const MUD_RIM: u32 = 0x565a38;
-const MUD_SHORE: u32 = 0x70614a;
-
-fn lin3(c: u32) -> [f32; 3] {
-    let l = lin(c);
-    [l[0], l[1], l[2]]
-}
-fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-}
-
-/// Ground colour: trampled black mud at the heart, swampy mud at the rim, sandy mud at the
-/// waterline, with a sin-mix jitter so it never reads flat.
-fn mud_color(wx: f32, wz: f32) -> [f32; 4] {
-    let d = (((wx - CENTRE.x) / BLOB_RX).powi(2) + ((wz - CENTRE.y) / BLOB_RZ).powi(2)).sqrt();
-    let n = ((wx * 0.7 + 1.3).sin() * (wz * 0.62 - 0.8).cos()
-        + (wx * 0.23 + wz * 0.31).sin() * 0.5)
-        * 0.5;
-    let c = if d < 0.4 {
-        mix3(lin3(MUD_HEART), lin3(MUD_MID), d / 0.4)
-    } else if d < 0.75 {
-        mix3(lin3(MUD_MID), lin3(MUD_RIM), (d - 0.4) / 0.35)
-    } else {
-        mix3(lin3(MUD_RIM), lin3(MUD_SHORE), (d - 0.75) / 0.25)
-    };
-    let j = 1.0 + n * 0.10;
-    [c[0] * j, c[1] * j, c[2] * j, 1.0]
-}
-
-fn build_islet_mesh() -> Mesh {
-    const X0: f32 = -23.0;
-    const Z0: f32 = 81.0; // the grid's south edge — the causeway tiles end here
-    const NX: i32 = 70;
-    const NZ: i32 = 54;
-
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals: Vec<[f32; 3]> = Vec::new();
-    let mut colors: Vec<[f32; 4]> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-    let mut quad = |p: [[f32; 3]; 4], n: [f32; 3], c: [[f32; 4]; 4]| {
-        let b = positions.len() as u32;
-        for k in 0..4 {
-            positions.push(p[k]);
-            normals.push(n);
-            colors.push(c[k]);
-        }
-        indices.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
-    };
-
-    let class_at = |ix: i32, iz: i32| -> Option<i32> {
-        if !(0..NX).contains(&ix) || !(0..NZ).contains(&iz) {
-            return None;
-        }
-        islet_class(X0 + ix as f32 + 0.5, Z0 + iz as f32 + 0.5)
-    };
-
-    for iz in 0..NZ {
-        for ix in 0..NX {
-            let Some(h) = class_at(ix, iz) else { continue };
-            let top = (h - 1) as f32 * GROUND_STEP;
-            let wx = X0 + ix as f32;
-            let wz = Z0 + iz as f32;
-
-            quad(
-                [[wx, top, wz], [wx + 1.0, top, wz], [wx + 1.0, top, wz + 1.0], [wx, top, wz + 1.0]],
-                [0.0, 1.0, 0.0],
-                [
-                    mud_color(wx, wz),
-                    mud_color(wx + 1.0, wz),
-                    mud_color(wx + 1.0, wz + 1.0),
-                    mud_color(wx, wz + 1.0),
-                ],
-            );
-
-            // Cliff walls down to lower neighbours / the sea — graded lip→base mud.
-            let tc = mud_color(wx + 0.5, wz + 0.5);
-            let wall_top = [tc[0] * 0.80, tc[1] * 0.78, tc[2] * 0.76, 1.0];
-            let wall_bot = [tc[0] * 0.56, tc[1] * 0.54, tc[2] * 0.52, 1.0];
-            let wc = [wall_bot, wall_bot, wall_top, wall_top];
-            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                let nh_top = if iz == 0 && dz == -1 {
-                    // North seam: where the causeway's grid tiles continue, the ground is
-                    // continuous — no wall; elsewhere the islet edge drops to the sea.
-                    if worldmap::ground_at_world(wx + 0.5, Z0 - 0.5).is_some() {
-                        continue;
-                    } else {
-                        SEA_Y
-                    }
-                } else {
-                    match class_at(ix + dx, iz + dz) {
-                        Some(nh) => (nh - 1) as f32 * GROUND_STEP,
-                        None => SEA_Y,
-                    }
-                };
-                if top <= nh_top + 1e-4 {
-                    continue;
-                }
-                let (e0, e1, n): ([f32; 2], [f32; 2], [f32; 3]) = match (dx, dz) {
-                    (1, 0) => ([wx + 1.0, wz], [wx + 1.0, wz + 1.0], [1.0, 0.0, 0.0]),
-                    (-1, 0) => ([wx, wz + 1.0], [wx, wz], [-1.0, 0.0, 0.0]),
-                    (0, 1) => ([wx + 1.0, wz + 1.0], [wx, wz + 1.0], [0.0, 0.0, 1.0]),
-                    _ => ([wx, wz], [wx + 1.0, wz], [0.0, 0.0, -1.0]),
-                };
-                quad(
-                    [
-                        [e0[0], nh_top, e0[1]],
-                        [e1[0], nh_top, e1[1]],
-                        [e1[0], top, e1[1]],
-                        [e0[0], top, e0[1]],
-                    ],
-                    n,
-                    wc,
-                );
-            }
-        }
-    }
-
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
+/// Spawn one instance of a pre-baked shared-mesh variant set (random pick / yaw / scale) —
+/// the scatter's batching path: a whole stand of these costs one draw per variant.
+fn spawn_stand(
+    commands: &mut Commands,
+    handles: &[Handle<Mesh>],
+    mat: &Handle<StandardMaterial>,
+    pos: Vec3,
+    lo: f32,
+    hi: f32,
+    s: &mut u32,
+) {
+    let v = (next_u32(s) as usize) % handles.len();
+    commands.spawn((
+        Mesh3d(handles[v].clone()),
+        MeshMaterial3d(mat.clone()),
+        Transform {
+            translation: pos,
+            rotation: ry(rng_range(s, 0.0, TAU)),
+            scale: Vec3::splat(rng_range(s, lo, hi)),
+        },
+        BiomeEntity,
+    ));
 }
 
 // ── Prop meshes (vertex-coloured, flat-shaded — the CONTRACT.md recipe) ─────────────
@@ -909,7 +1150,7 @@ const IRON: u32 = 0x4a4e56;
 const BONE: u32 = 0xddd3b6;
 const HIDE: u32 = 0x8a6a45;
 const HIDE_DARK: u32 = 0x6d573a;
-const WATTLE: u32 = 0x6e5a3e;
+const HIDE_PATCH: u32 = 0x9d8055;
 const WARPAINT: u32 = 0x6a8a20;
 
 /// One palisade run from `a` to `b` (world space; the mesh is authored in world coords and
@@ -1173,35 +1414,517 @@ fn spire_mesh(rng: &mut u32) -> Mesh {
     group(p)
 }
 
-/// A round wattle hut: mud-daub wall, ragged hide cone roof, black door hole.
-fn hut_mesh(r: f32, rng: &mut u32) -> Mesh {
+/// An ork hide tent: crossed-pole A-frame, two stretched-hide slopes with mismatched
+/// patches and ragged eaves, a dark door mouth at −Z, a trophy skull on the ridge.
+/// `pub(crate)`: the wilderness camps (`camps.rs`) pitch the same tents.
+pub(crate) fn tent_mesh(s: f32, rng: &mut u32) -> Mesh {
     let mut p: Vec<Mesh> = Vec::new();
-    let shade = [WATTLE, 0x655241, 0x78654c][(next_u32(rng) % 3) as usize];
-    p.push(cyl(r, 1.5, v(0.0, 0.75, 0.0), Quat::IDENTITY, lin(shade)));
-    p.push(tinted(
-        Cone { radius: r + 0.55, height: 1.25 }
-            .mesh()
-            .build()
-            .translated_by(v(0.0, 2.12, 0.0)),
-        lin(if rng01(rng) < 0.5 { HIDE } else { HIDE_DARK }),
-    ));
-    for i in 0..7 {
-        let a = i as f32 / 7.0 * TAU + rng01(rng);
-        p.push(bxr(
-            0.5,
-            0.05,
-            0.35,
-            v(a.cos() * (r + 0.35), 1.42 + rng_range(rng, -0.08, 0.05), a.sin() * (r + 0.35)),
-            ry(-a) * rz(rng_range(rng, -0.3, 0.3)),
-            lin(HIDE_DARK),
-        ));
+    let h = 2.2 * s; // ridge height
+    let w = 1.8 * s; // ground half-width
+    let d = 1.5 * s; // half-depth
+    let tilt = (w / h).atan();
+    let slope = (w * w + h * h).sqrt();
+    // Crossed pole pairs (tips poke past the ridge) + the ridge log between them.
+    for sz in [-1.0f32, 1.0] {
+        for sx in [-1.0f32, 1.0] {
+            p.push(cyl(
+                0.07 * s,
+                slope * 1.14,
+                v(sx * w * 0.5, h * 0.52, sz * d * 0.94),
+                rz(-sx * tilt),
+                lin(TIMBER_DARK),
+            ));
+        }
     }
-    p.push(bx(0.75, 1.05, 0.2, v(0.0, 0.52, -r), lin(0x171008))); // door hole
-    p.push(cyl(0.05, 0.7, v(0.0, 2.9, 0.0), Quat::IDENTITY, lin(TIMBER_DARK)));
-    if rng01(rng) < 0.6 {
-        p.push(bx(0.16, 0.15, 0.15, v(0.0, 1.25, -r - 0.05), lin(BONE))); // skull over the door
+    p.push(cyl(0.08 * s, d * 2.3, v(0.0, h + 0.08 * s, 0.0), rx(FRAC_PI_2), lin(TIMBER)));
+    // The two hide slopes: main sheet + a mismatched patch + ragged eave tatters.
+    for sx in [-1.0f32, 1.0] {
+        let main = if rng01(rng) < 0.5 { HIDE } else { HIDE_DARK };
+        p.push(bxr(slope, 0.06, d * 2.0, v(sx * w * 0.5, h * 0.5, 0.0), rz(-sx * tilt), lin(main)));
+        p.push(bxr(
+            slope * 0.45,
+            0.05,
+            d * rng_range(rng, 0.6, 1.0),
+            v(sx * (w * 0.5 + 0.04), h * 0.5 + 0.03, rng_range(rng, -0.4, 0.4) * d),
+            rz(-sx * tilt),
+            lin(if main == HIDE { HIDE_DARK } else { HIDE_PATCH }),
+        ));
+        for i in 0..3 {
+            p.push(bxr(
+                0.34 * s,
+                0.05,
+                rng_range(rng, 0.3, 0.55) * s,
+                v(sx * (w * 0.86), h * 0.13, (-0.8 + i as f32 * 0.8) * d),
+                rz(-sx * (tilt + rng_range(rng, 0.2, 0.5))),
+                lin(HIDE_DARK),
+            ));
+        }
+    }
+    // Back wall + the dark door mouth up front.
+    p.push(bx(w * 1.5, h * 0.8, 0.08, v(0.0, h * 0.4, d * 0.95), lin(HIDE_DARK)));
+    p.push(bx(0.75 * s, 1.0 * s, 0.1, v(0.0, 0.5 * s, -d * 0.92), lin(0x171008)));
+    if rng01(rng) < 0.7 {
+        p.push(bx(0.17 * s, 0.16 * s, 0.16 * s, v(0.0, h + 0.2 * s, -d * 0.8), lin(BONE)));
     }
     group(p)
+}
+
+/// A timber longhouse — the warband's barracks: log-course walls on corner posts, pitched
+/// hide roof with patches, a skull gable, a dark door mouth (−Z) and a log pile outside.
+fn longhouse_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    p.push(bx(3.8, 0.24, 5.8, v(0.0, 0.12, 0.0), lin(TIMBER_DARK))); // plinth
+    p.push(bx(3.4, 1.9, 5.4, v(0.0, 1.15, 0.0), lin(TIMBER)));
+    for sx in [-1.0f32, 1.0] {
+        for i in 0..3 {
+            p.push(bx(
+                0.07,
+                0.16,
+                5.3,
+                v(sx * 1.74, 0.55 + i as f32 * 0.55, 0.0),
+                lin(if i % 2 == 0 { TIMBER_DARK } else { TIMBER_PALE }),
+            ));
+        }
+    }
+    for (sx, sz) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        p.push(cyl(0.14, 2.3, v(sx * 1.62, 1.15, sz * 2.6), Quat::IDENTITY, lin(TIMBER_PALE)));
+    }
+    // Pitched hide roof (ridge along Z) + a slipped patch each side + ridge log + gable skull.
+    let tilt = 0.62f32;
+    for sx in [-1.0f32, 1.0] {
+        p.push(bxr(
+            2.4,
+            0.1,
+            6.2,
+            v(sx * 0.95, 2.65, 0.0),
+            rz(-sx * tilt),
+            lin(if rng01(rng) < 0.5 { HIDE } else { HIDE_DARK }),
+        ));
+        p.push(bxr(
+            1.1,
+            0.08,
+            rng_range(rng, 1.2, 2.2),
+            v(sx * 1.7, 2.25, rng_range(rng, -1.5, 1.5)),
+            rz(-sx * (tilt + 0.25)),
+            lin(HIDE_PATCH),
+        ));
+    }
+    p.push(cyl(0.1, 6.4, v(0.0, 3.32, 0.0), rx(FRAC_PI_2), lin(TIMBER_DARK)));
+    p.push(bx(0.5, 0.42, 0.36, v(0.0, 2.6, -2.85), lin(BONE)));
+    // Door mouth + frame posts.
+    p.push(bx(1.0, 1.5, 0.14, v(0.0, 0.75, -2.74), lin(0x171008)));
+    for sx in [-1.0f32, 1.0] {
+        p.push(cyl(0.09, 1.7, v(sx * 0.62, 0.85, -2.78), Quat::IDENTITY, lin(TIMBER_PALE)));
+    }
+    // Log pile against the +X wall.
+    for i in 0..4 {
+        let (lift, off) = if i < 3 { (0.14, (i as f32 - 1.0) * 0.30) } else { (0.40, -0.15) };
+        p.push(cyl(
+            0.14,
+            rng_range(rng, 1.6, 2.2),
+            v(1.95 + off, lift, 1.2),
+            rx(FRAC_PI_2) * rz(rng_range(rng, -0.08, 0.08)),
+            lin(if i % 2 == 0 { TIMBER } else { TIMBER_PALE }),
+        ));
+    }
+    group(p)
+}
+
+/// The hold's forge: a stone hearth (the ember glow is a separate emissive entity), a
+/// horned anvil on a stump and a quench barrel. Authored about its origin, hearth at −Z.
+fn forge_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    for i in 0..10 {
+        let a = i as f32 / 10.0 * TAU;
+        p.push(tinted(
+            Sphere::new(rng_range(rng, 0.16, 0.24))
+                .mesh()
+                .ico(0)
+                .unwrap()
+                .translated_by(v(a.cos() * 0.85, 0.12, a.sin() * 0.6 - 0.35)),
+            lin(0x66666e),
+        ));
+    }
+    p.push(bx(1.5, 0.85, 1.1, v(0.0, 0.42, -0.35), lin(0x5a5a62))); // hearth block
+    p.push(bx(0.5, 1.15, 0.5, v(-0.45, 1.4, -0.6), lin(0x4e4e56))); // chimney stub
+    // Anvil on a stump + the horn nub.
+    p.push(cyl(0.3, 0.5, v(0.95, 0.25, 0.55), Quat::IDENTITY, lin(TIMBER_DARK)));
+    p.push(bx(0.62, 0.22, 0.3, v(0.95, 0.61, 0.55), lin(IRON)));
+    p.push(bx(0.22, 0.14, 0.18, v(1.32, 0.62, 0.55), lin(IRON)));
+    // Quench barrel with a dark water top.
+    p.push(cyl(0.3, 0.62, v(-1.15, 0.31, 0.5), Quat::IDENTITY, lin(TIMBER)));
+    p.push(cyl(0.26, 0.04, v(-1.15, 0.63, 0.5), Quat::IDENTITY, lin(0x2a3438)));
+    group(p)
+}
+
+/// A crude boar pen: post-and-rail fence with a gate gap (−Z side), churned mud and a
+/// feed trough. Fence half-extent ~2.3.
+fn pen_mesh(rng: &mut u32) -> Mesh {
+    const HW: f32 = 2.3;
+    let mut p: Vec<Mesh> = Vec::new();
+    // Posts on all four sides (the −Z side leaves its middle pair out for the gap).
+    for side in 0..4 {
+        for i in 0..5 {
+            if side == 0 && (i == 2 || i == 3) {
+                continue;
+            }
+            let t = i as f32 / 4.0 * 2.0 - 1.0;
+            let (x, z) = match side {
+                0 => (t * HW, -HW),
+                1 => (t * HW, HW),
+                2 => (-HW, t * HW),
+                _ => (HW, t * HW),
+            };
+            let h = rng_range(rng, 0.95, 1.2);
+            p.push(cyl(0.08, h, v(x, h / 2.0, z), rz(rng_range(rng, -0.07, 0.07)), lin(TIMBER_DARK)));
+        }
+    }
+    // Rails: full runs on three sides, two stubs flanking the gate gap.
+    for rail_y in [0.42f32, 0.82] {
+        p.push(bx(2.0 * HW, 0.08, 0.09, v(0.0, rail_y, HW), lin(TIMBER)));
+        p.push(bx(0.09, 0.08, 2.0 * HW, v(-HW, rail_y + 0.03, 0.0), lin(TIMBER)));
+        p.push(bx(0.09, 0.08, 2.0 * HW, v(HW, rail_y - 0.02, 0.0), lin(TIMBER)));
+        for sx in [-1.0f32, 1.0] {
+            p.push(bx(HW - 0.7, 0.08, 0.09, v(sx * (HW * 0.5 + 0.35), rail_y, -HW), lin(TIMBER)));
+        }
+    }
+    // Churned mud + the feed trough.
+    p.push(cyl(1.3, 0.03, v(0.4, 0.03, 0.3), Quat::IDENTITY, lin(0x241d15)));
+    p.push(cyl(0.8, 0.03, v(-0.8, 0.045, -0.6), Quat::IDENTITY, lin(0x1c1610)));
+    p.push(bx(1.1, 0.26, 0.42, v(0.6, 0.13, 1.6), lin(TIMBER_DARK)));
+    p.push(bx(0.95, 0.06, 0.3, v(0.6, 0.24, 1.6), lin(0x4a3d28)));
+    group(p)
+}
+
+/// A war drum: a fat hide-topped barrel on log cradles, beater sticks left crossed on top.
+fn drum_mesh(rng: &mut u32) -> Mesh {
+    let r = rng_range(rng, 0.5, 0.62);
+    group(vec![
+        cyl(r, 0.9, v(0.0, 0.55, 0.0), Quat::IDENTITY, lin(TIMBER)),
+        cyl(r + 0.03, 0.07, v(0.0, 1.02, 0.0), Quat::IDENTITY, lin(HIDE)),
+        cyl(r + 0.04, 0.06, v(0.0, 0.35, 0.0), Quat::IDENTITY, lin(TIMBER_DARK)),
+        cyl(0.1, 0.6, v(-r * 0.8, 0.1, 0.0), rx(FRAC_PI_2), lin(TIMBER_DARK)),
+        cyl(0.1, 0.6, v(r * 0.8, 0.1, 0.0), rx(FRAC_PI_2), lin(TIMBER_DARK)),
+        cyl(0.03, 0.7, v(0.15, 1.12, 0.05), rz(0.9) * rx(0.4), lin(TIMBER_PALE)),
+        cyl(0.03, 0.7, v(-0.12, 1.12, -0.04), rz(-0.8) * rx(-0.3), lin(TIMBER_PALE)),
+    ])
+}
+
+/// A weapon rack: two posts, a crossbar, and a row of leaning spears/clubs/crude blades.
+fn rack_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    for sx in [-1.0f32, 1.0] {
+        p.push(cyl(0.07, 1.5, v(sx * 0.8, 0.75, 0.0), Quat::IDENTITY, lin(TIMBER_DARK)));
+    }
+    p.push(bx(1.9, 0.09, 0.09, v(0.0, 1.42, 0.0), lin(TIMBER)));
+    for i in 0..4 {
+        let x = -0.6 + i as f32 * 0.4;
+        let tilt = rng_range(rng, -0.16, 0.16);
+        match next_u32(rng) % 3 {
+            0 => {
+                p.push(cyl(0.035, 1.7, v(x, 0.85, 0.1), rx(0.22) * rz(tilt), lin(TIMBER_PALE)));
+                p.push(tinted(
+                    Cone { radius: 0.06, height: 0.22 }
+                        .mesh()
+                        .build()
+                        .translated_by(v(x, 1.72, 0.28)),
+                    lin(IRON),
+                ));
+            }
+            1 => {
+                p.push(cyl(0.05, 1.2, v(x, 0.6, 0.12), rx(0.2) * rz(tilt), lin(TIMBER)));
+                p.push(bx(0.18, 0.3, 0.18, v(x, 1.22, 0.24), lin(TIMBER_DARK)));
+            }
+            _ => {
+                p.push(bxr(0.1, 1.1, 0.04, v(x, 0.62, 0.12), rx(0.2) * rz(tilt), lin(IRON)));
+                p.push(bx(0.16, 0.1, 0.08, v(x, 0.16, 0.04), lin(TIMBER_DARK)));
+            }
+        }
+    }
+    group(p)
+}
+
+/// The spit roast beside the bonfire: two forked poles, a skewer, the night's carcass.
+fn spit_mesh(rng: &mut u32) -> Mesh {
+    group(vec![
+        cyl(0.06, 1.1, v(-0.8, 0.55, 0.0), rz(0.1), lin(TIMBER_DARK)),
+        cyl(0.06, 1.1, v(0.8, 0.55, 0.0), rz(-0.1), lin(TIMBER_DARK)),
+        cyl(0.04, 2.0, v(0.0, 1.05, 0.0), rz(FRAC_PI_2), lin(TIMBER_PALE)),
+        bxr(0.7, 0.3, 0.34, v(0.0, 1.0, 0.0), rz(rng_range(rng, -0.2, 0.2)), lin(0x8a5a38)),
+        bx(0.2, 0.16, 0.2, v(0.45, 1.0, 0.0), lin(0x7a4a2c)),
+    ])
+}
+
+/// A spoils pile: stacked plunder crates + grain sacks dumped where they were dropped.
+fn pile_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    p.push(bxr(0.7, 0.7, 0.7, v(0.0, 0.35, 0.0), ry(rng01(rng)), lin(TIMBER)));
+    p.push(bxr(0.55, 0.55, 0.55, v(0.75, 0.27, 0.3), ry(rng01(rng) * 0.8), lin(TIMBER_PALE)));
+    p.push(bxr(0.5, 0.5, 0.5, v(0.2, 0.95, 0.1), ry(rng01(rng)), lin(TIMBER_DARK)));
+    for (x, z) in [(-0.7f32, 0.4f32), (-0.5, -0.4), (0.9, -0.5)] {
+        p.push(tinted(
+            Sphere::new(0.32)
+                .mesh()
+                .ico(1)
+                .unwrap()
+                .scaled_by(Vec3::new(1.0, 0.62, 1.0))
+                .translated_by(v(x, 0.2, z)),
+            lin(0x9a8a64),
+        ));
+    }
+    group(p)
+}
+
+/// A gnarled claw-tree: a thick leaning trunk forking into crooked talon branches that
+/// rake at the sky — the Blight's second tree silhouette (`TreeKind::Dead` is the first).
+fn claw_tree_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    let shade = [0x4a3b28u32, 0x3a2e1e, 0x55432c][(next_u32(rng) % 3) as usize];
+    let dark = lin(shade);
+    let h = rng_range(rng, 1.8, 2.6);
+    p.push(cyl(0.17, h, v(0.0, h / 2.0, 0.0), rz(rng_range(rng, -0.08, 0.08)), dark));
+    let top = v(0.0, h - 0.08, 0.0);
+    let n = 4 + (next_u32(rng) % 2) as i32;
+    for i in 0..n {
+        let a = i as f32 / n as f32 * TAU + rng01(rng) * 0.8;
+        let out = rng_range(rng, 0.5, 0.95);
+        let q = ry(a) * rz(out);
+        let axis = q * Vec3::Y;
+        let bl = rng_range(rng, 0.9, 1.5);
+        p.push(tinted(
+            Cylinder::new(0.07, bl).mesh().resolution(5).build().rotated_by(q).translated_by(top + axis * (bl * 0.5)),
+            dark,
+        ));
+        // The talon tip, bent further outward.
+        let q2 = ry(a) * rz(out + 0.55);
+        p.push(tinted(
+            Cone { radius: 0.055, height: 0.5 }
+                .mesh()
+                .build()
+                .rotated_by(q2)
+                .translated_by(top + axis * bl + (q2 * Vec3::Y) * 0.2),
+            lin(0x2e2418),
+        ));
+    }
+    group(p)
+}
+
+/// A snapped snag: a leaning broken trunk with a splintered crown, its fallen top rotting
+/// in the mud beside it.
+fn snag_mesh(rng: &mut u32) -> Mesh {
+    let h = rng_range(rng, 1.4, 2.2);
+    let lean = rng_range(rng, 0.15, 0.3) * if next_u32(rng) % 2 == 0 { 1.0 } else { -1.0 };
+    let mut p = vec![cyl(0.19, h, v(0.0, h / 2.0, 0.0), rz(lean), lin(0x443522))];
+    for _ in 0..3 {
+        p.push(tinted(
+            Cone { radius: 0.06, height: rng_range(rng, 0.25, 0.5) }
+                .mesh()
+                .build()
+                .translated_by(v(-lean * h + rng_range(rng, -0.12, 0.12), h * 0.95, rng_range(rng, -0.12, 0.12))),
+            lin(0x57452c),
+        ));
+    }
+    p.push(bxr(
+        0.3,
+        0.3,
+        rng_range(rng, 1.0, 1.8),
+        v(rng_range(rng, 0.5, 0.9), 0.15, rng_range(rng, -0.4, 0.4)),
+        ry(rng01(rng) * TAU) * rz(0.05),
+        lin(0x3a2d1c),
+    ));
+    group(p)
+}
+
+/// A gibbet: a leaning pole and arm with a small iron bone-cage swinging on chain links —
+/// the orks' message to travellers.
+fn gibbet_mesh(rng: &mut u32) -> Mesh {
+    let mut p = vec![
+        cyl(0.09, 3.2, v(0.0, 1.6, 0.0), rz(rng_range(rng, -0.05, 0.05)), lin(TIMBER_DARK)),
+        bx(1.4, 0.1, 0.1, v(0.55, 3.1, 0.0), lin(TIMBER)),
+    ];
+    for k in 0..3 {
+        p.push(cyl(0.022, 0.18, v(1.1, 2.92 - k as f32 * 0.16, 0.0), Quat::IDENTITY, lin(IRON)));
+    }
+    let cy = 2.1;
+    p.push(bx(0.5, 0.06, 0.5, v(1.1, cy + 0.32, 0.0), lin(IRON)));
+    p.push(bx(0.45, 0.06, 0.45, v(1.1, cy - 0.32, 0.0), lin(IRON)));
+    for (sx, sz) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        p.push(bx(0.05, 0.62, 0.05, v(1.1 + sx * 0.2, cy, sz * 0.2), lin(IRON)));
+    }
+    p.push(bx(0.2, 0.3, 0.18, v(1.1, cy - 0.08, 0.0), lin(BONE))); // the remains
+    group(p)
+}
+
+/// A tall stake with remains run through partway up — ribs, a skull, one dangling bone.
+fn impale_mesh(rng: &mut u32) -> Mesh {
+    let h = rng_range(rng, 1.6, 2.2);
+    let tilt = rng_range(rng, -0.18, 0.18);
+    group(vec![
+        cyl(0.06, h, v(0.0, h / 2.0, 0.0), rz(tilt), lin(TIMBER_DARK)),
+        tinted(
+            Cone { radius: 0.05, height: 0.3 }.mesh().build().translated_by(v(-tilt * h, h, 0.0)),
+            lin(TIMBER_PALE),
+        ),
+        bx(0.42, 0.34, 0.3, v(-tilt * h * 0.6, h * 0.62, 0.0), lin(BONE)),
+        bx(0.2, 0.18, 0.18, v(-tilt * h * 0.6, h * 0.62 + 0.28, 0.05), lin(BONE)),
+        bxr(0.07, 0.4, 0.07, v(-tilt * h * 0.6 + 0.2, h * 0.62 - 0.3, 0.0), rz(0.3), lin(BONE)),
+    ])
+}
+
+/// The ribcage of some titanic beast, arcing out of the mud toward a horned skull.
+fn ribcage_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    let n = 4 + (next_u32(rng) % 2) as i32;
+    for i in 0..n {
+        let z = i as f32 * 0.55;
+        let s = 1.0 - i as f32 * 0.12; // ribs shrink toward the tail
+        for sx in [-1.0f32, 1.0] {
+            p.push(bxr(0.09, 1.1 * s, 0.13, v(sx * 0.75 * s, 0.5 * s, z), rz(-sx * 0.35), lin(BONE)));
+            p.push(bxr(0.08, 0.7 * s, 0.11, v(sx * 0.42 * s, 1.15 * s, z), rz(-sx * 0.85), lin(0xcabfa2)));
+        }
+    }
+    p.push(bx(0.16, 0.14, n as f32 * 0.55, v(0.0, 0.08, (n as f32 - 1.0) * 0.275), lin(0xcabfa2))); // spine
+    p.push(bx(0.55, 0.45, 0.6, v(0.0, 0.3, -0.75), lin(BONE))); // the skull
+    for sx in [-1.0f32, 1.0] {
+        p.push(tinted(
+            Cone { radius: 0.08, height: 0.5 }
+                .mesh()
+                .build()
+                .rotated_by(rz(sx * 1.2))
+                .translated_by(v(sx * 0.45, 0.62, -0.8)),
+            lin(BONE),
+        ));
+    }
+    group(p)
+}
+
+/// Battle leavings: split shields, snapped blades, a cart wheel half-sunk in the mud.
+fn scrap_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    for _ in 0..3 {
+        let shade = [TIMBER, TIMBER_PALE, 0x6a3a2a][(next_u32(rng) % 3) as usize];
+        p.push(bxr(
+            rng_range(rng, 0.4, 0.6),
+            0.07,
+            rng_range(rng, 0.5, 0.7),
+            v(rng_range(rng, -0.5, 0.5), 0.08, rng_range(rng, -0.5, 0.5)),
+            ry(rng01(rng) * TAU) * rz(rng_range(rng, -0.25, 0.25)),
+            lin(shade),
+        ));
+    }
+    for _ in 0..2 {
+        p.push(bxr(
+            0.08,
+            rng_range(rng, 0.6, 0.9),
+            0.03,
+            v(rng_range(rng, -0.4, 0.4), 0.12, rng_range(rng, -0.4, 0.4)),
+            ry(rng01(rng) * TAU) * rz(rng_range(rng, 0.9, 1.4)),
+            lin(IRON),
+        ));
+    }
+    p.push(tinted(
+        Cylinder::new(0.45, 0.07)
+            .mesh()
+            .resolution(8)
+            .build()
+            .rotated_by(rx(FRAC_PI_2) * rz(rng_range(rng, 0.2, 0.5)))
+            .translated_by(v(0.5, 0.3, 0.2)),
+        lin(TIMBER_DARK),
+    ));
+    group(p)
+}
+
+/// A crude warning effigy: cross-pole scarecrow draped in hides, skull head, paint band.
+fn effigy_mesh(rng: &mut u32) -> Mesh {
+    group(vec![
+        cyl(0.07, 2.2, v(0.0, 1.1, 0.0), rz(rng_range(rng, -0.07, 0.07)), lin(TIMBER_DARK)),
+        bx(1.5, 0.09, 0.09, v(0.0, 1.62, 0.0), lin(TIMBER)),
+        bxr(0.6, 0.9, 0.1, v(0.0, 1.15, 0.0), ry(rng_range(rng, -0.2, 0.2)), lin(HIDE_DARK)),
+        bxr(0.34, 0.6, 0.08, v(0.45, 1.3, 0.02), rz(0.25), lin(HIDE)),
+        bxr(0.3, 0.55, 0.08, v(-0.5, 1.32, -0.02), rz(-0.3), lin(HIDE_PATCH)),
+        bx(0.22, 0.2, 0.2, v(0.0, 1.95, 0.0), lin(BONE)),
+        bx(0.24, 0.05, 0.21, v(0.0, 1.9, 0.0), lin(WARPAINT)),
+    ])
+}
+
+/// Sickly warp toadstools clustered on the mud.
+fn shroom_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    for _ in 0..(3 + next_u32(rng) % 3) {
+        let x = rng_range(rng, -0.5, 0.5);
+        let z = rng_range(rng, -0.5, 0.5);
+        let h = rng_range(rng, 0.16, 0.42);
+        let r = h * rng_range(rng, 0.55, 0.8);
+        p.push(cyl(r * 0.35, h, v(x, h / 2.0, z), rz(rng_range(rng, -0.15, 0.15)), lin(0xb8b09a)));
+        let cap = [0x73923eu32, 0x86a83c, 0x5f7e34][(next_u32(rng) % 3) as usize];
+        p.push(tinted(
+            Sphere::new(r)
+                .mesh()
+                .ico(1)
+                .unwrap()
+                .scaled_by(Vec3::new(1.0, 0.55, 1.0))
+                .translated_by(v(x, h, z)),
+            lin(cap),
+        ));
+    }
+    group(p)
+}
+
+/// A black tar pit with old bones breaking its surface.
+fn tar_pit_mesh(rng: &mut u32) -> Mesh {
+    let r = rng_range(rng, 1.2, 2.0);
+    group(vec![
+        cyl(r, 0.035, v(0.0, 0.03, 0.0), Quat::IDENTITY, lin(0x14110c)),
+        cyl(
+            r * 0.55,
+            0.035,
+            v(rng_range(rng, -0.4, 0.4), 0.05, rng_range(rng, -0.4, 0.4)),
+            Quat::IDENTITY,
+            lin(0x0c0a07),
+        ),
+        bxr(0.09, 0.7, 0.09, v(r * 0.3, 0.2, -r * 0.2), rz(0.6), lin(BONE)),
+        bx(0.2, 0.16, 0.16, v(-r * 0.35, 0.08, r * 0.25), lin(BONE)),
+        tinted(
+            Cone { radius: 0.07, height: 0.4 }
+                .mesh()
+                .build()
+                .rotated_by(rz(-0.9))
+                .translated_by(v(-r * 0.3, 0.16, -r * 0.3)),
+            lin(0xcabfa2),
+        ),
+    ])
+}
+
+/// A warp-fume vent: a low ring of scorched stones around a dark throat (the green smoke
+/// is a pair of `FortSmoke` entities).
+fn vent_mesh(rng: &mut u32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    for i in 0..7 {
+        let a = i as f32 / 7.0 * TAU + rng01(rng);
+        p.push(tinted(
+            Sphere::new(rng_range(rng, 0.12, 0.2))
+                .mesh()
+                .ico(0)
+                .unwrap()
+                .translated_by(v(a.cos() * 0.45, 0.08, a.sin() * 0.45)),
+            lin(0x4a4a44),
+        ));
+    }
+    p.push(cyl(0.3, 0.06, v(0.0, 0.05, 0.0), Quat::IDENTITY, lin(0x14120c)));
+    group(p)
+}
+
+/// A road waypost: a leaning pole with a skull, a hide rag and a warning crossbar — the
+/// orks signpost the road to their own gate.
+fn waypost_mesh(rng: &mut u32) -> Mesh {
+    let lean = rng_range(rng, -0.1, 0.1);
+    group(vec![
+        cyl(0.07, 2.6, v(0.0, 1.3, 0.0), rz(lean), lin(TIMBER_DARK)),
+        bx(0.9, 0.1, 0.1, v(0.0, 2.0, 0.0), lin(TIMBER)),
+        bx(0.2, 0.19, 0.19, v(0.0, 2.72, 0.0), lin(BONE)),
+        bxr(0.34, 0.5, 0.05, v(0.35, 1.7, 0.0), rz(rng_range(rng, -0.25, 0.25)), lin(HIDE_DARK)),
+        bxr(0.3, 0.4, 0.05, v(-0.38, 1.78, 0.0), rz(rng_range(rng, -0.3, 0.3)), lin(HIDE)),
+    ])
 }
 
 /// The hold's war totem — four stacked carved heads, war-paint bands, horned skull crown.
@@ -1243,8 +1966,9 @@ fn totem_mesh(rng: &mut u32) -> Mesh {
 }
 
 /// A heavy prisoner cage with three huddled captives (decorative — the hold's are beyond
-/// rescue; that's the story it tells).
-fn cage_mesh() -> Mesh {
+/// rescue; that's the story it tells). `pub(crate)`: the wilderness camps use the same
+/// cage for their closed (pre-rescue) state.
+pub(crate) fn cage_mesh() -> Mesh {
     const W: f32 = 2.2;
     const H: f32 = 1.8;
     const HW: f32 = W / 2.0;
@@ -1306,7 +2030,7 @@ fn bone_pile_mesh(rng: &mut u32) -> Mesh {
     group(p)
 }
 
-/// A hacked-off stump (the orks ate the islet's trees long ago).
+/// A hacked-off stump (the orks ate the Blight's living trees long ago).
 fn stump_mesh(rng: &mut u32) -> Mesh {
     let r = rng_range(rng, 0.22, 0.34);
     let h = rng_range(rng, 0.35, 0.6);
@@ -1322,49 +2046,6 @@ fn mud_pool_mesh(rng: &mut u32) -> Mesh {
     group(vec![
         cyl(r, 0.03, v(0.0, 0.03, 0.0), Quat::IDENTITY, lin(0x241d15)),
         cyl(r * 0.6, 0.03, v(rng_range(rng, -0.3, 0.3), 0.045, rng_range(rng, -0.3, 0.3)), Quat::IDENTITY, lin(0x1c1610)),
-    ])
-}
-
-/// One broken bridge stub: a plank deck on tilted poles running along +Z from the origin,
-/// ending in snapped, sagging planks. The strait's depth is faked — poles just sink to the
-/// sea plane.
-fn bridge_stub_mesh(len: f32, rng: &mut u32) -> Mesh {
-    let mut p: Vec<Mesh> = Vec::new();
-    let n = (len / 0.55).ceil() as i32;
-    for i in 0..n {
-        let z = i as f32 * 0.55;
-        let last = i >= n - 2;
-        let sag = if last { (i - (n - 3)) as f32 * -0.16 } else { 0.0 };
-        let tilt = if last { rng_range(rng, 0.15, 0.5) } else { rng_range(rng, -0.04, 0.04) };
-        p.push(bxr(
-            1.3,
-            0.07,
-            0.5,
-            v(rng_range(rng, -0.05, 0.05), 0.35 + sag, z),
-            rz(tilt),
-            lin(if i % 3 == 0 { TIMBER_PALE } else { TIMBER }),
-        ));
-    }
-    for sz in [0.3f32, len * 0.6] {
-        for sx in [-0.55f32, 0.55] {
-            p.push(cyl(
-                0.08,
-                1.1,
-                v(sx, -0.15, sz),
-                rz(rng_range(rng, -0.1, 0.1)),
-                lin(TIMBER_DARK),
-            ));
-        }
-    }
-    group(p)
-}
-
-/// Loose planks + a snapped pile adrift where the bridge gave way.
-fn bridge_debris_mesh() -> Mesh {
-    group(vec![
-        bxr(1.1, 0.06, 0.4, v(0.0, SEA_Y + 0.06, 0.0), ry(0.7) * rz(0.12), lin(TIMBER)),
-        bxr(0.9, 0.06, 0.35, v(0.8, SEA_Y + 0.05, 0.9), ry(-0.4), lin(TIMBER_PALE)),
-        cyl(0.07, 1.0, v(-0.5, SEA_Y + 0.25, 0.4), rz(0.35), lin(TIMBER_DARK)),
     ])
 }
 
@@ -1527,6 +2208,7 @@ fn tower_fire(
     hero: Res<HeroState>,
     assets: Option<Res<WarpBoltAssets>>,
     mut commands: Commands,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut q: Query<&mut WarTower>,
 ) {
     let Some(assets) = assets else { return };
@@ -1541,6 +2223,8 @@ fn tower_fire(
             continue;
         }
         t.ready_at = now + TOWER_CD;
+        // The release crack (`warp-cast.ogg`), spatial at the crow's-nest muzzle.
+        cues.write(crate::audio::AudioCue::WarpCast(t.muzzle));
         commands.spawn((
             Mesh3d(assets.mesh.clone()),
             MeshMaterial3d(assets.mat.clone()),

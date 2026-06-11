@@ -97,8 +97,11 @@ fn spawn_queued_bolts(
     mut commands: Commands,
     assets: Res<BoltAssets>,
     mut spawns: ResMut<BoltSpawns>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
 ) {
     for s in spawns.0.drain(..) {
+        // The staff-release crack (`warp-cast.ogg`), spatial at the shaman's hands.
+        cues.write(crate::audio::AudioCue::WarpCast(s.origin));
         commands.spawn((
             Mesh3d(assets.mesh.clone()),
             MeshMaterial3d(assets.mat.clone()),

@@ -4,7 +4,9 @@
 //! centre safe-zone (the castle spot), a grass frontier with scattered forest clumps and
 //! rolling terraced knolls, a beach ring backed by patchy coastal mountain ridges, four
 //! carved rivers + one lake, and **terraced** stepped heights (flat tile-tops + cliff
-//! faces; snow peak 10, rock peak 9).
+//! faces; snow peak 10, rock peak 9). South of the old coast the grid extends into the
+//! **Blight** — the walkable ork-fortress mire (`TB::Blight`, shape owned by
+//! `ork_fortress.rs`) that gameplay treats as swamp (poison + slow).
 //!
 //! `build` seeds the full playable island: the ground mesh plus ork-camp / castle / ore / chest
 //! placement and wildlife (single-biome views, keys 1–5, have no island layout, so none of these).
@@ -38,12 +40,17 @@ pub const MAP_SCALE: f32 = 1.5;
 // drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
 // `GX/GZ` are the GRID centre used for world placement + tile-cache indexing.
 pub const COLS: i32 = 216; // 144 * 1.5
-pub const ROWS: i32 = 162; // 108 * 1.5
+/// Rows: the original island (108 base rows → 162) PLUS the southern **Blight** extension —
+/// the walkable ork-fortress landmass (`ork_fortress::blight_class_base`). World z runs
+/// −81 … +165; everything north of +81 is the original map, untouched.
+pub const ROWS: i32 = 246;
 const CX: f32 = 72.0; // base COLS/2 — generation centre
 const CZ: f32 = 54.0;
 /// Grid centre (enlarged) — world placement recentres the map onto the origin here.
 pub const GX: f32 = COLS as f32 / 2.0;
-pub const GZ: f32 = ROWS as f32 / 2.0;
+/// NOT `ROWS/2`: the castle stays at the origin, so GZ is pinned to the ORIGINAL map's
+/// half-height (162/2) and the Blight extension grows `ROWS` southward only.
+pub const GZ: f32 = 81.0;
 const ISLAND_RX: f32 = 71.0;
 const ISLAND_RZ: f32 = 53.0;
 const ISLAND_EXP: f32 = 2.6;
@@ -70,6 +77,12 @@ const COL_ROCK: u32 = 0x8d847a;
 const COL_SNOW: u32 = 0xe4ecf5;
 const COL_DESERT: u32 = 0xddc189;
 const COL_SWAMP: u32 = 0x55613a;
+/// The Blight: trampled ork mud (interior mottle adds churned-black, ash and a sickly
+/// warp-green tinge — see `biome_col_at`).
+const COL_BLIGHT: u32 = 0x4d3e2a;
+const COL_BLIGHT_DARK: u32 = 0x332817;
+const COL_BLIGHT_ASH: u32 = 0x6f695c;
+const COL_BLIGHT_GREEN: u32 = 0x59653a;
 /// Snow-interior mottle (see `biome_col_at`): cool drift-shadow troughs + wind-polished
 /// bright crests, so the snowfield reads as wind-shaped drifts instead of one cream sheet.
 const COL_SNOW_SHADE: u32 = 0xc9d6e8;
@@ -93,6 +106,9 @@ enum TB {
     Snow,
     Desert,
     Swamp,
+    /// The ork-blighted mire around Gnashfang Hold (south extension). Maps to
+    /// [`Biome::Swamp`] for gameplay (poison, slow, ambience) but draws its own ground.
+    Blight,
 }
 
 struct Region {
@@ -104,7 +120,7 @@ struct Region {
     peak: i32,
 }
 
-const REGIONS: [Region; 5] = [
+const REGIONS: [Region; 6] = [
     Region { x: 26.0, z: 24.0, r: 31.0, biome: TB::Snow, peak: 10 }, // NW snow massif
     Region { x: 112.0, z: 28.0, r: 34.0, biome: TB::Desert, peak: 0 }, // NE dunes
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
@@ -113,6 +129,12 @@ const REGIONS: [Region; 5] = [
     Region { x: 116.0, z: 57.0, r: 28.0, biome: TB::Rock, peak: 9 },
     Region { x: 32.0, z: 80.0, r: 34.0, biome: TB::Forest, peak: 0 }, // SW forest
     Region { x: 72.0, z: 92.0, r: 32.0, biome: TB::Swamp, peak: 0 }, // S swamp
+    // Eastern marsh arm: fills the open grass strip that ran between the S swamp and the
+    // rocky mine range (world x +30…+66, z +15…+60), so the marsh laps right up to the
+    // foot of the mines instead of leaving a grass corridor. Rock's mountain priority in
+    // `region_at` auto-clips the east edge (the mines stay rock), and the castle safe-ring
+    // forces grass at the centre, so this only eats the in-between grass.
+    Region { x: 102.0, z: 78.0, r: 27.0, biome: TB::Swamp, peak: 0 },
 ];
 
 struct Plateau {
@@ -346,12 +368,12 @@ fn mountain_height(x: f32, z: f32, reg: &Region) -> i32 {
 }
 
 fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
-    // The ork-fortress causeway: a flat swamp tongue from the south shore to the grid edge,
-    // where Gnashfang Hold's gate wall stands (`ork_fortress.rs`). Checked BEFORE the island
-    // shape — the neck deliberately extends past the coast — and forced flat so coastal-ridge
-    // terraces can't wall off the approach.
-    if crate::ork_fortress::neck_land_base(x, z) {
-        return Some((TB::Swamp, 1));
+    // The Blight: the walkable ork-fortress landmass south of the old coast (shape + heights
+    // live in `ork_fortress.rs`). Checked BEFORE the island shape — it deliberately extends
+    // past the coast — and it overrides the south-swamp fringe so the trampled mud runs
+    // continuous from the marsh into Gnashfang Hold.
+    if let Some(h) = crate::ork_fortress::blight_class_base(x, z) {
+        return Some((TB::Blight, h));
     }
     if !is_land_shape(x, z) {
         return None;
@@ -453,7 +475,9 @@ fn tile_biome_world(wx: f32, wz: f32) -> Option<Biome> {
         TB::Snow => Some(Biome::Snow),
         TB::Rock => Some(Biome::Rocky),
         TB::Desert => Some(Biome::Desert),
-        TB::Swamp => Some(Biome::Swamp),
+        // The Blight IS swamp to gameplay: poison + slow (`player::movement`), swamp
+        // ambience/weather, swamp wildlife/forage. Only the ground + scatter differ.
+        TB::Swamp | TB::Blight => Some(Biome::Swamp),
         _ => None,
     }
 }
@@ -511,6 +535,7 @@ fn biome_col(b: TB) -> [f32; 3] {
         TB::Snow => COL_SNOW,
         TB::Desert => COL_DESERT,
         TB::Swamp => COL_SWAMP,
+        TB::Blight => COL_BLIGHT,
     })
 }
 
@@ -535,6 +560,17 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
             let dry = smoothstep(0.35, 1.40, noise_b(x * 8.0 - 23.0, z * 8.0 + 7.0));
             let col = mix3(base, lin3(COL_FOREST_DARK), moist * 0.50);
             mix3(col, lin3(COL_FOREST_DRY), dry * 0.35)
+        }
+        TB::Blight => {
+            // Churned-black trample troughs, dead-ash patches, and a sickly warp-green
+            // seep — the mud should read beaten flat by ten thousand ork feet. Weights
+            // run HOT (first pass read as one flat tan sheet from gameplay height).
+            let churn = smoothstep(0.10, 1.10, noise_a(x * 4.1 + 11.0, z * 4.1 - 5.0));
+            let ash = smoothstep(0.50, 1.25, noise_b(x * 2.6 - 9.0, z * 2.6 + 17.0));
+            let seep = smoothstep(0.40, 1.20, noise_a(x * 1.8 + 31.0, z * 1.8 + 3.0));
+            let col = mix3(base, lin3(COL_BLIGHT_DARK), churn * 0.70);
+            let col = mix3(col, lin3(COL_BLIGHT_ASH), ash * 0.45);
+            mix3(col, lin3(COL_BLIGHT_GREEN), seep * 0.40)
         }
         _ => base,
     }
@@ -562,9 +598,16 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
         let w = smoothstep(-BLEND, BLEND, edge);
         col = mix3(col, biome_col_at(reg.biome, x, z), w);
     }
-    // Sandy coast fade.
+    // The Blight blends in by its own shape (it's not a `Region` — the landmass lives in
+    // `ork_fortress.rs`): the south-swamp green smears into the trampled mud over `BLEND`.
+    let blight_w = smoothstep(-BLEND, BLEND, crate::ork_fortress::blight_edge_base(x, z));
+    if blight_w > 0.0 {
+        col = mix3(col, biome_col_at(TB::Blight, x, z), blight_w);
+    }
+    // Sandy coast fade — damped inside the Blight: `dist_from_coast` only knows the OLD
+    // island shape, so without the damp the whole southern landmass would tint to beach.
     let dco = dist_from_coast(x, z) as f32;
-    col = mix3(col, lin3(COL_SAND), smoothstep(3.5, 0.5, dco) * 0.85);
+    col = mix3(col, lin3(COL_SAND), smoothstep(3.5, 0.5, dco) * 0.85 * (1.0 - blight_w));
     // Universal mottle — value jitter + a slow warm/cool hue wander over the *blended*
     // colour, so biome interiors (forest, sand, snow…) get texture too, not just the open
     // grass. Multiplicative and small: it breaks the flat fill without recolouring a biome.
@@ -602,7 +645,7 @@ const SHORE_MAX: f32 = 8.0;
 /// Returns the image plus the world→UV mapping (`xy` = min corner, `zw` = 1/extent).
 fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     const W: usize = 256; // covers world x ∈ [-128, 128] (island is ±108)
-    const H: usize = 208; // covers world z ∈ [-104, 104] (island is ±81)
+    const H: usize = 352; // covers world z ∈ [-176, 176] (island ±81 + the Blight to ~+160)
     let min_x = -(W as f32) / 2.0;
     let min_z = -(H as f32) / 2.0;
     let idx = |x: usize, z: usize| z * W + x;
@@ -670,8 +713,10 @@ pub fn build(
     terrain_mats: &mut Assets<TerrainMaterial>,
     water_mats: &mut Assets<WaterMaterial>,
 ) {
-    // ── Terraced ground mesh (one mesh, blended vertex colours, per-face normals) ──
-    let ground = build_terrain_mesh();
+    // ── Terraced ground mesh (blended vertex colours, per-face normals) — two sheets:
+    //    the island proper on the grass detail texture, and the Blight on its own
+    //    trampled-mud detail so the ork ground reads filthy instead of lawn-grained. ──
+    let ground = build_terrain_mesh(|tb| tb != TB::Blight);
     let grass_detail = GroundDetail {
         scale: 0.18,
         strength: 0.40,
@@ -687,6 +732,25 @@ pub fn build(
     commands.spawn((
         Mesh3d(meshes.add(ground)),
         MeshMaterial3d(ground_mat),
+        Transform::default(),
+        crate::biome::BiomeEntity,
+    ));
+    let blight_ground = build_terrain_mesh(|tb| tb == TB::Blight);
+    let blight_detail = GroundDetail {
+        scale: 0.30,
+        strength: 0.62,
+        variation: 0.85,
+        seed: 7.0,
+        dark: 0x241a10,
+        base: 0x4d3e2a,
+        light: 0x6e5f46,
+        grain: 0.95,
+        streak: 0.65,
+    };
+    let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, images, terrain_mats);
+    commands.spawn((
+        Mesh3d(meshes.add(blight_ground)),
+        MeshMaterial3d(blight_mat),
         Transform::default(),
         crate::biome::BiomeEntity,
     ));
@@ -756,8 +820,11 @@ pub fn build(
                 tile_biome_world(x, z) == Some(biome)
                     && !crate::camps::in_clearing(x, z)
                     && !crate::bridges::near_bridge(x, z, 1.0)
-                    // Keep swamp scatter off the fortress gate approach (the causeway).
+                    // Keep swamp scatter off the fortress gate road, and out of the deep
+                    // Blight (the Blight tiles read as Swamp; ork_fortress scatters its own
+                    // dead-wood there — swamp props only bleed into the northern blend band).
                     && !crate::ork_fortress::on_gate_approach(x, z)
+                    && !(crate::ork_fortress::in_blight_world(x, z) && z > 86.0)
             },
             &|x, z| tile_top_y_world(x, z),
         );
@@ -843,7 +910,7 @@ pub fn build(
     let village_mats = crate::castle::build(commands, meshes, images, std_mats);
 
     // ── Ork camps: tents/fire/banner/cage + a patrolling warband (registers blockers). ──
-    crate::camps::build(commands, meshes, std_mats);
+    crate::camps::build(commands, meshes, images, std_mats);
 
     // ── Castle townsfolk: ambient villagers milling the courtyard + gates. ──
     crate::villagers::populate(commands, meshes, std_mats);
@@ -871,9 +938,9 @@ pub fn build(
     //    so each routes around the ruin already planted in its biome.
     crate::vignettes::populate_vignettes(commands, meshes, std_mats);
 
-    // ── Gnashfang Hold: the ork fortress on its own islet beyond the swamp coast (south of
-    //    the grid — pure world-dressing plus hero-targeting watchtowers; see `ork_fortress.rs`).
-    crate::ork_fortress::build(commands, meshes, images, std_mats, terrain_mats);
+    // ── Gnashfang Hold + the Blight: the ork fortress and its walkable poisoned landmass
+    //    south of the old coast (camp props, patrols, watchtowers; see `ork_fortress.rs`).
+    crate::ork_fortress::build(commands, meshes, images, std_mats);
 
     // ── River bridges: plank decks at the real river crossings (also nav-grid walkable). ──
     crate::bridges::populate(commands, meshes, std_mats);
@@ -941,7 +1008,10 @@ fn grass_config() -> BiomeConfig {
 }
 
 // ── Terraced terrain mesh ─────────────────────────────────────────────────────────
-fn build_terrain_mesh() -> Mesh {
+/// Build the terraced ground mesh over every tile `keep` accepts. Called twice from
+/// `build`: once for everything but the Blight (grass detail texture), once for the
+/// Blight alone (its own trampled-mud detail) — two sheets, identical recipe.
+fn build_terrain_mesh(keep: impl Fn(TB) -> bool) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -963,6 +1033,9 @@ fn build_terrain_mesh() -> Mesh {
     for iz in 0..ROWS {
         for ix in 0..COLS {
             let Some((tb, h)) = tile_at(ix, iz) else { continue };
+            if !keep(tb) {
+                continue;
+            }
             let top = (h - 1) as f32 * GROUND_STEP;
             let wx = ix as f32 - GX;
             let wz = iz as f32 - GZ;
