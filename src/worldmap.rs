@@ -666,7 +666,11 @@ pub fn build(
             lo,
             hi,
             false,
-            &move |x, z| tile_biome_world(x, z) == Some(biome) && !crate::camps::in_clearing(x, z),
+            &move |x, z| {
+                tile_biome_world(x, z) == Some(biome)
+                    && !crate::camps::in_clearing(x, z)
+                    && !crate::bridges::near_bridge(x, z, 1.0)
+            },
             &|x, z| tile_top_y_world(x, z),
         );
     }
@@ -707,6 +711,9 @@ pub fn build(
                         + (rng.next() as f32 - 0.5) * 0.3;
                     let wz = iz as f32 - GZ + 0.5 - dz as f32 * 0.32
                         + (rng.next() as f32 - 0.5) * 0.3;
+                    if crate::bridges::near_bridge(wx, wz, 0.5) {
+                        continue; // keep drift mounds off the plank decks
+                    }
                     let v = (rng.next() * 3.0) as u32;
                     commands.spawn((
                         Mesh3d(drift_meshes[(v % 3) as usize].clone()),
@@ -738,6 +745,7 @@ pub fn build(
                 && !crate::castle::in_footprint(x, z)
                 && !crate::camps::in_clearing(x, z)
                 && !crate::town::near_build_plot(x, z)
+                && !crate::bridges::near_bridge(x, z, 1.0)
         },
         &|x, z| tile_top_y_world(x, z),
     );

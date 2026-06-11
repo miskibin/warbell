@@ -82,8 +82,9 @@ fn setup_settings(mut commands: Commands, fonts: Res<UiFonts>) {
             .with_children(|b| {
                 b.spawn(label(&fonts.bold, "+1k", 13.0, TEXT));
             });
-            // Graphics-quality toggle: a text button ("High"/"Low") so the choice is explicit and
-            // legible without depending on an icon asset. Click or press F10 to flip.
+            // Graphics-quality toggle: a text button ("High"/"Ultra"/"Low"/"God Rays") so the
+            // choice is explicit and legible without depending on an icon asset. Click or press
+            // F10 to cycle.
             row.spawn((
                 Node {
                     height: Val::Px(34.0),

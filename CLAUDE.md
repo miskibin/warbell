@@ -106,6 +106,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_PANEL=tree\|inv` | seed + open the upgrade-tree / satchel panel for a shot |
 | `FOREST_EQUIP="sword_gold,gold_armor"` | equip the listed item ids at startup so the hero model shows its weapon/armor |
 | `FOREST_FOG="clear,full"` | override fog distances live (no rebuild) |
+| `FOREST_QUALITY=ultra\|high\|low\|godrays` | startup graphics preset (`quality.rs`); `ultra` = demo showcase (visible god rays + maxed AA/AO/shadows) |
 | `FOREST_AUDIOTEST` / `FOREST_GRADETEST` | isolate audio / reactive-grade for testing |
 | `FOREST_FLOATTEST=1` | continuously stage sample floating combat numbers near the hero (style preview) |
 | `FOREST_FLAGTEST=1` | park one cloth banner in open air at `(0, 6, -22)` to frame the flutter in isolation (`banner.rs`). NB the cloth streams along world ≈`(0.9, 0, -0.43)` — shoot from a spot perpendicular to that or it reads edge-on |
