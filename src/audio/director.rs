@@ -240,7 +240,7 @@ fn anchor_for(concept: Concept, pos: Option<Vec3>) -> Option<super::HeroLineAnch
     use super::HeroLineAnchor;
     match concept {
         Concept::NearTown | Concept::NearKids | Concept::NearPet | Concept::NearGuard
-        | Concept::InKeep => pos.map(|p| HeroLineAnchor::Near { pos: Vec2::new(p.x, p.z), r: 10.0 }),
+        | Concept::InKeep | Concept::NearFortress => pos.map(|p| HeroLineAnchor::Near { pos: Vec2::new(p.x, p.z), r: 20.0 }),
         Concept::BiomeEntered(b) => Some(HeroLineAnchor::Biome(b)),
         _ => None,
     }
