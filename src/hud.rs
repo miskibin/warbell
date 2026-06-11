@@ -183,7 +183,7 @@ fn setup_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                 shadow_hud(),
             ))
             .with_children(|b| {
-                b.spawn((label(&fonts.extrabold, "1", 16.0, GOLD), LevelText));
+                b.spawn((label(&fonts.display, "1", 16.0, GOLD), LevelText));
             });
             // Bars column.
             root.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0), ..default() })
@@ -230,8 +230,9 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
                 border_radius: radius(R_BTN),
                 ..default()
             },
-            BackgroundColor(rgb(22, 24, 30)), // 100% opacity
-            BorderColor::all(rgba(0, 0, 0, 0.6)),
+            BackgroundColor(rgb(27, 22, 16)), // 100% opacity (warm iron)
+            BorderColor::all(rgba(224, 168, 74, 0.3)),
+            shadow_hud(),
             bevy::ui::FocusPolicy::Pass,
         ))
         .with_children(|row| {
@@ -243,32 +244,33 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
                 column_gap: Val::Px(gap),
                 ..default()
             };
-            let g = atlas.get("stat:gold");
+            // Monochrome stat icons take their stat's colour; Twemoji fallbacks stay full-colour.
+            let g = atlas.get_tintable("stat:gold");
             row.spawn(cell(5.0)).with_children(|c| {
-                if let Some(h) = g { c.spawn(widgets::icon(h, 19.0)); }
+                if let Some(e) = g { c.spawn(widgets::icon_tinted(e, 17.0, GOLD)); }
                 c.spawn((label(&fonts.extrabold, "30", 14.0, GOLD), GoldText));
             });
-            let s = atlas.get("stat:stone");
+            let s = atlas.get_tintable("stat:stone");
             row.spawn(cell(5.0)).with_children(|c| {
-                if let Some(h) = s { c.spawn(widgets::icon(h, 19.0)); }
+                if let Some(e) = s { c.spawn(widgets::icon_tinted(e, 17.0, STONE)); }
                 c.spawn((label(&fonts.extrabold, "0", 14.0, STONE), StoneText));
             });
-            let w = atlas.get("stat:wood");
+            let w = atlas.get_tintable("stat:wood");
             row.spawn(cell(5.0)).with_children(|c| {
-                if let Some(h) = w { c.spawn(widgets::icon(h, 19.0)); }
+                if let Some(e) = w { c.spawn(widgets::icon_tinted(e, 17.0, rgb(190, 150, 100))); }
                 c.spawn((label(&fonts.extrabold, "0", 14.0, rgb(190, 150, 100)), WoodText));
             });
-            let p = atlas.get("stat:pop");
+            let p = atlas.get_tintable("stat:pop");
             row.spawn(cell(5.0)).with_children(|c| {
-                if let Some(h) = p { c.spawn(widgets::icon(h, 19.0)); }
+                if let Some(e) = p { c.spawn(widgets::icon_tinted(e, 17.0, rgb(235, 224, 180))); }
                 c.spawn((label(&fonts.extrabold, "4/4", 14.0, rgb(235, 224, 180)), PopText));
                 // Progress of the settle/starve meter toward the next ±1 peasant: green +% when a
                 // settler is incoming, red -% when one is starving away (colour set in update).
                 c.spawn((label(&fonts.extrabold, "", 12.0, rgb(150, 156, 164)), PopGrowthText));
             });
-            let f = atlas.get("stat:food");
+            let f = atlas.get_tintable("stat:food");
             row.spawn(cell(5.0)).with_children(|c| {
-                if let Some(h) = f { c.spawn(widgets::icon(h, 19.0)); }
+                if let Some(e) = f { c.spawn(widgets::icon_tinted(e, 17.0, food_grey)); }
                 c.spawn((label(&fonts.extrabold, "0", 14.0, food_grey), FoodText));
             });
         });
@@ -324,8 +326,8 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                     border_radius: radius(R_BTN),
                     ..default()
                 },
-                BackgroundColor(rgba(20, 22, 28, 0.72)),
-                BorderColor::all(rgba(0, 0, 0, 0.5)),
+                BackgroundColor(rgba(27, 22, 16, 0.8)),
+                BorderColor::all(IRON_EDGE),
             ))
             .with_children(|row| {
                 for kind in [SlotKind::Food, SlotKind::Resist, SlotKind::Power, SlotKind::Haste] {
@@ -343,10 +345,24 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                         QuickSlotCell(kind),
                     ))
                     .with_children(|slot| {
-                        // Key (top-left).
+                        // Keycap chip (top-left).
                         slot.spawn((
-                            Node { position_type: PositionType::Absolute, top: Val::Px(1.0), left: Val::Px(4.0), ..default() },
-                            label(&fonts.extrabold, kind.key().to_string(), 10.0, rgba(230, 236, 246, 0.8)),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                top: Val::Px(2.0),
+                                left: Val::Px(2.0),
+                                padding: UiRect::axes(Val::Px(4.0), Val::Px(0.0)),
+                                border: border(1.0),
+                                border_radius: radius(R_SLOT),
+                                ..default()
+                            },
+                            widgets::keycap_paint(),
+                            children![label(
+                                &fonts.extrabold,
+                                kind.key().to_string(),
+                                9.5,
+                                rgba(255, 224, 170, 0.92)
+                            )],
                         ));
                         // Icon (centre).
                         slot.spawn((
@@ -444,11 +460,11 @@ fn update_inv_hud(
                         border_radius: radius(R_BTN),
                         ..default()
                     },
-                    BackgroundColor(rgba(20, 18, 24, 0.55)),
+                    BackgroundColor(rgba(26, 20, 14, 0.6)),
                 ))
                 .with_children(|pip| {
-                    if let Some(h) = atlas.get(buff_icon_key(a.kind)) {
-                        pip.spawn(widgets::icon(h, 18.0));
+                    if let Some(e) = atlas.get_tintable(buff_icon_key(a.kind)) {
+                        pip.spawn(widgets::icon_tinted(e, 18.0, GOLD));
                     }
                     pip.spawn(label(&fonts.bold, format!("{:.0}s", a.remain), 10.0, GOLD));
                 });
@@ -480,7 +496,7 @@ fn update_inv_hud(
                         border_radius: radius(7.0),
                         ..default()
                     },
-                    BackgroundColor(rgba(20, 22, 28, 0.9)),
+                    BackgroundColor(rgba(28, 22, 15, 0.92)),
                     BorderColor::all(GREEN),
                     shadow_hud(),
                     anim(AnimKind::ToastIn, 0.0, 0.18),

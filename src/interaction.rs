@@ -17,7 +17,7 @@ use crate::player::HeroState;
 use crate::siege::{GamePhase, Siege};
 use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
-use crate::ui::widgets::border;
+use crate::ui::widgets::{self, border};
 
 /// Interaction ranges (world units), from the 3js `cityPlan`/`Shop` constants.
 const KEEP_DIST: f32 = 4.2;
@@ -187,11 +187,10 @@ fn setup_prompt(mut commands: Commands, fonts: Res<UiFonts>) {
                     border_radius: radius(5.0),
                     ..default()
                 },
-                BackgroundColor(rgba(48, 58, 80, 0.95)),
-                BorderColor::all(rgba(255, 255, 255, 0.14)),
+                widgets::keycap_paint(),
             ))
             .with_children(|k| {
-                k.spawn(label(&fonts.extrabold, "E", 12.0, rgb(233, 238, 251)));
+                k.spawn(label(&fonts.extrabold, "E", 12.0, rgba(255, 224, 170, 0.92)));
             });
             p.spawn((label(&fonts.bold, "Upgrades", 14.0, GOLD), PromptLabel));
         });

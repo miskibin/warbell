@@ -940,7 +940,7 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                 anim(AnimKind::SlideDown, 0.0, 0.36),
             ))
             .with_children(|card| {
-                card.spawn((label(&fonts.bold, "PREPARE", 12.0, GOLD), PhaseText));
+                card.spawn((label(&fonts.display, "PREPARE", 14.0, GOLD), PhaseText));
                 card.spawn((label(&fonts.semibold, "", 12.0, TEXT_DIM), SubText));
                 // Phase progress bar (prep day drains / wave horde remaining).
                 card.spawn((
