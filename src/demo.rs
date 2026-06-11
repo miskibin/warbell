@@ -28,7 +28,9 @@ impl Plugin for DemoPlugin {
                     .add_systems(PostUpdate, mute_captions);
             }
             Some("defend") => {
-                app.add_systems(PostStartup, defend_setup).add_systems(PostUpdate, mute_captions);
+                app.add_systems(PostStartup, defend_setup)
+                    .add_systems(Update, defend_hero.run_if(in_state(crate::game_state::Modal::None)))
+                    .add_systems(PostUpdate, mute_captions);
             }
             Some("build") => {
                 // Build logic lives in town.rs; here we just silence ambient barks for a clean clip.
@@ -51,15 +53,14 @@ impl Plugin for DemoPlugin {
 
 /// Scenic walk route (world XZ). Heads out of the castle lawn south-west toward the forest, over
 /// open grass. Keep waypoints on walkable land (this bypasses collision, so avoid walls/water).
-const EXPLORE_PATH: [Vec2; 6] = [
+const EXPLORE_PATH: [Vec2; 5] = [
     Vec2::new(-2.0, 12.0),
-    Vec2::new(-12.0, 20.0),
-    Vec2::new(-24.0, 28.0),
-    Vec2::new(-36.0, 34.0),
-    Vec2::new(-46.0, 38.0),
-    Vec2::new(-52.0, 39.0),
+    Vec2::new(-12.0, 19.0),
+    Vec2::new(-22.0, 25.0),
+    Vec2::new(-30.0, 28.0),
+    Vec2::new(-36.0, 30.0),
 ];
-const EXPLORE_SPEED: f32 = 4.5; // world units / sec
+const EXPLORE_SPEED: f32 = 4.0; // world units / sec
 const STEP_FREQ: f32 = 7.0; // matches movement.rs leg cadence
 
 /// Position + unit tangent at arc-length `d` along the polyline; `arrived` once past the end.
@@ -95,7 +96,12 @@ fn explore_drive(
     // Hold at the start until recording begins (warm-up lets shaders/lighting settle first).
     let rec = prog.as_ref().map_or(true, |p| p.recording);
     if rec {
-        *dist += EXPLORE_SPEED * dt;
+        // Only step forward onto solid land — never walk out over a river (no terrain there).
+        let next = *dist + EXPLORE_SPEED * dt;
+        let (np, _, _) = sample_path(&EXPLORE_PATH, next);
+        if crate::worldmap::ground_at_world(np.x, np.y).is_some() {
+            *dist = next;
+        }
     }
     let (pos, dir, arrived) = sample_path(&EXPLORE_PATH, *dist);
 
@@ -124,14 +130,14 @@ fn explore_drive(
 
 /// Real villager bark lines (verbatim from `audio/lines.rs`). We re-assert the caption every
 /// frame so the director's random ambient barks can't clobber our chosen quip mid-clip.
-const TALK_LINES: [&str; 5] = [
+// Only lines that have a recorded VO clip (idle_hens / idle_cousin / merchant), so the spoken
+// audio in the clip matches the caption on screen.
+const TALK_LINES: [&str; 3] = [
     "I told the hens about the orks. They were not impressed.",
     "Me cousin says he killed an ork once. Me cousin says a lotta things.",
-    "Another glorious day of standing exactly here. Living the dream.",
-    "If one more chicken gets into the chapel, I'm converting.",
     "Finest wares this side of the swamp. Only wares this side of the swamp, but still.",
 ];
-const TALK_EVERY: f32 = 3.6;
+const TALK_EVERY: f32 = 4.0;
 
 fn talk_drive(
     time: Res<Time>,
@@ -223,7 +229,74 @@ fn defend_setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for i in 0..8u32 {
+    for i in 0..18u32 {
         crate::villagers::spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, 1009 + i * 97);
     }
+}
+
+const HERO_SWING: f32 = 0.45; // matches combat::ATTACK_DURATION
+
+/// Put the knight in the thick of the night battle: he holds the gate, faces the nearest invader,
+/// swings on a cadence (the `hero_anim` swing reads these fields, mode-independent) and fells orks
+/// in front at the hit beat. Kept topped-up so he doesn't fall mid-clip. FreeRoam-only (capture).
+#[allow(clippy::type_complexity)]
+fn defend_hero(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut player: ResMut<crate::player::PlayerRes>,
+    mut hero_q: Query<(&mut Hero, &mut Transform), (Without<Camera3d>, Without<crate::orks::WaveInvader>)>,
+    orks: Query<(Entity, &Transform), (With<crate::orks::WaveInvader>, Without<crate::dying::Dying>, Without<Hero>)>,
+    mut gap: Local<f32>,
+) {
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+    player.0.hp = player.0.max_hp; // invulnerable for the show
+    let Ok((mut hero, mut htf)) = hero_q.single_mut() else { return };
+    let stand = Vec2::new(0.0, 15.0); // just outside the south gate, where the horde funnels in
+
+    // Face the nearest living invader.
+    let mut best: Option<f32> = None;
+    for (_, tf) in &orks {
+        let p = Vec2::new(tf.translation.x, tf.translation.z);
+        let d = p.distance(stand);
+        if best.map_or(true, |bd| d < bd) {
+            best = Some(d);
+            let dir = p - stand;
+            hero.facing = dir.x.atan2(dir.y);
+        }
+    }
+
+    // Swing cadence: a swing, then a short gap; fell front-arc invaders at the hit beat.
+    if hero.attacking {
+        hero.attack_t += dt;
+        let p = hero.attack_t / HERO_SWING;
+        if p >= 1.0 {
+            hero.attacking = false;
+            *gap = 0.0;
+        } else if !hero.hit_dealt && p >= 0.3 {
+            hero.hit_dealt = true;
+            let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
+            for (e, tf) in &orks {
+                let to = Vec2::new(tf.translation.x, tf.translation.z) - stand;
+                if to.length() < 3.4 && to.normalize_or_zero().dot(fwd) > 0.25 {
+                    crate::dying::begin_dying(&mut commands, e, now);
+                }
+            }
+        }
+    } else {
+        *gap += dt;
+        if *gap >= 0.22 {
+            hero.attacking = true;
+            hero.attack_t = 0.0;
+            hero.hit_dealt = false;
+        }
+    }
+
+    let hy = crate::worldmap::ground_at_world(stand.x, stand.y).unwrap_or(hero.y);
+    hero.pos = stand;
+    hero.y = hy;
+    hero.moving = false;
+    hero.moving_amt = 0.0;
+    htf.translation = Vec3::new(stand.x, hy, stand.y);
+    htf.rotation = Quat::from_rotation_y(hero.facing);
 }

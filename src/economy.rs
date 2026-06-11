@@ -92,6 +92,11 @@ impl Plugin for EconomyPlugin {
             .add_systems(OnEnter(Modal::Shop), spawn_shop)
             .add_systems(OnExit(Modal::Shop), despawn_shop)
             .add_systems(Update, shop_interact.run_if(in_state(Modal::Shop)));
+        // Clip-only: auto-fill the War Table for a tree-showcase clip (ungated — runs while the
+        // tree panel is up, which freezes the world).
+        if std::env::var("FOREST_DEMO").ok().as_deref() == Some("tree") {
+            app.add_systems(Update, demo_tree_fill);
+        }
     }
 }
 
@@ -172,6 +177,53 @@ fn try_purchase(
         true
     } else {
         false
+    }
+}
+
+/// Demo hook (`FOREST_DEMO=tree`): seed resources, open the War Table, then buy one node per few
+/// frames off the clip's frame-locked clock so a clip films the tree filling in (nodes flip to the
+/// owned tan as `tree_interact` recolours them). Clip-only; never wired in real play.
+#[allow(clippy::too_many_arguments)]
+fn demo_tree_fill(
+    prog: Option<Res<crate::capture::ClipProgress>>,
+    app: Res<State<AppState>>,
+    mut next: ResMut<NextState<Modal>>,
+    mut up: ResMut<Upgrades>,
+    mut player: ResMut<PlayerRes>,
+    mut bank: ResMut<Bank>,
+    mut def: ResMut<Defenses>,
+    mut eco: ResMut<EconomyState>,
+    mut keep: ResMut<KeepHp>,
+    mut primed: Local<bool>,
+    mut last: Local<i32>,
+) {
+    const STEP: u32 = 13; // recorded frames between buys
+    if !*primed {
+        *primed = true;
+        *last = -1;
+        player.0.add_gold(8000);
+        bank.0.add_stone(800.0);
+        if *app.get() == AppState::Playing {
+            next.set(Modal::UpgradeTree);
+        }
+    }
+    let Some(prog) = prog.as_ref() else { return };
+    if !prog.recording {
+        return;
+    }
+    let step = (prog.frame / STEP) as i32;
+    if step <= *last {
+        return;
+    }
+    *last = step;
+    // Buy the next affordable, prereq-met node (one per step) so the panel fills gradually.
+    for node in UPGRADE_NODES.iter() {
+        if !up.0.is_purchased(node.id)
+            && up.0.can_buy(node, player.0.gold, bank.0.stone() as i64, false)
+        {
+            try_purchase(node.id, &mut up, &mut player, &mut bank, &mut def, &mut eco, &mut keep);
+            break;
+        }
     }
 }
 
