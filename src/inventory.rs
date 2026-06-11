@@ -10,6 +10,7 @@
 //! into dealt, haste into move-speed) lives at each call site — `player/combat.rs`,
 //! `player/health.rs`, `player/movement.rs` — reading these resources directly.
 
+use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -209,6 +210,10 @@ struct InvUi;
 /// A clickable bag cell, tagged with its bag-slot index (use/equip on click, assign on Z/X/C).
 #[derive(Component)]
 struct InvSlotButton(usize);
+/// A clickable EQUIPPED card — click takes the piece off and returns it to the bag.
+/// `true` = weapon slot, `false` = armor.
+#[derive(Component)]
+struct UnequipButton(bool);
 /// The floating item tooltip (persists across panel rebuilds; separate from [`InvUi`]).
 #[derive(Component)]
 struct InvTooltip;
@@ -251,7 +256,7 @@ fn spawn_inventory_panel(
     atlas: Res<IconAtlas>,
     tex: Res<crate::ui::texture::UiTextures>,
 ) {
-    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex);
+    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex, true);
     spawn_tooltip(&mut commands, &fonts);
 }
 
@@ -305,6 +310,7 @@ fn build_inv_panel(
     fonts: &UiFonts,
     atlas: &IconAtlas,
     tex: &crate::ui::texture::UiTextures,
+    animate: bool, // pop-in on open only — action rebuilds must not re-play the entrance
 ) {
     let weapon = bag
         .equipped_id
@@ -320,7 +326,7 @@ fn build_inv_panel(
         .unwrap_or_else(|| "none".into());
 
     commands.spawn((widgets::scrim(60), InvUi)).with_children(|root| {
-        root.spawn((
+        let mut card_ec = root.spawn((
             Node {
                 flex_direction: FlexDirection::Column,
                 min_width: Val::Px(440.0),
@@ -331,9 +337,11 @@ fn build_inv_panel(
                 ..default()
             },
             widgets::card_paint(),
-            anim(AnimKind::PopIn, 0.0, 0.26),
-        ))
-        .with_children(|card| {
+        ));
+        if animate {
+            card_ec.insert(anim(AnimKind::PopIn, 0.0, 0.26));
+        }
+        card_ec.with_children(|card| {
             widgets::chrome_layers(card, tex.linen.clone());
             // Header.
             card.spawn(Node {
@@ -361,23 +369,55 @@ fn build_inv_panel(
                     })
                     .with_children(|eq| {
                         eq.spawn(label(&fonts.semibold, "EQUIPPED", 10.0, GREY));
-                        for (kind, val) in [("Weapon", &weapon), ("Armor", &armor)] {
-                            eq.spawn((
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: Val::Px(1.0),
-                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(10.0)),
-                                    border: border(1.0),
-                                    border_radius: radius(R_BTN),
-                                    ..default()
-                                },
-                                BackgroundColor(BTN_BG),
-                                BorderColor::all(BORDER_SOFT),
-                                children![
-                                    label(&fonts.semibold, kind, 9.0, GREY),
-                                    label(&fonts.semibold, val.clone(), 13.0, TEXT),
-                                ],
-                            ));
+                        for (kind, val, id, is_weapon) in [
+                            ("Weapon", &weapon, bag.equipped_id.as_deref(), true),
+                            ("Armor", &armor, bag.equipped_armor_id.as_deref(), false),
+                        ] {
+                            let node = Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(10.0),
+                                padding: UiRect::axes(Val::Px(12.0), Val::Px(9.0)),
+                                border: border(1.0),
+                                border_radius: radius(R_BTN),
+                                ..default()
+                            };
+                            let text_col = |eq: &mut RelatedSpawnerCommands<ChildOf>,
+                                            sub: &str,
+                                            sub_col: Color| {
+                                eq.spawn((
+                                    Node {
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(1.0),
+                                        ..default()
+                                    },
+                                    children![
+                                        label(&fonts.semibold, kind, 9.0, GREY),
+                                        label(&fonts.semibold, val.clone(), 13.0, TEXT),
+                                        label(&fonts.regular, sub.to_string(), 9.5, sub_col),
+                                    ],
+                                ));
+                            };
+                            if let Some(id) = id {
+                                // Occupied: a real button — click takes the piece off.
+                                eq.spawn((
+                                    node,
+                                    widgets::slot_paint(),
+                                    crate::ui::focus::Focusable,
+                                    UnequipButton(is_weapon),
+                                ))
+                                .with_children(|b| {
+                                    if let Some(e) = atlas.get_tintable(id) {
+                                        b.spawn(widgets::icon_tinted(e, 22.0, Color::WHITE));
+                                    }
+                                    text_col(b, "Click to unequip", rgba(255, 213, 140, 0.75));
+                                });
+                            } else {
+                                eq.spawn((node, BackgroundColor(BTN_BG), BorderColor::all(BORDER_SOFT)))
+                                    .with_children(|b| {
+                                        text_col(b, "", Color::NONE);
+                                    });
+                            }
                         }
                     });
 
@@ -549,18 +589,34 @@ fn inv_panel_interact(
     mut acts: MessageReader<crate::ui::focus::FocusActivate>,
     buttons: Query<(&Interaction, &InvSlotButton), Changed<Interaction>>,
     slots: Query<&InvSlotButton>,
+    unequips: Query<(&Interaction, &UnequipButton), Changed<Interaction>>,
+    unequip_all: Query<&UnequipButton>,
     panel: Query<Entity, With<InvUi>>,
 ) {
     // A real click, or Enter/E on the focused cell (see ui::focus) — one shared use path.
+    let keyed_acts: Vec<Entity> = acts.read().map(|a| a.0).collect();
     let clicked = buttons
         .iter()
         .find(|(i, _)| **i == Interaction::Pressed)
         .map(|(_, b)| b.0);
-    let keyed = acts.read().find_map(|a| slots.get(a.0).ok()).map(|b| b.0);
+    let keyed = keyed_acts.iter().find_map(|e| slots.get(*e).ok()).map(|b| b.0);
+    let unequip = unequips
+        .iter()
+        .find(|(i, _)| **i == Interaction::Pressed)
+        .map(|(_, b)| b.0)
+        .or_else(|| keyed_acts.iter().find_map(|e| unequip_all.get(*e).ok()).map(|b| b.0));
     let mut acted = false;
     if let Some(slot) = clicked.or(keyed) {
         if let Some(eff) = inv.0.activate_bag_item(slot) {
             apply_consume(&eff, &mut player.0, &mut buffs.0, time.elapsed_secs() as f64);
+        }
+        cues.write(AudioCue::UiSelect);
+        acted = true;
+    } else if let Some(is_weapon) = unequip {
+        if is_weapon {
+            inv.0.unequip_weapon();
+        } else {
+            inv.0.unequip_armor();
         }
         cues.write(AudioCue::UiSelect);
         acted = true;
@@ -569,7 +625,7 @@ fn inv_panel_interact(
         for e in &panel {
             commands.entity(e).despawn();
         }
-        build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex);
+        build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex, false);
     }
 }
 
@@ -615,7 +671,7 @@ fn inv_assign_input(
     for e in &panel {
         commands.entity(e).despawn();
     }
-    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex);
+    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex, false);
 }
 
 /// Park the floating tooltip at the cursor over the hovered bag item, filling name + stat +

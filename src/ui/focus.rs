@@ -11,6 +11,10 @@
 
 use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::prelude::*;
+// UI nodes carry `UiGlobalTransform` (an Affine2), NOT `GlobalTransform` — a query asking for
+// `GlobalTransform` on a UI node silently matches nothing. This bit once: every focus query came
+// back empty, so focus reset to None each frame and hover/arrows/tooltips were all dead.
+use bevy::ui::UiGlobalTransform;
 
 use super::theme::{rgba, GOLD};
 
@@ -62,15 +66,15 @@ fn hover_steals_focus(
 }
 
 /// Centre of a focusable in physical px (consistent units are all the scoring needs).
-fn centers(q: &Query<(Entity, &ComputedNode, &GlobalTransform), With<Focusable>>) -> Vec<(Entity, Vec2)> {
-    q.iter().map(|(e, _, gt)| (e, gt.translation().truncate())).collect()
+fn centers(q: &Query<(Entity, &ComputedNode, &UiGlobalTransform), With<Focusable>>) -> Vec<(Entity, Vec2)> {
+    q.iter().map(|(e, _, gt)| (e, gt.translation)).collect()
 }
 
 fn key_nav(
     mut focus: ResMut<UiFocus>,
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
-    q: Query<(Entity, &ComputedNode, &GlobalTransform), With<Focusable>>,
+    q: Query<(Entity, &ComputedNode, &UiGlobalTransform), With<Focusable>>,
 ) {
     if q.is_empty() {
         focus.current = None;
@@ -200,7 +204,7 @@ fn spawn_tip(mut commands: Commands, fonts: Res<super::fonts::UiFonts>) {
 
 fn drive_tip(
     focus: Res<UiFocus>,
-    tips: Query<(&Tip, &ComputedNode, &GlobalTransform)>,
+    tips: Query<(&Tip, &ComputedNode, &UiGlobalTransform)>,
     mut root: Query<(&mut Node, &mut Visibility), With<TipRoot>>,
     mut text: Query<&mut Text, With<TipText>>,
     windows: Query<&Window>,
@@ -213,7 +217,7 @@ fn drive_tip(
     };
     let Ok(window) = windows.single() else { return };
     let sf = cn.inverse_scale_factor();
-    let centre = gt.translation().truncate() * sf;
+    let centre = gt.translation * sf;
     let half = cn.size() * sf * 0.5;
     // Below the node, clamped on-screen (the tooltip's own size isn't known pre-layout; the
     // 270px right margin keeps even a max-width tip inside the window).
