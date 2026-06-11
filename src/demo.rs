@@ -31,13 +31,20 @@ impl Plugin for DemoPlugin {
                 app.add_systems(PostStartup, defend_setup)
                     .add_systems(
                         Update,
-                        (defend_hero, defend_keep_guards).run_if(in_state(crate::game_state::Modal::None)),
+                        (defend_hero, defend_keep_guards, defend_cam)
+                            .run_if(in_state(crate::game_state::Modal::None)),
                     )
                     .add_systems(PostUpdate, (mute_captions, defend_light));
             }
-            Some("build") | Some("work") => {
-                // Build/work logic lives in town.rs; here we just silence ambient barks.
+            Some("build") => {
+                // Build logic lives in town.rs; here we just silence ambient barks.
                 app.add_systems(PostUpdate, mute_captions);
+            }
+            Some("work") => {
+                // Village setup lives in town.rs (demo_work_setup); here: the tracking camera
+                // that follows one woodcutter through the whole chop-topple-haul loop.
+                app.add_systems(Update, work_drive.run_if(in_state(crate::game_state::Modal::None)))
+                    .add_systems(PostUpdate, mute_captions);
             }
             Some("talk") => {
                 // PostUpdate so our chosen caption is the last write each frame — the audio
@@ -223,6 +230,66 @@ fn rescue_drive(
     subs.force(now, Some("Townsfolk"), RESCUE_LINE, 2.0);
 }
 
+// ── work: tracking shot on a woodcutter (peasants visibly do the work) ───────────────
+
+/// Follow one woodcutter close-up through the whole work loop: march to the tree, swing the axe
+/// (chips fly, trunk shakes), topple it, shoulder the log and haul it home through the village.
+/// Sticky target — the same villager is followed across job-component changes (ChopJob → Hauling
+/// → idle gap → next ChopJob); only a despawn re-picks. Camera trails behind-left of the facing
+/// with a soft lerp so turns read as a swing, not a snap.
+#[allow(clippy::type_complexity)]
+fn work_drive(
+    time: Res<Time>,
+    prog: Option<Res<crate::capture::ClipProgress>>,
+    choppers: Query<
+        (Entity, &crate::town::Worker),
+        (With<crate::lumberjack::ChopJob>, Without<crate::dying::Dying>),
+    >,
+    haulers: Query<Entity, (With<crate::lumberjack::Hauling>, Without<crate::dying::Dying>)>,
+    vills: Query<&crate::villagers::Villager, Without<crate::dying::Dying>>,
+    mut cam_q: Query<&mut Transform, With<Camera3d>>,
+    mut target: Local<Option<Entity>>,
+    mut smooth: Local<Option<Vec3>>,
+) {
+    let dt = time.delta_secs();
+    let rec = prog.as_ref().map_or(true, |p| p.recording);
+    // During warm-up, re-pick freely so recording opens on the best subject: a cutter already
+    // swinging at a tree (`at_post`) beats one still marching, beats a hauler. Once recording,
+    // the star is sticky — followed across ChopJob → Hauling → idle-gap → next ChopJob — and
+    // only a despawn re-picks.
+    let lost = target.map_or(true, |e| vills.get(e).is_err());
+    if !rec || lost {
+        let pick = choppers
+            .iter()
+            .find(|(_, w)| w.at_post)
+            .map(|(e, _)| e)
+            .or_else(|| choppers.iter().next().map(|(e, _)| e))
+            .or_else(|| haulers.iter().next());
+        if pick.is_some() {
+            *target = pick;
+        }
+    }
+    let Some(v) = target.and_then(|e| vills.get(e).ok()) else { return };
+    let Ok(mut ctf) = cam_q.single_mut() else { return };
+
+    // Villagers are small folk (~0.8 units tall) — the camera has to sit close and low or the
+    // star reads as a speck and the canopy swallows him. Over-the-shoulder: short trail, slight
+    // side offset, eye barely above his head, aimed at the chest.
+    let gy = crate::worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(0.0);
+    let fwd = Vec2::new(v.facing.sin(), v.facing.cos());
+    let side = Vec2::new(fwd.y, -fwd.x);
+    let cpos = v.pos - fwd * 3.3 + side * 1.25;
+    let cgy = crate::worldmap::ground_at_world(cpos.x, cpos.y).unwrap_or(gy);
+    let want = Vec3::new(cpos.x, cgy.max(gy) + 1.6, cpos.y);
+    let eye = match *smooth {
+        Some(prev) => prev.lerp(want, 1.0 - (-2.6 * dt).exp()),
+        None => want,
+    };
+    *smooth = Some(eye);
+    ctf.translation = eye;
+    ctf.look_at(Vec3::new(v.pos.x, gy + 0.8, v.pos.y), Vec3::Y);
+}
+
 // ── defend: courtyard guard reinforcement ────────────────────────────────────────────
 
 /// Stand up a squad of courtyard guards so the castle visibly fights back (they auto-engage
@@ -251,6 +318,27 @@ fn defend_keep_guards(mut guards: Query<&mut crate::villagers::NpcHp, With<crate
 fn defend_light(mut ambient: ResMut<GlobalAmbientLight>) {
     ambient.brightness = 480.0;
     ambient.color = Color::srgb(0.72, 0.80, 1.0);
+}
+
+/// Low, slow-orbiting battle camera inside the courtyard melee — close enough that the knight,
+/// guards and orks fill the frame (the old far `FOREST_CAM` overview read as ants). Frame-locked
+/// drift (clip elapsed-time is wall-clocked, not 1:1 with playback) so the pan speed is exact in
+/// the stitched clip; during warm-up it holds the opening angle while shaders settle. The close
+/// range also lands inside `drive_dof_focus`'s hero-focus window, so the fight is sharp against a
+/// bokeh background — the "depth" the wide shot never had.
+fn defend_cam(
+    prog: Option<Res<crate::capture::ClipProgress>>,
+    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>)>,
+) {
+    let Ok(mut ctf) = cam_q.single_mut() else { return };
+    let f = prog.as_ref().map_or(0, |p| p.frame) as f32;
+    let centre = Vec2::new(0.0, 5.6); // between the keep and the knight's stand at (0,7)
+    let ang = 0.55 + f / 30.0 * 0.085; // rad; ~4.9°/s of playback — a slow battle pan
+    let r = 9.6;
+    let eye2 = centre + Vec2::new(ang.sin(), ang.cos()) * r;
+    let gy = crate::worldmap::ground_at_world(centre.x, centre.y).unwrap_or(0.0);
+    ctf.translation = Vec3::new(eye2.x, gy + 3.2, eye2.y);
+    ctf.look_at(Vec3::new(centre.x, gy + 1.4, centre.y), Vec3::Y);
 }
 
 const HERO_SWING: f32 = 0.45; // matches combat::ATTACK_DURATION
