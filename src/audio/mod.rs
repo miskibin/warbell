@@ -436,6 +436,10 @@ fn detect_hero_remarks(
             }
         }
     }
+    // Gnashfang Hold centre (world XZ) — fires when hero approaches the south blight.
+    const FORTRESS_CENTRE: Vec2 = Vec2::new(12.0, 103.0);
+    const FORTRESS_NEAR_R: f32 = 55.0;
+    let near_fortress = hp.distance(FORTRESS_CENTRE) <= FORTRESS_NEAR_R;
     use crate::critters::Species;
     let near_pet = pets
         .iter()
@@ -447,7 +451,7 @@ fn detect_hero_remarks(
         Vec2::new(p.x, p.z).distance(hp) <= QUIET_CLEAR
     });
 
-    // ── Trigger priority: Kill > Kids > Pet > Guard > Keep > Town > Night > Quiet. ──
+    // ── Trigger priority: Kill > Kids > Pet > Guard > Keep > Town > Fortress > Night > Quiet. ──
     use crate::siege::GamePhase;
     let concept = if killed {
         Some(Concept::KillMusing)
@@ -461,6 +465,8 @@ fn detect_hero_remarks(
         Some(Concept::InKeep)
     } else if near_town {
         Some(Concept::NearTown)
+    } else if near_fortress {
+        Some(Concept::NearFortress)
     } else if phase == Some(GamePhase::Wave) {
         Some(Concept::NightMusing)
     } else if phase.map(|p| p == GamePhase::Prep).unwrap_or(true) && !orks_near {

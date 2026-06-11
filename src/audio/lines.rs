@@ -71,6 +71,7 @@ pub enum Concept {
     NearPet,
     NearGuard,
     InKeep,
+    NearFortress,
     NightMusing,
     QuietMusing,
     KillMusing,
@@ -200,6 +201,10 @@ pub const LINES: &[Line] = &[
     // Trigger: InKeep — hero inside the keep footprint
     Line { floor: 300.0, priority: 5, ..line("keep_a",     Speaker::Hero, Concept::InKeep, "Old stones. They've outlived better men than me. They'll outlive me too.") },
     Line { floor: 300.0, priority: 5, ..line("keep_b",     Speaker::Hero, Concept::InKeep, "This keep's swallowed a hundred sieges. One more won't choke it.") },
+    // Trigger: NearFortress — hero within sight range of Gnashfang Hold (south swamp)
+    Line { floor: 600.0, priority: 8, ..line("fortress_sight", Speaker::Hero, Concept::NearFortress, "There it is. Gnashfang Hold. Every roar on this island starts there.") },
+    Line { floor: 600.0, priority: 8, ..line("fortress_near",  Speaker::Hero, Concept::NearFortress, "Walk soft. Their archers don't ask questions.") },
+    Line { floor: 600.0, priority: 8, ..line("fortress_drums", Speaker::Hero, Concept::NearFortress, "Hear the drums? They're not celebrating. They're counting.") },
     // Trigger: NightMusing — during a wave
     Line { floor: 300.0, priority: 5, ..line("night_a",    Speaker::Hero, Concept::NightMusing, "Stars are out. Somewhere up there someone's keeping a tally. Hope I'm ahead.") },
     Line { floor: 300.0, priority: 5, ..line("night_b",    Speaker::Hero, Concept::NightMusing, "Clear night. Pretty — if you forget what comes with the dark.") },
@@ -225,6 +230,20 @@ pub const LINES: &[Line] = &[
     Line { floor: 360.0, ..line("idle_hens",    Speaker::Villager, Concept::Greeting,         "I told the hens about the orks. They were not impressed.") },
     Line { floor: 360.0, ..line("idle_cousin",  Speaker::Villager, Concept::Greeting,         "Me cousin says he killed an ork once. Me cousin says a lotta things.") },
     Line { floor: 360.0, ..line("merchant",     Speaker::Villager, Concept::Greeting,         "Finest wares this side of the swamp. Only wares this side of the swamp, but still.") },
+    // Worker ambient lines — lumberjack, miner, farmer. Pooled into Greeting so they
+    // rotate naturally with the other ambient chatter; spatial villager routing applies.
+    Line { floor: 360.0, ..line("timber",          Speaker::Villager, Concept::Greeting, "Timber!") },
+    Line { floor: 360.0, ..line("lumber_opinions", Speaker::Villager, Concept::Greeting, "This one's got opinions.") },
+    Line { floor: 360.0, ..line("lumber_trees",    Speaker::Villager, Concept::Greeting, "Trees don't fight back. That's why I like trees.") },
+    Line { floor: 360.0, ..line("lumber_dream",    Speaker::Villager, Concept::Greeting, "Chop, haul, stack. Living the dream.") },
+    Line { floor: 360.0, ..line("miner_growback",  Speaker::Villager, Concept::Greeting, "Stone doesn't grow back. Wish someone tell the keep that.") },
+    Line { floor: 360.0, ..line("miner_heavy",     Speaker::Villager, Concept::Greeting, "Heavy? No, no. I walk like this for fun.") },
+    Line { floor: 360.0, ..line("miner_ore",       Speaker::Villager, Concept::Greeting, "Found ore! Somebody else carry it.") },
+    Line { floor: 360.0, ..line("miner_pa",        Speaker::Villager, Concept::Greeting, "Pick, rock, repeat. My paw did this. His paw did this. None of us learned.") },
+    Line { floor: 360.0, ..line("farmer_grow",     Speaker::Villager, Concept::Greeting, "Grow, you little green liars.") },
+    Line { floor: 360.0, ..line("farmer_turnips",  Speaker::Villager, Concept::Greeting, "Orcs trampled the turnips again. The turnips.") },
+    Line { floor: 360.0, ..line("farmer_always",   Speaker::Villager, Concept::Greeting, "Rain or orcs. Always something.") },
+    Line { floor: 360.0, ..line("farmer_feeds",    Speaker::Villager, Concept::Greeting, "Feed the whole island, they said. Nobody feeds the farmer.") },
     // These jabs are aimed AT the hero, so each opens a call-and-response chain: when the
     // line finishes it dispatches `ReplyToVillagerJab` to the hero, who picks a comeback from his
     // reply pool below (the Valve "then" dispatch — `tick_chains` resolves it against current facts,
