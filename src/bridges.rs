@@ -155,6 +155,17 @@ pub fn is_on_bridge(wx: f32, wz: f32) -> bool {
     span_at(wx, wz).is_some()
 }
 
+/// Is `(wx, wz)` on or hugging a bridge deck (footprint padded by `pad`)? Placement code
+/// (worldmap scatter, verbs props/chests) rejects these spots — the deck overhangs `OVERHANG`
+/// onto solid land at each end, so without this trees/props spawn up through the planks.
+pub fn near_bridge(wx: f32, wz: f32, pad: f32) -> bool {
+    spans().iter().any(|s| {
+        let (along, across) =
+            if s.across_x { (wx - s.cx, wz - s.cz) } else { (wz - s.cz, wx - s.cx) };
+        along.abs() <= s.half + pad && across.abs() <= DECK_HALF_Z + pad
+    })
+}
+
 /// Walkable deck-top Y at `(wx, wz)` if it's on a bridge, else `None`. The hero ORs this onto
 /// `worldmap::ground_at_world` (which is terrain-only and reads `None` over the river) so he can
 /// stand + ground on the planks. Deck transform sits at `bank_y + 0.2`; planks are 0.1 thick →

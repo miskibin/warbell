@@ -175,8 +175,8 @@ fn arm_as_guard(commands: &mut Commands, e: Entity, post: Vec2) {
 // NPC combat tuning. Townsfolk take damage ONLY through the [`NpcDamage`] channel (ork blades
 // from `siege.rs`, predator bites from `wildlife.rs`) — no self-inflicted melt — so guards are
 // beefy enough that a pair wins a 1v1 but a wave still overwhelms them.
-const NPC_MAX_HP: f32 = 65.0;
-const GUARD_DAMAGE: f32 = 9.0;
+const NPC_MAX_HP: f32 = 117.0; // +80% over the old 65: townsfolk soak much more punishment now
+const GUARD_DAMAGE: f32 = 6.3; // −30% off the old 9: guards trade slower, lean on staying power
 /// How far a guard will march to hunt an invader at night. Large enough to cover the whole
 /// defended area, so the reserve actively goes out to meet the wave instead of standing idle until
 /// an ork wanders within arm's reach (the old 12-unit passive radius left guards doing nothing).
@@ -192,8 +192,8 @@ const GUARD_REGEN: f32 = 3.0;
 const GUARD_MELEE: f32 = 1.6;
 const GUARD_SPEED: f32 = 2.4;
 const GUARD_ATTACK_CD: f32 = 1.0;
-/// A passive townsperson's self-defence swing: weak (a hoe, an axe haft) but real.
-const NPC_DEFEND_DMG: f32 = 6.0;
+/// A passive townsperson's self-defence swing: weak (a hoe, an axe haft) but real. −30% off the old 6.
+const NPC_DEFEND_DMG: f32 = 4.2;
 const NPC_DEFEND_CD: f32 = 1.2;
 const NPC_MELEE: f32 = 1.5;
 /// A defender gives up the brawl when its attacker breaks off this far away.
