@@ -54,6 +54,49 @@ jobs:
           Copy-Item -Recurse assets dist/${{ matrix.artifact }}/assets
           Compress-Archive -Path dist/${{ matrix.artifact }}/* -DestinationPath dist/${{ matrix.artifact }}.zip
 
+      # Build the MSI installer (WiX 6, a dotnet global tool). The exe already carries its
+      # embedded icon + version metadata from build.rs, so the installer + installed shortcut
+      # are branded with no extra work here.
+      - name: Build MSI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          wix build installer/tileworld.wxs -arch x64 -d SourceDir="$env:GITHUB_WORKSPACE" -o "dist/Warbell-${{ github.ref_name }}-setup.msi"
+
+      # Self-sign the MSI so it carries an Authenticode signature (Digital Signatures tab shows
+      # "Warbell (self-signed)"). NOTE: a self-signed cert does NOT chain to a trusted root, so
+      # end users still see a SmartScreen warning / "Unknown Publisher" in UAC. Removing those
+      # warnings requires a real CA code-signing certificate. To swap one in: store the .pfx as a
+      # base64 secret, import it here instead of New-SelfSignedCertificate, and sign with its
+      # thumbprint — the signtool invocation stays identical.
+      - name: Self-sign MSI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+            -Subject "CN=Warbell (self-signed), O=miskibin" `
+            -KeyUsage DigitalSignature -FriendlyName "Warbell code signing" `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -KeyExportPolicy Exportable -KeySpec Signature `
+            -HashAlgorithm SHA256
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          Write-Host "Using signtool: $($signtool.FullName)"
+          $msi = "dist/Warbell-${{ github.ref_name }}-setup.msi"
+          & $signtool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint `
+            /tr http://timestamp.digicert.com /td SHA256 $msi
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign failed ($LASTEXITCODE)" }
+          # Confirm the signature + timestamp are present. We can't use `signtool verify /pa`
+          # here: it demands a chain to a trusted root, and a self-signed cert isn't trusted
+          # (and adding it to the Root store pops a consent dialog that fails non-interactively).
+          # Get-AuthenticodeSignature reports the signer/timestamp without requiring trust.
+          $sig = Get-AuthenticodeSignature $msi
+          Write-Host "Signature status : $($sig.Status)  (NotTrusted/UnknownError is expected for a self-signed cert)"
+          Write-Host "Signer           : $($sig.SignerCertificate.Subject)"
+          Write-Host "Timestamp        : $($sig.TimeStamperCertificate.Subject)"
+          if (-not $sig.SignerCertificate) { throw "MSI is not signed" }
+
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -65,7 +108,11 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          # The MSI line only matches on the Windows runner; on Linux it is skipped silently
+          # thanks to fail_on_unmatched_files: false.
           files: |
             dist/${{ matrix.artifact }}.zip
             dist/${{ matrix.artifact }}.tar.gz
+            dist/Warbell-${{ github.ref_name }}-setup.msi
+          fail_on_unmatched_files: false
           generate_release_notes: true
