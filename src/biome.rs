@@ -493,7 +493,7 @@ pub fn scatter_region(
                         let trunk_r = (0.2 * s).min(0.8);
                         crate::blockers::add(cx, cz, trunk_r);
                         let base = cardinal(&mut r);
-                        commands.spawn((
+                        let mut tree = commands.spawn((
                             Mesh3d(mesh),
                             MeshMaterial3d(mat.clone()),
                             // Identity rotation — wind `Sway` overwrites it each frame.
@@ -508,6 +508,11 @@ pub fn scatter_region(
                             crate::verbs::ChopTree::new(trunk_r),
                             BiomeEntity,
                         ));
+                        // Desert "trees" are saguaro cacti — tag them so felling plays the dry
+                        // wood-crack instead of the full timber crash (no woody trunk to crash).
+                        if cfg.biome == Biome::Desert {
+                            tree.insert(crate::verbs::Cactus);
+                        }
                     }
                 } else {
                     // Big non-tree props (boulders) block, scaled with the instance and capped at

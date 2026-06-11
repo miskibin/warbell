@@ -84,6 +84,10 @@ pub enum AudioCue {
     /// A single axe chop landing on a tree (sampled `chop-wood-{1..3}.ogg`, random take +
     /// pitch jitter). Emitted once per swing that strikes any choppable tree (`verbs::chop_tree`).
     WoodChop,
+    /// A felled tree hitting the ground — the combined crack+crash (`tree-fall.ogg`). `cactus`
+    /// swaps it for the dry wood-crack alone (`wood-crack.ogg`), since a saguaro has no heavy
+    /// timber to crash. Emitted once at the landing frame by `verbs::drive_felling`, earshot-gated.
+    TreeFall { cactus: bool },
     /// Herb / loot picked up (sampled `forage.ogg`).
     Forage,
     /// Night wave summoned — the war bell's single hard toll (sampled `war-bell.ogg`).

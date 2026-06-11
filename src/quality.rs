@@ -138,11 +138,11 @@ fn ultra_fog() -> FogVolume {
         }
     }
     FogVolume {
-        density_factor: 0.012,
-        absorption: 0.01,
-        scattering: 0.45,
-        scattering_asymmetry: 0.88,
-        light_intensity: 4.5,
+        density_factor: 0.008,
+        absorption: 0.004,
+        scattering: 0.5,
+        scattering_asymmetry: 0.85,
+        light_intensity: 5.5,
         ..default()
     }
 }

@@ -251,6 +251,13 @@ impl ChopTree {
     }
 }
 
+/// Marks a [`ChopTree`] that's actually a desert saguaro, not a woody tree. Tagged at scatter
+/// time for every tree-class instance in a `Biome::Desert` patch (`biome::scatter_region`). The
+/// only gameplay effect is the felling sound: a cactus has no heavy timber crash, so it gets the
+/// dry wood-crack clip instead of the full tree-fall (`audio::AudioCue::TreeFall { cactus }`).
+#[derive(Component)]
+pub struct Cactus;
+
 /// A felled tree waiting to regrow: hidden in place (the trunk blocker lifted), restored to a
 /// full [`ChopTree`] by [`regrow_trees`] — so the woodcutters can't permanently deforest the
 /// safe zone, and the player's own clear-cuts heal over too.
@@ -360,10 +367,10 @@ fn drive_felling(
     fx: Option<Res<crate::player::CombatFx>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cues: MessageWriter<AudioCue>,
-    mut q: Query<(Entity, &mut Felling, &mut Transform, &mut Visibility)>,
+    mut q: Query<(Entity, &mut Felling, &mut Transform, &mut Visibility, Has<Cactus>)>,
 ) {
     let now = time.elapsed_secs();
-    for (e, mut fell, mut tf, mut vis) in &mut q {
+    for (e, mut fell, mut tf, mut vis, cactus) in &mut q {
         let t = now - fell.started;
         if t >= FELL_DUR {
             // Landing: hide the trunk (regrow restores it) + sell the impact where the crown hit.
@@ -379,9 +386,10 @@ fn drive_felling(
             if let Some(fx) = &fx {
                 crate::player::spawn_shockwave(&mut commands, fx, &mut materials, Vec3::new(at.x, gy, at.z), now);
             }
-            // A soft ground whump, only near the hero (woodcutters fell trees all day).
+            // The tree hits the ground: a full crack+crash for woody trees, just the dry crack
+            // for a cactus. Earshot-gated (woodcutters fell trees all day across the island).
             if hero.pos.distance(Vec2::new(tf.translation.x, tf.translation.z)) < 18.0 {
-                cues.write(AudioCue::Impact { kill: false });
+                cues.write(AudioCue::TreeFall { cactus });
             }
             commands.entity(e).try_remove::<Felling>();
             continue;

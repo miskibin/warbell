@@ -22,6 +22,12 @@ pub(crate) struct SfxBank {
     /// Wood-axe chops landing on a tree (three takes, picked at random + pitch-jittered per
     /// swing so a long chop session never loops one clip).
     chops: Vec<Handle<AudioSource>>,
+    /// A whole tree coming down: a wood crack/snap layered with a heavy ground crash
+    /// (`tree-fall.ogg`). Played once at the felling landing for woody trees.
+    tree_fall: Handle<AudioSource>,
+    /// Just the dry wood crack/snap (`wood-crack.ogg`) — the cactus felling sound (a saguaro
+    /// has no heavy trunk to crash, so it gets the crack alone).
+    wood_crack: Handle<AudioSource>,
     block: Handle<AudioSource>,
     ui: Handle<AudioSource>,
     /// Sampled herb-pick rustle (replaces the old `Sting::Forage` synth blip).
@@ -56,6 +62,8 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .iter()
             .map(|f| asset.load(*f))
             .collect(),
+        tree_fall: asset.load("audio/tree-fall.ogg"),
+        wood_crack: asset.load("audio/wood-crack.ogg"),
         block: asset.load("audio/block.ogg"),
         ui: asset.load("audio/menu-select.ogg"),
         forage: asset.load("audio/forage.ogg"),
@@ -140,6 +148,14 @@ pub(crate) fn play_cues(
             // long chop varies.
             AudioCue::WoodChop => {
                 one_shot(&mut commands, pick(&bank.chops, &mut seed), 0.6 * sfx, jitter(&mut seed, 0.12));
+            }
+            // A tree coming down on the felling blow: woody trees get the full crack+crash, a
+            // cactus just the dry crack. Louder than a chop swing (rarer, the kill-stroke) and
+            // pitch-jittered lightly so back-to-back fells don't sound identical.
+            AudioCue::TreeFall { cactus } => {
+                let clip = if cactus { bank.wood_crack.clone() } else { bank.tree_fall.clone() };
+                let vol = if cactus { 0.6 } else { 0.85 } * sfx;
+                one_shot(&mut commands, clip, vol, jitter(&mut seed, 0.08));
             }
             AudioCue::Block => one_shot(&mut commands, bank.block.clone(), 0.45 * sfx, jitter(&mut seed, 0.1)),
             AudioCue::Footstep { surface, landing } => {

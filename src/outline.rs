@@ -49,6 +49,10 @@ pub struct Outline {
     pub strength: f32,
     /// Camera near plane (depth → distance).
     pub near: f32,
+    /// Sun-gaze multiplier on `strength`, driven per-frame by [`fade_outline_toward_sun`]
+    /// (1 = full outlines; eases down when the camera looks into the sun, where backlit
+    /// silhouettes + full-strength edges read cartoony). Not a hand-tuned knob.
+    pub sun_fade: f32,
 }
 
 /// A SUBTLE default: silhouette-only (a high `normal_threshold` suppresses the per-facet
@@ -56,7 +60,37 @@ pub struct Outline {
 /// what's behind them, not cartoon-outlined. Crank it (or lower the crease sens) in the F1
 /// panel if you want a bolder toon look; set strength 0 to disable entirely.
 pub fn default_outline() -> Outline {
-    Outline { thickness: 1.2, depth_threshold: 0.06, normal_threshold: 1.3, strength: 0.15, near: NEAR }
+    Outline {
+        thickness: 1.2,
+        depth_threshold: 0.06,
+        normal_threshold: 1.3,
+        strength: 0.15,
+        near: NEAR,
+        sun_fade: 1.0,
+    }
+}
+
+/// Ease the outline off as the camera turns into the sun: against the bright sky every prop is
+/// already a high-contrast backlit silhouette, and stacking the full edge-darkening on top reads
+/// cartoony (user feedback). No effect below ~37° off-sun (cos 0.80), eases to 30% strength when
+/// staring straight at it. Runs ungated (pure view cosmetics, like the other render systems).
+fn fade_outline_toward_sun(
+    sun: Query<&GlobalTransform, With<crate::scene::Sun>>,
+    mut cams: Query<(&GlobalTransform, &mut Outline)>,
+) {
+    let Ok(sun_tf) = sun.single() else { return };
+    // The day/night cycle parks the sun at `sun_dir * 120` looking at the origin, so its
+    // translation IS the direction to the sun.
+    let to_sun = sun_tf.translation().normalize_or_zero();
+    for (cam_tf, mut o) in cams.iter_mut() {
+        let fwd = cam_tf.rotation() * Vec3::NEG_Z;
+        let align = fwd.dot(to_sun).max(0.0);
+        let t = ((align - 0.80) / (0.97 - 0.80)).clamp(0.0, 1.0);
+        let fade = 1.0 - 0.7 * (t * t * (3.0 - 2.0 * t)); // smoothstep ease
+        if (o.sun_fade - fade).abs() > 1e-3 {
+            o.sun_fade = fade;
+        }
+    }
 }
 
 pub struct OutlinePlugin;
@@ -66,7 +100,8 @@ impl Plugin for OutlinePlugin {
         app.add_plugins((
             ExtractComponentPlugin::<Outline>::default(),
             UniformComponentPlugin::<Outline>::default(),
-        ));
+        ))
+        .add_systems(Update, fade_outline_toward_sun);
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;

@@ -17,6 +17,7 @@ struct Settings {
     normal_threshold: f32,  // 1-dot(normal) break that counts as a crease edge
     strength: f32,          // how dark the outline goes (0..1)
     near: f32,              // camera near plane (depth → distance)
+    sun_fade: f32,          // sun-gaze multiplier (1 = full; <1 when looking into the sun)
 }
 @group(0) @binding(4) var<uniform> settings: Settings;
 
@@ -58,5 +59,5 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let normal_edge = smoothstep(settings.normal_threshold, settings.normal_threshold + 0.25, max_normal);
     let edge = max(depth_edge, normal_edge);
 
-    return vec4<f32>(color.rgb * (1.0 - edge * settings.strength), color.a);
+    return vec4<f32>(color.rgb * (1.0 - edge * settings.strength * settings.sun_fade), color.a);
 }
