@@ -249,8 +249,9 @@ fn spawn_inventory_panel(
     inv: Res<Inventory>,
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
+    tex: Res<crate::ui::texture::UiTextures>,
 ) {
-    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas);
+    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex);
     spawn_tooltip(&mut commands, &fonts);
 }
 
@@ -282,8 +283,8 @@ fn spawn_tooltip(commands: &mut Commands, fonts: &UiFonts) {
                 display: Display::None,
                 ..default()
             },
-            BackgroundColor(rgba(16, 18, 24, 0.97)),
-            BorderColor::all(rgba(255, 255, 255, 0.16)),
+            BackgroundColor(rgba(20, 16, 11, 0.97)),
+            BorderColor::all(GOLD_HAIRLINE),
             shadow_card(),
             GlobalZIndex(90),
             bevy::ui::FocusPolicy::Pass,
@@ -298,7 +299,13 @@ fn spawn_tooltip(commands: &mut Commands, fonts: &UiFonts) {
 
 /// (Re)build the satchel panel: an equipped-gear column beside a 6-wide bag grid. Each occupied
 /// cell is clickable (use/equip). Called on open and after every action. Ported from `InventoryPanel`.
-fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &IconAtlas) {
+fn build_inv_panel(
+    commands: &mut Commands,
+    bag: &Bag,
+    fonts: &UiFonts,
+    atlas: &IconAtlas,
+    tex: &crate::ui::texture::UiTextures,
+) {
     let weapon = bag
         .equipped_id
         .as_deref()
@@ -319,7 +326,7 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
                 min_width: Val::Px(440.0),
                 row_gap: Val::Px(14.0),
                 padding: UiRect::axes(Val::Px(26.0), Val::Px(22.0)),
-                border: border(1.0),
+                border: border(2.0),
                 border_radius: radius(R_PANEL),
                 ..default()
             },
@@ -327,6 +334,7 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
             anim(AnimKind::PopIn, 0.0, 0.26),
         ))
         .with_children(|card| {
+            widgets::chrome_layers(card, tex.linen.clone());
             // Header.
             card.spawn(Node {
                 flex_direction: FlexDirection::Row,
@@ -338,7 +346,7 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
             })
             .insert(BorderColor::all(BORDER_SOFT))
             .with_children(|h| {
-                h.spawn(label(&fonts.bold, "SATCHEL", 18.0, TEXT));
+                h.spawn(label(&fonts.display, "SATCHEL", 17.0, GOLD));
             });
 
             // Body: equipment column + bag grid.
@@ -440,6 +448,7 @@ fn build_inv_panel(commands: &mut Commands, bag: &Bag, fonts: &UiFonts, atlas: &
                                             ..default()
                                         },
                                         widgets::slot_paint(),
+                                        crate::ui::focus::Focusable,
                                         InvSlotButton(i),
                                     ))
                                     .with_children(|cell| {
@@ -536,25 +545,31 @@ fn inv_panel_interact(
     mut commands: Commands,
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
+    tex: Res<crate::ui::texture::UiTextures>,
+    mut acts: MessageReader<crate::ui::focus::FocusActivate>,
     buttons: Query<(&Interaction, &InvSlotButton), Changed<Interaction>>,
+    slots: Query<&InvSlotButton>,
     panel: Query<Entity, With<InvUi>>,
 ) {
+    // A real click, or Enter/E on the focused cell (see ui::focus) — one shared use path.
+    let clicked = buttons
+        .iter()
+        .find(|(i, _)| **i == Interaction::Pressed)
+        .map(|(_, b)| b.0);
+    let keyed = acts.read().find_map(|a| slots.get(a.0).ok()).map(|b| b.0);
     let mut acted = false;
-    for (interaction, btn) in &buttons {
-        if *interaction == Interaction::Pressed {
-            if let Some(eff) = inv.0.activate_bag_item(btn.0) {
-                apply_consume(&eff, &mut player.0, &mut buffs.0, time.elapsed_secs() as f64);
-            }
-            cues.write(AudioCue::UiSelect);
-            acted = true;
-            break;
+    if let Some(slot) = clicked.or(keyed) {
+        if let Some(eff) = inv.0.activate_bag_item(slot) {
+            apply_consume(&eff, &mut player.0, &mut buffs.0, time.elapsed_secs() as f64);
         }
+        cues.write(AudioCue::UiSelect);
+        acted = true;
     }
     if acted {
         for e in &panel {
             commands.entity(e).despawn();
         }
-        build_inv_panel(&mut commands, &inv.0, &fonts, &atlas);
+        build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex);
     }
 }
 
@@ -578,6 +593,7 @@ fn inv_assign_input(
     mut commands: Commands,
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
+    tex: Res<crate::ui::texture::UiTextures>,
     buttons: Query<(&Interaction, &InvSlotButton)>,
     panel: Query<Entity, With<InvUi>>,
 ) {
@@ -599,7 +615,7 @@ fn inv_assign_input(
     for e in &panel {
         commands.entity(e).despawn();
     }
-    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas);
+    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex);
 }
 
 /// Park the floating tooltip at the cursor over the hovered bag item, filling name + stat +

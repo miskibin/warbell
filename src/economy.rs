@@ -247,6 +247,7 @@ fn spawn_shop(
     eco: Res<EconomyState>,
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
+    tex: Res<crate::ui::texture::UiTextures>,
 ) {
     let discount = eco.shop_discount as f64;
     let items = build_shop_items(&eco.unlocked_weapons);
@@ -257,7 +258,7 @@ fn spawn_shop(
                 min_width: Val::Px(380.0),
                 row_gap: Val::Px(10.0),
                 padding: UiRect::axes(Val::Px(26.0), Val::Px(22.0)),
-                border: border(1.0),
+                border: border(2.0),
                 border_radius: radius(R_PANEL),
                 ..default()
             },
@@ -265,6 +266,7 @@ fn spawn_shop(
             anim(AnimKind::PopIn, 0.0, 0.26),
         ))
         .with_children(|card| {
+            widgets::chrome_layers(card, tex.linen.clone());
             // Header.
             card.spawn(Node {
                 flex_direction: FlexDirection::Row,
@@ -276,7 +278,7 @@ fn spawn_shop(
             })
             .insert(BorderColor::all(BORDER_SOFT))
             .with_children(|h| {
-                h.spawn(label(&fonts.bold, "WANDERING MERCHANT", 18.0, TEXT));
+                h.spawn(label(&fonts.display, "WANDERING MERCHANT", 16.0, GOLD));
                 h.spawn((label(&fonts.bold, "Gold 0", 13.0, GOLD), ShopHeader));
             });
             // Item rows.
@@ -298,6 +300,7 @@ fn spawn_shop(
                     },
                     BackgroundColor(BTN_BG),
                     BorderColor::all(BORDER_SOFT),
+                    crate::ui::focus::Focusable,
                     ShopItemButton(item.id),
                 ))
                 .with_children(|b| {
@@ -336,15 +339,17 @@ fn shop_interact(
     mut inv: ResMut<Inventory>,
     mut toasts: ResMut<Toasts>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
-    mut buttons: Query<(&Interaction, &ShopItemButton, &mut BackgroundColor)>,
+    mut acts: MessageReader<crate::ui::focus::FocusActivate>,
+    mut buttons: Query<(Entity, &Interaction, &ShopItemButton, &mut BackgroundColor)>,
     mut header: Query<&mut Text, With<ShopHeader>>,
 ) {
     let discount = eco.shop_discount as f64;
     let now = time.elapsed_secs() as f64;
 
-    // Handle a click first (one buy per press).
-    for (interaction, btn, _) in &buttons {
-        if *interaction == Interaction::Pressed {
+    // Handle a click or an Enter/E focus activation first (one buy per press).
+    let keyed: Vec<Entity> = acts.read().map(|a| a.0).collect();
+    for (e, interaction, btn, _) in &buttons {
+        if *interaction == Interaction::Pressed || keyed.contains(&e) {
             if let Some(item) = build_shop_items(&eco.unlocked_weapons).iter().find(|i| i.id == btn.0) {
                 let price = discounted_price(item.price, discount);
                 // Need the gold AND room in the bag; otherwise no-op (TS refunds a full bag).
@@ -360,7 +365,7 @@ fn shop_interact(
 
     // Recolour lines: affordable = gold, too dear = grey.
     let gold = player.0.gold;
-    for (_, btn, mut bg) in &mut buttons {
+    for (_, _, btn, mut bg) in &mut buttons {
         let price = build_shop_items(&eco.unlocked_weapons)
             .iter()
             .find(|i| i.id == btn.0)
