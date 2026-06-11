@@ -624,6 +624,12 @@ fn demo_work_setup(
     for _ in 0..6 {
         town.0.build_house(&mut bank.0); // dwellings raise the pop cap → more workers staff the yards
     }
+    // The workforce: producers staff from the idle `Townsfolk` (guard) pool — without bodies the
+    // yards stand empty and the clip shows a village where nobody works. The HEADCOUNT is the
+    // source of truth (`sync_population_bodies` reconciles bodies to it and culls strays — direct
+    // guard spawns get reaped right back to `population`), so raise the number and let the sync
+    // grow the bodies; auto-assign then staffs farms first, lumber/mine after.
+    town.0.population = 14;
 }
 
 /// Raise one producer building on plot `i` (build + spawn its mesh).
