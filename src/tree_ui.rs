@@ -34,7 +34,33 @@ impl Plugin for TreeUiPlugin {
                 Update,
                 (tree_interact, tree_paint, tree_detail).run_if(in_state(Modal::UpgradeTree)),
             );
+        // Temp diagnostics for the hover-dead-on-medallions bug (FOREST_UILOG=1).
+        if std::env::var("FOREST_UILOG").is_ok() {
+            app.add_systems(Update, debug_uilog.run_if(in_state(Modal::UpgradeTree)));
+        }
     }
+}
+
+/// `FOREST_UILOG=1`: dump cursor position, any non-None medallion interactions, the focus
+/// target, and one medallion's resolved geometry — to find why hover dies on the tree.
+fn debug_uilog(
+    windows: Query<&Window>,
+    btns: Query<(Entity, &Interaction, &TreeNodeButton, &ComputedNode, &bevy::ui::UiGlobalTransform)>,
+    focus: Res<crate::ui::focus::UiFocus>,
+    mut every: Local<u32>,
+) {
+    *every += 1;
+    if *every % 15 != 0 {
+        return;
+    }
+    let cur = windows.single().ok().and_then(|w| w.cursor_position());
+    let hot: Vec<&str> =
+        btns.iter().filter(|(_, i, ..)| **i != Interaction::None).map(|(_, _, b, ..)| b.0).collect();
+    let probe = btns
+        .iter()
+        .find(|(_, _, b, ..)| b.0 == "def_walls")
+        .map(|(_, _, _, cn, gt)| (gt.translation, cn.size(), cn.inverse_scale_factor()));
+    info!("UILOG cursor={cur:?} hot={hot:?} focus={:?} walls={probe:?}", focus.current);
 }
 
 // The tree opens via the contextual **E** near the keep (see `interaction.rs`); this system only
