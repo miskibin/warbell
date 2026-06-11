@@ -8,9 +8,7 @@ use bevy::prelude::*;
 use tileworld_core::inventory::item_def;
 use tileworld_core::player::Player;
 use tileworld_core::shop_catalog::{build_shop_items, discounted_price};
-use tileworld_core::upgrade_store::{
-    node_by_id, UpgradeBranch, UpgradeEffect, UpgradeState, UPGRADE_NODES,
-};
+use tileworld_core::upgrade_store::{node_by_id, UpgradeEffect, UpgradeState, UPGRADE_NODES};
 
 use crate::game_state::{AppState, Modal};
 use crate::inventory::{try_grant, Inventory, Toasts};
@@ -82,11 +80,7 @@ impl Plugin for EconomyPlugin {
                 OnExit(AppState::Paused),
                 reset_economy.run_if(crate::game_state::restart_requested),
             )
-            // Open the tree with U (only while actually playing, no other panel open).
-            .add_systems(Update, open_tree.run_if(in_state(Modal::None)))
-            .add_systems(OnEnter(Modal::UpgradeTree), spawn_tree)
-            .add_systems(OnExit(Modal::UpgradeTree), despawn_tree)
-            .add_systems(Update, tree_interact.run_if(in_state(Modal::UpgradeTree)))
+            // (The War Table tree panel itself lives in `tree_ui.rs` — TreeUiPlugin.)
             // Merchant shop (open with T; buys land in the bag).
             .add_systems(Update, open_shop.run_if(in_state(Modal::None)))
             .add_systems(OnEnter(Modal::Shop), spawn_shop)
@@ -158,7 +152,7 @@ fn apply_effect(
 
 /// Try to buy node `id`: gate + deduct gold/stone + enact the effect. Returns true on success.
 #[allow(clippy::too_many_arguments)]
-fn try_purchase(
+pub(crate) fn try_purchase(
     id: &str,
     up: &mut Upgrades,
     player: &mut PlayerRes,
@@ -224,259 +218,6 @@ fn demo_tree_fill(
             try_purchase(node.id, &mut up, &mut player, &mut bank, &mut def, &mut eco, &mut keep);
             break;
         }
-    }
-}
-
-// ── Tree UI (Modal panel) ─────────────────────────────────────────────────────────────
-
-// The tree opens via the contextual **E** near the keep (see `interaction.rs`); this system only
-// keeps the `FOREST_PANEL=tree` screenshot hook alive.
-fn open_tree(
-    app: Res<State<AppState>>,
-    mut next: ResMut<NextState<Modal>>,
-    mut auto_done: Local<bool>,
-) {
-    let force = !*auto_done && std::env::var("FOREST_PANEL").ok().as_deref() == Some("tree");
-    if force {
-        *auto_done = true;
-    }
-    if *app.get() == AppState::Playing && force {
-        next.set(Modal::UpgradeTree);
-    }
-}
-
-#[derive(Component)]
-struct TreeUi;
-#[derive(Component)]
-struct TreeNodeButton(&'static str);
-#[derive(Component)]
-struct TreeHeader;
-
-fn branch_title(b: UpgradeBranch) -> &'static str {
-    match b {
-        UpgradeBranch::Economy => "Prosperity",
-        UpgradeBranch::Defense => "Bulwark",
-        UpgradeBranch::Hero => "Champion",
-        UpgradeBranch::Arsenal => "Armoury",
-    }
-}
-
-fn branch_sigil(b: UpgradeBranch) -> &'static str {
-    match b {
-        UpgradeBranch::Economy => "branch:economy",
-        UpgradeBranch::Defense => "branch:defense",
-        UpgradeBranch::Hero => "branch:hero",
-        UpgradeBranch::Arsenal => "branch:arsenal",
-    }
-}
-
-fn branch_color(b: UpgradeBranch) -> Color {
-    match b {
-        UpgradeBranch::Economy => BRANCH_ECON,
-        UpgradeBranch::Defense => BRANCH_DEF,
-        UpgradeBranch::Hero => BRANCH_HERO,
-        UpgradeBranch::Arsenal => BRANCH_ARSENAL,
-    }
-}
-
-/// The upgrade board — a parchment "Castellan's plans" sheet with four heraldic charters, ported
-/// from the 3js `UpgradeTree`.
-fn spawn_tree(mut commands: Commands, fonts: Res<UiFonts>, atlas: Res<IconAtlas>) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(14.0),
-                padding: UiRect::axes(Val::Px(48.0), Val::Px(30.0)),
-                ..default()
-            },
-            BackgroundColor(PARCHMENT),
-            GlobalZIndex(60),
-            TreeUi,
-            anim(AnimKind::PopIn, 0.0, 0.22),
-        ))
-        .with_children(|root| {
-            // Header: title block (left) + treasury tally (right).
-            root.spawn(Node {
-                width: Val::Percent(100.0),
-                max_width: Val::Px(1180.0),
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::Center,
-                ..default()
-            })
-            .with_children(|head| {
-                head.spawn(Node { flex_direction: FlexDirection::Column, ..default() })
-                    .with_children(|t| {
-                        t.spawn(label(&fonts.bold, "CASTELLAN'S PLANS", 12.0, rgb(138, 106, 46)));
-                        t.spawn(label(&fonts.serif, "Expand the Keep", 34.0, INK));
-                    });
-                head.spawn((
-                    Node {
-                        padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
-                        border_radius: radius(R_CELL),
-                        ..default()
-                    },
-                    BackgroundColor(rgba(255, 246, 218, 0.6)),
-                ))
-                .with_children(|h| {
-                    h.spawn((label(&fonts.serif, "Gold 0   Stone 0", 18.0, rgb(58, 42, 14)), TreeHeader));
-                });
-            });
-
-            // Four charter columns.
-            root.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(20.0),
-                width: Val::Percent(100.0),
-                max_width: Val::Px(1180.0),
-                justify_content: JustifyContent::Center,
-                ..default()
-            })
-            .with_children(|cols| {
-                for branch in
-                    [UpgradeBranch::Economy, UpgradeBranch::Defense, UpgradeBranch::Hero, UpgradeBranch::Arsenal]
-                {
-                    cols.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(8.0),
-                        width: Val::Px(270.0),
-                        ..default()
-                    })
-                    .with_children(|col| {
-                        // Heraldic banner heading.
-                        col.spawn((
-                            Node {
-                                flex_direction: FlexDirection::Row,
-                                align_items: AlignItems::Center,
-                                column_gap: Val::Px(9.0),
-                                padding: UiRect::axes(Val::Px(12.0), Val::Px(9.0)),
-                                border_radius: radius(R_CELL),
-                                ..default()
-                            },
-                            BackgroundColor(branch_color(branch)),
-                        ))
-                        .with_children(|banner| {
-                            if let Some(h) = atlas.get(branch_sigil(branch)) {
-                                banner.spawn(widgets::icon(h, 18.0));
-                            }
-                            banner.spawn(label(&fonts.bold, branch_title(branch), 15.0, rgb(253, 243, 216)));
-                        });
-                        // Nodes.
-                        for node in UPGRADE_NODES.iter().filter(|n| n.branch == branch) {
-                            col.spawn((
-                                Button,
-                                Interaction::default(),
-                                Node {
-                                    flex_direction: FlexDirection::Row,
-                                    align_items: AlignItems::Center,
-                                    column_gap: Val::Px(11.0),
-                                    width: Val::Percent(100.0),
-                                    padding: UiRect::all(Val::Px(11.0)),
-                                    border: border(1.0),
-                                    border_radius: radius(R_BTN),
-                                    ..default()
-                                },
-                                BackgroundColor(rgba(255, 251, 238, 0.55)),
-                                BorderColor::all(rgba(86, 58, 24, 0.32)),
-                                TreeNodeButton(node.id),
-                            ))
-                            .with_children(|b| {
-                                // Medallion.
-                                b.spawn((
-                                    Node {
-                                        width: Val::Px(40.0),
-                                        height: Val::Px(40.0),
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::Center,
-                                        border_radius: radius(R_CARD),
-                                        ..default()
-                                    },
-                                    BackgroundColor(rgba(120, 84, 36, 0.12)),
-                                ))
-                                .with_children(|m| {
-                                    if let Some(h) = atlas.get(node.id) {
-                                        m.spawn(widgets::icon(h, 24.0));
-                                    }
-                                });
-                                // Text block.
-                                b.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), ..default() })
-                                    .with_children(|tb| {
-                                        tb.spawn(label(&fonts.serif, node.name, 16.0, INK));
-                                        tb.spawn(label(&fonts.regular, node.desc, 11.5, INK_SOFT));
-                                        let stone = if node.stone_cost > 0 {
-                                            format!("{}g   +{} stone", node.cost(), node.stone_cost)
-                                        } else {
-                                            format!("{}g", node.cost())
-                                        };
-                                        tb.spawn(label(&fonts.bold, stone, 12.5, rgb(154, 110, 22)));
-                                    });
-                            });
-                        }
-                    });
-                }
-            });
-
-            root.spawn(label(&fonts.serif, "Press U or Esc to close the plans", 13.0, rgb(138, 106, 46)));
-        });
-}
-
-fn despawn_tree(mut commands: Commands, q: Query<Entity, With<TreeUi>>) {
-    for e in &q {
-        commands.entity(e).despawn();
-    }
-}
-
-/// Per-frame: colour each node by state (owned / buyable / locked-or-poor), update the
-/// gold/stone header, and on a click buy the node.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn tree_interact(
-    mut up: ResMut<Upgrades>,
-    mut player: ResMut<PlayerRes>,
-    mut bank: ResMut<Bank>,
-    mut def: ResMut<Defenses>,
-    mut eco: ResMut<EconomyState>,
-    mut keep: ResMut<KeepHp>,
-    mut buttons: Query<(&Interaction, &TreeNodeButton, &mut BackgroundColor)>,
-    mut header: Query<&mut Text, With<TreeHeader>>,
-) {
-    let gold = player.0.gold;
-    let stone = bank.0.stone() as i64;
-
-    // Handle a click first (one buy; the node becomes owned so a held press is harmless).
-    for (interaction, btn, _) in &buttons {
-        if *interaction == Interaction::Pressed {
-            try_purchase(
-                btn.0,
-                &mut up,
-                &mut player,
-                &mut bank,
-                &mut def,
-                &mut eco,
-                &mut keep,
-            );
-            break;
-        }
-    }
-
-    // Re-colour every node by its current state (parchment palette).
-    for (_, btn, mut bg) in &mut buttons {
-        let Some(node) = node_by_id(btn.0) else { continue };
-        bg.0 = if up.0.is_purchased(btn.0) {
-            rgba(168, 142, 96, 0.5) // owned — sealed tan
-        } else if up.0.can_buy(node, gold, stone, false) {
-            rgba(255, 253, 244, 0.88) // buyable — bright vellum
-        } else {
-            rgba(245, 238, 222, 0.32) // locked / can't afford — faded
-        };
-    }
-
-    if let Ok(mut t) = header.single_mut() {
-        **t = format!("Gold {gold}   Stone {stone}");
     }
 }
 

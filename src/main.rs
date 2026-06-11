@@ -33,6 +33,7 @@ mod defenses;
 mod dof;
 mod dying;
 mod economy;
+mod tree_ui;
 mod footstep_fx;
 mod game_state;
 mod grade;
@@ -111,6 +112,7 @@ fn main() {
         .add_plugins((
             game_state::GameStatePlugin, // AppState/Modal states + freeze gate + screens
             economy::EconomyPlugin,      // gold (on PlayerRes) + stone bank
+            tree_ui::TreeUiPlugin,       // the War Table upgrade-tree graph panel (U / keep E)
             inventory::InventoryPlugin,  // bag + buffs + pickup toasts (quick-bar Q/Z/X/C)
             verbs::VerbsPlugin,          // biome verbs: ore mining (HeroSwing) → stone
             defenses::DefensePlugin,     // towers/archers/ballista/shrine + war bell (upgrade-gated)
