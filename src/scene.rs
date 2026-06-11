@@ -508,7 +508,7 @@ fn setup_sun(mut commands: Commands) {
         },
         // NB: no `VolumetricLight` here. The sun's half of the god-rays effect (the camera's
         // `VolumetricFog` is the other half) is the *only* runtime switch for the volumetric pass
-        // — Bevy tears the pass down when no `VolumetricLight` exists. The God Rays graphics preset
+        // — Bevy tears the pass down when no `VolumetricLight` exists. The Ultra graphics preset
         // (`quality.rs`) inserts it on demand; spawning it here would run the pass for the first
         // frame or two before `apply_quality` removes it, seeding a stale ~20 ms reading that the
         // F2 GPU-passes table then shows forever. Default presets (High/Low) never pay for it.
@@ -534,7 +534,7 @@ fn setup_sun(mut commands: Commands) {
     // A single big fog box enclosing the island + the air above it; the sun's shafts only
     // render inside this volume. Low `density_factor` keeps it subtle (gentle haze + shafts,
     // not pea-soup); raised toward the canopy height so beams read between the trees. The
-    // "God Rays" graphics preset (src/quality.rs) overrides these for clearly-visible shafts.
+    // Ultra graphics preset (src/quality.rs) overrides these for clearly-visible shafts.
     commands.spawn((
         FogVolume {
             density_factor: 0.012, // very thin — just enough to catch shafts, not murk the view
