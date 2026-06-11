@@ -19,7 +19,10 @@ use bevy::render::render_resource::Face;
 
 use crate::palette::lin;
 
-/// One island-wide wind heading (radians about Y) every flag streams toward.
+/// One island-wide wind heading (radians about Y) every flag streams along. The cloth is
+/// authored along local +X, so `from_rotation_y(WIND_YAW)` streams it toward world
+/// `(cos WIND_YAW, 0, -sin WIND_YAW)` ≈ (0.90, 0, −0.43) — roughly the ±X axis the tree
+/// sway in `wind.rs` leans about, so flags and canopies agree on the wind.
 const WIND_YAW: f32 = 0.45;
 /// Cloth grid resolution: columns along the fly (x), rows down the hoist (y).
 const NX: usize = 11;
@@ -32,7 +35,20 @@ impl Plugin for BannerPlugin {
         // Ungated visual animation (like `wind.rs` sway): reads virtual time, so it
         // freezes with the world behind panels but keeps drawing.
         app.add_systems(Update, flutter_flags);
+        // Screenshot hook: FOREST_FLAGTEST=1 parks one test flag on open ground near the
+        // hero spawn so the cloth can be framed in isolation.
+        if std::env::var("FOREST_FLAGTEST").is_ok() {
+            app.add_systems(Startup, spawn_test_flag);
+        }
     }
+}
+
+fn spawn_test_flag(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    spawn_flag(&mut commands, &mut meshes, &mut materials, Vec3::new(0.0, 6.0, -22.0), 0.85, 0.42, 0x2f5fa6, Some(0xd9b34a));
 }
 
 /// A fluttering cloth flag. The mesh handle on the same entity is unique to this flag and
