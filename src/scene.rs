@@ -463,6 +463,13 @@ fn drive_dof_focus(
     let Ok((cam_tf, mut dof)) = cam_q.single_mut() else {
         return;
     };
+    // Screenshot knob: FOREST_FOCAL="tiles" pins the focal plane (free-cam parks it at a
+    // fixed 28, which blurs close-up staged subjects).
+    if let Some(f) = std::env::var("FOREST_FOCAL").ok().and_then(|s| s.trim().parse::<f32>().ok())
+    {
+        dof.focal = f;
+        return;
+    }
     let target = if *mode == crate::player::PlayMode::Play {
         hero_q
             .single()

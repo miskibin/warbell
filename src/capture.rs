@@ -40,6 +40,17 @@ impl Plugin for CapturePlugin {
                 .add_systems(Startup, clip_setup)
                 .add_systems(Update, (clip_orbit, drive_clip).chain());
         }
+        // FOREST_NOHUD=1: hide every UI node each frame (HUD, prompts, quick-bar) so a
+        // staged shot shows only the world — for marketing/store captures.
+        if std::env::var("FOREST_NOHUD").is_ok() {
+            app.add_systems(Update, hide_hud);
+        }
+    }
+}
+
+fn hide_hud(mut nodes: Query<&mut Visibility, With<Node>>) {
+    for mut vis in &mut nodes {
+        *vis = Visibility::Hidden;
     }
 }
 
