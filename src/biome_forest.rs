@@ -20,7 +20,8 @@ use crate::props;
 use crate::trees::{build_tree_mesh, TreeKind};
 
 /// Trees are authored ~1.5u tall; scale up so they tower at eye level.
-const TREE_SCALE: f32 = 1.7;
+/// (Dialled back 20% from the old 1.7 — forest canopy read a touch oversized.)
+const TREE_SCALE: f32 = 1.36;
 
 pub fn config() -> BiomeConfig {
     BiomeConfig {

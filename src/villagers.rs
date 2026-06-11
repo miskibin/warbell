@@ -78,6 +78,16 @@ pub struct Villager {
     /// for [`ATTACK_ANIM_DUR`] after it. `0` = never struck. Stamped by [`guard_combat`] and
     /// [`npc_fight_back`] when a blow lands — the townsfolk mirror of the ork rig's `atk_anim`.
     pub(crate) atk_anim: f32,
+    /// Smoothed local head yaw (radians) — eased toward the idle look-around scan, or toward the
+    /// passing hero when he's near, so a standing villager turns to watch you go by (see
+    /// [`villager_limbs`]'s greeting logic).
+    head_yaw: f32,
+    /// Greeting-nod envelope, `1.0` → `0.0` over [`GREET_NOD_DUR`]; kicked once each time the hero
+    /// walks up close (re-armed by [`Villager::greet_armed`] when he leaves).
+    greet: f32,
+    /// True while the hero is out of greeting range, arming the next nod so it fires once per
+    /// approach rather than continuously while he lingers nearby.
+    greet_armed: bool,
 }
 
 impl Villager {
@@ -1080,16 +1090,67 @@ fn swing_x(p: f32) -> f32 {
     }
 }
 
+/// Idle villagers turn their head to watch the hero when he passes within this range (world u).
+const GREET_DIST: f32 = 8.0;
+/// Max head yaw off forward while watching the hero (radians) — a turn of the head, not an owl spin.
+const HEAD_TURN_MAX: f32 = 0.7;
+/// Ease rate of the head yaw toward its target (per second) — a relaxed, lifelike turn.
+const HEAD_EASE: f32 = 4.5;
+/// Duration of the single welcoming head-nod when the hero walks up (seconds).
+const GREET_NOD_DUR: f32 = 0.8;
+
+/// Layered limb offsets (radians) for one idle "fidget" — small gestures a standing villager
+/// cycles through so they read as a person idling, not a frozen pathing agent. All zero = rest.
+#[derive(Default)]
+struct Fidget {
+    head_pitch: f32, // + looks down
+    head_yaw: f32,   // a glance aside (on top of the look-around scan)
+    head_roll: f32,  // a curious head-tilt
+    arm: f32,        // free-arm raise — a shift / scratch
+    lean: f32,       // weight shift onto one leg
+}
+
+/// Cheap stateless hash → `0.0..1.0`, for picking a villager's current idle gesture from the
+/// gesture-clock cycle index (no RNG state to thread through the per-frame anim).
+fn hash01(x: f32) -> f32 {
+    let v = (x * 12.9898).sin() * 43758.5453;
+    v - v.floor()
+}
+
+/// Which idle fidget a villager is mid-way through, given the global clock + its per-instance
+/// `seed` (its `phase`, so neighbours don't fidget in lockstep). Each gesture eases in→peak→out
+/// over ~3.3s; one slot is deliberately "stillness" so they aren't perpetually twitching.
+fn idle_fidget(tw: f32, seed: f32) -> Fidget {
+    let g = tw * 0.3 + seed * 1.7; // ~3.3s per gesture, phase-desynced
+    let cyc = g.floor();
+    let bell = ((g - cyc) * std::f32::consts::PI).sin(); // 0 → 1 → 0 across the gesture
+    let mut f = Fidget::default();
+    match (hash01(cyc + seed * 31.0) * 5.0) as i32 {
+        1 => f.head_yaw = bell * 0.45,                                   // glance off to the side
+        2 => {
+            f.head_pitch = bell * 0.26;
+            f.head_roll = bell * 0.13;
+        } // peer down with a curious tilt
+        3 => f.arm = bell * 0.55,                                        // shift / scratch the free arm
+        4 => f.lean = bell * 0.12,                                       // shift weight onto one leg
+        _ => {}                                                          // a beat of stillness
+    }
+    f
+}
+
 fn villager_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
-    vils: Query<(&Villager, &Children, &GlobalTransform, Option<&crate::town::Worker>, Option<&Role>)>,
+    hero: Query<&crate::player::Hero>,
+    mut vils: Query<(&mut Villager, &Children, &GlobalTransform, Option<&crate::town::Worker>, Option<&Role>)>,
     mut parts: Query<(&VilPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
+    let dt = time.delta_secs();
     let cam_p = cam.single().ok().map(|g| g.translation());
-    for (v, children, gt, worker, role) in &vils {
+    let hero_p = hero.single().ok().map(|h| h.pos);
+    for (mut v, children, gt, worker, role) in &mut vils {
         if let Some(cp) = cam_p {
             if gt.translation().distance_squared(cp) > LIMB_CULL2 {
                 continue;
@@ -1108,12 +1169,44 @@ fn villager_limbs(
         } else {
             (0.5 + 0.7 * (t * 4.5).sin(), 4.5) // quick hoe, ~1.4s
         };
+
+        // ── Greeting + idle fidgets ──────────────────────────────────────────────────────
+        // A standing (idle, off-work) villager turns to watch the hero pass and gives one nod as
+        // he walks up — the "they noticed me" beat. While greeting, the head tracks the hero and
+        // the idle fidgets stand down (they're paying attention to you).
+        let idle = !v.moving && !working;
+        let hero_d = hero_p.map(|hp| hp.distance(v.pos)).unwrap_or(f32::MAX);
+        let greeting = idle && hero_d < GREET_DIST;
+        if hero_d > GREET_DIST * 1.4 {
+            v.greet_armed = true; // hero left → re-arm the nod for his next approach
+        }
+        if greeting && v.greet_armed && v.greet <= 0.0 {
+            v.greet = 1.0; // fire one nod
+            v.greet_armed = false;
+        }
+        v.greet = (v.greet - dt / GREET_NOD_DUR).max(0.0);
+        let greet_nod = (v.greet * std::f32::consts::PI).sin() * 0.30; // a single soft down-up bob
+
+        // Head yaw target (local): toward the hero when greeting, else the gentle look-around scan
+        // while idle, else forward (walking). Eased through `head_yaw` so it turns, never snaps.
+        let want_yaw = if greeting {
+            let to = hero_p.unwrap() - v.pos;
+            steer::wrap_pi(to.x.atan2(to.y) - v.facing).clamp(-HEAD_TURN_MAX, HEAD_TURN_MAX)
+        } else if idle {
+            (t * 0.7).sin() * 0.18
+        } else {
+            0.0
+        };
+        v.head_yaw += steer::wrap_pi(want_yaw - v.head_yaw) * (dt * HEAD_EASE).min(1.0);
+
+        let fid = if idle && !greeting { idle_fidget(tw, v.phase) } else { Fidget::default() };
+
         for &child in children {
             let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
             tf.rotation = match part.kind {
                 PartKind::Leg(sign) => {
                     let s = if v.moving { (t * v.gait).sin() * v.swing } else { (t * 0.8).sin() * 0.02 };
-                    Quat::from_rotation_x(sign * s)
+                    Quat::from_rotation_x(sign * s + sign * fid.lean) // lean shifts weight onto one leg
                 }
                 PartKind::Arm(sign) => {
                     // The right arm (sign > 0) carries the weapon (sword / hoe / axe) → a strike
@@ -1125,15 +1218,20 @@ fn villager_limbs(
                         Quat::from_rotation_x(arm_work)
                     } else {
                         let s = if v.moving { -(t * v.gait).sin() * 0.5 } else { (t * 1.2).sin() * 0.06 };
-                        Quat::from_rotation_x(sign * s)
+                        // The free (left) arm carries the idle fidget (a shift / scratch); the
+                        // weapon hand stays at rest.
+                        let fx = if sign < 0.0 { -fid.arm } else { 0.0 };
+                        Quat::from_rotation_x(sign * s + fx)
                     }
                 }
                 PartKind::Head => {
                     if working {
                         Quat::from_rotation_x((t * nod_rate).sin() * 0.06) // small nod toward the work
                     } else {
-                        let scan = if v.moving { 0.0 } else { (t * 0.7).sin() * 0.18 };
-                        Quat::from_rotation_y(scan)
+                        // Yaw = tracked/scanning look; pitch = greeting nod + fidget peer; roll = tilt.
+                        Quat::from_rotation_y(v.head_yaw + fid.head_yaw)
+                            * Quat::from_rotation_x(greet_nod + fid.head_pitch)
+                            * Quat::from_rotation_z(fid.head_roll)
                     }
                 }
                 PartKind::Tail => Quat::IDENTITY, // villagers have no tail
@@ -1550,7 +1648,7 @@ fn spawn(
         gait: 8.0,
         swing: 0.5,
         bob: 0.045,
-        body_r: 0.28,
+        body_r: 0.22,
         phase,
         moving: false,
         mode: Mode::Idle,
@@ -1558,6 +1656,9 @@ fn spawn(
         rng: r,
         gathering: false,
         atk_anim: 0.0,
+        head_yaw: 0.0,
+        greet: 0.0,
+        greet_armed: true,
     };
 
     let root = commands
