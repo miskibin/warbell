@@ -35,8 +35,8 @@ impl Plugin for DemoPlugin {
                     )
                     .add_systems(PostUpdate, (mute_captions, defend_light));
             }
-            Some("build") => {
-                // Build logic lives in town.rs; here we just silence ambient barks for a clean clip.
+            Some("build") | Some("work") => {
+                // Build/work logic lives in town.rs; here we just silence ambient barks.
                 app.add_systems(PostUpdate, mute_captions);
             }
             Some("talk") => {

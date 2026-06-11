@@ -469,7 +469,14 @@ fn drive_dof_focus(
             .map(|h| cam_tf.translation().distance(Vec3::new(h.pos.x, h.y + 1.0, h.pos.y)))
             .unwrap_or(28.0)
     } else {
-        28.0 // free-cam: a fixed mid-ground focal plane
+        // Free-cam / clips: focus the hero when he's the subject (close to the camera, e.g. the
+        // chase-cam scenes), so he stays sharp; otherwise a fixed mid-ground plane.
+        hero_q
+            .single()
+            .ok()
+            .map(|h| cam_tf.translation().distance(Vec3::new(h.pos.x, h.y + 1.0, h.pos.y)))
+            .filter(|d| *d < 14.0)
+            .unwrap_or(28.0)
     };
     dof.focal = target;
 }

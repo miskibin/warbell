@@ -127,6 +127,10 @@ impl Plugin for TownPlugin {
         if std::env::var("FOREST_DEMO").ok().as_deref() == Some("build") {
             app.add_systems(Update, demo_build_timelapse.run_if(in_state(Modal::None)));
         }
+        // Clip-only: instant working village for the peasants-at-work scene.
+        if std::env::var("FOREST_DEMO").ok().as_deref() == Some("work") {
+            app.add_systems(Update, demo_work_setup);
+        }
     }
 }
 
@@ -586,6 +590,39 @@ fn stage_town_for_shot(
     if mode == "burn" {
         town.0.damage(0, 20.0);
         spawn_flame(&mut commands, &mut meshes, &mut materials, 0, &spots);
+    }
+}
+
+/// Demo hook (`FOREST_DEMO=work`): instantly stand up a working village — several lumber + mine
+/// yards (so woodcutters walk out and fell real trees, miners cart stone) plus farms and houses
+/// for the population that staffs them. The warm-up lets the workers reach their jobs before
+/// recording. Clip-only; never wired in real play.
+#[allow(clippy::too_many_arguments)]
+fn demo_work_setup(
+    mut done: Local<bool>,
+    spots: Res<PlotSpots>,
+    mats: Option<Res<VillageMats>>,
+    mut town: ResMut<TownRes>,
+    mut bank: ResMut<Bank>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    if *done || spots.0.is_empty() {
+        return;
+    }
+    let Some(mats) = mats else { return };
+    *done = true;
+    bank.0.add_wood(4000.0);
+    bank.0.add_stone(4000.0);
+    const PLAN: [BuildKind; 8] = [
+        BuildKind::Lumber, BuildKind::Mine, BuildKind::Lumber, BuildKind::Farm,
+        BuildKind::Mine, BuildKind::Lumber, BuildKind::Farm, BuildKind::Mine,
+    ];
+    for (i, k) in PLAN.iter().enumerate() {
+        raise_plot(i, *k, &mut town, &mut bank, &mut commands, &mut meshes, &mats.0, &spots);
+    }
+    for _ in 0..6 {
+        town.0.build_house(&mut bank.0); // dwellings raise the pop cap → more workers staff the yards
     }
 }
 
