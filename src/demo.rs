@@ -29,8 +29,11 @@ impl Plugin for DemoPlugin {
             }
             Some("defend") => {
                 app.add_systems(PostStartup, defend_setup)
-                    .add_systems(Update, defend_hero.run_if(in_state(crate::game_state::Modal::None)))
-                    .add_systems(PostUpdate, mute_captions);
+                    .add_systems(
+                        Update,
+                        (defend_hero, defend_keep_guards).run_if(in_state(crate::game_state::Modal::None)),
+                    )
+                    .add_systems(PostUpdate, (mute_captions, defend_light));
             }
             Some("build") => {
                 // Build logic lives in town.rs; here we just silence ambient barks for a clean clip.
@@ -229,9 +232,25 @@ fn defend_setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for i in 0..18u32 {
+    for i in 0..26u32 {
         crate::villagers::spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, 1009 + i * 97);
     }
+}
+
+/// Keep the defending townsfolk on their feet for the whole clip — without this the warm-up melee
+/// (36 orks vs the squad) wipes them before recording even starts, leaving "just orks" on screen.
+fn defend_keep_guards(mut guards: Query<&mut crate::villagers::NpcHp, With<crate::villagers::Guard>>) {
+    for mut hp in &mut guards {
+        hp.hp = hp.max;
+    }
+}
+
+/// Cinematic moonlight lift for the night siege: the wave phase forces deep night (advance_sky),
+/// so the battle is unreadably dark. Flood a cool ambient fill (PostUpdate, after advance_sky) so
+/// the guards, orks and knight all read while the sky stays night. Clip-only.
+fn defend_light(mut ambient: ResMut<GlobalAmbientLight>) {
+    ambient.brightness = 480.0;
+    ambient.color = Color::srgb(0.72, 0.80, 1.0);
 }
 
 const HERO_SWING: f32 = 0.45; // matches combat::ATTACK_DURATION
@@ -252,7 +271,7 @@ fn defend_hero(
     let dt = time.delta_secs();
     player.0.hp = player.0.max_hp; // invulnerable for the show
     let Ok((mut hero, mut htf)) = hero_q.single_mut() else { return };
-    let stand = Vec2::new(0.0, 15.0); // just outside the south gate, where the horde funnels in
+    let stand = Vec2::new(0.0, 7.0); // in the courtyard by the keep, where breached orks + guards meet
 
     // Face the nearest living invader.
     let mut best: Option<f32> = None;
