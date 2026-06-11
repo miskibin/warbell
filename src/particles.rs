@@ -72,6 +72,8 @@ fn update_weather(
     time: Res<Time>,
     hero: Option<Res<HeroState>>,
     ambiences: Option<Res<BiomeAmbiences>>,
+    mode: Res<crate::player::PlayMode>,
+    fly_cam: Query<&Transform, With<crate::controls::FlyCam>>,
     mut weather: ResMut<Weather>,
     mut center: ResMut<WeatherCenter>,
     existing: Query<Entity, With<Particle>>,
@@ -79,8 +81,17 @@ fn update_weather(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let (Some(hero), Some(ambiences)) = (hero, ambiences) else { return };
-    center.0 = hero.pos;
-    let desired = ambiences.sample(crate::worldmap::biome_at_world(hero.pos.x, hero.pos.y)).particle;
+    // The weather box follows the hero in Play, but the free-roam fly-cam in FreeRoam — otherwise
+    // flying off to frame a trailer shot leaves the motes parked back at the (stationary) hero and
+    // the scene reads empty. Sample the biome + centre the box at whichever the view is tracking.
+    let focus = match *mode {
+        crate::player::PlayMode::FreeRoam => {
+            fly_cam.single().map(|t| Vec3::new(t.translation.x, t.translation.y, t.translation.z)).unwrap_or(Vec3::new(hero.pos.x, hero.y, hero.pos.y))
+        }
+        crate::player::PlayMode::Play => Vec3::new(hero.pos.x, hero.y, hero.pos.y),
+    };
+    center.0 = Vec2::new(focus.x, focus.z);
+    let desired = ambiences.sample(crate::worldmap::biome_at_world(focus.x, focus.z)).particle;
     // Exponential approach, stable across frame rates.
     let k = 1.0 - (-time.delta_secs() * WEATHER_FADE).exp();
 
@@ -103,8 +114,7 @@ fn update_weather(
         // Nothing up → spawn the desired field invisible, to fade in over the next frames.
         None => {
             if desired != ParticleKind::None {
-                let center = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
-                let (mat, full_alpha) = spawn(desired, &mut commands, &mut meshes, &mut materials, center);
+                let (mat, full_alpha) = spawn(desired, &mut commands, &mut meshes, &mut materials, focus);
                 weather.spawned = Some(desired);
                 weather.mat = Some(mat);
                 weather.full_alpha = full_alpha;

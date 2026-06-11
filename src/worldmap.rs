@@ -15,9 +15,11 @@
 use std::sync::OnceLock;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::ExtendedMaterial;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::biome::{
     scatter_region, AtmoSample, Backdrop, Biome, BiomeAmbience, BiomeAmbiences, BiomeConfig,
@@ -587,6 +589,77 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
 /// Trampled-earth tint blended into the ground along the gate approach-roads.
 const ROAD_DIRT: u32 = 0x8a6d44;
 
+// ── Shore-distance field (water shader foam / shallows) ─────────────────────────
+/// Max encoded shore distance, in tiles — keep in sync with `SHORE_MAX` in
+/// `assets/shaders/water.wgsl`.
+const SHORE_MAX: f32 = 8.0;
+
+/// Bake an R8 distance-to-land field over the island (1 texel = 1 world unit, with a
+/// sea margin all round): 0 on land ramping to 1 at ≥ [`SHORE_MAX`] tiles offshore.
+/// The water shader samples it for the shore foam collar + shallow→deep gradient —
+/// the terrain has **no underwater geometry** (cliff walls stop at the waterline), so
+/// scene depth can't measure shallowness; this baked field is the only source.
+/// Returns the image plus the world→UV mapping (`xy` = min corner, `zw` = 1/extent).
+fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
+    const W: usize = 256; // covers world x ∈ [-128, 128] (island is ±108)
+    const H: usize = 208; // covers world z ∈ [-104, 104] (island is ±81)
+    let min_x = -(W as f32) / 2.0;
+    let min_z = -(H as f32) / 2.0;
+    let idx = |x: usize, z: usize| z * W + x;
+
+    // Land mask → two-pass 8-neighbour chamfer distance transform (≈Euclidean).
+    let mut d = vec![f32::INFINITY; W * H];
+    for z in 0..H {
+        for x in 0..W {
+            let wx = min_x + x as f32 + 0.5;
+            let wz = min_z + z as f32 + 0.5;
+            if ground_at_world(wx, wz).is_some() {
+                d[idx(x, z)] = 0.0;
+            }
+        }
+    }
+    const DIAG: f32 = 1.414;
+    for z in 0..H {
+        for x in 0..W {
+            let mut v = d[idx(x, z)];
+            if x > 0 { v = v.min(d[idx(x - 1, z)] + 1.0); }
+            if z > 0 { v = v.min(d[idx(x, z - 1)] + 1.0); }
+            if x > 0 && z > 0 { v = v.min(d[idx(x - 1, z - 1)] + DIAG); }
+            if x + 1 < W && z > 0 { v = v.min(d[idx(x + 1, z - 1)] + DIAG); }
+            d[idx(x, z)] = v;
+        }
+    }
+    for z in (0..H).rev() {
+        for x in (0..W).rev() {
+            let mut v = d[idx(x, z)];
+            if x + 1 < W { v = v.min(d[idx(x + 1, z)] + 1.0); }
+            if z + 1 < H { v = v.min(d[idx(x, z + 1)] + 1.0); }
+            if x + 1 < W && z + 1 < H { v = v.min(d[idx(x + 1, z + 1)] + DIAG); }
+            if x > 0 && z + 1 < H { v = v.min(d[idx(x - 1, z + 1)] + DIAG); }
+            d[idx(x, z)] = v;
+        }
+    }
+
+    let data: Vec<u8> =
+        d.iter().map(|v| ((v / SHORE_MAX).clamp(0.0, 1.0) * 255.0) as u8).collect();
+    let mut img = Image::new(
+        Extent3d { width: W as u32, height: H as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::R8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    // Linear filtering smooths the 1-texel bands; the default clamp-to-edge address
+    // mode makes off-texture samples read the border (open sea = max distance).
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    let region = Vec4::new(min_x, min_z, 1.0 / W as f32, 1.0 / H as f32);
+    (images.add(img), region)
+}
+
 // ── Build ────────────────────────────────────────────────────────────────────────
 #[allow(clippy::too_many_arguments)]
 pub fn build(
@@ -620,6 +693,7 @@ pub fn build(
 
     // ── Sea (big animated water plane under everything; shows at coast/rivers/lake) ──
     let sea_mesh = meshes.add(Plane3d::default().mesh().size(900.0, 900.0).subdivisions(8).build());
+    let (shore_tex, shore_region) = bake_shore_distance(images);
     let sea = water_mats.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::srgba(0x2f as f32 / 255.0, 0x6f as f32 / 255.0, 0xae as f32 / 255.0, 0.9),
@@ -631,9 +705,14 @@ pub fn build(
         },
         extension: WaterExt {
             params: WaterParams {
-                params: Vec4::new(0.16, 0.45, 0.4, 0.0),
-                sky_tint: Vec4::new(0.70, 0.82, 0.93, 0.0),
+                // x amp, y freq, z scroll, w fresnel strength.
+                params: Vec4::new(0.16, 0.45, 0.4, 0.85),
+                // rgb sky tint at grazing angles, w shore-fx strength (foam collar +
+                // shallow→deep gradient in water.wgsl).
+                sky_tint: Vec4::new(0.70, 0.82, 0.93, 1.0),
+                region: shore_region,
             },
+            shore: Some(shore_tex),
         },
     });
     commands.spawn((

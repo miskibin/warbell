@@ -35,8 +35,8 @@ use crate::scene::Sun;
 /// The active preset. `High` matches the scene's authored defaults.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum GraphicsQuality {
-    #[default]
     High,
+    #[default]
     Ultra,
     Low,
 }

@@ -1,11 +1,14 @@
 //! Animated water material + the river-centerline placement queries.
 //!
 //! The surface is an `ExtendedMaterial<StandardMaterial, WaterExt>` whose FRAGMENT shader
-//! (`assets/shaders/water.wgsl`) perturbs the lighting normal with scrolling ripple waves:
-//! because the base StandardMaterial has tiny roughness + high reflectance, that moving
-//! normal makes it reflect the Atmosphere sky (via IBL) and slide the sun glint across the
-//! surface — i.e. real-looking water. `WaterPlugin` only registers the material; `worldmap`
-//! builds the actual river/lake geometry with it.
+//! (`assets/shaders/water.wgsl`) perturbs the lighting normal with scrolling multi-octave
+//! waves (fine octaves distance-faded), samples a **baked shore-distance texture** for a
+//! shallow→deep colour/opacity gradient + soft waterline + animated shore foam (the terrain
+//! has no underwater geometry — walls stop at the waterline — so prepass depth can't measure
+//! shallowness), and adds grazing-angle fresnel toward the sky tint — the moving normal
+//! reflects the Atmosphere sky (via IBL) and slides the sun glint across the surface.
+//! `WaterPlugin` only registers the material; `worldmap` builds the river/lake geometry
+//! with it and bakes the shore field.
 //!
 //! Exposes [`on_river`] / [`river_bank_t`] (per CONTRACT2.md) — the sine-centerline queries
 //! the scatter (and the kept `decor` charm) use to keep props out of the water + dress banks.
@@ -99,14 +102,25 @@ pub type WaterMaterial = ExtendedMaterial<StandardMaterial, WaterExt>;
 pub struct WaterParams {
     /// x=amplitude, y=wave frequency, z=scroll speed, w=fresnel strength.
     pub params: Vec4,
-    /// rgb = sky/fresnel tint added at grazing angles (a unused).
+    /// rgb = sky/fresnel tint added at grazing angles; a = shore-fx strength
+    /// (foam collar + shallow→deep gradient, driven by the baked shore texture).
     pub sky_tint: Vec4,
+    /// Shore-distance texture mapping: xy = world-space min corner of the baked
+    /// region, zw = 1 / its world extent (world XZ → texture UV).
+    pub region: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Clone, TypePath, Debug)]
 pub struct WaterExt {
     #[uniform(100)]
     pub params: WaterParams,
+    /// R8 shore-distance field baked by `worldmap::bake_shore_distance` (0 = land,
+    /// 1 = ≥ 8 tiles offshore). The terrain has no underwater geometry, so this —
+    /// not prepass depth — is what gives the shader shallowness/foam information.
+    /// `None` falls back to Bevy's 1×1 white image → everything reads "deep".
+    #[texture(101)]
+    #[sampler(102)]
+    pub shore: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for WaterExt {
