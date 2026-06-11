@@ -4,15 +4,19 @@
 //! the freeze gate for free; on the start screen (where `Modal` doesn't exist) the same panel
 //! is spawned/despawned directly. `Esc`/`H`/the header ✕ close it in both contexts.
 //!
-//! Five tabs — **Basics / Combat / Stronghold / Economy / Survival** — in the medieval chrome
-//! (linen + gold hairline frame, Cinzel header, tinted game-icons). The **Stronghold** tab
-//! explains the town-building RTS loop: rescue villagers → build on plots → food grows the
-//! population → workers gather → militia and walls hold it at night. Switching a tab rebuilds
-//! the panel in place, the same despawn-and-rebuild pattern the satchel uses.
+//! A near-fullscreen (90%) sheet in the medieval chrome, organised as **visual cards** rather
+//! than a key-list: the Combat tab draws the ork roster with real HP/damage bars straight from
+//! `tileworld_core::ork_config`, the Stronghold tab lists buildings with their true costs from
+//! `town_store`, Economy shows where each resource comes from and goes, Survival draws the
+//! day/night loop and the heir chain. Five tabs — **Basics / Combat / Stronghold / Economy /
+//! Survival**. Switching a tab rebuilds the panel in place (the satchel pattern).
 
 use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
+
+use tileworld_core::ork_config::{ork_config, OrkVariant};
+use tileworld_core::town_store::{BuildKind, HOUSE_COST, POP_PER_HOUSE};
 
 use crate::audio::AudioCue;
 use crate::game_state::{AppState, Modal};
@@ -180,32 +184,6 @@ fn tutorial_interact(
 
 // ─── Content model ──────────────────────────────────────────────────────────────────
 
-/// One thing shown in a row's left gutter — either a keyboard key or an [`IconAtlas`] icon.
-#[derive(Clone, Copy)]
-enum Chip {
-    Key(&'static str),
-    Icon(&'static str),
-}
-
-/// A single how-to row: a few chips, a title, and a one-line explanation.
-struct Row {
-    chips: &'static [Chip],
-    title: &'static str,
-    desc: &'static str,
-}
-
-/// An optional illustrative mini-diagram for a tab.
-#[derive(Clone, Copy, PartialEq)]
-enum Diagram {
-    None,
-    /// Combat: a sample HP bar (rendered after the rows).
-    HpBar,
-    /// Survival: the day → night loop bar (rendered at the top).
-    DayNight,
-    /// Stronghold: the rescue → build → feed → defend town loop (rendered at the top).
-    TownLoop,
-}
-
 /// Tab labels + their icon key (tinted game-icons via [`IconAtlas`]).
 const TAB_NAMES: [(&str, &str); 5] = [
     ("Basics", "buff:haste"),
@@ -215,63 +193,11 @@ const TAB_NAMES: [(&str, &str); 5] = [
     ("Survival", "sym:sun"),
 ];
 
-use Chip::{Icon, Key};
+/// Card-title gold (a touch brighter than `KICKER` so titles pop on the dark sub-cards).
+const CARD_TITLE: Color = rgb(216, 178, 114);
+const CARD_BG: Color = rgba(146, 122, 86, 0.07);
 
-const BASICS: &[Row] = &[
-    Row { chips: &[Key("W"), Key("A"), Key("S"), Key("D")], title: "Move", desc: "Walk your knight around the island." },
-    Row { chips: &[Key("`")], title: "Camera", desc: "Toggle free fly-cam \u{2194} follow-cam. Hold RMB in fly-cam to look around." },
-    Row { chips: &[Key("E")], title: "Interact", desc: "One key for everything nearby \u{2014} keep, merchant, build plot, war bell. A prompt names it." },
-    Row { chips: &[Key("F")], title: "Loot & rescue", desc: "Open chests, forage plants and free caged villagers \u{2014} they walk home and join your town." },
-    Row { chips: &[Key("I")], title: "Satchel", desc: "Open your bag to eat, equip and pin quick-slot items." },
-    Row { chips: &[Key("R")], title: "Recruit", desc: "Rally nearby villagers to fight at your side." },
-    Row { chips: &[Key("H")], title: "Help", desc: "Open this guide any time." },
-];
-
-const COMBAT: &[Row] = &[
-    Row { chips: &[Key("LMB")], title: "Attack", desc: "Swing your weapon. Levels, gear and crits all raise your damage." },
-    Row { chips: &[Key("RMB")], title: "Block", desc: "Raise your shield to cut incoming damage \u{2014} it drains stamina, so let it recover." },
-    Row { chips: &[Icon("hero_dmg_1")], title: "Know your enemy", desc: "Grunts hit hard, scouts run fast, berserkers hit harder, shamans lob bolts from range." },
-    Row { chips: &[Icon("hero_hp_1")], title: "Stay alive", desc: "Watch your HP and eat food (Q) to heal between fights." },
-];
-
-const STRONGHOLD: &[Row] = &[
-    Row { chips: &[Key("F")], title: "Rescue villagers", desc: "Caged villagers are scattered across the island. Free them and they walk home to your town." },
-    Row { chips: &[Key("E")], title: "Build on plots", desc: "Stand on an empty plot by the castle: houses raise the population cap, farms grow food, woodcutter yards and miner camps gather wood and stone." },
-    Row { chips: &[Icon("stat:food")], title: "Feed the town", desc: "Villagers eat from the larder. A food surplus draws in new settlers; famine drives them off." },
-    Row { chips: &[Icon("stat:wood")], title: "Workers", desc: "Villagers staff buildings on their own \u{2014} woodcutters fell real trees, miners cart ore, all straight into your stores." },
-    Row { chips: &[Key("R")], title: "Militia", desc: "Rallied villagers and posted guards fight the raiders beside you." },
-    Row { chips: &[Icon("def_walls")], title: "Hold it at night", desc: "Night raiders split off to torch your buildings. Walls and guards protect them; damage mends by day." },
-];
-
-const ECONOMY: &[Row] = &[
-    Row { chips: &[Icon("sym:gold")], title: "Gold", desc: "Dropped by kills and chests. Spends at the merchant and the War Table." },
-    Row { chips: &[Icon("sym:stone")], title: "Stone", desc: "Mine ore veins with your attack \u{2014} pays for walls, towers and buildings." },
-    Row { chips: &[Icon("stat:wood")], title: "Wood", desc: "Chop trees yourself or let your woodcutters haul it. Houses and farms need it." },
-    Row { chips: &[Icon("def_reinforce")], title: "War Table", desc: "Press E at the keep: four branches \u{2014} Prosperity, Bulwark, Champion, Armoury." },
-    Row { chips: &[Icon("branch:arsenal")], title: "Merchant", desc: "Press E at the stall to trade for weapons, armor and potions." },
-    Row { chips: &[Key("Q"), Key("Z"), Key("X"), Key("C")], title: "Quick-bar", desc: "Q eats food \u{00b7} Z resist \u{00b7} X power \u{00b7} C haste. Pin items from the satchel." },
-];
-
-const SURVIVAL: &[Row] = &[
-    Row { chips: &[Icon("sym:sun")], title: "Day & night", desc: "By day you loot, build and prepare; at dusk the orks come." },
-    Row { chips: &[Icon("def_reinforce")], title: "Defend the keep", desc: "If the keep's HP hits zero the run ends. Walls and towers buy you time." },
-    Row { chips: &[Key("E")], title: "Ring the bell", desc: "Done preparing? Ring the war bell to call the night early." },
-    Row { chips: &[Icon("buff:power")], title: "Succession", desc: "When your hero falls an heir takes up the blade. Run out of heirs and the run ends." },
-    Row { chips: &[Icon("branch:economy")], title: "Five biomes", desc: "Forest, desert, snow, swamp and rock ring the island, each with its own bounty and beasts." },
-];
-
-/// Rows + diagram for a tab index.
-fn tab_content(tab: usize) -> (&'static [Row], Diagram) {
-    match tab {
-        1 => (COMBAT, Diagram::HpBar),
-        2 => (STRONGHOLD, Diagram::TownLoop),
-        3 => (ECONOMY, Diagram::None),
-        4 => (SURVIVAL, Diagram::DayNight),
-        _ => (BASICS, Diagram::None),
-    }
-}
-
-// ─── Build ──────────────────────────────────────────────────────────────────────────
+// ─── Small builders ─────────────────────────────────────────────────────────────────
 
 /// A keycap chip (a small raised key, e.g. `E` or `LMB`).
 fn keycap(font: &Handle<Font>, k: &str) -> impl Bundle {
@@ -282,12 +208,166 @@ fn keycap(font: &Handle<Font>, k: &str) -> impl Bundle {
             border_radius: radius(5.0),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
+            flex_shrink: 0.0,
             ..default()
         },
         widgets::keycap_paint(),
-        children![label(font, k, 12.0, rgb(240, 226, 192))],
+        children![label(font, k, 13.0, rgb(240, 226, 192))],
     )
 }
+
+/// A framed sub-card with a small-caps gold title; `f` fills the body.
+fn section(
+    p: &mut RelatedSpawnerCommands<ChildOf>,
+    fonts: &UiFonts,
+    title: &str,
+    f: impl FnOnce(&mut RelatedSpawnerCommands<ChildOf>),
+) {
+    p.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(11.0),
+            padding: UiRect::all(Val::Px(16.0)),
+            border: border(1.0),
+            border_radius: radius(R_CARD),
+            // Stretch to share the column height — a 90% sheet with top-huddled cards reads empty.
+            flex_grow: 1.0,
+            ..default()
+        },
+        BackgroundColor(CARD_BG),
+        BorderColor::all(BORDER_SOFT),
+    ))
+    .with_children(|c| {
+        c.spawn(label(&fonts.display, title, 14.0, CARD_TITLE));
+        f(c);
+    });
+}
+
+/// One explained point inside a card: a keycap **or** icon in a small gutter, then
+/// `title — desc` text that wraps.
+fn point(
+    p: &mut RelatedSpawnerCommands<ChildOf>,
+    fonts: &UiFonts,
+    atlas: &IconAtlas,
+    key: Option<&str>,
+    icon: Option<&str>,
+    title: &str,
+    desc: &str,
+) {
+    p.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(10.0),
+        ..default()
+    })
+    .with_children(|r| {
+        r.spawn(Node {
+            min_width: Val::Px(40.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_shrink: 0.0,
+            ..default()
+        })
+        .with_children(|g| {
+            if let Some(k) = key {
+                g.spawn(keycap(&fonts.bold, k));
+            } else if let Some(entry) = icon.and_then(|i| atlas.get_tintable(i)) {
+                g.spawn(widgets::icon_tinted(entry, 24.0, GOLD));
+            }
+        });
+        r.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), flex_grow: 1.0, ..default() })
+            .with_children(|tc| {
+                tc.spawn(label(&fonts.semibold, title, 15.0, TEXT));
+                tc.spawn(label(&fonts.regular, desc, 13.0, TEXT_DIM));
+            });
+    });
+}
+
+/// A horizontal sample bar (HP / stamina / enemy-stat tracks).
+fn hbar(p: &mut RelatedSpawnerCommands<ChildOf>, w: Val, frac: f32, top: Color, bot: Color) {
+    p.spawn((
+        Node {
+            width: w,
+            height: Val::Px(13.0),
+            border: border(1.0),
+            border_radius: radius(R_SLOT),
+            overflow: Overflow::clip(),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        BackgroundColor(SLOT_BG),
+        BorderColor::all(SLOT_BORDER),
+    ))
+    .with_children(|track| {
+        track.spawn((
+            Node { width: Val::Percent(frac * 100.0), height: Val::Percent(100.0), ..default() },
+            widgets::vgrad(top, bot),
+        ));
+    });
+}
+
+/// A small tinted pill (branch / biome chips).
+fn pill(p: &mut RelatedSpawnerCommands<ChildOf>, font: &Handle<Font>, text: &str, tint: Color) {
+    p.spawn((
+        Node {
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+            border: border(1.0),
+            border_radius: radius(R_CELL),
+            ..default()
+        },
+        BackgroundColor(tint.with_alpha(0.18)),
+        BorderColor::all(tint.with_alpha(0.55)),
+    ))
+    .with_children(|c| {
+        c.spawn(label(font, text, 12.5, Color::WHITE.mix(&tint, 0.35)));
+    });
+}
+
+/// A `2 wood · 4 stone` cost chip row.
+fn cost_chips(p: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas, wood: f64, stone: f64) {
+    p.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(8.0),
+        flex_shrink: 0.0,
+        ..default()
+    })
+    .with_children(|row| {
+        let mut chip = |icon: &str, n: f64| {
+            if n <= 0.0 {
+                return;
+            }
+            row.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(3.0),
+                ..default()
+            })
+            .with_children(|c| {
+                if let Some(entry) = atlas.get_tintable(icon) {
+                    c.spawn(widgets::icon_tinted(entry, 15.0, GOLD));
+                }
+                c.spawn(label(&fonts.bold, format!("{}", n as i64), 13.0, GOLD));
+            });
+        };
+        chip("stat:wood", wood);
+        chip("stat:stone", stone);
+    });
+}
+
+/// A column that takes an equal share of a row.
+fn col() -> Node {
+    Node {
+        flex_direction: FlexDirection::Column,
+        row_gap: Val::Px(14.0),
+        flex_grow: 1.0,
+        flex_basis: Val::Px(0.0),
+        ..default()
+    }
+}
+
+// ─── Panel shell ────────────────────────────────────────────────────────────────────
 
 /// Build (or rebuild) the whole tutorial panel for the given active `tab`.
 fn build_panel(
@@ -297,18 +377,16 @@ fn build_panel(
     atlas: &IconAtlas,
     tex: &UiTextures,
 ) {
-    let (rows, diagram) = tab_content(tab);
-
     // `FocusPolicy::Block` so the scrim swallows pointer picks — on the start screen the menu
     // buttons sit *under* it and must not stay clickable through the backdrop.
     commands.spawn((widgets::scrim(60), FocusPolicy::Block, TutorialUi)).with_children(|root| {
         root.spawn((
             Node {
+                width: Val::Percent(90.0),
+                height: Val::Percent(90.0),
                 flex_direction: FlexDirection::Column,
-                min_width: Val::Px(620.0),
-                max_width: Val::Px(660.0),
                 row_gap: Val::Px(12.0),
-                padding: UiRect::axes(Val::Px(28.0), Val::Px(22.0)),
+                padding: UiRect::axes(Val::Px(30.0), Val::Px(22.0)),
                 border: border(2.0),
                 border_radius: radius(R_PANEL),
                 ..default()
@@ -323,13 +401,14 @@ fn build_panel(
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,
-                padding: UiRect::bottom(Val::Px(8.0)),
+                padding: UiRect::bottom(Val::Px(9.0)),
                 border: UiRect::bottom(Val::Px(1.0)),
+                flex_shrink: 0.0,
                 ..default()
             })
             .insert(BorderColor::all(BORDER_SOFT))
             .with_children(|h| {
-                h.spawn(label(&fonts.display, "HOW TO PLAY", 16.0, GOLD));
+                h.spawn(label(&fonts.display, "HOW TO PLAY", 22.0, GOLD));
                 h.spawn(Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
@@ -345,7 +424,8 @@ fn build_panel(
             // ── Tab row ──
             card.spawn(Node {
                 flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(6.0),
+                column_gap: Val::Px(7.0),
+                flex_shrink: 0.0,
                 ..default()
             })
             .with_children(|tabs| {
@@ -358,8 +438,8 @@ fn build_panel(
                         Node {
                             flex_direction: FlexDirection::Row,
                             align_items: AlignItems::Center,
-                            column_gap: Val::Px(7.0),
-                            padding: UiRect::axes(Val::Px(13.0), Val::Px(8.0)),
+                            column_gap: Val::Px(8.0),
+                            padding: UiRect::axes(Val::Px(19.0), Val::Px(10.0)),
                             border: border(1.0),
                             border_radius: radius(R_BTN),
                             ..default()
@@ -370,93 +450,426 @@ fn build_panel(
                     ))
                     .with_children(|b| {
                         if let Some(entry) = atlas.get_tintable(icon_key) {
-                            b.spawn(widgets::icon_tinted(entry, 15.0, if on { INK } else { GOLD }));
+                            b.spawn(widgets::icon_tinted(entry, 17.0, if on { INK } else { GOLD }));
                         }
-                        b.spawn(label(&fonts.bold, *name, 13.0, if on { INK } else { TEXT_DIM }));
+                        b.spawn(label(&fonts.bold, *name, 14.5, if on { INK } else { TEXT_DIM }));
                     });
                 }
             });
 
-            // ── Body (fixed min-height so switching tabs doesn't jump the card) ──
+            // ── Body (fills the sheet; each tab lays out its own cards) ──
             card.spawn(Node {
                 flex_direction: FlexDirection::Column,
-                min_height: Val::Px(330.0),
-                row_gap: Val::Px(11.0),
+                row_gap: Val::Px(12.0),
                 padding: UiRect::top(Val::Px(4.0)),
+                flex_grow: 1.0,
+                min_height: Val::Px(0.0),
+                overflow: Overflow::clip_y(),
                 ..default()
             })
-            .with_children(|body| {
-                match diagram {
-                    Diagram::DayNight => day_night_bar(body, fonts, atlas),
-                    Diagram::TownLoop => town_loop(body, fonts, atlas),
-                    _ => {}
-                }
-                for row in rows {
-                    body.spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(14.0),
-                        ..default()
-                    })
-                    .with_children(|r| {
-                        // Left gutter: chips (keycaps / icons), fixed width so titles line up.
-                        r.spawn(Node {
-                            min_width: Val::Px(112.0),
-                            flex_direction: FlexDirection::Row,
-                            flex_wrap: FlexWrap::Wrap,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(4.0),
-                            row_gap: Val::Px(4.0),
-                            flex_shrink: 0.0,
-                            ..default()
-                        })
-                        .with_children(|gutter| {
-                            for chip in row.chips {
-                                match chip {
-                                    Key(k) => {
-                                        gutter.spawn(keycap(&fonts.bold, k));
-                                    }
-                                    Icon(key) => {
-                                        if let Some(entry) = atlas.get_tintable(key) {
-                                            gutter.spawn(widgets::icon_tinted(entry, 22.0, GOLD));
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                        // Right: title + description.
-                        r.spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(1.0),
-                            ..default()
-                        })
-                        .with_children(|tc| {
-                            tc.spawn(label(&fonts.semibold, row.title, 14.0, TEXT));
-                            tc.spawn(label(&fonts.regular, row.desc, 12.5, TEXT_DIM));
-                        });
-                    });
-                }
-                if diagram == Diagram::HpBar {
-                    hp_bar(body, fonts, atlas);
-                }
+            .with_children(|body| match tab {
+                1 => tab_combat(body, fonts, atlas),
+                2 => tab_stronghold(body, fonts, atlas),
+                3 => tab_economy(body, fonts, atlas),
+                4 => tab_survival(body, fonts, atlas),
+                _ => tab_basics(body, fonts, atlas),
             });
 
             // ── Footer ──
-            card.spawn(label(&fonts.regular, "Click a tab or use \u{2190} \u{2192} + Enter to switch", 11.0, GREY));
+            card.spawn((
+                Node { flex_shrink: 0.0, ..default() },
+                children![label(
+                    &fonts.regular,
+                    "Click a tab or use \u{2190} \u{2192} + Enter to switch",
+                    11.0,
+                    GREY
+                )],
+            ));
         });
     });
 }
+
+/// Two equal columns side by side; the closures fill each.
+fn two_cols(
+    body: &mut RelatedSpawnerCommands<ChildOf>,
+    left: impl FnOnce(&mut RelatedSpawnerCommands<ChildOf>),
+    right: impl FnOnce(&mut RelatedSpawnerCommands<ChildOf>),
+) {
+    body.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        column_gap: Val::Px(14.0),
+        align_items: AlignItems::Stretch,
+        width: Val::Percent(100.0),
+        flex_grow: 1.0,
+        ..default()
+    })
+    .with_children(|row| {
+        row.spawn(col()).with_children(left);
+        row.spawn(col()).with_children(right);
+    });
+}
+
+// ─── Tabs ───────────────────────────────────────────────────────────────────────────
+
+fn tab_basics(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas) {
+    two_cols(
+        body,
+        |l| {
+            section(l, fonts, "ONE KEY FOR EVERYTHING \u{2014} E", |c| {
+                c.spawn(label(
+                    &fonts.regular,
+                    "Walk up to anything important and press E \u{2014} a prompt names what you're about to do.",
+                    13.0,
+                    TEXT_DIM,
+                ));
+                point(c, fonts, atlas, None, Some("def_reinforce"), "At the keep", "Opens the War Table \u{2014} the upgrade tree.");
+                point(c, fonts, atlas, None, Some("branch:arsenal"), "At the merchant stall", "Opens the shop \u{2014} weapons, armor, potions.");
+                point(c, fonts, atlas, None, Some("stat:pop"), "On an empty plot", "Opens the build menu \u{2014} houses, farms, yards.");
+                point(c, fonts, atlas, None, Some("buff:power"), "At the war bell", "Rings in the night early, once you're ready.");
+            });
+            section(l, fonts, "CAMERA", |c| {
+                point(c, fonts, atlas, Some("`"), None, "Toggle the fly-cam", "Follow-cam \u{2194} free camera. In fly-cam: hold RMB to look, Space/Ctrl for up/down, Shift to sprint.");
+            });
+        },
+        |r| {
+            section(r, fonts, "SCAVENGE \u{2014} F", |c| {
+                point(c, fonts, atlas, None, Some("sym:gold"), "Chests", "Crack them open for gold, gear and supplies.");
+                point(c, fonts, atlas, None, Some("stat:food"), "Forage", "Pick herbs, apples and other plants for the satchel.");
+                point(c, fonts, atlas, None, Some("sym:lock"), "Caged villagers", "Free them \u{2014} they walk home and join your town.");
+            });
+            section(r, fonts, "SATCHEL & QUICK-BAR", |c| {
+                point(c, fonts, atlas, Some("I"), None, "Satchel", "Your bag \u{2014} eat, equip weapons and armor, pin items.");
+                point(c, fonts, atlas, Some("Q"), None, "Eat", "Chews the best food in the bag to heal.");
+                point(c, fonts, atlas, Some("Z"), None, "Quick-slots  Z / X / C", "Resist, power and haste potions. In the satchel, hover an item and press a key to pin it.");
+                point(c, fonts, atlas, Some("R"), None, "Recruit", "Rallies nearby villagers to fight at your side.");
+            });
+        },
+    );
+}
+
+fn tab_combat(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas) {
+    two_cols(
+        body,
+        |l| {
+            section(l, fonts, "KNOW YOUR ENEMY", |c| {
+                c.spawn(label(
+                    &fonts.regular,
+                    "Each night's horde mixes four breeds. Health and hit numbers below are night one \u{2014} they grow every wave.",
+                    13.0,
+                    TEXT_DIM,
+                ));
+                let max_hp = ork_config(OrkVariant::Berserker).hp;
+                for (v, name, trait_) in [
+                    (OrkVariant::Grunt, "Grunt", "The line-filler. Slow, steady, everywhere."),
+                    (OrkVariant::Scout, "Scout", "Fast and fragile \u{2014} slips past the walls."),
+                    (OrkVariant::Berserker, "Berserker", "Huge and brutal. Do not trade blows."),
+                    (OrkVariant::Shaman, "Shaman", "Lobs bolts from range and heals its kin \u{2014} kill it first."),
+                ] {
+                    let cfg = ork_config(v);
+                    c.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(3.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        })
+                        .with_children(|head| {
+                            head.spawn(label(&fonts.semibold, name, 15.0, TEXT));
+                            head.spawn(label(
+                                &fonts.bold,
+                                format!("{} HP \u{00b7} {} dmg", cfg.hp as i64, cfg.damage as i64),
+                                12.0,
+                                GREY,
+                            ));
+                        });
+                        hbar(row, Val::Percent(100.0), (cfg.hp / max_hp) as f32, HP_TOP, HP_BOT);
+                        row.spawn(label(&fonts.regular, trait_, 12.5, TEXT_DIM));
+                    });
+                }
+            });
+        },
+        |r| {
+            section(r, fonts, "SWORDPLAY", |c| {
+                point(c, fonts, atlas, Some("LMB"), None, "Attack", "Swing your blade. Levels, better weapons and crits all raise the damage.");
+                point(c, fonts, atlas, Some("RMB"), None, "Block", "Raise the shield to cut incoming damage \u{2014} it drains stamina, so don't hold it forever.");
+                c.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|s| {
+                    hbar(s, Val::Px(170.0), 0.55, STAM_TOP, STAM_BOT);
+                    s.spawn(label(&fonts.regular, "stamina \u{2014} recovers when you lower the shield", 11.0, GREY));
+                });
+            });
+            section(r, fonts, "STAY ALIVE", |c| {
+                c.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|s| {
+                    if let Some(entry) = atlas.get_tintable("hero_hp_1") {
+                        s.spawn(widgets::icon_tinted(entry, 18.0, RED));
+                    }
+                    hbar(s, Val::Px(170.0), 0.68, HP_TOP, HP_BOT);
+                    s.spawn(label(&fonts.regular, "your health", 11.0, GREY));
+                });
+                point(c, fonts, atlas, Some("Q"), None, "Eat to heal", "Food from foraging, chests and farms. Stock up before dusk.");
+                point(c, fonts, atlas, None, Some("buff:resist"), "Potions", "Resist (Z), power (X) and haste (C) turn a bad night around.");
+            });
+            section(r, fonts, "GEAR UP", |c| {
+                point(c, fonts, atlas, None, Some("sword_iron"), "Weapons", "Buy at the merchant, equip in the satchel. Each tier hits harder.");
+                point(c, fonts, atlas, None, Some("iron_armor"), "Armor", "Soaks a share of every hit \u{2014} the cheapest way to survive late nights.");
+            });
+        },
+    );
+}
+
+fn tab_stronghold(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas) {
+    town_loop(body, fonts, atlas);
+    two_cols(
+        body,
+        |l| {
+            section(l, fonts, "BUILD ON PLOTS \u{2014} E", |c| {
+                c.spawn(label(
+                    &fonts.regular,
+                    "Empty plots ring the castle. Stand on one and press E. Every producer needs a villager to staff it.",
+                    13.0,
+                    TEXT_DIM,
+                ));
+                // (icon, name, cost, effect) — costs straight from the parity-tested core.
+                let rows: [(&str, &str, f64, f64, String); 4] = [
+                    ("stat:pop", "House", HOUSE_COST.wood, HOUSE_COST.stone, format!("Shelters {POP_PER_HOUSE} more villagers.")),
+                    ("stat:food", "Farm", BuildKind::Farm.cost().wood, BuildKind::Farm.cost().stone, "Grows food while staffed.".into()),
+                    ("stat:wood", "Woodcutter", BuildKind::Lumber.cost().wood, BuildKind::Lumber.cost().stone, "Its worker fells real trees \u{2014} wood per tree.".into()),
+                    ("stat:stone", "Stone Miner", BuildKind::Mine.cost().wood, BuildKind::Mine.cost().stone, "Its worker picks apart ore boulders \u{2014} stone per haul.".into()),
+                ];
+                for (icon, name, wood, stone, effect) in rows {
+                    c.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        if let Some(entry) = atlas.get_tintable(icon) {
+                            row.spawn(widgets::icon_tinted(entry, 24.0, GOLD));
+                        }
+                        row.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(2.0),
+                            flex_grow: 1.0,
+                            ..default()
+                        })
+                        .with_children(|tc| {
+                            tc.spawn(label(&fonts.semibold, name, 15.0, TEXT));
+                            tc.spawn(label(&fonts.regular, effect, 12.5, TEXT_DIM));
+                        });
+                        cost_chips(row, fonts, atlas, wood, stone);
+                    });
+                }
+                c.spawn(label(
+                    &fonts.regular,
+                    "Wood and stone bootstrap each other: the Woodcutter costs only stone, the Miner only wood.",
+                    12.5,
+                    GREY,
+                ));
+            });
+        },
+        |r| {
+            section(r, fonts, "POPULATION", |c| {
+                point(c, fonts, atlas, Some("F"), None, "Rescue", "Freed villagers walk home and join the workforce.");
+                point(c, fonts, atlas, None, Some("stat:food"), "Food decides growth", "Villagers eat every day. A surplus draws in new settlers \u{2014} famine drives them off.");
+                point(c, fonts, atlas, None, Some("stat:pop"), "Houses cap it", "No beds, no settlers. Build houses to grow past the founding pair.");
+            });
+            section(r, fonts, "THE NIGHT TEST", |c| {
+                point(c, fonts, atlas, None, Some("sym:warn"), "Raiders torch buildings", "Part of every wave splits off to burn your town instead of the keep.");
+                point(c, fonts, atlas, Some("R"), None, "Militia", "Rallied villagers and posted guards fight back. Dead villagers stay dead \u{2014} only food surplus replaces them.");
+                point(c, fonts, atlas, None, Some("def_walls"), "Walls & towers", "Bought at the War Table \u{2014} they keep the horde off your producers. Damage mends itself by day.");
+            });
+        },
+    );
+}
+
+fn tab_economy(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas) {
+    // Three resource cards: where it comes from → what it buys.
+    body.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        column_gap: Val::Px(14.0),
+        align_items: AlignItems::Stretch,
+        width: Val::Percent(100.0),
+        flex_grow: 1.0,
+        ..default()
+    })
+    .with_children(|row| {
+        for (icon, name, from, spend) in [
+            ("sym:gold", "GOLD", "Ork bounties \u{00b7} chests across the island.", "Merchant gear & potions \u{00b7} War Table upgrades."),
+            ("sym:stone", "STONE", "Smash ore boulders with your attack; Stone Miner workers cart it home.", "Walls, towers & defenses \u{00b7} the Woodcutter yard."),
+            ("stat:wood", "WOOD", "Chop trees yourself; Woodcutter workers fell them all day.", "Houses & farms \u{00b7} the Miner camp."),
+        ] {
+            row.spawn((
+                col(),
+                BackgroundColor(CARD_BG),
+                BorderColor::all(BORDER_SOFT),
+            ))
+            .insert(Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(8.0),
+                padding: UiRect::all(Val::Px(14.0)),
+                border: border(1.0),
+                border_radius: radius(R_CARD),
+                flex_grow: 1.0,
+                flex_basis: Val::Px(0.0),
+                ..default()
+            })
+            .with_children(|c| {
+                c.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|h| {
+                    if let Some(entry) = atlas.get_tintable(icon) {
+                        h.spawn(widgets::icon_tinted(entry, 27.0, GOLD));
+                    }
+                    h.spawn(label(&fonts.display, name, 15.5, CARD_TITLE));
+                });
+                c.spawn(label(&fonts.bold, "EARN", 10.5, GREY));
+                c.spawn(label(&fonts.regular, from, 13.0, TEXT_DIM));
+                c.spawn(label(&fonts.bold, "SPEND", 10.5, GREY));
+                c.spawn(label(&fonts.regular, spend, 13.0, TEXT_DIM));
+            });
+        }
+    });
+    two_cols(
+        body,
+        |l| {
+            section(l, fonts, "THE WAR TABLE \u{2014} E AT THE KEEP", |c| {
+                c.spawn(label(
+                    &fonts.regular,
+                    "Four branches of permanent upgrades. Early picks shape your whole run \u{2014} walls before night two is the classic opener.",
+                    13.0,
+                    TEXT_DIM,
+                ));
+                c.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(6.0),
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                })
+                .with_children(|chips| {
+                    pill(chips, &fonts.bold, "Prosperity \u{2014} income & town", BRANCH_ECON);
+                    pill(chips, &fonts.bold, "Bulwark \u{2014} walls & towers", BRANCH_DEF);
+                    pill(chips, &fonts.bold, "Champion \u{2014} your knight", BRANCH_HERO);
+                    pill(chips, &fonts.bold, "Armoury \u{2014} weapons & shop", BRANCH_ARSENAL);
+                });
+            });
+        },
+        |r| {
+            section(r, fonts, "THE MERCHANT \u{2014} E AT THE STALL", |c| {
+                point(c, fonts, atlas, None, Some("sword_gold"), "Weapons & armor", "Straight power for gold. New stock unlocks via Armoury upgrades.");
+                point(c, fonts, atlas, None, Some("potion"), "Potions & food", "Heals and buffs \u{2014} pin them to Z/X/C from the satchel.");
+            });
+        },
+    );
+}
+
+fn tab_survival(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas) {
+    day_night_bar(body, fonts, atlas);
+    two_cols(
+        body,
+        |l| {
+            section(l, fonts, "THE KEEP IS THE RUN", |c| {
+                c.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|s| {
+                    if let Some(entry) = atlas.get_tintable("def_reinforce") {
+                        s.spawn(widgets::icon_tinted(entry, 18.0, GOLD));
+                    }
+                    hbar(s, Val::Px(190.0), 0.8, HP_TOP, HP_BOT);
+                    s.spawn(label(&fonts.regular, "keep HP", 11.0, GREY));
+                });
+                point(c, fonts, atlas, None, Some("sym:warn"), "If it falls, the run ends", "Orks that reach the keep batter it down. Walls, towers and your sword are what stand between.");
+                point(c, fonts, atlas, None, Some("def_walls"), "It heals by day", "Keep and town damage mend during daylight \u{2014} survive the night and regroup.");
+            });
+            section(l, fonts, "RING THE BELL", |c| {
+                point(c, fonts, atlas, Some("E"), None, "Start the night early", "Done preparing? The war bell by the keep calls the horde now \u{2014} less waiting, same rewards.");
+            });
+        },
+        |r| {
+            section(r, fonts, "SUCCESSION", |c| {
+                c.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|chain| {
+                    for (i, a) in [1.0_f32, 0.66, 0.4].into_iter().enumerate() {
+                        if i > 0 {
+                            chain.spawn(children![label(&fonts.bold, "\u{2192}", 13.0, rgba(224, 168, 74, 0.6))]);
+                        }
+                        widgets::medallion(
+                            chain,
+                            atlas.get_tintable("branch:hero"),
+                            30.0,
+                            rgba(224, 168, 74, 0.5 * a),
+                            rgba(146, 122, 86, 0.18),
+                            GOLD.with_alpha(a),
+                        );
+                    }
+                    chain.spawn(label(&fonts.regular, "the bloodline", 11.0, GREY));
+                });
+                point(c, fonts, atlas, None, Some("branch:hero"), "Death is not the end", "When your knight falls, an heir takes up the blade \u{2014} the run continues. Run out of heirs and it's over.");
+            });
+            section(r, fonts, "FIVE BIOMES", |c| {
+                c.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(6.0),
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                })
+                .with_children(|chips| {
+                    pill(chips, &fonts.bold, "Forest", rgb(92, 142, 62));
+                    pill(chips, &fonts.bold, "Desert", rgb(214, 178, 94));
+                    pill(chips, &fonts.bold, "Snow", rgb(196, 214, 228));
+                    pill(chips, &fonts.bold, "Swamp", rgb(96, 124, 84));
+                    pill(chips, &fonts.bold, "Rock", rgb(148, 148, 152));
+                });
+                point(c, fonts, atlas, None, Some("branch:economy"), "Each has its own bounty", "Different plants, prey, predators and chests \u{2014} ranging farther pays, but watch the time of day.");
+            });
+        },
+    );
+}
+
+// ─── Diagrams ───────────────────────────────────────────────────────────────────────
 
 /// The day → night loop bar (Survival tab): a warm "day" segment and a deep-blue "night" one.
 fn day_night_bar(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas) {
     body.spawn((
         Node {
             width: Val::Percent(100.0),
-            height: Val::Px(36.0),
+            height: Val::Px(52.0),
             flex_direction: FlexDirection::Row,
             border: border(1.0),
             border_radius: radius(R_CARD),
             overflow: Overflow::clip(),
+            flex_shrink: 0.0,
             ..default()
         },
         BorderColor::all(BORDER_SOFT),
@@ -477,9 +890,9 @@ fn day_night_bar(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, at
         ))
         .with_children(|d| {
             if let Some(entry) = atlas.get_tintable("sym:sun") {
-                d.spawn(widgets::icon_tinted(entry, 18.0, rgb(74, 52, 16)));
+                d.spawn(widgets::icon_tinted(entry, 21.0, rgb(74, 52, 16)));
             }
-            d.spawn(label(&fonts.bold, "DAY \u{2014} prepare", 12.0, rgb(48, 34, 10)));
+            d.spawn(label(&fonts.bold, "DAY \u{2014} loot, build, upgrade", 14.5, rgb(48, 34, 10)));
         });
         // Night.
         bar.spawn((
@@ -496,20 +909,20 @@ fn day_night_bar(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, at
         ))
         .with_children(|n| {
             if let Some(entry) = atlas.get_tintable("buff:power") {
-                n.spawn(widgets::icon_tinted(entry, 15.0, rgb(176, 188, 220)));
+                n.spawn(widgets::icon_tinted(entry, 18.0, rgb(176, 188, 220)));
             }
-            n.spawn(label(&fonts.bold, "NIGHT \u{2014} defend", 12.0, rgb(204, 214, 238)));
+            n.spawn(label(&fonts.bold, "NIGHT \u{2014} the orks come", 14.5, rgb(204, 214, 238)));
         });
     });
 }
 
 /// The Stronghold tab's loop strip: rescue → build → feed → defend, as framed medallions.
 fn town_loop(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas) {
-    const STEPS: [(&str, &str); 4] = [
-        ("sym:lock", "RESCUE"),
-        ("stat:pop", "BUILD"),
-        ("stat:food", "FEED"),
-        ("def_walls", "DEFEND"),
+    const STEPS: [(&str, &str, &str); 4] = [
+        ("sym:lock", "RESCUE", "free caged villagers"),
+        ("stat:pop", "BUILD", "houses, farms, yards"),
+        ("stat:food", "FEED", "surplus grows the town"),
+        ("def_walls", "DEFEND", "hold it through the night"),
     ];
     body.spawn((
         Node {
@@ -517,76 +930,43 @@ fn town_loop(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas:
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            column_gap: Val::Px(14.0),
-            padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+            column_gap: Val::Px(20.0),
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(10.0)),
             border: border(1.0),
             border_radius: radius(R_CARD),
+            flex_shrink: 0.0,
             ..default()
         },
         BackgroundColor(rgba(146, 122, 86, 0.08)),
         BorderColor::all(BORDER_SOFT),
     ))
     .with_children(|strip| {
-        for (i, (icon_key, name)) in STEPS.iter().enumerate() {
+        for (i, (icon_key, name, sub)) in STEPS.iter().enumerate() {
             if i > 0 {
                 strip.spawn((
-                    Node { margin: UiRect::bottom(Val::Px(14.0)), ..default() },
-                    children![label(&fonts.bold, "\u{2192}", 15.0, rgba(224, 168, 74, 0.65))],
+                    Node { margin: UiRect::bottom(Val::Px(26.0)), ..default() },
+                    children![label(&fonts.bold, "\u{2192}", 18.0, rgba(224, 168, 74, 0.65))],
                 ));
             }
             strip
                 .spawn(Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(4.0),
+                    row_gap: Val::Px(3.0),
                     ..default()
                 })
                 .with_children(|step| {
                     widgets::medallion(
                         step,
                         atlas.get_tintable(icon_key),
-                        34.0,
+                        44.0,
                         rgba(224, 168, 74, 0.5),
                         rgba(146, 122, 86, 0.18),
                         GOLD,
                     );
-                    step.spawn(label(&fonts.bold, *name, 10.0, TEXT_DIM));
+                    step.spawn(label(&fonts.bold, *name, 12.5, TEXT));
+                    step.spawn(label(&fonts.regular, *sub, 11.0, GREY));
                 });
         }
-    });
-}
-
-/// A sample HP bar (Combat tab) showing the health track players watch in the heat of battle.
-fn hp_bar(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas: &IconAtlas) {
-    body.spawn(Node {
-        flex_direction: FlexDirection::Row,
-        align_items: AlignItems::Center,
-        column_gap: Val::Px(10.0),
-        padding: UiRect::top(Val::Px(2.0)),
-        ..default()
-    })
-    .with_children(|hp| {
-        if let Some(entry) = atlas.get_tintable("hero_hp_1") {
-            hp.spawn(widgets::icon_tinted(entry, 18.0, RED));
-        }
-        hp.spawn((
-            Node {
-                width: Val::Px(240.0),
-                height: Val::Px(14.0),
-                border: border(1.0),
-                border_radius: radius(R_SLOT),
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            BackgroundColor(SLOT_BG),
-            BorderColor::all(SLOT_BORDER),
-        ))
-        .with_children(|track| {
-            track.spawn((
-                Node { width: Val::Percent(68.0), height: Val::Percent(100.0), ..default() },
-                widgets::vgrad(HP_TOP, HP_BOT),
-            ));
-        });
-        hp.spawn(label(&fonts.regular, "Health \u{2014} eat food (Q) to recover", 12.5, TEXT_DIM));
     });
 }
