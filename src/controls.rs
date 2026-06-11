@@ -18,12 +18,33 @@ const SPRINT_MULT: f32 = 3.5;
 /// Don't let the camera sink below the canopy floor.
 const MIN_Y: f32 = 0.4;
 
-/// Marks the camera as fly-controllable + stores its yaw/pitch (kept in sync so mouse
-/// look and the transform never disagree).
+/// Cinematic smoothing rates (1/sec). Higher = snappier, lower = more floaty/filmic.
+/// The smoothed value chases its target by `1 - exp(-rate*dt)` each frame (frame-rate
+/// independent), so raw mouse jitter and instant key on/off become eased ramps — the slow
+/// glide that reads as a tripod/gimbal move in a trailer rather than a twitchy debug fly.
+/// Look lags the mouse so flicks settle smoothly; move builds/sheds momentum so dolly
+/// starts and stops ease instead of popping.
+const LOOK_SMOOTH: f32 = 11.0;
+const MOVE_SMOOTH: f32 = 4.5;
+
+/// Marks the camera as fly-controllable. Mouse/keys drive the `target_*`/desired velocity;
+/// the live `yaw`/`pitch`/`vel` chase those targets with damping for cinematic motion.
 #[derive(Component)]
 pub struct FlyCam {
+    /// Smoothed (rendered) yaw/pitch — what the transform actually uses.
     pub yaw: f32,
     pub pitch: f32,
+    /// Where the mouse wants the look to be; `yaw`/`pitch` ease toward these.
+    pub target_yaw: f32,
+    pub target_pitch: f32,
+    /// Smoothed world-space velocity (momentum), eased toward the keyboard's desired velocity.
+    pub vel: Vec3,
+}
+
+impl FlyCam {
+    pub fn new(yaw: f32, pitch: f32) -> Self {
+        FlyCam { yaw, pitch, target_yaw: yaw, target_pitch: pitch, vel: Vec3::ZERO }
+    }
 }
 
 pub struct ControlsPlugin;
@@ -65,14 +86,22 @@ fn fly_camera(
 
     let looking = buttons.pressed(MouseButton::Right) && !over_ui;
     let dt = time.delta_secs();
+    // Exponential smoothing factors, frame-rate independent. Clamped to [0,1] so a long
+    // frame (e.g. the per-frame stall during clip capture) can't overshoot past the target.
+    let look_a = (1.0 - (-LOOK_SMOOTH * dt).exp()).clamp(0.0, 1.0);
+    let move_a = (1.0 - (-MOVE_SMOOTH * dt).exp()).clamp(0.0, 1.0);
 
     for (mut tf, mut cam) in &mut cam_q {
+        // Mouse drives the *target* look; the rendered yaw/pitch lag behind it so flicks and
+        // jitter resolve into a smooth glide.
         if looking {
             let d = motion.delta;
-            cam.yaw -= d.x * SENSITIVITY;
-            cam.pitch = (cam.pitch - d.y * SENSITIVITY).clamp(-1.54, 1.54);
-            tf.rotation = Quat::from_euler(EulerRot::YXZ, cam.yaw, cam.pitch, 0.0);
+            cam.target_yaw -= d.x * SENSITIVITY;
+            cam.target_pitch = (cam.target_pitch - d.y * SENSITIVITY).clamp(-1.54, 1.54);
         }
+        cam.yaw += (cam.target_yaw - cam.yaw) * look_a;
+        cam.pitch += (cam.target_pitch - cam.pitch) * look_a;
+        tf.rotation = Quat::from_euler(EulerRot::YXZ, cam.yaw, cam.pitch, 0.0);
 
         let forward = tf.forward();
         let right = tf.right();
@@ -96,10 +125,18 @@ fn fly_camera(
             dir -= Vec3::Y;
         }
 
+        // Desired velocity from keys; the live velocity eases toward it so dolly moves ramp up
+        // and coast to a stop instead of popping on/off — the momentum that reads as a gimbal.
         let speed = if keys.pressed(KeyCode::ShiftLeft) { MOVE_SPEED * SPRINT_MULT } else { MOVE_SPEED };
-        tf.translation += dir.normalize_or_zero() * speed * dt;
+        let desired = dir.normalize_or_zero() * speed;
+        let vel = cam.vel + (desired - cam.vel) * move_a;
+        cam.vel = vel;
+        tf.translation += vel * dt;
         if tf.translation.y < MIN_Y {
             tf.translation.y = MIN_Y;
+            if cam.vel.y < 0.0 {
+                cam.vel.y = 0.0;
+            }
         }
     }
 }

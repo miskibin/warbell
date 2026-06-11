@@ -85,38 +85,18 @@ pub fn debug_play_stings(bank: Res<StingBank>, mut commands: Commands, mut done:
 
 // ── War drums (looping, spatial — see ambience.rs) ───────────────────────────────────
 
-/// The baked ork war-drum loop: a two-bar deep-tom march. Spatial loops at each camp ride
-/// this one source (`ambience::attach_war_drum_audio`), silent by day and faded in as the
-/// assault musters — the diegetic "the wave is coming" the HUD countdown only abstracts.
+/// Handle to the ork war-drum loop: a recorded ~20 s, 140 BPM deep-tom tribal siege march
+/// (`assets/audio/war-drums.ogg`, downmixed to mono so it positions cleanly as a 3D source).
+/// Every camp's spatial loop rides this one source (`ambience::attach_war_drum_audio`), silent by
+/// day and faded in as the assault musters — the diegetic "the wave is coming" the HUD abstracts.
 #[derive(Resource)]
 pub struct WarDrumLoop(pub Handle<AudioSource>);
 
-/// Bake the drum loop at startup. ~140 BPM, eight beats (≈3.43 s): heavy hits on the
-/// strong beats, a ghost double before each bar turn. Every hit is a pitch-dropping sine
-/// thump (drum skin) plus a short low-passed noise burst (mallet slap); the last hit's
-/// tail dies well before the bar ends so the loop point is silent → seamless.
-pub fn bake_war_drums(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
-    const BEAT: f32 = 60.0 / 140.0;
-    let mut y = Synth::new();
-    // (beat index, accent)
-    for &(b, a) in &[
-        (0.0_f32, 1.0_f32),
-        (2.0, 0.85),
-        (3.5, 0.45),
-        (4.0, 1.0),
-        (6.0, 0.85),
-        (7.0, 0.5),
-        (7.5, 0.6),
-    ] {
-        let t0 = b * BEAT;
-        y.tone(Wave::Sine, 102.0, t0, 0.30, 0.42 * a, Some(54.0));
-        y.noise(t0, 0.10, 0.14 * a, Filter::Low, 340.0, 90.0);
-    }
-    // Pad the buffer to the full two-bar length so the loop keeps its marching rest.
-    y.ensure((8.0 * BEAT * SAMPLE_RATE as f32) as usize);
-    commands.insert_resource(WarDrumLoop(
-        sources.add(AudioSource { bytes: wav_bytes(&y.finish()).into() }),
-    ));
+/// Load the war-drum loop at startup. (It was a procedural synth bake — a two-bar tom march —
+/// replaced by a real recording; still looped via `PlaybackMode::Loop`, and at 140 BPM the 20 s
+/// clip repeats cleanly enough that the seam doesn't read.)
+pub fn load_war_drums(mut commands: Commands, asset: Res<AssetServer>) {
+    commands.insert_resource(WarDrumLoop(asset.load("audio/war-drums.ogg")));
 }
 
 // ── The synth (verbatim from the bevy port's audio.rs) ──────────────────────────────

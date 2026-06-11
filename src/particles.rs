@@ -142,7 +142,9 @@ fn spawn(
     // Per-kind look + motion.
     let (count, radius, color, emissive, alpha, vel, sway, y_lo, y_hi) = match kind {
         ParticleKind::Snow => (520u32, 0.07, Color::srgb(1.0, 1.0, 1.0), 0.0, 1.0, Vec3::new(0.0, -1.7, 0.0), 0.7, 0.0, 16.0),
-        ParticleKind::Dust => (240, 0.06, Color::srgb(0.85, 0.74, 0.52), 0.0, 0.8, Vec3::new(0.9, 0.05, 0.4), 0.5, 0.15, 3.0),
+        // Desert: a dense, fast, ground-to-overhead sheet of blown sand streaming sideways — with
+        // the gust in `drift` it surges and lulls so the desert reads as genuinely windy.
+        ParticleKind::Dust => (420, 0.06, Color::srgb(0.85, 0.74, 0.52), 0.0, 0.8, Vec3::new(2.6, 0.06, 1.0), 0.9, 0.05, 5.5),
         ParticleKind::Fireflies => (32, 0.08, Color::srgb(1.0, 0.95, 0.45), 7.0, 1.0, Vec3::ZERO, 0.9, 0.4, 2.2),
         ParticleKind::Pollen => (150, 0.045, Color::srgb(1.0, 0.96, 0.7), 0.6, 0.9, Vec3::new(0.1, 0.28, 0.05), 0.6, 0.2, 6.0),
         // Mist is unused (the flat-disc look read as hard-edged shards); kept as a soft mote
@@ -191,13 +193,17 @@ fn drift(time: Res<Time>, center: Res<WeatherCenter>, mut q: Query<(&Particle, &
     let dt = time.delta_secs();
     let t = time.elapsed_secs_wrapped();
     let (cx, cz) = (center.0.x, center.0.y);
+    // A slow, layered gust on the *directional* wind (≈0.15× lull → ≈1.85× surge) so a steady
+    // drift becomes gusty — the desert dust (big horizontal vel) heaves and slackens like real
+    // wind. Snow/pollen/fireflies have little directional vel, so they're barely touched.
+    let gust = 1.0 + 0.55 * (t * 0.27).sin() + 0.3 * (t * 0.11 + 1.3).sin();
     for (p, mut tf) in &mut q {
-        // Sinusoidal horizontal sway layered on the base velocity.
+        // Sinusoidal horizontal sway layered on the gusting base velocity.
         let sx = (t * 1.3 + p.phase).sin() * p.sway;
         let sz = (t * 1.1 + p.phase * 1.7).cos() * p.sway;
-        tf.translation.x += (p.vel.x + sx) * dt;
+        tf.translation.x += (p.vel.x * gust + sx) * dt;
         tf.translation.y += p.vel.y * dt;
-        tf.translation.z += (p.vel.z + sz) * dt;
+        tf.translation.z += (p.vel.z * gust + sz) * dt;
 
         // Wrap vertically by travel direction; wrap horizontally within the moving box.
         if p.vel.y < 0.0 && tf.translation.y < p.y_min {

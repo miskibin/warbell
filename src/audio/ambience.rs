@@ -57,9 +57,10 @@ pub(crate) struct Ambience {
 #[derive(Component)]
 pub(crate) struct CampfireAudio;
 
-/// War-drum loop level at the source (spatial falloff handles distance from there). Loud:
-/// the drums should carry — hearing them faintly from across the river IS the feature.
-const WAR_DRUM_VOL: f32 = 1.3;
+/// War-drum loop level at the source (spatial falloff handles distance from there). Kept at
+/// unity: the drums should carry — hearing them faintly from across the river IS the feature —
+/// but the real recording is full-scale (the old synth peaked at ~0.4), so >1.0 would clip.
+const WAR_DRUM_VOL: f32 = 1.0;
 /// Seconds of prep left when the camps start drumming (the warbands muster before dark).
 const DRUM_LEAD: f32 = 45.0;
 /// Drum fade rate (per second) — a slow swell, not a switch.

@@ -64,6 +64,11 @@ pub fn toggle_mode(
             let (yaw, pitch, _) = tf.rotation.to_euler(EulerRot::YXZ);
             fly.yaw = yaw;
             fly.pitch = pitch;
+            // Sync smoothing targets + clear momentum so the fly-cam takes over at rest
+            // instead of easing toward a stale target or drifting from leftover velocity.
+            fly.target_yaw = yaw;
+            fly.target_pitch = pitch;
+            fly.vel = Vec3::ZERO;
         }
     }
 }

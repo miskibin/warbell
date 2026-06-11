@@ -248,7 +248,7 @@ impl Plugin for GameAudioPlugin {
                     music::setup_music,
                     sfx::setup_sfx,
                     synth::bake_stings,
-                    synth::bake_war_drums,
+                    synth::load_war_drums,
                     voice::setup_voice,
                     npc::setup_villager_trigger,
                     director::setup_voice_manager,

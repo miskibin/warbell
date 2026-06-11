@@ -61,7 +61,7 @@ pub struct Cage {
 }
 
 /// Index of the cage within the per-camp `solids` vec in [`build`].
-const CAGE_SOLID: usize = 4;
+const CAGE_SOLID: usize = 3;
 
 /// Seconds after a camp's warband is wiped before it repopulates (TS `OrkCamp.tsx`'s
 /// `CAMP_RESPAWN_DELAY`).
@@ -211,8 +211,10 @@ fn biome_within(cx: f32, cz: f32, biome: Biome, r: i32) -> bool {
 
 // ── Build ────────────────────────────────────────────────────────────────────────
 
-/// Warband member offsets around the fire (camp-local), one per `orks::VARIANTS` entry.
-const WARBAND: [(f32, f32); 4] = [(-0.6, 1.0), (2.6, 1.4), (-2.0, -0.6), (0.3, 2.4)];
+/// Warband member offsets around the fire (camp-local), one per `orks::VARIANTS` entry. Spread to
+/// four corners of the clearing — clear of the fire, the cage and the big tent (−2.4,0) — so the
+/// warband spawns (and idle-orbits, via each ork's `anchor`) fanned out instead of in one knot.
+const WARBAND: [(f32, f32); 4] = [(1.6, 1.8), (-1.0, -2.0), (2.2, 0.6), (-0.2, 2.6)];
 
 /// Build every planned camp: props (registering blockers) + the warband. Tagged `BiomeEntity`
 /// so the biome switch despawns/rebuilds them. Called from `worldmap::build` after the castle.
@@ -262,12 +264,11 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
         let place = |local: Vec3| centre3 + rot_q * local;
 
         // Static props: (mesh, camp-local pos, local yaw, footprint half-extents (hw,hd) in the
-        // prop's own frame; (0,0) = no collision). Tents are pure set-dressing — walk-through, no
-        // blocker (they read as open lean-tos and a wall there snags the hero on approach).
+        // prop's own frame; (0,0) = no collision). One big tent now, set right beside the cage and
+        // SOLID — it registers a blocker box, so the hero and the warband route around it.
         let (ta, tb) = tent_cols(site.faction);
         let solids = vec![
-            (tent_mesh(ta), v(-1.1, 0.0, -0.6), 0.3_f32, (0.0_f32, 0.0_f32)),
-            (tent_mesh(tb), v(1.3, 0.0, 0.4), -0.4, (0.0, 0.0)),
+            (tent_mesh(ta, tb), v(-2.4, 0.0, 0.0), 0.0_f32, (1.0_f32, 1.0_f32)),
             (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.25, 0.25)),
             (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
             (cage_mesh(), v(-2.2, 0.0, 2.2), 0.6, (0.95, 0.95)),
@@ -432,16 +433,19 @@ fn tent_cols(f: Faction) -> ([f32; 4], [f32; 4]) {
     }
 }
 
-/// Ridge tent — two slanted canvas slopes forming an A-frame + a ridge pole. Each slope is a
-/// thin box, long axis Y (len 1.18), tilted about Z so its top leans inward and the two meet at
-/// the apex (~y 0.93). `from_rotation_z(+θ)` tilts a box's top toward −X, so the LEFT slope
-/// (base at −X) uses −θ to lean its top toward centre (+X), and the right slope +θ.
-fn tent_mesh(canvas: [f32; 4]) -> Mesh {
+/// The camp's big ridge tent — two slanted canvas slopes forming an A-frame + a ridge pole, with
+/// a closed rear gable so it reads as a real, *solid* tent (it registers a collision box now — you
+/// walk around it, not through it). Each slope is a thin box, long axis Y (len 1.65), tilted about
+/// Z so its top leans inward and the two meet at the apex (~y 1.31). `from_rotation_z(+θ)` tilts a
+/// box's top toward −X, so the LEFT slope (base at −X) uses −θ to lean its top toward centre (+X),
+/// and the right slope +θ. ~1.4× the old per-camp tents (there are two no more — one larger one).
+fn tent_mesh(canvas: [f32; 4], back: [f32; 4]) -> Mesh {
     let ang = 0.635; // atan2(0.7, 0.95)
     group(vec![
-        bxr(0.05, 1.18, 1.4, v(-0.33, 0.46, 0.0), rz(-ang), canvas), // left slope
-        bxr(0.05, 1.18, 1.4, v(0.33, 0.46, 0.0), rz(ang), canvas),   // right slope
-        cyl(0.03, 1.55, v(0.0, 0.95, 0.0), rx(FRAC_PI_2), lin(POLE)), // ridge pole along Z
+        bxr(0.06, 1.65, 1.96, v(-0.46, 0.65, 0.0), rz(-ang), canvas), // left slope
+        bxr(0.06, 1.65, 1.96, v(0.46, 0.65, 0.0), rz(ang), canvas),   // right slope
+        cyl(0.035, 2.1, v(0.0, 1.31, 0.0), rx(FRAC_PI_2), lin(POLE)),  // ridge pole along Z
+        bx(0.8, 0.55, 0.06, v(0.0, 0.34, -0.95), back),                // closed rear gable flap
     ])
 }
 

@@ -84,12 +84,13 @@ fn abandoned_camp() -> Mesh {
         )); // charred logs crossing the ash
     }
     let tent = Vec3::new(0.9, 0.0, 0.0);
+    // A-frame: each panel's TOP leans to centre (meeting at the ridge), bottom splays outward.
     v.push(tint(
-        Cuboid::new(0.05, 0.95, 1.1).mesh().build().rotated_by(Quat::from_rotation_z(0.62)).translated_by(tent + Vec3::new(-0.26, 0.42, 0.0)),
+        Cuboid::new(0.05, 0.95, 1.1).mesh().build().rotated_by(Quat::from_rotation_z(-0.62)).translated_by(tent + Vec3::new(-0.26, 0.42, 0.0)),
         CANVAS,
     ));
     v.push(tint(
-        Cuboid::new(0.05, 0.95, 1.1).mesh().build().rotated_by(Quat::from_rotation_z(-0.62)).translated_by(tent + Vec3::new(0.26, 0.42, 0.0)),
+        Cuboid::new(0.05, 0.95, 1.1).mesh().build().rotated_by(Quat::from_rotation_z(0.62)).translated_by(tent + Vec3::new(0.26, 0.42, 0.0)),
         CANVAS,
     ));
     v.push(tint(
@@ -181,8 +182,8 @@ fn frozen_camp() -> Mesh {
     const STONE: u32 = 0x8a8f98;
     let mut v = Vec::new();
     v.push(ball(1.0, Vec3::new(0.0, 0.03, 0.0), 0.2, SNOW)); // drift the camp sinks into
-    v.push(tint(Cuboid::new(0.05, 0.8, 1.0).mesh().build().rotated_by(Quat::from_rotation_z(0.6)).translated_by(Vec3::new(-0.22, 0.33, 0.0)), CANVAS));
-    v.push(tint(Cuboid::new(0.05, 0.8, 1.0).mesh().build().rotated_by(Quat::from_rotation_z(-0.6)).translated_by(Vec3::new(0.22, 0.33, 0.0)), CANVAS));
+    v.push(tint(Cuboid::new(0.05, 0.8, 1.0).mesh().build().rotated_by(Quat::from_rotation_z(-0.6)).translated_by(Vec3::new(-0.22, 0.33, 0.0)), CANVAS)); // A-frame: tops meet at ridge
+    v.push(tint(Cuboid::new(0.05, 0.8, 1.0).mesh().build().rotated_by(Quat::from_rotation_z(0.6)).translated_by(Vec3::new(0.22, 0.33, 0.0)), CANVAS));
     v.push(bx(0.34, 0.12, 1.05, Vec3::new(0.0, 0.6, 0.0), SNOW)); // snow heaped on the ridge
     let mk = Vec3::new(0.95, 0.0, 0.3);
     v.push(cyl(0.04, 1.3, mk + Vec3::new(0.0, 0.65, 0.0), POLE)); // marker pole
@@ -297,6 +298,7 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
                 .id();
             crate::blockers::add(x, z, s.block_r);
             crate::landmarks::attach_custom(commands, id, s.name, s.lore, s.buff, s.mag, s.beacon, Vec3::new(x, y, z), meshes, materials);
+            info!("vignette {:?} \"{}\" at {:.1},{:.1},{:.1}", s.biome, s.name, x, y, z);
         } else {
             info!("vignette: no spot found for {:?}", s.biome);
         }

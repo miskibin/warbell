@@ -24,6 +24,11 @@ use crate::siege::{GamePhase, Siege};
 const MAX_MARKS: usize = 160;
 /// Chance an ork's fall also drops a piece of gear next to the stain.
 const DROP_CHANCE: f32 = 0.45;
+/// Blood stains fade out far quicker than the day-long gear/scorch traces: a stain reads right
+/// after the kill, then is gone within ~30s (the gear + scorches still carry the morning-after
+/// story). Hold full opacity for `BLOOD_HOLD`s, then fade over `BLOOD_FADE`s and despawn.
+const BLOOD_HOLD: f32 = 12.0;
+const BLOOD_FADE: f32 = 18.0;
 
 const TAU: f32 = std::f32::consts::TAU;
 const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
@@ -46,6 +51,16 @@ pub struct BattleMark {
 
 #[derive(Component)]
 struct Aftermath;
+
+/// A blood stain that fades out on its own (unlike gear/scorches, which persist till the next
+/// assault). Carries its OWN material handle — the stain's alpha lives in the mesh vertex colour,
+/// so [`fade_blood`] dims this per-stain material's `base_color` alpha (which multiplies it) to
+/// ramp the whole splat out, then despawns it.
+#[derive(Component)]
+struct BloodStain {
+    born: f32,
+    mat: Handle<StandardMaterial>,
+}
 
 /// FIFO of live marks for the cap.
 #[derive(Resource, Default)]
@@ -75,7 +90,7 @@ impl Plugin for AftermathPlugin {
             .add_systems(Startup, setup_assets)
             .add_systems(
                 Update,
-                (mark_ork_falls, mark_scorches, sweep_at_next_assault)
+                (mark_ork_falls, mark_scorches, fade_blood, sweep_at_next_assault)
                     .run_if(in_state(crate::game_state::Modal::None)),
             );
     }
@@ -116,12 +131,15 @@ fn setup_assets(
 /// `Added<Dying>` so it fires exactly once per ork, whoever landed the kill (hero, guard,
 /// tower, rival faction).
 fn mark_ork_falls(
+    time: Res<Time>,
     fallen: Query<&GlobalTransform, (With<Ork>, Added<Dying>)>,
     assets: Option<Res<MarkAssets>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut log: ResMut<MarkLog>,
     mut commands: Commands,
 ) {
     let Some(assets) = assets else { return };
+    let now = time.elapsed_secs();
     for gt in &fallen {
         let p = gt.translation();
         let yaw = rng01(&mut log.rng) * TAU;
@@ -133,7 +151,15 @@ fn mark_ork_falls(
             rotation: Quat::from_rotation_y(yaw),
             scale: Vec3::new(s, 1.0, s * squash),
         };
-        spawn_mark(&mut commands, &mut log, assets.stain.clone(), assets.decal_mat.clone(), stain_tf);
+        // Each stain gets its own (alpha-blended) material so `fade_blood` can dim it solo.
+        let stain_mat = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 1.0,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+        let e = spawn_mark(&mut commands, &mut log, assets.stain.clone(), stain_mat.clone(), stain_tf);
+        commands.entity(e).try_insert(BloodStain { born: now, mat: stain_mat });
         if rng01(&mut log.rng) < DROP_CHANCE {
             let mesh = match (rng01(&mut log.rng) * 3.0) as u32 {
                 0 => assets.club.clone(),
@@ -181,7 +207,7 @@ fn spawn_mark(
     mesh: Handle<Mesh>,
     mat: Handle<StandardMaterial>,
     tf: Transform,
-) {
+) -> Entity {
     let e = commands
         .spawn((Mesh3d(mesh), MeshMaterial3d(mat), tf, NotShadowCaster, Aftermath, BiomeEntity))
         .id();
@@ -189,6 +215,30 @@ fn spawn_mark(
     while log.entities.len() > MAX_MARKS {
         if let Some(old) = log.entities.pop_front() {
             commands.entity(old).try_despawn();
+        }
+    }
+    e
+}
+
+/// Ramp each blood stain's per-stain material alpha down after [`BLOOD_HOLD`]s and despawn it once
+/// fully faded — so blood clears within ~30s while gear/scorches keep the day-long battlefield read.
+fn fade_blood(
+    time: Res<Time>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    stains: Query<(Entity, &BloodStain)>,
+    mut commands: Commands,
+) {
+    let now = time.elapsed_secs();
+    for (e, b) in &stains {
+        let age = now - b.born;
+        if age < BLOOD_HOLD {
+            continue;
+        }
+        let f = ((age - BLOOD_HOLD) / BLOOD_FADE).min(1.0); // 0 → 1 across the fade window
+        if f >= 1.0 {
+            commands.entity(e).try_despawn();
+        } else if let Some(m) = materials.get_mut(&b.mat) {
+            m.base_color = m.base_color.with_alpha(1.0 - f); // multiplies the mesh's vertex alpha
         }
     }
 }

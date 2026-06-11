@@ -461,7 +461,7 @@ fn setup_camera(
         ShadowFilteringMethod::Gaussian,
         // Toon edge-outline (runs before the blur): crisp object silhouettes. Tunable in F1.
         crate::outline::default_outline(),
-        crate::controls::FlyCam { yaw, pitch },
+        crate::controls::FlyCam::new(yaw, pitch),
         // Listener for spatial wildlife audio (see `audio.rs`). `gap` = ear separation in
         // world units; scaled by the global `SpatialScale` set in `main.rs`.
         SpatialListener::new(4.0),

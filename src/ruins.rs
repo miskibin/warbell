@@ -144,7 +144,12 @@ fn mottle(mut m: Mesh, amount: f32) -> Mesh {
             let cx = (pos[i][0] + pos[i + 1][0] + pos[i + 2][0]) / 3.0;
             let cy = (pos[i][1] + pos[i + 1][1] + pos[i + 2][1]) / 3.0;
             let cz = (pos[i][2] + pos[i + 1][2] + pos[i + 2][2]) / 3.0;
-            let f = 1.0 + (hash3(cx, cy, cz) - 0.5) * amount;
+            // Two octaves: coarse blotches (weather staining over ~1.4u patches) + fine grain.
+            let coarse = hash3((cx * 0.7).floor(), (cy * 0.7).floor(), (cz * 0.7).floor());
+            let fine = hash3(cx * 2.3, cy * 2.3, cz * 2.3);
+            let n = coarse * 0.6 + fine * 0.4;
+            // Biased a touch dark (weathering darkens more than it lightens).
+            let f = 1.0 + (n - 0.58) * amount;
             for k in 0..3 {
                 for ch in 0..3 {
                     cols[i + k][ch] = (cols[i + k][ch] * f).clamp(0.0, 1.0);
@@ -205,7 +210,7 @@ pub fn build_trilithon_mesh() -> Mesh {
         // Slight per-stone brightness jitter so even the two uprights differ subtly.
         let v = if sx < 0.0 { 0.97 } else { 1.03 };
         parts.push(tinted(
-            tile_box(POST_W, POST_H, POST_D, 3).translated_by(Vec3::new(sx, base_y + POST_H * 0.5, 0.0)),
+            tile_box(POST_W, POST_H, POST_D, 4).translated_by(Vec3::new(sx, base_y + POST_H * 0.5, 0.0)),
             lin_scaled(body_hex, v),
         ));
         // Hewn cap — narrower + darker, capping the upright just under the lintel.
@@ -218,7 +223,7 @@ pub fn build_trilithon_mesh() -> Mesh {
     // Horizontal lintel spanning both uprights' tops, with a darker shadowed underside.
     let lintel_w = GAP + POST_W + 0.3;
     let lintel_y = PLINTH_H + POST_H + LINTEL_H * 0.5 - 0.02;
-    parts.push(tinted(tile_box(lintel_w, LINTEL_H, POST_D, 3).translated_by(Vec3::new(0.0, lintel_y, 0.0)), lin(STONE_B)));
+    parts.push(tinted(tile_box(lintel_w, LINTEL_H, POST_D, 5).translated_by(Vec3::new(0.0, lintel_y, 0.0)), lin(STONE_B)));
     parts.push(tinted(
         box_at(lintel_w * 0.98, 0.06, POST_D * 0.7, Vec3::new(0.0, PLINTH_H + POST_H + 0.02, 0.0)),
         lin(STONE_CAP),
@@ -246,7 +251,7 @@ pub fn build_trilithon_mesh() -> Mesh {
         let g = greys[i];
         // Tapered bulk (base at origin → lean → seat on the ring).
         parts.push(tinted(
-            tile_box(w, h, w * 0.85, 3)
+            tile_box(w, h, w * 0.85, 4)
                 .translated_by(yv(h * 0.5))
                 .rotated_by(lean)
                 .translated_by(Vec3::new(rx, 0.1, rz)),
@@ -264,7 +269,7 @@ pub fn build_trilithon_mesh() -> Mesh {
         ));
     }
 
-    mottle(flat_shaded(merged(parts)), 0.16)
+    mottle(flat_shaded(merged(parts)), 0.6)
 }
 
 // ── Frozen spire (snow landmark) ──────────────────────────────────────────────
@@ -334,7 +339,7 @@ pub fn build_frozen_spire_mesh() -> Mesh {
         shard(&mut parts, Vec3::new(sx, 0.12, sz), h, 0.2, lean, if i % 2 == 0 { ICE } else { DEEP });
     }
 
-    mottle(flat_shaded(merged(parts)), 0.10)
+    mottle(flat_shaded(merged(parts)), 0.28)
 }
 
 // ── Sunken pyramid (desert landmark) ──────────────────────────────────────────
@@ -354,7 +359,7 @@ pub fn build_sunken_pyramid_mesh() -> Mesh {
 
     // Half-buried sand drift skirt — a low wide platform + corner dunes, hides the seam
     // and reads as the pyramid sunk into the dunes.
-    parts.push(tbox(4.4, 0.18, 4.4, yv(0.09), 4, SAND_DK));
+    parts.push(tbox(4.4, 0.18, 4.4, yv(0.09), 5, SAND_DK));
     for &(dx, dz) in &[(1.9_f32, 1.7_f32), (-2.0, 1.5), (-1.6, -1.9), (1.8, -1.6)] {
         parts.push(ball(0.9, Vec3::new(dx, 0.06, dz), 0.28, SAND_DK));
     }
@@ -373,7 +378,7 @@ pub fn build_sunken_pyramid_mesh() -> Mesh {
             parts.push(tinted(box_at(w + 0.06, 0.07, w + 0.06, yv(y + 0.035)), lin(SHADOW)));
         }
         // Tier body, alternating course tone for a weathered banding (grainy faces).
-        parts.push(tbox(w, th, w, yv(y + th * 0.5), 3, if i % 2 == 0 { SAND } else { SAND_DK }));
+        parts.push(tbox(w, th, w, yv(y + th * 0.5), 5, if i % 2 == 0 { SAND } else { SAND_DK }));
         // Sunlit top lip.
         parts.push(tinted(box_at(w, 0.05, w, yv(y + th - 0.02)), lin(SAND_LT)));
         // Central front staircase tread on the +Z face.
@@ -385,7 +390,7 @@ pub fn build_sunken_pyramid_mesh() -> Mesh {
     // ── Summit temple with a dark doorway facing +Z and a flat overhanging roof.
     let tw = top_w * 0.92;
     let tht = 0.58;
-    parts.push(tbox(tw, tht, tw, yv(y + tht * 0.5), 3, SAND));
+    parts.push(tbox(tw, tht, tw, yv(y + tht * 0.5), 4, SAND));
     parts.push(tbox(tw * 1.16, 0.12, tw * 1.16, yv(y + tht + 0.05), 2, SAND_DK));
     parts.push(tinted(box_at(tw * 0.34, tht * 0.7, 0.14, Vec3::new(0.0, y + tht * 0.4, tw * 0.5)), lin(DOOR)));
 
@@ -404,7 +409,7 @@ pub fn build_sunken_pyramid_mesh() -> Mesh {
     parts.push(tbox(0.5, 0.32, 0.5, Vec3::new(-2.3, 0.16, 1.0), 1, SAND));
     parts.push(tbox(0.4, 0.26, 0.6, Vec3::new(-2.5, 0.13, -0.7), 1, SAND_DK));
 
-    mottle(flat_shaded(merged(parts)), 0.16)
+    mottle(flat_shaded(merged(parts)), 0.6)
 }
 
 // ── Per-biome placement (combined world map) ─────────────────────────────────────
@@ -504,14 +509,14 @@ fn footprint_spread(x: f32, z: f32, radius: f32) -> Option<f32> {
 
 /// **The Hollow Oak** — a tall bare gnarled dead tree, ~5u to the branch tips, base at y=0.
 pub fn build_giant_dead_tree_mesh() -> Mesh {
-    mottle(flat_shaded(merged(dead_tree_parts(TREE_BARK, TREE_BARK_DARK, TREE_ROOT, None))), 0.13)
+    mottle(flat_shaded(merged(dead_tree_parts(TREE_BARK, TREE_BARK_DARK, TREE_ROOT, None))), 0.4)
 }
 
 /// **The Mire Sentinel** — the swamp's drowned cousin of the dead tree: mossy grey-green,
 /// water-stained bark, hanging moss strands off the limbs and a ring of knob-tipped cypress
 /// "knees" round its sodden base. Base at y=0.
 pub fn build_swamp_sentinel_mesh() -> Mesh {
-    mottle(flat_shaded(merged(dead_tree_parts(SWAMP_BARK, SWAMP_BARK_DARK, SWAMP_ROOT, Some(SWAMP_MOSS)))), 0.15)
+    mottle(flat_shaded(merged(dead_tree_parts(SWAMP_BARK, SWAMP_BARK_DARK, SWAMP_ROOT, Some(SWAMP_MOSS)))), 0.44)
 }
 
 /// Shared dead-tree build: a dark flared root collar grounding a tapered three-segment
