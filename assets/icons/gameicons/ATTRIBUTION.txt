@@ -1,0 +1,46 @@
+Game-icons.net icons (https://game-icons.net), licensed CC-BY 3.0
+(https://creativecommons.org/licenses/by/3.0/).
+
+Rasterized from the SVG sources at https://github.com/game-icons/icons to
+white-on-transparent 64px PNGs (black background plate stripped); tinted at
+runtime by the UI. Filenames are our icon-atlas ids (':' replaced with '_').
+
+Authors whose icons are used here:
+  Lorc            https://lorcblog.blogspot.com
+  Delapouite      https://delapouite.com
+  sbed            http://opengameart.org/content/95-game-icons
+  Skoll           https://game-icons.net
+  Willdabeast     http://wjbstories.blogspot.com
+  Cathelineau     https://game-icons.net
+  Caro Asercion   https://game-icons.net
+  Zeromancer      (public domain dedication)
+
+id → source icon (author/name on game-icons.net):
+  eco_bounty=delapouite/two-coins · eco_tax_office=delapouite/greek-temple ·
+  eco_merchant_guild=lorc/scales · def_walls=delapouite/stone-wall ·
+  def_gate=delapouite/dungeon-gate · def_towers=delapouite/watchtower ·
+  def_tower_mastery=lorc/archery-target · def_keep_archers=lorc/high-shot ·
+  def_reinforce=delapouite/castle · def_armor_1=lorc/visored-helm ·
+  def_armor_2=lorc/checked-shield · def_ballista=skoll/ballista ·
+  def_shrine=delapouite/water-fountain · hero_hp_1=lorc/shining-heart ·
+  hero_hp_2=zeromancer/heart-plus · hero_dmg_1=lorc/crossed-swords ·
+  hero_dmg_2=lorc/broadsword · hero_crit=lorc/sword-clash ·
+  hero_lifesteal=lorc/bloody-sword · hero_swift=lorc/boots ·
+  hero_cleave=lorc/whirlwind · ars_axe=lorc/battle-axe · ars_sword=lorc/winged-sword ·
+  bread=delapouite/bread · potion=delapouite/health-potion · feast=lorc/roast-chicken ·
+  sword_iron=skoll/gladius · sword_gold=lorc/shining-sword · axe=lorc/battle-axe ·
+  fur=delapouite/fur-shirt · venom=sbed/vial · goat_charm=skoll/goat ·
+  croc_steak=delapouite/steak · elk_jerky=lorc/meat · marsh_herb=delapouite/herbs-bundle ·
+  apple=lorc/shiny-apple · stone_maul=delapouite/warhammer ·
+  leather_armor=delapouite/leather-armor · iron_armor=lorc/breastplate ·
+  gold_armor=delapouite/chest-armor · blade_frost=lorc/relic-blade ·
+  dragon_plate=delapouite/dragon-shield · mercenary_contract=lorc/tied-scroll ·
+  stat_gold=delapouite/coins · stat_stone=lorc/stone-block · stat_wood=delapouite/log ·
+  stat_pop=delapouite/house · stat_food=lorc/wheat · sym_gold=delapouite/two-coins ·
+  sym_stone=lorc/stone-block · sym_lock=lorc/padlock · sym_warn=lorc/hazard-sign ·
+  sym_sun=caro-asercion/heraldic-sun · sym_audio_on=delapouite/sound-on ·
+  sym_audio_off=delapouite/sound-off · sym_fullscreen=delapouite/expand ·
+  buff_resist=willdabeast/round-shield · buff_power=lorc/mailed-fist ·
+  buff_haste=lorc/sprint · buff_food=lorc/chicken-leg · branch_economy=lorc/swap-bag ·
+  branch_defense=delapouite/tower-flag · branch_hero=cathelineau/swordman ·
+  branch_arsenal=lorc/anvil

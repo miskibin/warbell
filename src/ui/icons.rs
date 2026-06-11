@@ -1,10 +1,15 @@
-//! **Item / upgrade / status icons.** The original game drew these as emoji. We ship the matching
-//! **Twemoji** PNG rasters (CC-BY 4.0, see `assets/icons/twemoji/ATTRIBUTION.txt`) and load one per
-//! id into [`IconAtlas`]. Both `ItemDef` and `UpgradeNode` already carry their emoji string in core,
-//! so the atlas resolves them generically by converting the emoji to its Twemoji filename
-//! (`emoji → lowercase codepoints, U+FE0F dropped`). A handful of named status/branch/buff symbols
-//! are registered too. If an emoji has no matching PNG, the item falls back to the old procedurally
-//! rasterised shape so nothing ever renders blank.
+//! **Item / upgrade / status icons.** Two icon sources, resolved per id at startup:
+//!
+//! 1. **game-icons.net** monochrome white PNGs (CC-BY 3.0, `assets/icons/gameicons/` — see its
+//!    `ATTRIBUTION.txt`). These are *tintable* (white × `ImageNode.color`), so the UI inks them
+//!    dark on parchment and gold on dark chrome. Filename = atlas id with `:` → `_`.
+//! 2. **Twemoji** PNG rasters (CC-BY 4.0, `assets/icons/twemoji/ATTRIBUTION.txt`) as the fallback
+//!    for any id without a game-icons match. Full-colour — must NOT be tinted. Both `ItemDef` and
+//!    `UpgradeNode` carry their emoji string in core; the atlas resolves the Twemoji filename from
+//!    it (`emoji → lowercase codepoints, U+FE0F dropped`).
+//!
+//! If neither exists, the item falls back to the old procedurally rasterised shape so nothing
+//! ever renders blank. [`IconAtlas::get_tintable`] tells call sites whether tinting is safe.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -14,13 +19,17 @@ use std::collections::HashMap;
 use tileworld_core::inventory::{IconRgb, IconShape, IconSpec, ITEM_DEFS};
 use tileworld_core::upgrade_store::UPGRADE_NODES;
 
-/// id → its icon texture. Keys are item ids, upgrade-node ids, and `sym:*` / `branch:*` / `buff:*`
-/// named symbols.
+/// id → its icon texture + whether it is a tintable white monochrome (game-icons source).
+/// Keys are item ids, upgrade-node ids, and `sym:*` / `branch:*` / `buff:*` named symbols.
 #[derive(Resource, Default)]
-pub struct IconAtlas(HashMap<String, Handle<Image>>);
+pub struct IconAtlas(HashMap<String, (Handle<Image>, bool)>);
 
 impl IconAtlas {
     pub fn get(&self, id: &str) -> Option<Handle<Image>> {
+        self.0.get(id).map(|(h, _)| h.clone())
+    }
+    /// Handle + tintable flag — tint only when `true` (Twemoji/procedural icons are full-colour).
+    pub fn get_tintable(&self, id: &str) -> Option<(Handle<Image>, bool)> {
         self.0.get(id).cloned()
     }
 }
@@ -79,25 +88,41 @@ fn build_icons(
     mut images: ResMut<Assets<Image>>,
     mut atlas: ResMut<IconAtlas>,
 ) {
-    let load = |emoji: &str| -> Option<Handle<Image>> {
+    // game-icons PNGs are checked on disk (AssetServer can't probe existence synchronously).
+    // `BEVY_ASSET_ROOT` keeps this working when the binary runs from another cwd.
+    let asset_root = std::env::var("BEVY_ASSET_ROOT").unwrap_or_else(|_| ".".into());
+    let gameicon = |id: &str| -> Option<Handle<Image>> {
+        let stem = id.replace(':', "_");
+        std::path::Path::new(&asset_root)
+            .join(format!("assets/icons/gameicons/{stem}.png"))
+            .exists()
+            .then(|| assets.load(format!("icons/gameicons/{stem}.png")))
+    };
+    let twemoji = |emoji: &str| -> Option<Handle<Image>> {
         emoji_to_codepoint(emoji).map(|cp| assets.load(format!("icons/twemoji/{cp}.png")))
     };
 
-    // Items: prefer the emoji PNG, fall back to the procedural shape.
+    // Items: game-icons → Twemoji → procedural shape.
     for def in ITEM_DEFS {
-        let handle = load(def.icon).unwrap_or_else(|| images.add(rasterise(def.icon_spec())));
-        atlas.0.insert(def.id.to_string(), handle);
+        let entry = gameicon(def.id).map(|h| (h, true)).unwrap_or_else(|| {
+            (twemoji(def.icon).unwrap_or_else(|| images.add(rasterise(def.icon_spec()))), false)
+        });
+        atlas.0.insert(def.id.to_string(), entry);
     }
-    // Upgrade-tree nodes carry their own emoji.
+    // Upgrade-tree nodes carry their own emoji as the fallback.
     for node in UPGRADE_NODES {
-        if let Some(h) = load(node.icon) {
-            atlas.0.insert(node.id.to_string(), h);
+        if let Some(entry) =
+            gameicon(node.id).map(|h| (h, true)).or_else(|| twemoji(node.icon).map(|h| (h, false)))
+        {
+            atlas.0.insert(node.id.to_string(), entry);
         }
     }
     // Named symbols.
     for (key, emoji) in SYMBOLS {
-        if let Some(h) = load(emoji) {
-            atlas.0.insert((*key).to_string(), h);
+        if let Some(entry) =
+            gameicon(key).map(|h| (h, true)).or_else(|| twemoji(emoji).map(|h| (h, false)))
+        {
+            atlas.0.insert((*key).to_string(), entry);
         }
     }
 }

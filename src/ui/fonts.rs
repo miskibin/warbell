@@ -1,7 +1,7 @@
-//! **Fonts.** The original game used Inter (weights 400/600/700/800) for all chrome and a Palatino
-//! serif for the upgrade-tree board. We bundle Inter static TTFs + EB Garamond (a free OFL serif) and
-//! load them into [`UiFonts`] at startup. Bevy's `TextFont` selects a face by `Handle<Font>` (no
-//! weight axis), so each weight is a separate file.
+//! **Fonts.** Inter (weights 400/600/700/800) for body/numerals — readability first — plus two
+//! display faces for the medieval chrome: **Cinzel** (OFL, Trajan-style roman capitals) for
+//! titles/headers, and **EB Garamond** (OFL serif) for parchment body text. Bevy's `TextFont`
+//! selects a face by `Handle<Font>` (no weight axis), so each weight is a separate file.
 
 use bevy::prelude::*;
 
@@ -12,7 +12,8 @@ pub struct UiFonts {
     pub semibold: Handle<Font>, // 600
     pub bold: Handle<Font>,     // 700
     pub extrabold: Handle<Font>, // 800
-    pub serif: Handle<Font>,    // EB Garamond — upgrade board only
+    pub serif: Handle<Font>,    // EB Garamond — parchment body text
+    pub display: Handle<Font>,  // Cinzel — titles, headers, banners
 }
 
 impl UiFonts {
@@ -23,6 +24,7 @@ impl UiFonts {
             bold: assets.load("fonts/Inter-Bold.ttf"),
             extrabold: assets.load("fonts/Inter-ExtraBold.ttf"),
             serif: assets.load("fonts/EBGaramond.ttf"),
+            display: assets.load("fonts/Cinzel.ttf"),
         }
     }
 }
