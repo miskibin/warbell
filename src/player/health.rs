@@ -1,4 +1,5 @@
-//! Hero vitals — drains the orks' [`PendingHeroDamage`] into HP (mitigated while blocking),
+//! Hero vitals — drains the orks' [`PendingHeroDamage`] into HP (negated entirely while
+//! blocking, at a stamina cost),
 //! and on death respawns the hero at a castle gate after a short beat. Ported from the
 //! damage + "respawn" path of `playerStore.ts` (the TS succession system is out of scope).
 
@@ -8,7 +9,6 @@ use crate::audio::AudioCue;
 
 use super::{Hero, HeroHealth, PendingHeroDamage, PlayerRes, HERO_SCALE};
 
-const BLOCK_MITIGATION: f32 = 0.2; // a blocked hit deals 20% (and costs stamina)
 const BLOCK_HIT_STAMINA: f32 = 18.0; // stamina spent absorbing one blocked hit
 const RESPAWN_DELAY: f64 = 1.6; // s down before the hero rises again (succession lands in P5)
 /// Seconds the hero takes to keel over once slain (the death "crumple", like the orks').
@@ -45,7 +45,9 @@ pub fn apply_hero_damage(
         let mut dmg = pending.0;
         let blocking = hh.blocking;
         if blocking {
-            dmg *= BLOCK_MITIGATION;
+            // A raised shield absorbs the hit COMPLETELY — the cost is stamina, not HP
+            // (`p.damage` no-ops on 0, so no hurt flash / death path fires).
+            dmg = 0.0;
             cues.write(AudioCue::Block); // shield knock — only when a hit is actually absorbed
             hh.stamina = (hh.stamina - BLOCK_HIT_STAMINA).max(0.0);
             if hh.stamina <= 0.0 {
@@ -53,8 +55,8 @@ pub fn apply_hero_damage(
                 hh.blocking = false;
             }
         }
-        // Layer the resist-buff (taken) + worn-armor (armor) mults onto the (already
-        // block-reduced) blow — matches the TS `damage(amount, takenMult, armorMult)`.
+        // Layer the resist-buff (taken) + worn-armor (armor) mults onto the unblocked blow
+        // — matches the TS `damage(amount, takenMult, armorMult)`.
         p.damage(dmg as f64, now, buffs.0.damage_taken_mult(now), inv.0.armor_damage_mult());
         let dead = p.hp <= 0.0;
 
@@ -66,10 +68,16 @@ pub fn apply_hero_damage(
             (format!("-{}", dmg.round() as i32), crate::combat_fx::col_hero_hit())
         };
         floats.0.push(crate::combat_fx::FloatReq { world: head, text, color, scale: 1.0 });
-        feedback.flash = 0.35;
+        // A fully-blocked hit keeps the impact shake (shield knock) but skips the red
+        // damage flash and the hurt grunt — no damage was taken.
+        if !blocking {
+            feedback.flash = 0.35;
+        }
         feedback.trauma = (feedback.trauma + if dead { 0.5 } else { 0.22 }).min(1.0);
 
-        cues.write(if dead { AudioCue::HeroDeath } else { AudioCue::HeroHurt });
+        if !blocking {
+            cues.write(if dead { AudioCue::HeroDeath } else { AudioCue::HeroHurt });
+        }
     }
     pending.0 = 0.0;
 

@@ -1,6 +1,6 @@
 //! Homing magic bolts — the ork shaman's ranged spell. A bolt tracks the hero's
 //! live position, deals damage on arrival (via `PendingHeroDamage`, so a raised
-//! shield mitigates it), and fizzles after a short lifetime or once it has flown
+//! shield blocks it), and fizzles after a short lifetime or once it has flown
 //! its full range. Ported from the original game's `projectileStore.ts`.
 
 use bevy::prelude::*;

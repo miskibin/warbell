@@ -1,6 +1,6 @@
 //! Shield block — hold right-mouse to raise the shield: drains stamina, sets the `blocking`
-//! flag that [`super::health`] reads to mitigate hits, and locks out when stamina is spent
-//! until it recovers. Ported from `blockStore.ts`.
+//! flag that [`super::health`] reads to negate hits outright, and locks out when stamina is
+//! spent until it recovers. Ported from `blockStore.ts`.
 
 use bevy::prelude::*;
 
