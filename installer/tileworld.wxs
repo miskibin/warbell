@@ -9,7 +9,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Tileworld"
            Manufacturer="miskibin"
-           Version="0.1.0"
+           Version="0.1.1"
            UpgradeCode="4932DA25-490C-49B0-B6B2-1083FCE18B2D">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Tileworld is already installed." />
