@@ -122,7 +122,7 @@ fn hex_srgb_f(c: u32) -> [f32; 3] {
 /// Build a 256² seamless detail texture (sRGB, Repeat) from a [`GroundDetail`] ramp,
 /// returning it + its mean luminance (the shader divides by mean to keep brightness
 /// neutral). Same noise recipe as the TS `terrainDetail` generator.
-fn detail_image(d: &GroundDetail) -> (Image, f32) {
+pub(crate) fn detail_image(d: &GroundDetail) -> (Image, f32) {
     let n = DETAIL_PX as usize;
     let mut data = vec![0u8; n * n * 4];
     let dark = hex_srgb_f(d.dark);

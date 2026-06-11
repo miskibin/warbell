@@ -40,10 +40,12 @@ impl Plugin for CampsPlugin {
     }
 }
 
-/// Campfire flame marker — also the anchor the audio module hangs a spatial campfire loop on.
+/// Campfire flame marker — also the anchor the audio module hangs a spatial campfire loop
+/// (+ war-drum sink) on. `pub(crate)` phase: the ork fortress (`ork_fortress.rs`) tags its
+/// bonfire with this same component precisely to inherit that audio lifecycle.
 #[derive(Component)]
 pub struct Flicker {
-    phase: f32,
+    pub(crate) phase: f32,
 }
 #[derive(Component)]
 struct CampSmoke {
@@ -188,6 +190,11 @@ fn site_ok(cx: f32, cz: f32, biome: Biome, placed: &[CampSite]) -> bool {
         }
     }
     if crate::castle::in_footprint(cx, cz) || Vec2::new(cx, cz).length() < 24.0 {
+        return false;
+    }
+    // The fortress causeway is new flat land — without this the swamp camp can reject-sample
+    // onto the gate approach and squat in Gnashfang Hold's line of fire.
+    if crate::ork_fortress::on_neck_world(cx, cz) {
         return false;
     }
     let on_biome = worldmap::biome_at_world(cx, cz) == Some(biome);

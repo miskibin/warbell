@@ -132,12 +132,21 @@ pub fn spawn_boats_island(
         // so the boats read as near water in front of the open horizon.
         let kf = rng.range(1.22, 1.6);
         let dir = if rng.next() < 0.5 { -1.0 } else { 1.0 };
+        // Don't spawn inside the ork fortress's bay (south sea) — resample the bearing.
+        let mut phi = rng.range(lo, hi);
+        for _ in 0..24 {
+            let (s, c) = phi.sin_cos();
+            if !crate::ork_fortress::boat_keepout(center.x + c * radii.x * kf, center.y + s * radii.y * kf) {
+                break;
+            }
+            phi = rng.range(lo, hi);
+        }
         let boat = Boat {
             cx: center.x,
             cz: center.y,
             rx: radii.x * kf,
             rz: radii.y * kf,
-            phi: rng.range(lo, hi),
+            phi,
             omega: dir * rng.range(0.008, 0.022), // slow drift along the ocean arc
             wrap: false,
             lo,
@@ -175,6 +184,7 @@ fn boat_drift(time: Res<Time>, mut q: Query<(&mut Boat, &mut Transform)>) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
     for (mut bo, mut tf) in &mut q {
+        let prev_phi = bo.phi;
         bo.phi += bo.omega * dt;
         if !bo.wrap {
             if bo.phi <= bo.lo {
@@ -188,6 +198,13 @@ fn boat_drift(time: Res<Time>, mut q: Query<(&mut Boat, &mut Transform)>) {
 
         let (s, c) = bo.phi.sin_cos();
         let (x, z) = (bo.cx + c * bo.rx, bo.cz + s * bo.rz);
+        // The ork fortress's bay is closed water: a hull about to drift in turns back the
+        // way it came instead (no boat ever crosses Gnashfang Hold's moat).
+        if crate::ork_fortress::boat_keepout(x, z) {
+            bo.phi = prev_phi;
+            bo.omega = -bo.omega;
+            continue;
+        }
         // Tangential heading: point the bow (+X) along travel.
         let (vx, vz) = (-bo.rx * s * bo.omega, bo.rz * c * bo.omega);
         let yaw = (-vz).atan2(vx);

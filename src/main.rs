@@ -51,6 +51,7 @@ mod miner;
 mod navgrid;
 mod nightsky;
 mod orbs;
+mod ork_fortress;
 mod orks;
 mod outline;
 mod palette;
@@ -181,6 +182,7 @@ fn main() {
             demo::DemoPlugin, // scripted clip scenarios (FOREST_DEMO=explore|defend; build→town.rs)
             separation::SeparationPlugin, // orks + townsfolk shove apart so bodies don't interpenetrate
             castle_decor::CastleDecorPlugin, // courtyard dressing + upgrade-bought set pieces
+            ork_fortress::OrkFortressPlugin, // Gnashfang Hold: off-map ork fortress + hero-firing towers
         ))
         .run();
 }

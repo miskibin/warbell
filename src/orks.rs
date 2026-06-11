@@ -249,8 +249,8 @@ pub(crate) fn apply_knockback(o: &mut Ork, dt: f32) {
 }
 
 #[derive(Component)]
-struct OrkPart {
-    kind: PartKind,
+pub(crate) struct OrkPart {
+    pub(crate) kind: PartKind,
 }
 
 /// A glowing ork eye (emissive sphere child of the ork root) — menacing pinpoints that read at
@@ -1073,6 +1073,55 @@ impl Armory {
                 ));
             }
             // Two glowing eyes — the menacing night-glow.
+            for off in EYE_OFFS {
+                p.spawn((
+                    Mesh3d(self.eye_mesh.clone()),
+                    MeshMaterial3d(self.eye_mat.clone()),
+                    Transform::from_translation(off),
+                    OrkEye,
+                ));
+            }
+        });
+        root
+    }
+
+    /// Spawn a DECORATIVE ork — the full variant mesh hierarchy (torso, limbs tagged
+    /// [`OrkPart`], glowing eyes) with **no** [`Ork`] brain and no `Health`, so it can't
+    /// aggro, path, or be targeted by the hero. The fortress population (`ork_fortress.rs`)
+    /// drives these with its own wander + limb systems; the caller tags lifecycle
+    /// (`BiomeEntity`) and inserts its own driver component on the returned root.
+    /// `extra_scale` multiplies the variant's own scale (the warlord is an oversized 1.55×).
+    pub fn spawn_prop(
+        &self,
+        commands: &mut Commands,
+        variant: OrkVariant,
+        faction: Faction,
+        pos: Vec3,
+        facing: f32,
+        extra_scale: f32,
+    ) -> Entity {
+        let t = self.template(variant, faction);
+        let scale = BASE_SCALE * t.st.scale * extra_scale;
+        let root = commands
+            .spawn((
+                Transform {
+                    translation: pos,
+                    rotation: Quat::from_rotation_y(facing),
+                    scale: Vec3::splat(scale),
+                },
+                Visibility::Visible,
+            ))
+            .id();
+        commands.entity(root).with_children(|p| {
+            p.spawn((Mesh3d(t.torso.clone()), MeshMaterial3d(self.mat.clone()), Transform::default()));
+            for (kind, pivot, mesh) in &t.parts {
+                p.spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(self.mat.clone()),
+                    Transform::from_translation(*pivot),
+                    OrkPart { kind: *kind },
+                ));
+            }
             for off in EYE_OFFS {
                 p.spawn((
                     Mesh3d(self.eye_mesh.clone()),

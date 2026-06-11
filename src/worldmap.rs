@@ -344,6 +344,13 @@ fn mountain_height(x: f32, z: f32, reg: &Region) -> i32 {
 }
 
 fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
+    // The ork-fortress causeway: a flat swamp tongue from the south shore to the grid edge,
+    // where Gnashfang Hold's gate wall stands (`ork_fortress.rs`). Checked BEFORE the island
+    // shape — the neck deliberately extends past the coast — and forced flat so coastal-ridge
+    // terraces can't wall off the approach.
+    if crate::ork_fortress::neck_land_base(x, z) {
+        return Some((TB::Swamp, 1));
+    }
     if !is_land_shape(x, z) {
         return None;
     }
@@ -670,6 +677,8 @@ pub fn build(
                 tile_biome_world(x, z) == Some(biome)
                     && !crate::camps::in_clearing(x, z)
                     && !crate::bridges::near_bridge(x, z, 1.0)
+                    // Keep swamp scatter off the fortress gate approach (the causeway).
+                    && !crate::ork_fortress::on_gate_approach(x, z)
             },
             &|x, z| tile_top_y_world(x, z),
         );
@@ -782,6 +791,10 @@ pub fn build(
     //    collapsed watchtower, …) — discoverable POIs + pilgrim destinations. After the landmarks
     //    so each routes around the ruin already planted in its biome.
     crate::vignettes::populate_vignettes(commands, meshes, std_mats);
+
+    // ── Gnashfang Hold: the ork fortress on its own islet beyond the swamp coast (south of
+    //    the grid — pure world-dressing plus hero-targeting watchtowers; see `ork_fortress.rs`).
+    crate::ork_fortress::build(commands, meshes, images, std_mats, terrain_mats);
 
     // ── River bridges: plank decks at the real river crossings (also nav-grid walkable). ──
     crate::bridges::populate(commands, meshes, std_mats);

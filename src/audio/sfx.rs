@@ -225,6 +225,13 @@ pub(crate) fn play_cues(
                     one_shot(&mut commands, h, sting.volume() * sfx, jitter(&mut seed, 0.05));
                 }
             }
+            // The fortress war-horn — the one *spatial* synth sting (it blares from the
+            // hold's gate, not the hero's ear), pitch jitter tiny so a horn stays a horn.
+            AudioCue::FortressHorn(pos) => {
+                if let Some(h) = stings.handle(Sting::WarHorn) {
+                    spatial_shot(&mut commands, h, Sting::WarHorn.volume() * sfx, jitter(&mut seed, 0.03), pos);
+                }
+            }
             // Hero-mouth cues (grunts / jump / hurt / death / lines) are handled by `voice.rs`.
             _ => {}
         }

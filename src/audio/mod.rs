@@ -107,6 +107,9 @@ pub enum AudioCue {
     CampRescue,
     /// Hero HP crossed the low threshold.
     LowHp,
+    /// The ork fortress sounds its war-horn (synth `Sting::WarHorn`, spatial at the gate) —
+    /// the hero crossed Gnashfang Hold's outer threshold (`ork_fortress.rs`).
+    FortressHorn(Vec3),
 }
 
 /// Per-run gates for the "once" event voice lines (the old game's `spoken` key-set). Reset on
