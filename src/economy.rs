@@ -85,7 +85,7 @@ impl Plugin for EconomyPlugin {
             .add_systems(Update, open_shop.run_if(in_state(Modal::None)))
             .add_systems(OnEnter(Modal::Shop), spawn_shop)
             .add_systems(OnExit(Modal::Shop), despawn_shop)
-            .add_systems(Update, shop_interact.run_if(in_state(Modal::Shop)));
+            .add_systems(Update, (shop_interact, shop_close).run_if(in_state(Modal::Shop)));
         // Clip-only: auto-fill the War Table for a tree-showcase clip (ungated — runs while the
         // tree panel is up, which freezes the world).
         if std::env::var("FOREST_DEMO").ok().as_deref() == Some("tree") {
@@ -229,6 +229,9 @@ struct ShopUi;
 struct ShopItemButton(&'static str);
 #[derive(Component)]
 struct ShopHeader;
+/// The header ✕ — leaves the shop like T/Esc.
+#[derive(Component)]
+struct ShopCloseBtn;
 
 // The shop opens via the contextual **E** at the merchant stall (see `interaction.rs`); this system
 // only keeps the `FOREST_PANEL=shop` screenshot hook alive.
@@ -279,7 +282,16 @@ fn spawn_shop(
             .insert(BorderColor::all(BORDER_SOFT))
             .with_children(|h| {
                 h.spawn(label(&fonts.display, "WANDERING MERCHANT", 16.0, GOLD));
-                h.spawn((label(&fonts.bold, "Gold 0", 13.0, GOLD), ShopHeader));
+                h.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                })
+                .with_children(|right| {
+                    right.spawn((label(&fonts.bold, "Gold 0", 13.0, GOLD), ShopHeader));
+                    widgets::close_button(right, &fonts.bold, ShopCloseBtn, false);
+                });
             });
             // Item rows.
             for item in items {
@@ -326,6 +338,16 @@ fn spawn_shop(
 fn despawn_shop(mut commands: Commands, q: Query<Entity, With<ShopUi>>) {
     for e in &q {
         commands.entity(e).despawn();
+    }
+}
+
+/// The header ✕ — click leaves the shop (same as T/Esc).
+fn shop_close(
+    mut next: ResMut<NextState<Modal>>,
+    btns: Query<&Interaction, (With<ShopCloseBtn>, Changed<Interaction>)>,
+) {
+    if btns.iter().any(|i| *i == Interaction::Pressed) {
+        next.set(Modal::None);
     }
 }
 

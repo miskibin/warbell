@@ -32,7 +32,8 @@ impl Plugin for TreeUiPlugin {
             .add_systems(OnExit(Modal::UpgradeTree), despawn_tree)
             .add_systems(
                 Update,
-                (tree_interact, tree_paint, tree_detail).run_if(in_state(Modal::UpgradeTree)),
+                (tree_interact, tree_paint, tree_detail, tree_close)
+                    .run_if(in_state(Modal::UpgradeTree)),
             );
         // Temp diagnostics for the hover-dead-on-medallions bug (FOREST_UILOG=1).
         if std::env::var("FOREST_UILOG").is_ok() {
@@ -97,6 +98,8 @@ struct CostLabel(&'static str);
 #[derive(Component)]
 struct EdgeOf(&'static str);
 #[derive(Component)]
+struct TreeCloseBtn;
+#[derive(Component)]
 struct HeaderGold;
 #[derive(Component)]
 struct HeaderStone;
@@ -136,8 +139,9 @@ fn branch_color(b: UpgradeBranch) -> Color {
 
 // ── Graph geometry ──────────────────────────────────────────────────────────────────────
 const PITCH_X: f32 = 60.0; // column pitch
-const PITCH_Y: f32 = 88.0; // tier-row pitch
+const PITCH_Y: f32 = 100.0; // tier-row pitch (room for the name + cost block under each node)
 const NODE: f32 = 46.0; // medallion diameter
+const LABEL_H: f32 = 38.0; // name (≤2 wrapped lines) + cost under a medallion
 
 struct Laid {
     node: &'static UpgradeNode,
@@ -258,12 +262,14 @@ fn spawn_tree(
                             });
                         head.spawn(Node {
                             flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
                             column_gap: Val::Px(8.0),
                             ..default()
                         })
                         .with_children(|chips| {
                             treasury_chip(chips, &fonts, &atlas, "sym:gold", HeaderGold);
                             treasury_chip(chips, &fonts, &atlas, "sym:stone", HeaderStone);
+                            widgets::close_button(chips, &fonts.bold, TreeCloseBtn, true);
                         });
                     });
 
@@ -450,10 +456,11 @@ fn spawn_branch(
             ..default()
         })
         .with_children(|canvas| {
-            // Edges first (under the medallions).
+            // Edges first (under the medallions); they start below the parent's label block.
             for l in laid.iter() {
                 let Some((pcol, pdepth)) = l.parent else { continue };
-                let (px, py) = (pcol * PITCH_X + PITCH_X / 2.0, pdepth as f32 * PITCH_Y + NODE + 14.0);
+                let (px, py) =
+                    (pcol * PITCH_X + PITCH_X / 2.0, pdepth as f32 * PITCH_Y + NODE + LABEL_H);
                 let (cx, cy) = (l.col * PITCH_X + PITCH_X / 2.0, l.depth as f32 * PITCH_Y);
                 let midy = (py + cy) / 2.0;
                 let seg = |x: f32, y: f32, w: f32, h: f32| {
@@ -529,19 +536,29 @@ fn spawn_branch(
                             }],
                         ));
                     });
+                // Name + cost block — the "basic info" readable without hovering. The name wraps
+                // inside one column pitch so neighbouring labels can't collide.
                 canvas.spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Px(l.col * PITCH_X - PITCH_X / 2.0),
-                        top: Val::Px(y + NODE + 2.0),
-                        width: Val::Px(PITCH_X * 2.0),
-                        justify_content: JustifyContent::Center,
+                        left: Val::Px(l.col * PITCH_X - 2.0),
+                        top: Val::Px(y + NODE + 1.0),
+                        width: Val::Px(PITCH_X + 4.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(0.0),
                         ..default()
                     },
-                    children![(
-                        label(&fonts.bold, cost_text(l.node), 10.5, rgb(154, 110, 22)),
-                        CostLabel(l.node.id)
-                    )],
+                    children![
+                        (
+                            label(&fonts.semibold, l.node.name, 9.5, INK),
+                            bevy::text::TextLayout::new_with_justify(bevy::text::Justify::Center),
+                        ),
+                        (
+                            label(&fonts.bold, cost_text(l.node), 10.0, rgb(154, 110, 22)),
+                            CostLabel(l.node.id)
+                        )
+                    ],
                 ));
             }
         });
@@ -551,6 +568,21 @@ fn spawn_branch(
 fn despawn_tree(mut commands: Commands, q: Query<Entity, With<TreeUi>>) {
     for e in &q {
         commands.entity(e).despawn();
+    }
+}
+
+/// The header ✕ — click or Enter/E while focused closes the plans (same as U/Esc).
+fn tree_close(
+    mut next: ResMut<NextState<Modal>>,
+    mut acts: MessageReader<FocusActivate>,
+    btns: Query<(Entity, &Interaction), (With<TreeCloseBtn>, Changed<Interaction>)>,
+    all: Query<Entity, With<TreeCloseBtn>>,
+) {
+    let keyed: Vec<Entity> = acts.read().map(|a| a.0).collect();
+    let clicked = btns.iter().any(|(_, i)| *i == Interaction::Pressed)
+        || all.iter().any(|e| keyed.contains(&e));
+    if clicked {
+        next.set(Modal::None);
     }
 }
 

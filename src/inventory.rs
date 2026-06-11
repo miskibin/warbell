@@ -214,6 +214,9 @@ struct InvSlotButton(usize);
 /// `true` = weapon slot, `false` = armor.
 #[derive(Component)]
 struct UnequipButton(bool);
+/// The header ✕ — closes the satchel like Tab/I/Esc.
+#[derive(Component)]
+struct InvCloseBtn;
 /// The floating item tooltip (persists across panel rebuilds; separate from [`InvUi`]).
 #[derive(Component)]
 struct InvTooltip;
@@ -243,8 +246,13 @@ fn open_inventory(
 /// Make **Tab** / **I** a toggle: pressed while the satchel is open, they close it (Esc is
 /// handled centrally by `pause_toggle`). The open press can't re-fire here because state only
 /// flips to `Inventory` next frame, by which point the key is no longer `just_pressed`.
-fn close_inventory(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<Modal>>) {
-    if keys.just_pressed(KeyCode::Tab) || keys.just_pressed(KeyCode::KeyI) {
+fn close_inventory(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut next: ResMut<NextState<Modal>>,
+    btns: Query<&Interaction, (With<InvCloseBtn>, Changed<Interaction>)>,
+) {
+    let x_clicked = btns.iter().any(|i| *i == Interaction::Pressed);
+    if keys.just_pressed(KeyCode::Tab) || keys.just_pressed(KeyCode::KeyI) || x_clicked {
         next.set(Modal::None);
     }
 }
@@ -355,6 +363,7 @@ fn build_inv_panel(
             .insert(BorderColor::all(BORDER_SOFT))
             .with_children(|h| {
                 h.spawn(label(&fonts.display, "SATCHEL", 17.0, GOLD));
+                widgets::close_button(h, &fonts.bold, InvCloseBtn, false);
             });
 
             // Body: equipment column + bag grid.

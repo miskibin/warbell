@@ -238,3 +238,40 @@ pub fn vgrad(top: Color, bot: Color) -> BackgroundGradient {
 pub fn border(px: f32) -> UiRect {
     UiRect::all(Val::Px(px))
 }
+
+/// Spawn a small **✕ close button** for a panel header. The caller supplies a marker component
+/// and handles its click/`FocusActivate` (usually `Modal::None`). `on_parchment` flips the
+/// colours from dark-panel gold to parchment ink.
+pub fn close_button(
+    p: &mut RelatedSpawnerCommands<ChildOf>,
+    font: &Handle<Font>,
+    marker: impl Component,
+    on_parchment: bool,
+) {
+    let (fg, bg, bd) = if on_parchment {
+        (super::theme::INK, rgba(86, 58, 24, 0.12), rgba(86, 58, 24, 0.45))
+    } else {
+        (GOLD, BTN_BG, GOLD_HAIRLINE)
+    };
+    p.spawn((
+        Button,
+        Interaction::default(),
+        super::focus::Focusable,
+        Node {
+            width: Val::Px(28.0),
+            height: Val::Px(28.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            border: border(1.0),
+            border_radius: radius(R_BTN),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        BackgroundColor(bg),
+        BorderColor::all(bd),
+        marker,
+    ))
+    .with_children(|b| {
+        b.spawn(super::fonts::label(font, "\u{2715}", 13.0, fg));
+    });
+}
