@@ -225,14 +225,41 @@ const WARBAND: [(f32, f32); 4] = [(1.6, 1.8), (-1.0, -2.0), (2.2, 0.6), (-0.2, 2
 
 /// Build every planned camp: props (registering blockers) + the warband. Tagged `BiomeEntity`
 /// so the biome switch despawns/rebuilds them. Called from `worldmap::build` after the castle.
-pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+pub fn build(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
+) {
     let sites = plan();
     if sites.is_empty() {
         return;
     }
 
-    // Shared vertex-colour material (props + orks) — batches to few draw calls.
+    // Shared vertex-colour material for the ORKS (grime on a face-sized limb is noise).
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
+    // The structural props (tents, cage, totem, banner, fire ring) carry a neutral grime-grain
+    // detail texture multiplied over their vertex colours — same trick as Gnashfang Hold, so
+    // the camps read rough/dirty instead of flat-shaded clean. One extra batch.
+    let grime = crate::biome::GroundDetail {
+        scale: 1.0,
+        strength: 0.9,
+        variation: 0.5,
+        seed: 13.0,
+        dark: 0x8e887e,
+        base: 0xc2bcb0,
+        light: 0xf2ece0,
+        grain: 0.9,
+        streak: 0.7,
+    };
+    let (grime_img, _) = crate::terrain::detail_image(&grime);
+    let grime_tex = images.add(grime_img);
+    let prop_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(grime_tex),
+        perceptual_roughness: 0.95,
+        ..default()
+    });
     // Emissive flame (bloom-lit, like the castle torches) + translucent smoke.
     let flame_mat = materials.add(StandardMaterial {
         base_color: crate::palette::srgb(0xff8a30),
@@ -275,12 +302,14 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
         // (`ork_fortress::tent_mesh`/`cage_mesh`) so every warband pitches the same gear as
         // Gnashfang Hold; both are SOLID — they register blocker boxes, so the hero and the
         // warband route around them.
+        // Tent NW (−z), cage SW (+z), well apart so the bigger fortress models don't overlap
+        // (they did at the old −2.4/+2.2 spots). Tent at 0.7× the fortress size to fit the camp.
         let mut prop_rng = site.seed | 1;
         let solids = vec![
-            (crate::ork_fortress::tent_mesh(0.85, &mut prop_rng), v(-2.4, 0.0, 0.0), 0.0_f32, (1.65_f32, 1.4_f32)),
+            (crate::ork_fortress::tent_mesh(0.7, &mut prop_rng), v(-2.3, 0.0, -2.1), 0.0_f32, (1.3_f32, 1.1_f32)),
             (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.25, 0.25)),
             (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
-            (crate::ork_fortress::cage_mesh(), v(-2.2, 0.0, 2.2), 0.6, (1.2, 1.2)),
+            (crate::ork_fortress::cage_mesh(), v(-2.4, 0.0, 2.2), 0.6, (1.2, 1.2)),
             (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.55, 0.55)),
         ];
         for (idx, (m, local, lyaw, (hw, hd))) in solids.into_iter().enumerate() {
@@ -288,7 +317,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
             let world = place(local);
             let mut e = commands.spawn((
                 Mesh3d(h),
-                MeshMaterial3d(mat.clone()),
+                MeshMaterial3d(prop_mat.clone()),
                 Transform { translation: world, rotation: rot_q * ry(lyaw), scale: Vec3::ONE },
                 BiomeEntity,
             ));
@@ -309,7 +338,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
         let totem_yaw = (-totem_world.x).atan2(-totem_world.z);
         commands.spawn((
             Mesh3d(meshes.add(totem_mesh(site.faction))),
-            MeshMaterial3d(mat.clone()),
+            MeshMaterial3d(prop_mat.clone()),
             Transform { translation: totem_world, rotation: ry(totem_yaw), scale: Vec3::ONE },
             BiomeEntity,
         ));
