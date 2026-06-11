@@ -18,7 +18,7 @@
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::{globals, view},
+    mesh_view_bindings::{globals, lights, view},
 }
 
 struct WaterParams {
@@ -139,48 +139,72 @@ fn fragment(
     pbr_input.N = normalize(pbr_input.N + ripple_n - vec3<f32>(0.0, 1.0, 0.0));
     pbr_input.world_normal = pbr_input.N;
 
-    var color = pbr_input.material.base_color.rgb;
     var alpha = pbr_input.material.base_color.a;
     var rough = pbr_input.material.perceptual_roughness;
-
-    // Subtle crest/trough banding: light gathers on the swell tops so the surface
-    // reads as moving even where there's no glint.
-    color *= 1.0 + s.x * 0.10;
 
     // Distance to the nearest land tile, in tiles (0 on land, SHORE_MAX+ offshore).
     let uv = (p - water.region.xy) * water.region.zw;
     let shore = textureSample(shore_tex, shore_samp, uv).r * SHORE_MAX;
     let fx = water.sky_tint.w;
 
-    // Shallow → deep gradient: bright washed turquoise lapping the banks, dark navy
-    // out in the channel / open sea. Opacity follows — shallows stay translucent.
-    let depth_t = 1.0 - exp(-shore * 0.45);
-    let shallow_col = color * vec3<f32>(1.55, 1.65, 1.25);
-    let deep_col = color * vec3<f32>(0.30, 0.40, 0.58);
-    color = mix(color, mix(shallow_col, deep_col, depth_t), fx);
-    alpha = mix(alpha, mix(0.55, 0.95, depth_t), fx);
+    // Authored stylized palette (linear RGB): vivid turquoise lapping the banks,
+    // rich saturated blue out in the channel / open sea. Authored here rather than
+    // derived from the (muted) base colour — scaling that washed the whole river
+    // toward grey. Lighting still applies, so it dims at night like everything else.
+    // The first water texel beside land already reads ~1 (chamfer step + half-texel
+    // sampling), so shift the field half a tile back toward the bank — otherwise the
+    // waterline effects start one tile out and the foam collar evaporates.
+    let shore_d = max(shore - 0.5, 0.0);
+
+    let depth_t = 1.0 - exp(-shore_d * 0.7);
+    let shallow_col = vec3<f32>(0.05, 0.38, 0.40);
+    let deep_col = vec3<f32>(0.012, 0.09, 0.32);
+    var color = mix(pbr_input.material.base_color.rgb,
+        mix(shallow_col, deep_col, depth_t), fx);
+    alpha = mix(alpha, mix(0.82, 0.96, depth_t), fx);
+
+    // Crest/trough banding: light gathers on the swell tops so the surface reads
+    // as moving even where there's no glint.
+    color *= 1.0 + s.x * 0.20;
 
     // Soft waterline: fade out right where the sheet meets the bank so the shoreline
     // is a wash, not a hard z-cut.
-    alpha *= mix(1.0, smoothstep(0.0, 0.25, shore), fx);
+    alpha *= mix(1.0, smoothstep(0.0, 0.15, shore), fx);
 
-    // Animated foam collar on every shore: a noise-wobbled band over the shallows
-    // plus a brighter line hugging the waterline, breathing with the swell phase.
+    // Foam collar on every shore: a crisp noise-dappled band over the shallows plus
+    // a bright line hugging the waterline, breathing with the swell phase. The hard
+    // smoothstep threshold keeps it readable low-poly dapples, not grey smudge.
     let n = vnoise(p * 1.9 + vec2<f32>(t * 0.25, -t * 0.20));
-    let foam_w = 0.85 + 0.35 * sin(t * 0.9 + n * 6.2831) + s.x * 0.20;
-    let band = 1.0 - smoothstep(0.0, max(foam_w, 0.001), shore + (n - 0.5) * 0.7);
-    let line = 1.0 - smoothstep(0.0, 0.35, shore);
-    let foam = clamp(band * (0.40 + 0.60 * n) + line * 0.75, 0.0, 1.0) * fx;
-    color = mix(color, vec3<f32>(0.92, 0.96, 0.97), foam * 0.85);
-    alpha = max(alpha, foam * 0.85);
+    let foam_w = 0.45 + 0.2 * sin(t * 0.9 + n * 6.2831) + s.x * 0.15;
+    let band = 1.0 - smoothstep(0.0, max(foam_w, 0.001), shore_d + (n - 0.5) * 0.5);
+    let line = 1.0 - smoothstep(0.0, 0.3, shore_d);
+    let foam = smoothstep(0.55, 0.85, band * (0.30 + 0.70 * n) + line * 0.6) * fx;
+    color = mix(color, vec3<f32>(0.95, 0.97, 0.98), foam);
+    alpha = max(alpha, min(foam * 1.2, 0.97));
     rough = mix(rough, 0.85, foam);
 
     // Grazing-angle fresnel: tint toward the sky and tighten the roughness so the
     // distance mirrors the Atmosphere; head-on stays the soft readable sheet.
     let fres = pow(1.0 - clamp(dot(pbr_input.N, pbr_input.V), 0.0, 1.0), 5.0)
         * water.params.w;
-    color = mix(color, water.sky_tint.rgb, fres * 0.55);
-    rough = mix(rough, 0.10, fres);
+    rough = mix(rough, 0.16, fres);
+
+    // Day factor from the brightest directional light. Bevy premultiplies ONLY
+    // illuminance into `.color` (no exposure), so these are lux-scale: the day sun
+    // peaks ≈13k, while the night pair — 3800-lux moon + the sun's 800-lux
+    // readability floor — tops out ≈2.7k. The vivid authored palette is a DAYLIGHT
+    // look — under the blue-leaning night grade its cyan luminance survives while
+    // the terrain crushes, so the lake would glow radioactive at midnight. Dim it
+    // toward a dark moonlit sheet instead.
+    var sun_lum = 0.0;
+    let nd = min(lights.n_directional_lights, 4u);
+    for (var i = 0u; i < nd; i = i + 1u) {
+        let c = lights.directional_lights[i].color.rgb;
+        sun_lum = max(sun_lum, dot(c, vec3<f32>(0.299, 0.587, 0.114)));
+    }
+    let day_f = smoothstep(3500.0, 9000.0, sun_lum);
+    color = mix(color, water.sky_tint.rgb, fres * 0.35 * mix(0.4, 1.0, day_f));
+    color *= mix(0.22, 1.0, day_f);
 
     pbr_input.material.base_color = vec4<f32>(color, alpha);
     pbr_input.material.perceptual_roughness = rough;
