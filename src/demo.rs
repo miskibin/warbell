@@ -133,14 +133,14 @@ fn explore_drive(
 
 /// Real villager bark lines (verbatim from `audio/lines.rs`). We re-assert the caption every
 /// frame so the director's random ambient barks can't clobber our chosen quip mid-clip.
-// Only lines that have a recorded VO clip (idle_hens / idle_cousin / merchant), so the spoken
-// audio in the clip matches the caption on screen.
+// The funniest, most sarcastic townsfolk barks — each has a recorded VO clip
+// (screaming / statue / optimist), so the spoken audio matches the caption on screen.
 const TALK_LINES: [&str; 3] = [
-    "I told the hens about the orks. They were not impressed.",
-    "Me cousin says he killed an ork once. Me cousin says a lotta things.",
-    "Finest wares this side of the swamp. Only wares this side of the swamp, but still.",
+    "Bless you for the protection. The screaming at night is a lovely touch.",
+    "They'll raise you a statue one day, m'lord. The pigeons are very excited.",
+    "Mum always said look on the bright side. So: at least the orks are punctual.",
 ];
-const TALK_EVERY: f32 = 4.0;
+const TALK_EVERY: f32 = 6.2;
 
 fn talk_drive(
     time: Res<Time>,
