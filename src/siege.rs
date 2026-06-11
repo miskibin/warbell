@@ -272,8 +272,8 @@ pub fn spawn_point(i: u32, keep: Vec2, max_ring: f32, standable: impl Fn(f32, f3
 
 /// Where a keep-marching invader actually paths: a standable point just inside the nearest gate.
 /// The keep origin sits inside the solid keep box, so A* straight to it fails and the invader
-/// wedges at the wall; stepping 4u in from the gate gap lands it in the courtyard, within batter
-/// range of the keep.
+/// wedges at the wall; stepping 4u in from the gate gap lands it in the courtyard, where the
+/// direct in-yard press (no more A*) closes the rest of the way to batter range.
 fn keep_march_goal(from: Vec2) -> Vec2 {
     let gate = crate::castle::gate_centers()
         .into_iter()
@@ -335,9 +335,13 @@ pub fn stuck_step(closest: f32, progress_at: f32, dist_keep: f32, engaged: bool,
 pub const KEEP_POS: Vec2 = Vec2::ZERO;
 /// Invaders enter from a ring this far out (golden-angle spread, on standable tiles).
 const SPAWN_RING: f32 = 30.0;
-/// An invader within this of the keep batters it. Generous: with no A* an invader can't thread
-/// the gates, so it sieges the wall ring — this lets a horde bunched at the wall still do damage.
-const KEEP_ATTACK_RANGE: f32 = 14.0;
+/// An invader within this of the keep batters it — but ONLY from inside the courtyard
+/// (`castle::in_courtyard`): the walls fully shield the keep, so a horde bunched at the wall
+/// ring does nothing until it threads a gate. (The old 14.0 "generous" range predates the A*
+/// gate-threading march and let wall-bunched orks drain keep HP from OUTSIDE the walls.)
+/// 9.0 leaves several ranks of batter room around the keep box (blockers stop bodies ~4u out)
+/// without reaching back out through the gate mouths.
+const KEEP_ATTACK_RANGE: f32 = 9.0;
 /// Keep damage per invader hit (on the ork's normal strike cooldown).
 const KEEP_DAMAGE: f32 = 9.0;
 /// An invader spots + diverts onto a town-guard within this range (instead of marching the keep),
@@ -756,7 +760,11 @@ fn invader_brain(
         let atk_range = if o.shaman { orks::SHAMAN_CAST_RANGE } else { orks::ORK_ATTACK_RANGE };
         let at_hero = chase_hero && o.pos.distance(hero.pos) < atk_range;
         let at_guard = guard_tgt.is_some_and(|(_, gp)| o.pos.distance(gp) < atk_range);
-        let at_keep = !chase_hero && guard_tgt.is_none() && dist_keep <= KEEP_ATTACK_RANGE;
+        // Keep damage requires being INSIDE the walls — an ork bunched at the wall ring chops
+        // nothing (walls shield the keep; only buildings + the keep itself are attackable).
+        let in_yard = crate::castle::in_courtyard(o.pos.x, o.pos.y);
+        let at_keep =
+            !chase_hero && guard_tgt.is_none() && in_yard && dist_keep <= KEEP_ATTACK_RANGE;
         // Chasing a target (hero/guard) uses cheap direct steering; only the keep march paths A*.
         // Arsonists with a building goal also steer directly toward `target` (= the building, in
         // the open safe-zone outside the walls) instead of running the keep A* — otherwise they'd
@@ -812,11 +820,17 @@ fn invader_brain(
             // (they're close and move every frame, so pathing them is churn).
             let step_target = if chase_direct {
                 target
+            } else if in_yard {
+                // Through the gate: the courtyard is open ground, so drop the A* and press the
+                // keep directly until inside batter range (the E/W gate-interior goals sit at
+                // ~13u, beyond KEEP_ATTACK_RANGE — without this press they'd stall at the goal).
+                KEEP_POS
             } else {
                 // A* the keep march to a STANDABLE point just inside the nearest gate — the keep
                 // origin sits inside the solid keep box, so pathing straight to it fails and the
                 // invader wedges at the wall ("just there, can't approach"). The gate-interior
-                // goal threads them through the gap into batter range.
+                // goal threads them through the gap; the in-yard press above then closes to
+                // batter range.
                 let keep_goal = keep_march_goal(o.pos);
                 if path.cursor >= path.waypoints.len()
                     || now >= path.next_replan
@@ -863,7 +877,10 @@ fn invader_brain(
             building_goal.is_some_and(|(_, bp)| o.pos.distance(bp) < BUILDING_ATTACK_RANGE);
         let attacking = at_hero || at_guard || at_keep || at_building;
         let pursuing = chase_hero || guard_tgt.is_some() || building_goal.is_some();
-        let engaged = attacking || (pursuing && o.moving);
+        // An in-yard keep-presser jostling in a crowd (moving but net-zero keep progress, e.g.
+        // boxed behind the batter ring) is intended behaviour, not a wedge — only a frozen one
+        // (!moving) should still time out.
+        let engaged = attacking || ((pursuing || in_yard) && o.moving);
         let (closest, progress_at, reap) = stuck_step(inv.closest, inv.progress_at, dist_keep, engaged, now);
         inv.closest = closest;
         inv.progress_at = progress_at;
@@ -1285,14 +1302,15 @@ mod tests {
     }
 
     #[test]
-    fn keep_march_goal_lands_inside_batter_range() {
-        // From any spawn-ring bearing, the gate-interior goal sits within KEEP_ATTACK_RANGE of the
-        // keep (so reaching it = battering it) and off the keep origin (a valid, standable A* goal).
+    fn keep_march_goal_lands_inside_the_courtyard() {
+        // From any spawn-ring bearing, the gate-interior goal sits INSIDE the wall ring (so the
+        // direct in-yard press takes over from there — keep damage is courtyard-only) and off
+        // the keep origin (a valid, standable A* goal).
         for i in 0..16 {
             let a = i as f32 * 0.4;
             let from = Vec2::new(a.cos(), a.sin()) * SPAWN_RING;
             let g = keep_march_goal(from);
-            assert!(g.distance(KEEP_POS) <= KEEP_ATTACK_RANGE, "goal {g:?} out of batter range");
+            assert!(crate::castle::in_courtyard(g.x, g.y), "goal {g:?} outside the courtyard");
             assert!(g.distance(KEEP_POS) > 2.0, "goal must clear the keep box");
         }
     }

@@ -1188,6 +1188,13 @@ pub fn courtyard_half() -> (f32, f32) {
     (HALF_X, HALF_Z)
 }
 
+/// True strictly INSIDE the wall ring (wall thickness excluded). Siege rule: an invader only
+/// batters the keep from in here — outside, the walls shield it, so the wall ring is a real
+/// obstacle (thread a gate or do nothing), never a spot to chip the keep from.
+pub fn in_courtyard(wx: f32, wz: f32) -> bool {
+    wx.abs() < HALF_X - WALL_THICK && wz.abs() < HALF_Z - WALL_THICK
+}
+
 /// The four gate-gap centres (world XZ) — town villagers spill in/out through these.
 pub fn gate_centers() -> [Vec2; 4] {
     [Vec2::new(0.0, -HALF_Z), Vec2::new(0.0, HALF_Z), Vec2::new(-HALF_X, 0.0), Vec2::new(HALF_X, 0.0)]
