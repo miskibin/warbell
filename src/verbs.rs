@@ -29,9 +29,10 @@ const SWING_CONE_DOT: f32 = 0.5;
 /// How many boulders to seed across the rock biome. Higher than the old 18 so the town's stone
 /// miner (`miner.rs`) has boulders to work without starving the hero's own mining.
 const ORE_COUNT: u32 = 28;
-/// Seconds before a depleted boulder regrows in place. Deliberately slow (~6 min) — stone is a
-/// frontier resource, and a working miner shouldn't strip the map (cf. trees' 150s `TREE_REGROW`).
-const ORE_REGROW: f32 = 360.0;
+/// Seconds before a depleted boulder regrows in place. Deliberately slow (~18 min) — stone is a
+/// frontier resource, and a working miner shouldn't strip the map (cf. trees' 450s `TREE_REGROW`).
+/// 3× the old 360s so ore stays a destination worth ranging out for, not a topped-up vending machine.
+const ORE_REGROW: f32 = 1080.0;
 
 /// Published by combat at each swing's hit-phase: the cone the blow sweeps. Mining (and later
 /// the training dummies) test their targets against it, sharing the player's one swing.
@@ -472,8 +473,9 @@ const TREE_HP: f64 = 165.0;
 /// Wood banked per felled tree. This is the ONLY wood source — the Woodcutter plot has no
 /// passive trickle (core `BuildKind::produces` → `None`) — so a tree is worth a real haul.
 pub(crate) const TREE_WOOD: f64 = 2.0;
-/// Seconds before a felled tree grows back in place.
-const TREE_REGROW: f32 = 150.0;
+/// Seconds before a felled tree grows back in place. 3× the old 150s — a cleared stand stays
+/// cleared long enough to feel earned, and wood is worth ranging out for.
+const TREE_REGROW: f32 = 450.0;
 
 /// Fell `e`: bank the wood (+ float), then [`topple_tree`]. The hero's [`chop_tree`] path —
 /// he pockets the wood on the spot. The woodcutter NPC instead calls [`topple_tree`] directly
@@ -723,8 +725,10 @@ fn ore_glow_pulse(time: Res<Time>, mut q: Query<(&mut PointLight, &OreGlow)>) {
 // (if there's room) and the plant regrows after a delay. ECS-native (the core `ForageStore`
 // snaps to its own tilemap; we keep state per-entity over forest meshes + the 90s constant).
 
-/// Respawn delay (s) — core's `DEFAULT_RESPAWN`.
-const FORAGE_RESPAWN: f32 = forage_store::DEFAULT_RESPAWN as f32;
+/// Respawn delay (s) — 3× core's TS-parity `DEFAULT_RESPAWN` (90 → 270). A deliberate
+/// forest-canonical balance divergence: herbs/apples should be a destination, not a treadmill,
+/// so a stripped orchard or bramble patch stays bare a good while.
+const FORAGE_RESPAWN: f32 = forage_store::DEFAULT_RESPAWN as f32 * 3.0;
 
 #[derive(Component)]
 struct Forage {
@@ -822,10 +826,9 @@ const APPLE_SPOTS: [(f32, f32, f32); 6] = [
     (0.10, 1.42, 0.10),   // crown tip
 ];
 
-/// Apples one tree carries (and yields when stripped) — what hangs == what you bag. (5 of the 6
-/// `APPLE_SPOTS`; the canopy should look loaded with fruit, and the strip-burst should feel
-/// like a real haul.)
-const APPLES_PER_TREE: usize = 5;
+/// Apples one tree carries (and yields when stripped) — what hangs == what you bag. (3 of the 6
+/// `APPLE_SPOTS`; a leaner haul than the old 5 so food has to be worked for, not vacuumed up.)
+const APPLES_PER_TREE: usize = 3;
 
 /// Uniform scale every apple tree spawns at — noticeably bigger than the surrounding forest
 /// scatter so the orchard trees stand proud of the underbrush (the canopy tops out ~2.5u).
@@ -1081,7 +1084,9 @@ fn seed_forage(
 // frontier gradient), reusing core's pure `roll_gear` pool picks.
 
 const CHEST_INTERACT_DIST: f32 = 2.2;
-const CACHE_RESPAWN: f32 = 150.0;
+/// Seconds before a looted supply cache re-closes + refills. 3× the old 150s so caches aren't a
+/// standing-still income tap — you bank one, then it's a while before it's worth circling back.
+const CACHE_RESPAWN: f32 = 450.0;
 
 #[derive(Component)]
 pub(crate) struct Chest {
@@ -1091,7 +1096,18 @@ pub(crate) struct Chest {
     pub(crate) opened_at: f32,
     /// Frontier factor at placement → loot tier.
     factor: f64,
+    /// Hand-authored one-shot loot `(gold, item ids)` — set for the Blight war-hoard so it
+    /// pays a fixed plunder haul instead of frontier-rolled gear. `None` for scattered chests.
+    trophy: Option<(i64, &'static [&'static str])>,
+    /// A deep-rim **war hoard**: a one-shot treasure that pays a guaranteed top-tier haul + a
+    /// heavy purse (`chest_interact`), placed only out in the dangerous deep biomes. The reward
+    /// for ranging far past the distance-scaled wildlife/camps.
+    hoard: bool,
 }
+
+/// ChestId for the one war-hoard at Gnashfang Hold — one past `populate_chests`' `0..CHEST_COUNT`
+/// range, so the looted-treasure save flag keys it without colliding with a scattered chest.
+pub(crate) const TROPHY_CHEST_ID: usize = 12;
 
 /// Stable index of a chest over the spawn order (`0..CHEST_COUNT`). The save keys a
 /// looted-treasure flag by this so a re-launched world re-opens the right chests.
@@ -1141,12 +1157,26 @@ fn drive_lid_swing(
 /// Forest-native frontier gradient: 0 across the safe core around the castle (the world
 /// origin), smoothly → 1 toward the rim. (Core's `frontier_factor` is anchored to its own
 /// enlarged tilemap; we recompute the gradient and reuse only core's pure loot picks.)
-fn forest_frontier(x: f32, z: f32) -> f64 {
+pub(crate) fn forest_frontier(x: f32, z: f32) -> f64 {
     const SAFE: f32 = 22.0;
     const RIM: f32 = 92.0;
     let d = (x * x + z * z).sqrt();
     let t = ((d - SAFE) / (RIM - SAFE)).clamp(0.0, 1.0) as f64;
     t * t * (3.0 - 2.0 * t) // smoothstep
+}
+
+/// Distance-graded danger multipliers `(hp_mul, dmg_mul)` for a ROAMING enemy at world (x,z):
+/// ×1 across the safe core, climbing to ×2 HP / ×1.6 damage out at the rim. The reward for
+/// ranging far (richer chests, top-tier loot) is paid for in tougher, harder-hitting wildlife
+/// and camp orks. Applied at spawn-time HP ([`crate::player::combat::ensure_combat_health`]) and
+/// at each bite/club ([`crate::wildlife`], [`crate::orks`]).
+///
+/// NB this deliberately does NOT touch the night-siege invaders: they spawn in a far ring and
+/// march to the keep at the origin, so grading them by spawn distance would silently buff every
+/// siege. Invaders carry their own wave-scaled HP from `siege::spawn_invader` and never read this.
+pub(crate) fn frontier_threat(x: f32, z: f32) -> (f32, f32) {
+    let f = forest_frontier(x, z) as f32;
+    (1.0 + f, 1.0 + 0.6 * f)
 }
 
 /// Deterministic [0,1) per-position hash — stable loot per chest.
@@ -1185,21 +1215,37 @@ fn chest_interact(
             continue;
         }
         let head = Vec3::new(p.x, p.y + 1.4, p.z);
-        // Resolve loot: caches → gold + a loaf; treasure → frontier gear + gold.
-        let (loot, gold): (Vec<&'static str>, i64) = if chest.cache {
-            // Some caches also hold a Mercenary Contract (spent via R to hire a guard).
+        // Resolve loot: hand-authored trophy → fixed haul; caches → gold + a loaf; deep-rim
+        // hoard → guaranteed top-tier haul + heavy purse; ordinary treasure → frontier gear +
+        // gold. The gold/item curves steepen hard with distance (near is stingy, the rim is
+        // rich) so the frontier pulls the hero outward.
+        let (loot, gold): (Vec<&'static str>, i64) = if let Some((g, ids)) = chest.trophy {
+            (ids.to_vec(), g)
+        } else if chest.cache {
+            // Some caches also hold a Mercenary Contract (spent via R to hire a guard). Gold is
+            // distance-graded: a stingy ~6 near the keep climbing to ~54 out at the rim.
             let mut loot = vec!["bread"];
             if tile_hash(p.x, p.z) > 0.7 {
                 loot.push("mercenary_contract");
             }
-            (loot, (10.0 + chest.factor * 30.0).round() as i64)
-        } else {
+            (loot, (6.0 + chest.factor * 48.0).round() as i64)
+        } else if chest.hoard {
+            // Deep-rim war hoard: FOUR guaranteed top-tier rolls (factor pinned to 1.0 so the
+            // best pool is certain even if the spot reads sub-rim) + a heavy 150–360 purse.
             let h = tile_hash(p.x, p.z);
-            let items = 1 + chest.factor.round() as i64;
+            let loot = (0..4)
+                .map(|i| frontier::roll_gear(1.0, (h + i as f64 * 0.37) % 1.0))
+                .collect();
+            (loot, (150.0 + chest.factor * 150.0 + h * 60.0).round() as i64)
+        } else {
+            // Ordinary treasure: 1 item near → 3 at the rim; gold ~8 near → ~123–153 at the rim
+            // (was a flat 15 + f·60, so near is nerfed and the rim is a far bigger prize).
+            let h = tile_hash(p.x, p.z);
+            let items = 1 + (chest.factor * 2.0).round() as i64;
             let loot = (0..items)
                 .map(|i| frontier::roll_gear(chest.factor, (h + i as f64 * 0.37) % 1.0))
                 .collect();
-            (loot, (15.0 + chest.factor * 60.0 + h * 20.0).round() as i64)
+            (loot, (8.0 + chest.factor * 130.0 + h * 15.0).round() as i64)
         };
         // Won't open if the bag can't hold the gear (TS: full bag rejects the chest).
         if !inv.0.has_room_for(&loot) {
@@ -1293,7 +1339,7 @@ pub fn populate_chests(
             .spawn((
                 Transform::from_xyz(x, y, z),
                 Visibility::Visible,
-                Chest { cache, opened: false, opened_at: 0.0, factor },
+                Chest { cache, opened: false, opened_at: 0.0, factor, trophy: None, hoard: false },
                 ChestId(placed as usize),
                 crate::biome::BiomeEntity,
             ))
@@ -1311,6 +1357,106 @@ pub fn populate_chests(
         });
         placed += 1;
     }
+
+    // ── Deep-rim war hoards ──────────────────────────────────────────────────────────
+    // One rare hoard per biome, parked out at the deep-biome heart (the signature-landmark
+    // ground, far past the safe zone). Each pays a guaranteed top-tier haul (`chest_interact`'s
+    // `hoard` branch) but sits among the distance-scaled wildlife/camps — high risk, high loot,
+    // the carrot that pulls the hero off the home grass. ChestIds run past `TROPHY_CHEST_ID` so
+    // the save's looted-flag vec keys them without colliding with the scatter or the trophy.
+    // (Anchors are the biome region centres from the worldmap; see CLAUDE.md's biome table.)
+    const HOARD_SPOTS: [(f32, f32); 5] = [
+        (-69.0, -45.0), // snow massif
+        (60.0, -39.0),  // desert deep
+        (66.0, 4.0),    // rocky highlands
+        (-60.0, 39.0),  // forest heart
+        (0.0, 57.0),    // swamp mire
+    ];
+    for (i, &(ax, az)) in HOARD_SPOTS.iter().enumerate() {
+        // Settle onto the nearest valid ground near the anchor (spiral out a little if the exact
+        // spot is water/blocked/a build plot), so a hoard never lands in a lake or a wall.
+        let mut spot = None;
+        'search: for ring in 0..6 {
+            let r = ring as f32 * 3.0;
+            for k in 0..8 {
+                let ang = k as f32 * std::f32::consts::FRAC_PI_4;
+                let (x, z) = (ax + ang.cos() * r, az + ang.sin() * r);
+                if worldmap::ground_at_world(x, z).is_some()
+                    && !crate::blockers::is_blocked(x, z)
+                    && !crate::camps::in_clearing(x, z)
+                    && !crate::town::near_build_plot(x, z)
+                    && !crate::bridges::near_bridge(x, z, 1.0)
+                {
+                    spot = Some((x, z));
+                    break 'search;
+                }
+                if r == 0.0 {
+                    break; // ring 0 is the single centre point
+                }
+            }
+        }
+        let Some((x, z)) = spot else { continue };
+        let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
+        let factor = forest_frontier(x, z);
+        let parent = commands
+            .spawn((
+                Transform::from_xyz(x, y, z),
+                Visibility::Visible,
+                Chest { cache: false, opened: false, opened_at: 0.0, factor, trophy: None, hoard: true },
+                ChestId(TROPHY_CHEST_ID + 1 + i),
+                crate::biome::BiomeEntity,
+            ))
+            .id();
+        commands.entity(parent).with_children(|p| {
+            p.spawn((Mesh3d(base_mesh.clone()), MeshMaterial3d(chest_mat.clone()), Transform::default()));
+            p.spawn((
+                Mesh3d(lid_mesh.clone()),
+                MeshMaterial3d(chest_mat.clone()),
+                Transform::from_xyz(0.0, 0.40, -0.25),
+                ChestLid,
+            ));
+        });
+    }
+}
+
+/// Spawn the single hand-authored war-hoard chest (Gnashfang Hold's plunder) at a fixed mire
+/// spot. One-shot treasure with authored `gold` + `loot` instead of a frontier roll, so the
+/// deep-Blight raid pays a known haul, not power-creeping gear. Keyed [`TROPHY_CHEST_ID`] for
+/// the save flag. Called from `ork_fortress::build`.
+pub fn spawn_trophy_chest(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
+    rot: f32,
+    gold: i64,
+    loot: &'static [&'static str],
+) {
+    let base_mesh = meshes.add(chest_body_mesh());
+    let lid_mesh = meshes.add(chest_lid_mesh());
+    let chest_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.78,
+        ..default()
+    });
+    let parent = commands
+        .spawn((
+            Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(rot)),
+            Visibility::Visible,
+            Chest { cache: false, opened: false, opened_at: 0.0, factor: 1.0, trophy: Some((gold, loot)), hoard: false },
+            ChestId(TROPHY_CHEST_ID),
+            crate::biome::BiomeEntity,
+        ))
+        .id();
+    commands.entity(parent).with_children(|p| {
+        p.spawn((Mesh3d(base_mesh.clone()), MeshMaterial3d(chest_mat.clone()), Transform::default()));
+        p.spawn((
+            Mesh3d(lid_mesh.clone()),
+            MeshMaterial3d(chest_mat.clone()),
+            Transform::from_xyz(0.0, 0.40, -0.25),
+            ChestLid,
+        ));
+    });
 }
 
 // ─── Chest model (vertex-coloured, flat-shaded) ─────────────────────────────────────

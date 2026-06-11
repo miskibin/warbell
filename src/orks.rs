@@ -446,16 +446,19 @@ fn ork_brain(
                 }
                 // Strike the HERO only (a rival brawl is resolved by `ork_brawl`).
                 if o.brawl_target.is_none() && o.atk_cd <= 0.0 {
+                    // Frontier-graded blow: a deep-biome warband hits ~1.6× as hard as one near
+                    // the castle (pairs with its distance-scaled HP from `ensure_combat_health`).
+                    let (_, dmg_mul) = crate::verbs::frontier_threat(o.pos.x, o.pos.y);
                     if o.shaman {
                         o.atk_cd = SHAMAN_CAST_CD;
                         let gy = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(0.0);
                         bolts.0.push(crate::projectile::BoltSpawn {
                             origin: Vec3::new(o.pos.x, gy + 1.4, o.pos.y),
-                            damage: SHAMAN_BOLT_DAMAGE,
+                            damage: SHAMAN_BOLT_DAMAGE * dmg_mul,
                         });
                     } else {
                         o.atk_cd = ORK_ATTACK_CD * if frenzied { 0.6 } else { 1.0 };
-                        pending.0 += variant_melee(o.variant);
+                        pending.0 += variant_melee(o.variant) * dmg_mul;
                     }
                     // Trigger the strike animation (club chop / staff jab) — `ork_limbs` reads this.
                     o.atk_anim = time.elapsed_secs();

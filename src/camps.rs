@@ -65,9 +65,10 @@ pub struct Cage {
 /// Index of the cage within the per-camp `solids` vec in [`build`].
 const CAGE_SOLID: usize = 3;
 
-/// Seconds after a camp's warband is wiped before it repopulates (TS `OrkCamp.tsx`'s
-/// `CAMP_RESPAWN_DELAY`).
-const CAMP_RESPAWN_DELAY: f32 = 60.0;
+/// Seconds after a camp's warband is wiped before it repopulates. 3× the old 60s (TS
+/// `OrkCamp.tsx` used 60) so clearing a camp buys real breathing room instead of an endless
+/// treadmill of fresh orks.
+const CAMP_RESPAWN_DELAY: f32 = 180.0;
 /// The hero must be at least this far (world units) from a camp for it to repopulate, so a cleared
 /// warband returns OUT OF SIGHT rather than in front of the player (TS `CAMP_RESPAWN_FAR` = 40).
 const CAMP_RESPAWN_FAR: f32 = 40.0;

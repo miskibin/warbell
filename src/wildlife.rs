@@ -110,9 +110,11 @@ pub struct Struck {
 
 /// Seconds a struck predator stays enraged + locked onto the hero.
 const STRUCK_LATCH: f32 = 6.0;
-/// Respawn delays — a slain animal's species reappears nearby after this.
-const ANIMAL_RESPAWN: f32 = 35.0;
-const PREDATOR_RESPAWN: f32 = 50.0;
+/// Respawn delays — a slain animal's species reappears nearby after this. 3× slower than the
+/// old pace (was 35/50) so the wilds don't refill the moment you turn your back — culled game
+/// stays culled long enough to matter, and pushes the hero to range farther for fresh hunts.
+const ANIMAL_RESPAWN: f32 = 105.0;
+const PREDATOR_RESPAWN: f32 = 150.0;
 
 /// Town sanctuary radius (world units from the castle origin). Covers the grass safe-zone
 /// (`worldmap::SAFE_R` = 18) PLUS the build-plot ring (farthest plot centre ~21.5 +
@@ -342,6 +344,10 @@ fn animal_brain(
                         a.atk_cd = 1.0;
                         a.atk_anim = now; // play the lunge-bite / tail-sting / arm-slam
                         if let Some((_, bite)) = pred {
+                            // Frontier-graded bite: a rim predator hits ~1.6× as hard as one near
+                            // the castle (pairs with its distance-scaled HP — far wilds bite back).
+                            let (_, dmg_mul) = crate::verbs::frontier_threat(a.pos.x, a.pos.y);
+                            let bite = bite * dmg_mul;
                             // The bite lands on whoever is being charged: a townsperson takes it
                             // through the NPC damage channel, the hero through his own.
                             if let Some(ne) = a.hunt_npc {

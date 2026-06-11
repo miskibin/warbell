@@ -168,6 +168,7 @@ impl Plugin for OrkFortressPlugin {
                 siege_flare,
                 fortress_barks,
                 patrol_respawn,
+                blight_rescue,
             )
                 .run_if(in_state(Modal::None)),
         );
@@ -1029,6 +1030,33 @@ pub fn build(
     }
     commands.insert_resource(BlightPatrols { armory, sites });
 
+    // ── Caged captives: closed cages staked by two patrols (the raid objective). Each blocks
+    //    like a solid prop — you walk UP to it; `blight_rescue` opens it when its squad falls. ──
+    for (slot, (at_xz, _patrol)) in BLIGHT_CAGES.iter().enumerate() {
+        let yaw = rng_range(&mut rng, 0.0, TAU);
+        crate::blockers::add_obb(at_xz.x, at_xz.y, 1.1, 1.0, yaw);
+        commands.spawn((
+            Mesh3d(meshes.add(cage_mesh())),
+            MeshMaterial3d(timber_mat.clone()),
+            Transform { translation: at(*at_xz), rotation: ry(yaw), scale: Vec3::ONE },
+            BiomeEntity,
+            BlightCage { slot },
+        ));
+    }
+    commands.insert_resource(BlightCaptives::default());
+
+    // ── The war-hoard: one authored plunder chest deep in the south-east mire. ──
+    let (hx, gold, loot) = BLIGHT_HOARD;
+    crate::verbs::spawn_trophy_chest(
+        commands,
+        meshes,
+        std_mats,
+        at(hx),
+        rng_range(&mut rng, 0.0, TAU),
+        gold,
+        loot,
+    );
+
     info!("ork fortress: Gnashfang Hold built at {:.0},{:.0}", CENTRE.x, CENTRE.y);
 }
 
@@ -1046,6 +1074,40 @@ const PATROL_SITES: [(Vec2, [OrkVariant; 2]); 5] = [
 /// the return to happen unseen (the camps' respawn manners, slower).
 const PATROL_RESPAWN_DELAY: f32 = 120.0;
 const PATROL_RESPAWN_FAR: f32 = 45.0;
+
+// ── Caged captives: the orks' plundered townsfolk, the reason to raid the mire ──────────
+//
+// A couple of barred cages are staked in the open Blight, each guarded by one patrol squad.
+// Wipe the guards (one-time — patrols respawn, captives don't) and the cage swings open +
+// one townsperson joins the castle (grows the bloodline). Mirrors `villagers::camp_rescue`,
+// keyed off the Blight patrols instead of the wilderness camps.
+
+/// A closed captive cage in the mire — `patrol` indexes [`PATROL_SITES`] (the squad guarding
+/// it; cleared = freed) and `i` is its slot in [`BlightCaptives`].
+#[derive(Component)]
+struct BlightCage {
+    slot: usize,
+}
+
+/// `(cage world XZ, guarding PATROL_SITES index)`. Both cages sit a few units OUTSIDE the
+/// walls in walkable mire, hard by their patrol's home so the squad reads as their jailers.
+const BLIGHT_CAGES: [(Vec2, usize); 2] = [
+    (Vec2::new(42.0, 99.0), 1),    // east flank — guarded by patrol 1 (38,100)
+    (Vec2::new(-17.0, 125.0), 3),  // deep south-west mire — guarded by patrol 3 (-14,122)
+];
+
+/// The war-hoard: a single one-shot plunder chest deep in the south-east mire, guarded by
+/// patrol 4. `(chest world XZ, gold, loot)` — fixed haul (consumables + a purse), no gear, so
+/// it rewards the trek without power-creeping the already-strong hero.
+const BLIGHT_HOARD: (Vec2, i64, &[&str]) = (Vec2::new(57.0, 119.0), 120, &["feast", "potion", "venom"]);
+
+/// One-time freed/seen flags per [`BLIGHT_CAGES`] slot (re-inserted fresh each world build, so
+/// a new game re-stocks the cages). `seen` guards against freeing before the patrol spawns.
+#[derive(Resource, Default)]
+struct BlightCaptives {
+    freed: [bool; BLIGHT_CAGES.len()],
+    seen: [bool; BLIGHT_CAGES.len()],
+}
 
 struct PatrolSite {
     home: Vec2,
@@ -1096,6 +1158,60 @@ fn patrol_respawn(
         }
         site.cleared_at = None;
         spawn_squad(&mut commands, armory, site);
+    }
+}
+
+/// Free a caged captive once the patrol guarding it is wiped (one-time): swap the closed cage
+/// for the opened husk, grow the town by one, float + voice the rescue. Mirrors
+/// `villagers::camp_rescue` but keyed off the [`BlightPatrols`] homes. `seen` stops a cage from
+/// freeing before its squad has even spawned; wave invaders are excluded so a night siege at the
+/// keep can't read as "guards cleared".
+#[allow(clippy::too_many_arguments)]
+fn blight_rescue(
+    mut town: ResMut<crate::town::TownRes>,
+    captives: Option<ResMut<BlightCaptives>>,
+    orks: Query<&crate::orks::Ork, (Without<crate::orks::WaveInvader>, Without<crate::dying::Dying>)>,
+    cages_q: Query<(Entity, &BlightCage, &Transform)>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let Some(mut captives) = captives else { return };
+    for (slot, (at_xz, patrol)) in BLIGHT_CAGES.iter().enumerate() {
+        if captives.freed[slot] {
+            continue;
+        }
+        let home = PATROL_SITES[*patrol].0;
+        if orks.iter().any(|o| o.home().distance(home) < 1.5) {
+            captives.seen[slot] = true; // squad still alive — this cage IS guarded
+            continue;
+        }
+        if !captives.seen[slot] {
+            continue; // patrol not spawned yet — don't auto-free
+        }
+        captives.freed[slot] = true;
+        // Open the cage in place (swap the closed prop for the husk at its exact pose).
+        let y = ground_y(at_xz.x, at_xz.y).unwrap_or(0.0);
+        let mut cage_tf = Transform::from_xyz(at_xz.x, y, at_xz.y);
+        for (e, c, tf) in &cages_q {
+            if c.slot == slot {
+                cage_tf = *tf;
+                commands.entity(e).try_despawn();
+            }
+        }
+        crate::camps::open_cage(&mut commands, &mut meshes, &mut materials, cage_tf);
+        town.0.population += 1; // the freed townsperson appears via town::sync_population_bodies
+        floats.0.push(crate::combat_fx::FloatReq {
+            world: Vec3::new(at_xz.x, cage_tf.translation.y + 1.8, at_xz.y),
+            text: "Captive freed!  +1 townsperson".into(),
+            color: Color::srgb(0.5, 1.0, 0.6),
+            scale: 1.2,
+        });
+        cues.write(crate::audio::AudioCue::CampRescue);
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::FirstRescue));
     }
 }
 

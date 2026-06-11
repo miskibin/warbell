@@ -273,20 +273,23 @@ pub fn update_fx_fades(
 /// editing their spawn code). Cheap: the queries are empty once everyone is tagged.
 pub fn ensure_combat_health(
     mut commands: Commands,
-    orks: Query<(Entity, &Ork), Without<Health>>,
+    orks: Query<(Entity, &Ork, &Transform), Without<Health>>,
     animals: Query<(Entity, &Animal), Without<Health>>,
 ) {
-    // Camp orks get their variant's full old-game base HP (254/136/306/201, via `siege::base_hp`);
-    // wave invaders already carry their wave-scaled HP from `siege::spawn_invader`, so they never
-    // fall through to here.
-    for (e, o) in &orks {
-        let hp = crate::siege::base_hp(o.variant);
+    // Camp orks get their variant's full old-game base HP (254/136/306/201, via `siege::base_hp`),
+    // scaled UP by frontier distance (×1 near the castle → ×2 at the rim) so deep-biome warbands
+    // are genuinely tankier. Wave invaders already carry their wave-scaled HP from
+    // `siege::spawn_invader`, so they never fall through to here (and stay un-distance-scaled).
+    for (e, o, tf) in &orks {
+        let (hp_mul, _) = crate::verbs::frontier_threat(tf.translation.x, tf.translation.z);
+        let hp = (crate::siege::base_hp(o.variant) * hp_mul).round();
         commands.entity(e).try_insert(Health { hp, max: hp });
     }
-    // Per-species animal HP (rescaled from core's `animal_config` into forest's combat units) —
-    // a wolf/bear now soaks several blows where a rabbit still pops in one.
+    // Per-species animal HP (from core's `animal_config`), same frontier scaling — a rim wolf
+    // soaks twice the blows of a home-wood one (a rabbit still pops near-instantly either way).
     for (e, a) in &animals {
-        let hp = crate::verbs::animal_profile(a.species).hp;
+        let (hp_mul, _) = crate::verbs::frontier_threat(a.pos.x, a.pos.y);
+        let hp = (crate::verbs::animal_profile(a.species).hp * hp_mul).max(2.0);
         commands.entity(e).try_insert(Health { hp, max: hp });
     }
 }
