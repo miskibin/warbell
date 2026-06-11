@@ -1,4 +1,4 @@
-//! D: Tileworld — a Bevy 0.18 port of the TS/three.js game. A knight defends a central
+//! Warbell (formerly "D: Tileworld") — a Bevy 0.18 game. A knight defends a central
 //! castle against night-wave ork sieges across a five-biome island: real-time combat,
 //! economy, an upgrade tree, inventory, villagers, bloodline succession, and wildlife, on
 //! one enlarged landmass ringed by open ocean (with drifting boats).
@@ -85,7 +85,7 @@ fn main() {
     // Screenshot harness window: render at a fixed high resolution + scale-factor 1.0 so the
     // captured PNG is crisp. (A small/low-res capture minifies the ground detail texture to a
     // washed-out pale mean — the real game at native res looks lush.)
-    let mut window = Window { title: "Tileworld Biomes — Bevy".into(), ..default() };
+    let mut window = Window { title: "Warbell".into(), ..default() };
     if std::env::var("FOREST_SHOT").is_ok() {
         window.resolution =
             bevy::window::WindowResolution::new(1920, 1080).with_scale_factor_override(1.0);

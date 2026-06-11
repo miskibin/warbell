@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**"D: Tileworld"** — a **Bevy 0.18** game. This started as a static forest-scene viewer and
+**"Warbell"** (renamed from "D: Tileworld", June 2026) — a **Bevy 0.18** game. This started as a static forest-scene viewer and
 has grown into a full playable game: a knight defends a central castle against night-wave
 ork sieges, with combat, economy, an upgrade tree, inventory, villagers, succession, and five
 biomes on one enlarged island. (It began life as a port of an old TypeScript/three.js game;

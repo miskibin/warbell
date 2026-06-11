@@ -1,6 +1,6 @@
-# D: Tileworld — Bevy
+# Warbell
 
-A **Bevy 0.18** port of the TypeScript/three.js game **"D: Tileworld"**. A knight defends a
+**Warbell** (formerly "D: Tileworld") — a **Bevy 0.18** game. A knight defends a
 central castle against night-wave ork sieges across a five-biome island: real-time combat,
 an economy, an upgrade tree, inventory, villagers, a bloodline succession loop, and wildlife —
 at near-parity with the original game, wrapped in forest's own (better) lighting and

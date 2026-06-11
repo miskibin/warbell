@@ -79,7 +79,7 @@ fn update_notice(
                     border_radius: radius(R_CARD),
                     ..default()
                 },
-                BackgroundColor(rgba(18, 22, 32, 0.86)),
+                BackgroundColor(rgba(26, 21, 15, 0.88)),
                 BorderColor::all(rgba(224, 164, 88, 0.5)),
                 shadow_card(),
             ))

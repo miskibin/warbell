@@ -371,19 +371,22 @@ fn spawn_start_screen(
                 ..default()
             })
             .with_children(|m| {
-                m.spawn((label(&fonts.bold, "DEFEND THE KEEP", 12.0, KICKER), anim(AnimKind::Rise, 0.06, 0.6)));
-                // Two-line title.
+                m.spawn((label(&fonts.display, "DEFEND THE KEEP", 13.0, KICKER), anim(AnimKind::Rise, 0.06, 0.6)));
+                // The title — Cinzel roman capitals, gold-lit.
                 m.spawn((
                     Node { flex_direction: FlexDirection::Column, ..default() },
                     anim(AnimKind::Rise, 0.12, 0.7),
                 ))
                 .with_children(|t| {
-                    for line in ["TILE", "WORLD"] {
-                        t.spawn((
-                            label(&fonts.extrabold, line, 84.0, rgb(238, 244, 255)),
-                            TextShadow { offset: Vec2::new(0.0, 6.0), color: rgba(0, 0, 0, 0.6) },
-                        ));
-                    }
+                    t.spawn((
+                        label(&fonts.display, "WARBELL", 88.0, rgb(244, 228, 188)),
+                        TextShadow { offset: Vec2::new(0.0, 6.0), color: rgba(0, 0, 0, 0.65) },
+                    ));
+                    // Gold rule under the title, like a charter heading.
+                    t.spawn((
+                        Node { width: Val::Px(330.0), height: Val::Px(2.0), margin: UiRect::top(Val::Px(2.0)), ..default() },
+                        BackgroundColor(rgba(224, 168, 74, 0.75)),
+                    ));
                 });
                 m.spawn((label(&fonts.regular, "A knight's last stand.", 17.0, TEXT_DIM), anim(AnimKind::Rise, 0.2, 0.7)));
                 // Quick "how to play" — the whole loop in two lines, so a new player isn't lost.
@@ -416,7 +419,7 @@ fn spawn_start_screen(
                         anim_btn(AnimKind::Rise, 0.34, 0.7),
                     ))
                     .with_children(|b| {
-                        b.spawn(label(&fonts.extrabold, "CONTINUE GAME", 19.0, Color::WHITE));
+                        b.spawn(label(&fonts.extrabold, "CONTINUE GAME", 19.0, INK));
                     });
                 } else {
                     // Disabled: no Button/Interaction/Hoverable, just a dim card.
@@ -427,8 +430,8 @@ fn spawn_start_screen(
                             border_radius: radius(11.0),
                             ..default()
                         },
-                        BackgroundColor(rgba(74, 111, 200, 0.20)),
-                        BorderColor::all(rgba(130, 162, 234, 0.22)),
+                        BackgroundColor(rgba(196, 144, 62, 0.16)),
+                        BorderColor::all(rgba(244, 204, 132, 0.22)),
                         anim(AnimKind::Rise, 0.34, 0.7),
                     ))
                     .with_children(|b| {
@@ -448,7 +451,7 @@ fn spawn_start_screen(
                     anim_btn(AnimKind::Rise, 0.36, 0.7),
                 ))
                 .with_children(|b| {
-                    b.spawn(label(&fonts.extrabold, "NEW GAME", 19.0, Color::WHITE));
+                    b.spawn(label(&fonts.extrabold, "NEW GAME", 19.0, INK));
                 });
                 // Difficulty selector.
                 m.spawn((
@@ -465,7 +468,7 @@ fn spawn_start_screen(
                             border_radius: radius(10.0),
                             ..default()
                         },
-                        BackgroundColor(rgba(14, 20, 34, 0.72)),
+                        BackgroundColor(rgba(24, 19, 13, 0.72)),
                         BorderColor::all(BORDER_SOFT),
                     ))
                     .with_children(|seg| {
@@ -484,7 +487,7 @@ fn spawn_start_screen(
                                 SegButton(d),
                             ))
                             .with_children(|b| {
-                                b.spawn(label(&fonts.semibold, diff_name(d), 13.0, if on { Color::WHITE } else { TEXT_FAINT }));
+                                b.spawn(label(&fonts.semibold, diff_name(d), 13.0, if on { INK } else { TEXT_FAINT }));
                             });
                         }
                     });
@@ -576,7 +579,7 @@ fn pause_btn<M: Component, L: Bundle>(
         anim_btn(AnimKind::PopIn, delay, 0.28),
     ))
     .with_children(|b| {
-        b.spawn((label(font, text, 16.0, Color::WHITE), label_extra));
+        b.spawn((label(font, text, 16.0, INK), label_extra));
     });
 }
 
@@ -610,7 +613,7 @@ fn spawn_pause_screen(
         ))
         .with_children(|c| {
             c.spawn((
-                label(&fonts.extrabold, "PAUSED", 38.0, TEXT),
+                label(&fonts.display, "PAUSED", 34.0, GOLD),
                 Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
             ));
 
@@ -763,7 +766,7 @@ fn spawn_gameover_screen(
 
     commands.spawn((modal_root(50), GameOverUi)).with_children(|root| {
         root.spawn((
-            label(&fonts.extrabold, title, 60.0, col),
+            label(&fonts.display, title, 58.0, col),
             TextShadow { offset: Vec2::new(0.0, 4.0), color: rgba(0, 0, 0, 0.8) },
             anim(AnimKind::PopIn, 0.0, 0.6),
         ));
@@ -785,7 +788,7 @@ fn spawn_gameover_screen(
                 anim_btn(AnimKind::FloatUp, 0.35, 0.5),
             ))
             .with_children(|b| {
-                b.spawn(label(&fonts.extrabold, "CONTINUE FROM LAST NIGHT", 15.0, Color::WHITE));
+                b.spawn(label(&fonts.extrabold, "CONTINUE FROM LAST NIGHT", 15.0, INK));
             });
         }
         root.spawn((
@@ -802,7 +805,7 @@ fn spawn_gameover_screen(
         ))
         .with_children(|b| {
             let txt = if can_continue { "NEW GAME" } else { "PLAY AGAIN" };
-            b.spawn(label(&fonts.extrabold, txt, 15.0, Color::WHITE));
+            b.spawn(label(&fonts.extrabold, txt, 15.0, INK));
         });
     });
 }
@@ -945,7 +948,7 @@ fn spawn_confirm(commands: &mut Commands, fonts: &UiFonts) {
             anim(AnimKind::PopIn, 0.0, 0.26),
         ))
         .with_children(|c| {
-            c.spawn(label(&fonts.extrabold, "OVERWRITE SAVED GAME?", 24.0, TEXT));
+            c.spawn(label(&fonts.display, "OVERWRITE SAVED GAME?", 22.0, TEXT));
             c.spawn(label(
                 &fonts.regular,
                 "This deletes your current run. It can't be undone.",
@@ -985,7 +988,7 @@ fn spawn_confirm(commands: &mut Commands, fonts: &UiFonts) {
                     anim_btn(AnimKind::PopIn, 0.05, 0.26),
                 ))
                 .with_children(|b| {
-                    b.spawn(label(&fonts.extrabold, "CANCEL", 16.0, Color::WHITE));
+                    b.spawn(label(&fonts.extrabold, "CANCEL", 16.0, INK));
                 });
             });
             c.spawn((
