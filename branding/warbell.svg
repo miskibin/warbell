@@ -1,0 +1,102 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- disc face: dark warm ink, faint center glow -->
+    <radialGradient id="disc" cx="50%" cy="42%" r="62%">
+      <stop offset="0%"  stop-color="#3a2c14"/>
+      <stop offset="55%" stop-color="#2c2010"/>
+      <stop offset="100%" stop-color="#1c1409"/>
+    </radialGradient>
+    <!-- bronze rim -->
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#f4cc84"/>
+      <stop offset="35%"  stop-color="#c4903e"/>
+      <stop offset="70%"  stop-color="#8a5e2a"/>
+      <stop offset="100%" stop-color="#5a4524"/>
+    </linearGradient>
+    <!-- gold bell body -->
+    <linearGradient id="bell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#fff0d0"/>
+      <stop offset="22%"  stop-color="#ffd58c"/>
+      <stop offset="62%"  stop-color="#e8b25a"/>
+      <stop offset="100%" stop-color="#c4903e"/>
+    </linearGradient>
+    <linearGradient id="lip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#e0a84a"/>
+      <stop offset="100%" stop-color="#8a5e2a"/>
+    </linearGradient>
+    <radialGradient id="glint" cx="38%" cy="30%" r="55%">
+      <stop offset="0%"  stop-color="#fff6e2" stop-opacity="0.85"/>
+      <stop offset="60%" stop-color="#fff6e2" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- medallion -->
+  <circle cx="256" cy="256" r="244" fill="url(#rim)"/>
+  <circle cx="256" cy="256" r="224" fill="#1c1409"/>
+  <circle cx="256" cy="256" r="214" fill="url(#disc)"/>
+  <circle cx="256" cy="256" r="214" fill="none" stroke="#5a4524" stroke-width="3"/>
+
+  <!-- rivets around the rim -->
+  <g fill="#f4cc84">
+    <circle cx="256" cy="36"  r="7"/>
+    <circle cx="256" cy="476" r="7"/>
+    <circle cx="36"  cy="256" r="7"/>
+    <circle cx="476" cy="256" r="7"/>
+    <circle cx="100" cy="100" r="6"/>
+    <circle cx="412" cy="100" r="6"/>
+    <circle cx="100" cy="412" r="6"/>
+    <circle cx="412" cy="412" r="6"/>
+  </g>
+
+  <!-- sound arcs (alarm ringing) -->
+  <g fill="none" stroke="#c4903e" stroke-width="9" stroke-linecap="round" opacity="0.55">
+    <path d="M 150 168 A 150 150 0 0 0 150 344"/>
+    <path d="M 362 168 A 150 150 0 0 1 362 344"/>
+  </g>
+  <g fill="none" stroke="#f4cc84" stroke-width="9" stroke-linecap="round" opacity="0.8">
+    <path d="M 180 188 A 110 110 0 0 0 180 324"/>
+    <path d="M 332 188 A 110 110 0 0 1 332 324"/>
+  </g>
+
+  <!-- yoke pin -->
+  <rect x="246" y="118" width="20" height="22" rx="5" fill="url(#lip)"/>
+  <!-- crown loop -->
+  <path d="M 256 96
+           C 238 96 226 110 226 128
+           C 226 142 236 150 246 150
+           L 266 150
+           C 276 150 286 142 286 128
+           C 286 110 274 96 256 96 Z
+           M 256 112
+           C 266 112 272 120 272 128
+           C 272 134 268 136 262 136
+           L 250 136
+           C 244 136 240 134 240 128
+           C 240 120 246 112 256 112 Z"
+        fill="url(#bell)" stroke="#5a4524" stroke-width="3"/>
+
+  <!-- bell body -->
+  <path d="M 256 150
+           C 224 150 206 168 200 196
+           C 192 234 178 286 150 332
+           C 142 346 152 360 168 360
+           L 344 360
+           C 360 360 370 346 362 332
+           C 334 286 320 234 312 196
+           C 306 168 288 150 256 150 Z"
+        fill="url(#bell)" stroke="#5a4524" stroke-width="4"/>
+
+  <!-- mouth lip band -->
+  <path d="M 150 360
+           C 178 384 334 384 362 360
+           C 372 374 366 392 350 396
+           C 300 408 212 408 162 396
+           C 146 392 140 374 150 360 Z"
+        fill="url(#lip)" stroke="#5a4524" stroke-width="4"/>
+
+  <!-- clapper -->
+  <circle cx="256" cy="392" r="16" fill="url(#lip)" stroke="#5a4524" stroke-width="3"/>
+
+  <!-- body glint -->
+  <ellipse cx="226" cy="232" rx="34" ry="92" fill="url(#glint)"/>
+</svg>

@@ -3,7 +3,7 @@ members = ["crates/core"]
 
 [package]
 name = "tileworld_bevy_forest"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
@@ -18,6 +18,12 @@ tileworld_core = { path = "crates/core", features = ["serde"] }
 # Save/continue: JSON snapshot of a run, written at each dawn (`src/savegame.rs`).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Windows-only: embed the app icon + version metadata (ProductName/Company/version) into the
+# .exe resource section via build.rs. This is what Explorer, the taskbar, the winit window, and
+# the installer all read — no runtime icon-loading code needed (winit picks up the exe's icon).
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 # Compile bevy deps with optimizations even in dev — otherwise the scene runs
 # at single digit FPS. Our own crate stays fast-to-compile at opt-level 0.

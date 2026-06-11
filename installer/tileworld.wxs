@@ -1,22 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- WiX 6 authoring for the Windows installer.
-     Build (from repo root, after `cargo build -release`):
-       wix build installer/tileworld.wxs -arch x64 -d SourceDir=$PWD -o dist/tileworld-setup.msi
+     Build (from repo root, after a release build of the exe):
+       wix build installer/tileworld.wxs -arch x64 -d SourceDir=$PWD -o dist/Warbell-setup.msi
      SourceDir must be the repo root (relative Source paths resolve against the
      authored Directory tree, not the .wxs location, so they can't be used here).
      `Files Include` (WiX v5+) harvests the whole assets/ tree recursively, so new
-     assets are picked up on rebuild with no .wxs edits. -->
+     assets are picked up on rebuild with no .wxs edits.
+     The exe carries its own embedded icon (via build.rs / winresource), so the
+     installed shortcut and the file in Explorer are branded automatically; the
+     <Icon> below additionally brands the Add/Remove-Programs entry (ARPPRODUCTICON)
+     and the Start-menu shortcut explicitly. -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="Tileworld"
+  <Package Name="Warbell"
            Manufacturer="miskibin"
-           Version="0.1.1"
+           Version="0.2.0"
            UpgradeCode="4932DA25-490C-49B0-B6B2-1083FCE18B2D">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Tileworld is already installed." />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Warbell is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- Branding: app icon for Add/Remove Programs + the Start-menu shortcut. -->
+    <Icon Id="WarbellIcon" SourceFile="$(SourceDir)\branding\warbell.ico" />
+    <Property Id="ARPPRODUCTICON" Value="WarbellIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/miskibin/tileworld-bevy-forest" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/miskibin/tileworld-bevy-forest" />
+
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Tileworld">
+      <Directory Id="INSTALLFOLDER" Name="Warbell">
         <!-- Bevy resolves the asset root relative to the exe's directory, so the
              assets/ folder must sit next to the binary. -->
         <File Id="GameExe" Source="$(SourceDir)\target\release\tileworld_bevy_forest.exe" />
@@ -29,10 +39,11 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut">
         <Shortcut Id="AppShortcut"
-                  Name="Tileworld"
+                  Name="Warbell"
                   Target="[INSTALLFOLDER]tileworld_bevy_forest.exe"
-                  WorkingDirectory="INSTALLFOLDER" />
-        <RegistryValue Root="HKCU" Key="Software\miskibin\Tileworld"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="WarbellIcon" />
+        <RegistryValue Root="HKCU" Key="Software\miskibin\Warbell"
                        Name="installed" Type="integer" Value="1" KeyPath="yes" />
         <RemoveFolder Id="CleanupShortcut" Directory="ProgramMenuFolder" On="uninstall" />
       </Component>
