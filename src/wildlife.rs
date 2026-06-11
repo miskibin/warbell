@@ -907,7 +907,7 @@ fn spawn_one(
         gait: plan.gait,
         swing: plan.swing,
         bob: plan.bob,
-        body_r: (plan.scale * 0.45).max(0.25),
+        body_r: (plan.scale * 0.36).max(0.20),
         phase,
         moving: false,
         timer: rng_range(&mut rng, 0.5, 4.0),

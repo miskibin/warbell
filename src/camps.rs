@@ -327,6 +327,10 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
             Transform::from_translation(fire + Vec3::Y * 0.28),
             Flicker { phase },
             BiomeEntity,
+            // Pooled flicker-light so the camp reads from across the map at night (the flame
+            // mesh alone is emissive-only). The light rides the flame's own transform — its
+            // scale wobble doesn't move the light, and it shares the flame's BiomeEntity life.
+            crate::firelight::campfire_light(phase),
         ));
         for i in 0..3 {
             commands.spawn((

@@ -282,12 +282,13 @@ fn advance_sky(
 
     for (mut light, mut tf) in &mut sun_q {
         *tf = Transform::from_translation(sun_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
-        // A moonlight floor (≈1 700 lux): enough for soft directional moonlight, but
-        // low enough that the procedural Atmosphere sky stays dark/moody after dark. Ground
-        // visibility comes from ambient + IBL below. Daytime peak raised (≈14 100) with the
-        // ambient/IBL fill cut below — the sun should dominate the fill so lit vs shadowed
-        // ground actually contrasts instead of washing flat.
-        light.illuminance = 1700.0 + 12_400.0 * day;
+        // A moonlight KEY (≈3 800 lux, was 1 700): night depth works exactly like day depth —
+        // the directional light must dominate the ambient/IBL fill or lit vs shadowed ground
+        // flattens out. At 1 700 the moon barely beat the ≈600 fill (2.5:1, vs day's ~25:1) and
+        // night read flat AND dark; 3 800 against the trimmed fill below gives moonlit faces +
+        // readable cast shadows while the Atmosphere sky stays dark (a below-horizon sun feeds
+        // it little). Daytime peak unchanged (≈14 100).
+        light.illuminance = 3800.0 + 10_300.0 * day;
         // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
         // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
         // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
@@ -308,13 +309,12 @@ fn advance_sky(
         }
     }
 
-    // Ambient: the night floor stays HIGH (≈270) since it — not the dimmed moonlight — is
-    // what lights the ground after dark (and ambient doesn't feed the Atmosphere sky, so it
-    // brightens the ground without re-brightening the moody sky). But by DAY the ambient
-    // *dips* (≈140): the sun is the day's fill, and a strong cool ambient was flattening the
-    // lit/shadow contrast into the washed look. (Computed from `day`, never read-back, so it
-    // can't compound frame-to-frame.)
-    ambient.brightness = 270.0 - 130.0 * day;
+    // Ambient: night floor trimmed to ≈240 (was 270) — the moonlight key above is now the
+    // night's main light, and ambient is just the shadow-side fill (too much of it was half
+    // the night flatness). By DAY the ambient *dips* (≈140): the sun is the day's fill, and a
+    // strong cool ambient was flattening the lit/shadow contrast into the washed look.
+    // (Computed from `day`, never read-back, so it can't compound frame-to-frame.)
+    ambient.brightness = 240.0 - 100.0 * day;
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.
@@ -324,22 +324,24 @@ fn advance_sky(
         ambient.color = lerp_col(ambient.color, t.ambient_color, bw);
     }
 
-    // IBL (baked daytime) dimmed at night, but kept a strong floor (≈400) so surfaces still
-    // catch skylight after dark — the other half of the after-dark ground light. The daytime
+    // IBL (baked daytime) dimmed at night to a ≈360 floor (was 400) so surfaces still catch
+    // skylight after dark, but the moonlight key keeps the contrast (see above). The daytime
     // value is deliberately modest (430): like ambient above, too much skylight fill kills
     // the sun's shadow contrast.
     for mut env in &mut env_q {
-        env.intensity = 400.0 + (IBL_INTENSITY - 400.0) * day;
+        env.intensity = 360.0 + (IBL_INTENSITY - 360.0) * day;
     }
 
     // Darken night at the GRADE stage. Camera `Exposure` only scales PBR lighting, but
     // after dark the scene is lit almost entirely by the Atmosphere sky (which bypasses
     // Exposure) — so a final-image stops cut here is what actually makes night read as a
     // dark, blue moonlit night instead of AgX dusk. Depth tunable via FOREST_NIGHT.
+    // 0.30 (was 0.42): with the brighter moonlight key above, the old cut left night too dark
+    // overall (player feedback) — the moody read now comes from contrast, not raw darkness.
     let night_stops = std::env::var("FOREST_NIGHT")
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
-        .unwrap_or(0.42);
+        .unwrap_or(0.30);
     for mut g in &mut grade_q {
         g.global.exposure = -night * night_stops;
     }

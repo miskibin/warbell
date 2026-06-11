@@ -490,7 +490,7 @@ pub fn scatter_region(
                         // (capped ≤ the blockers neighbour-scan bound) so you can walk under
                         // the canopy and brush past, but not through the bole. Small props
                         // (bushes/rocks/barrel cacti/ground cover) register nothing.
-                        let trunk_r = (0.2 * s).min(0.8);
+                        let trunk_r = (0.16 * s).min(0.8);
                         crate::blockers::add(cx, cz, trunk_r);
                         let base = cardinal(&mut r);
                         let mut tree = commands.spawn((

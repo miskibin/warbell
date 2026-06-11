@@ -138,10 +138,10 @@ fn stats(v: OrkVariant) -> Stats {
     match v {
         // Brutes are bulked up so the warband reads as a hulking threat; the Scout stays
         // small + nimble (the lithe outrider) as the deliberate odd one out.
-        OrkVariant::Grunt => Stats { skin: 0x3a6a2a, scale: 1.35, speed: 1.6, gait: 7.0, swing: 0.35, bob: 0.05, wander_r: 3.0, body_r: 0.45, shaman: false },
-        OrkVariant::Scout => Stats { skin: 0x5f9a3c, scale: 0.78, speed: 2.3, gait: 9.0, swing: 0.42, bob: 0.07, wander_r: 3.6, body_r: 0.28, shaman: false },
-        OrkVariant::Berserker => Stats { skin: 0x7a3a26, scale: 1.45, speed: 1.9, gait: 8.0, swing: 0.42, bob: 0.06, wander_r: 3.2, body_r: 0.5, shaman: false },
-        OrkVariant::Shaman => Stats { skin: 0x6a3f86, scale: 1.3, speed: 1.3, gait: 6.0, swing: 0.30, bob: 0.04, wander_r: 2.6, body_r: 0.44, shaman: true },
+        OrkVariant::Grunt => Stats { skin: 0x3a6a2a, scale: 1.35, speed: 1.6, gait: 7.0, swing: 0.35, bob: 0.05, wander_r: 3.0, body_r: 0.36, shaman: false },
+        OrkVariant::Scout => Stats { skin: 0x5f9a3c, scale: 0.78, speed: 2.3, gait: 9.0, swing: 0.42, bob: 0.07, wander_r: 3.6, body_r: 0.22, shaman: false },
+        OrkVariant::Berserker => Stats { skin: 0x7a3a26, scale: 1.45, speed: 1.9, gait: 8.0, swing: 0.42, bob: 0.06, wander_r: 3.2, body_r: 0.40, shaman: false },
+        OrkVariant::Shaman => Stats { skin: 0x6a3f86, scale: 1.3, speed: 1.3, gait: 6.0, swing: 0.30, bob: 0.04, wander_r: 2.6, body_r: 0.35, shaman: true },
     }
 }
 

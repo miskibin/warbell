@@ -36,6 +36,7 @@ mod dof;
 mod dying;
 mod economy;
 mod tree_ui;
+mod firelight;
 mod footstep_fx;
 mod game_state;
 mod grade;
@@ -61,6 +62,7 @@ mod roads;
 mod ruins;
 mod savegame;
 mod scene;
+mod separation;
 mod siege;
 mod steer;
 mod subtitles;
@@ -165,6 +167,7 @@ fn main() {
         ))
         .add_plugins((
             nightsky::NightSkyPlugin, // stars + moon dome that fade in after dark
+            firelight::FireLightPlugin, // flickering point-lights on campfires + torches (night)
             banner::BannerPlugin, // fluttering cloth flags (keep spire, towers, ork camps)
             aftermath::AftermathPlugin, // persistent battle traces (stains, gear, scorches)
             town::TownPlugin, // city-building: plots, build menu, economy, burn/repair
@@ -172,6 +175,7 @@ fn main() {
             miner::MinerPlugin, // stone miners work real boulders + cart the stone home (ranges far)
             savegame::SaveGamePlugin, // dawn autosave + Continue/New Game (one slot)
             demo::DemoPlugin, // scripted clip scenarios (FOREST_DEMO=explore|defend; build→town.rs)
+            separation::SeparationPlugin, // orks + townsfolk shove apart so bodies don't interpenetrate
         ))
         .run();
 }

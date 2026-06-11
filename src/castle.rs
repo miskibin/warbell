@@ -1065,6 +1065,34 @@ pub fn build(
     spawn(cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::PreWalls);
     spawn(well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::PreWalls);
 
+    // Pooled flicker-lights at each torch flame — the `torch_parts` geometry is emissive-only, so
+    // the gates/keep door read flat in the dark without these. Tagged with the SAME `CastlePart`
+    // as the torch they sit on, so `sync_castle` lights gate torches only once the gate is built
+    // and a Hidden light casts nothing. Spawned here (not in the torch loop above) because the
+    // `spawn` closure holds `&mut commands` until its last call just above. Flame local y = 1.22.
+    for (x, z, rot) in gates() {
+        let half = GATE_GAP / 2.0 + 0.5;
+        for (k, sx) in [-half, half].into_iter().enumerate() {
+            let local = Quat::from_rotation_y(rot) * Vec3::new(sx, 0.0, 1.0);
+            commands.spawn((
+                Transform::from_translation(Vec3::new(x + local.x, 1.25, z + local.z)),
+                Visibility::Hidden,
+                CastlePart { kind: CastleKind::Gate },
+                BiomeEntity,
+                crate::firelight::torch_light(x * 0.7 + z * 0.31 + k as f32 * 2.1),
+            ));
+        }
+    }
+    for sx in [-2.3_f32, 2.3] {
+        commands.spawn((
+            Transform::from_translation(Vec3::new(sx, 1.25, 3.4)),
+            Visibility::Inherited, // keep-door torches are always lit
+            CastlePart { kind: CastleKind::Always },
+            BiomeEntity,
+            crate::firelight::torch_light(sx * 1.3),
+        ));
+    }
+
     // Cloth flags (banner.rs) on the poles the merged geometry left bare: the keep spire's
     // pennant (always shown) and each wall tower's flag (revealed with the Towers upgrade —
     // `sync_castle` drives their visibility via the same `CastlePart` tag as the towers).
