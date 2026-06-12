@@ -571,6 +571,7 @@ fn run_director(
     mut player: ResMut<crate::player::PlayerRes>,
     eco: Res<crate::economy::EconomyState>,
     mut town: ResMut<crate::town::TownRes>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
     armory: Option<Res<InvaderArmory>>,
     invaders: Query<Entity, With<WaveInvader>>,
     alive_invaders: Query<(), (With<WaveInvader>, Without<crate::dying::Dying>)>,
@@ -620,13 +621,26 @@ fn run_director(
             }
             WaveAction::SetPhase(p) => {
                 siege.phase = p;
-                // Wave→Prep is a clear: shore up the keep + pay the Tax Office stipend.
+                // Wave→Prep is a clear: shore up the keep + collect the dawn tithe.
                 if p == GamePhase::Prep {
                     // Dawn repair: +20% of max HP, guaranteed each new day (on top of the slow
                     // continuous prep repair above).
                     keep.hp = (keep.hp + keep.max * KEEP_DAWN_REPAIR_FRAC).min(keep.max);
-                    if eco.tax_office {
-                        player.0.add_gold(crate::economy::TAX_STIPEND);
+                    // The dawn tithe: every villager who survived the night pays gold (the Tax
+                    // Office doubles it). Population — not loot loops — is the gold engine, so
+                    // the float spells out where the money came from.
+                    let tithe = town.0.tithe(eco.tax_office);
+                    if tithe > 0 {
+                        player.0.add_gold(tithe);
+                        floats.0.push(crate::combat_fx::FloatReq {
+                            world: Vec3::new(0.0, 6.5, 0.0),
+                            text: format!(
+                                "\u{1f4b0} Dawn tithe: +{tithe}g from {} villagers",
+                                town.0.population
+                            ),
+                            color: Color::srgb(1.0, 0.85, 0.4),
+                            scale: 1.25,
+                        });
                     }
                     // Dawn: a youth comes of age — heirs ARE townsfolk (one headcount), so the
                     // bloodline grows by growing the town. Gated by housing: people aren't

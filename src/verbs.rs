@@ -1084,9 +1084,9 @@ fn seed_forage(
 // frontier gradient), reusing core's pure `roll_gear` pool picks.
 
 const CHEST_INTERACT_DIST: f32 = 2.2;
-/// Seconds before a looted supply cache re-closes + refills. 3× the old 150s so caches aren't a
-/// standing-still income tap — you bank one, then it's a while before it's worth circling back.
-const CACHE_RESPAWN: f32 = 450.0;
+// Caches no longer refill on a wall-clock timer (the old 150s→450s delays still made waiting
+// out the day a gold tap): they restock at DAWN, once per survived night — see `chest_respawn`.
+// Canonical divergence from core's `chests::CACHE_RESPAWN` (the TS parity record).
 
 #[derive(Component)]
 pub(crate) struct Chest {
@@ -1274,17 +1274,30 @@ fn chest_interact(
     }
 }
 
-/// Re-close + refill supply caches once their respawn delay elapses.
+/// Re-close + refill supply caches at dawn (the Wave→Prep clear) — once per survived night.
+/// Time alone never restocks them, so loitering through a long prep day earns nothing; the
+/// world resupplies only when the town wins a new day.
 #[allow(clippy::type_complexity)]
 fn chest_respawn(
     time: Res<Time>,
+    siege: Option<Res<crate::siege::Siege>>,
+    mut prev_phase: Local<Option<crate::siege::GamePhase>>,
     mut commands: Commands,
     mut chests: Query<(&mut Chest, &Children), Without<ChestLid>>,
     lids: Query<(), (With<ChestLid>, Without<Chest>)>,
 ) {
+    let Some(siege) = siege else { return };
+    let dawned = matches!(
+        (*prev_phase, siege.phase),
+        (Some(crate::siege::GamePhase::Wave), crate::siege::GamePhase::Prep)
+    );
+    *prev_phase = Some(siege.phase);
+    if !dawned {
+        return;
+    }
     let now = time.elapsed_secs();
     for (mut chest, children) in &mut chests {
-        if chest.cache && chest.opened && now - chest.opened_at >= CACHE_RESPAWN {
+        if chest.cache && chest.opened {
             chest.opened = false;
             for &c in children {
                 if lids.get(c).is_ok() {

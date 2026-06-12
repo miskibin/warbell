@@ -8,7 +8,7 @@
 //! stay ungated. Numbers live in `town_store` (test-gated).
 
 use bevy::prelude::*;
-use tileworld_core::town_store::{BuildKind, Cost, PopEvent, Town, HOUSE_COST, POP_PER_HOUSE};
+use tileworld_core::town_store::{BuildKind, PopEvent, Town, POP_PER_HOUSE};
 
 use crate::castle::{Mats, VillageMats, M};
 use crate::villagers::{Guard, Townsfolk};
@@ -101,7 +101,10 @@ impl Plugin for TownPlugin {
             )
             .add_systems(OnEnter(Modal::Build), spawn_build)
             .add_systems(OnExit(Modal::Build), despawn_build)
-            .add_systems(Update, build_interact.run_if(in_state(Modal::Build)))
+            .add_systems(Update, (build_interact, build_hover_ghost).run_if(in_state(Modal::Build)))
+            // Self-explanation (ungated visuals): the gold ring marks WHICH plot the build
+            // menu will use; the timber pad marks where the NEXT house will rise.
+            .add_systems(Update, (sync_plot_highlight, sync_house_site_pad))
             .add_systems(
                 Update,
                 (auto_assign_workers, sync_staffed, release_orphan_workers, sync_plot_visibility)
@@ -742,57 +745,22 @@ fn demo_build_timelapse(
 #[derive(Component)]
 struct BuildUi;
 
-/// A row in the Build menu. Producers go on the outer plot you're standing on; a House is
-/// raised inside the walls (a protected dwelling that lifts the population cap) and needs no plot.
-#[derive(Clone, Copy)]
-enum BuildItem {
-    Producer(BuildKind),
-    House,
-}
-
+/// A row in the Build menu — producers only. The menu is strictly "what to raise on THIS
+/// plot": Houses left it (they used to appear inside the walls while the player stood on an
+/// outer plot — a building rising somewhere other than where you chose read as a bug). A
+/// House is now raised on its own marked site in the courtyard via the on-site **E** prompt.
 #[derive(Component)]
-struct BuildOption(BuildItem);
+struct BuildOption(BuildKind);
 
-const MENU: [BuildItem; 4] = [
-    BuildItem::Producer(BuildKind::Farm),
-    BuildItem::House,
-    BuildItem::Producer(BuildKind::Lumber),
-    BuildItem::Producer(BuildKind::Mine),
-];
+const MENU: [BuildKind; 3] = [BuildKind::Farm, BuildKind::Lumber, BuildKind::Mine];
 
-impl BuildItem {
-    fn label(self) -> &'static str {
-        match self {
-            BuildItem::Producer(k) => k.label(),
-            BuildItem::House => "House",
-        }
-    }
-
-    fn cost(self) -> Cost {
-        match self {
-            BuildItem::Producer(k) => k.cost(),
-            BuildItem::House => HOUSE_COST,
-        }
-    }
-
-    /// One-line "what it does", so players see that a Farm *feeds the town and grows population*
-    /// and a House *makes room for more people*, not just abstract stats.
-    fn desc(self) -> &'static str {
-        match self {
-            BuildItem::Producer(BuildKind::Farm) => "Grows food \u{2192} feeds the town so peasants settle in",
-            BuildItem::Producer(BuildKind::Lumber) => "Woodcutter \u{2192} fells real trees and hauls the logs home (needs a worker)",
-            BuildItem::Producer(BuildKind::Mine) => "Stone Miner \u{2192} mines real boulders and carts the stone home (needs a worker)",
-            BuildItem::House => "Home in the walls \u{2192} +2 people your town can hold",
-        }
-    }
-
-    /// Whether this item can be built right now. Producers need an empty plot under the hero;
-    /// a House just needs the resources and a free slot inside the walls.
-    fn affordable(self, town: &Town, bank: &tileworld_core::resource_store::ResourceState, on_plot: bool) -> bool {
-        match self {
-            BuildItem::Producer(k) => on_plot && town.can_afford(k, bank),
-            BuildItem::House => town.can_build_house(bank),
-        }
+/// One-line "what it does", so players see that a Farm *feeds the town and grows population*,
+/// not just abstract stats.
+fn build_desc(kind: BuildKind) -> &'static str {
+    match kind {
+        BuildKind::Farm => "Grows food \u{2192} feeds the town so peasants settle in",
+        BuildKind::Lumber => "Woodcutter \u{2192} fells real trees and hauls the logs home (needs a worker)",
+        BuildKind::Mine => "Stone Miner \u{2192} mines real boulders and carts the stone home (needs a worker)",
     }
 }
 
@@ -824,14 +792,14 @@ fn spawn_build(
             anim(AnimKind::PopIn, 0.0, 0.22),
         ))
         .with_children(|root| {
-            root.spawn(label(&fonts.extrabold, "BUILD", 20.0, GOLD));
+            root.spawn(label(&fonts.extrabold, "BUILD ON THIS PLOT", 20.0, GOLD));
             let on_plot = target.0.is_some();
             if !on_plot {
                 root.spawn(label(&fonts.regular, "Stand on an empty plot to build a producer.", 13.0, GREY));
             }
             for item in MENU {
                 let c = item.cost();
-                let afford = item.affordable(&town.0, &bank.0, on_plot);
+                let afford = on_plot && town.0.can_afford(item, &bank.0);
                 let col = if afford { Color::WHITE } else { TEXT_FAINT };
                 root.spawn((
                     Button,
@@ -857,7 +825,7 @@ fn spawn_build(
                     })
                     .with_children(|l| {
                         l.spawn(label(&fonts.semibold, item.label(), 14.0, col));
-                        l.spawn(label(&fonts.regular, item.desc(), 11.0, desc_col));
+                        l.spawn(label(&fonts.regular, build_desc(item), 11.0, desc_col));
                     });
                     // Right: cost (only the resources actually needed).
                     let mut cost = String::new();
@@ -873,13 +841,158 @@ fn spawn_build(
                     b.spawn(label(&fonts.semibold, &cost, 13.0, col));
                 });
             }
+            // Houses moved out of this menu (see `BuildOption` doc) — point at their new home
+            // so a returning player isn't left hunting for them.
+            root.spawn(label(
+                &fonts.regular,
+                "Houses: walk to the timber site inside the walls and press E.",
+                11.0,
+                GREY,
+            ));
             root.spawn(label(&fonts.regular, "Esc to close", 11.0, GREY));
         });
 }
 
-fn despawn_build(mut commands: Commands, q: Query<Entity, With<BuildUi>>) {
+fn despawn_build(mut commands: Commands, q: Query<Entity, Or<(With<BuildUi>, With<BuildGhost>)>>) {
     for e in &q {
         commands.entity(e).despawn();
+    }
+}
+
+// ── Self-explanation visuals: plot ring, ghost preview, house site pad ─────────────────
+
+/// The pulsing gold ring laid on the plot the build menu targets — so "press E to build"
+/// and the menu's choice are visibly anchored to ONE spot in the world.
+#[derive(Component)]
+struct PlotHighlight;
+
+/// A translucent preview of the hovered menu row, standing on the target plot — you see the
+/// building where it will rise *before* you click.
+#[derive(Component)]
+struct BuildGhost;
+
+/// The construction-site pad marking where the NEXT house will rise inside the walls
+/// (`castle::next_house_site`); the on-site **E** prompt raises it right there.
+#[derive(Component)]
+struct HouseSitePad;
+
+/// Keep the gold ring on the targeted plot: visible while the hero stands on a buildable plot
+/// (`BuildTarget`) in open play or with the Build menu up; hidden otherwise. Lazy-spawned on
+/// first run (not biome-tagged — it's a permanent FX entity, just repositioned).
+fn sync_plot_highlight(
+    time: Res<Time>,
+    target: Res<BuildTarget>,
+    spots: Res<PlotSpots>,
+    app: Option<Res<State<AppState>>>,
+    modal: Option<Res<State<Modal>>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut q: Query<(&mut Transform, &mut Visibility), With<PlotHighlight>>,
+) {
+    let Ok((mut tf, mut vis)) = q.single_mut() else {
+        // One ring, built once: flat gold annulus a hair above the pad (same planar-flash
+        // recipe as the combat rings — unlit + emissive so it reads day and night).
+        let mat = materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.86, 0.5, 0.55),
+            emissive: LinearRgba::rgb(1.6, 1.1, 0.4),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(meshes.add(Annulus::new(2.45, 2.8).mesh().resolution(48).build())),
+            MeshMaterial3d(mat),
+            Transform::from_xyz(0.0, -10.0, 0.0)
+                .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+            Visibility::Hidden,
+            PlotHighlight,
+        ));
+        return;
+    };
+    let playing = app.is_some_and(|s| *s.get() == AppState::Playing);
+    let shown = modal.is_some_and(|m| matches!(*m.get(), Modal::None | Modal::Build));
+    let spot = target.0.and_then(|i| spots.0.get(i).copied());
+    match (playing && shown, spot) {
+        (true, Some(p)) => {
+            let y = crate::worldmap::ground_at_world(p.x, p.y).unwrap_or(0.0);
+            tf.translation = Vec3::new(p.x, y + 0.06, p.y);
+            // A slow breath, not a strobe — enough motion to say "this one".
+            let pulse = 1.0 + (time.elapsed_secs() * 2.6).sin() * 0.04;
+            tf.scale = Vec3::splat(pulse);
+            *vis = Visibility::Visible;
+        }
+        _ => *vis = Visibility::Hidden,
+    }
+}
+
+/// While the Build menu is up, hovering a row stands a translucent ghost of that building on
+/// the targeted plot. Rebuilt only when the hovered row changes; reaped with the panel.
+fn build_hover_ghost(
+    target: Res<BuildTarget>,
+    spots: Res<PlotSpots>,
+    btns: Query<(&Interaction, &BuildOption)>,
+    ghosts: Query<Entity, With<BuildGhost>>,
+    mut current: Local<Option<BuildKind>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let hovered = btns
+        .iter()
+        .find_map(|(i, o)| (*i == Interaction::Hovered).then_some(o.0));
+    // `current` is a Local and survives the panel closing (which reaps the ghost), so a bare
+    // equality check would skip respawning the same row next time — require a live ghost too.
+    if hovered == *current && (hovered.is_none() || !ghosts.is_empty()) {
+        return;
+    }
+    *current = hovered;
+    for e in &ghosts {
+        commands.entity(e).try_despawn();
+    }
+    let (Some(kind), Some(idx)) = (hovered, target.0) else { return };
+    let Some(pos) = spots.0.get(idx).copied() else { return };
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    // One shared see-through material for every part — a hologram, not a finished building.
+    let mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.75, 0.92, 1.0, 0.38),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    let parent = commands
+        .spawn((Transform::from_xyz(pos.x, y, pos.y), Visibility::Visible, BuildGhost))
+        .id();
+    commands.entity(parent).with_children(|p| {
+        for (mesh, _) in building_parts(kind) {
+            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat.clone()), Transform::default()));
+        }
+    });
+}
+
+/// Keep one construction-site pad standing on the next free dwelling slot inside the walls,
+/// so "where do houses go?" has a visible answer in the world (the on-site E raises it there).
+/// Lazy-spawned and self-healing: a biome swap reaps it (`BiomeEntity`), we respawn next frame.
+fn sync_house_site_pad(
+    town: Res<TownRes>,
+    mats: Option<Res<VillageMats>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut q: Query<(&mut Transform, &mut Visibility), With<HouseSitePad>>,
+) {
+    let site = crate::castle::next_house_site(town.0.houses);
+    if let Ok((mut tf, mut vis)) = q.single_mut() {
+        match site {
+            Some(p) => {
+                let y = crate::worldmap::ground_at_world(p.x, p.y).unwrap_or(0.0);
+                tf.translation = Vec3::new(p.x, y, p.y);
+                *vis = Visibility::Visible;
+            }
+            None => *vis = Visibility::Hidden, // all twelve dwellings stand
+        }
+    } else if let (Some(p), Some(mats)) = (site, mats) {
+        spawn_textured(&mut commands, &mut meshes, &mats.0, HouseSitePad, crate::town_meshes::plot_parts(), p);
     }
 }
 
@@ -901,28 +1014,19 @@ fn build_interact(
         if *interaction != Interaction::Pressed {
             continue;
         }
-        match opt.0 {
-            // A House goes up inside the walls (no plot): the castle reveals the next dwelling
-            // and the population cap lifts. `sync_castle` shows the mesh from `town.houses`.
-            BuildItem::House => {
-                if town.0.build_house(&mut bank.0) {
-                    next_modal.set(Modal::None);
+        // The producer goes on the empty plot the hero is standing on — exactly the one the
+        // gold ring marks (`sync_plot_highlight`).
+        let kind = opt.0;
+        let Some(idx) = target.0 else { continue };
+        if town.0.build(idx, kind, &mut bank.0) {
+            // Rebuild-on-rubble: clear any stale mesh first.
+            for (e, bm) in &existing {
+                if bm.idx == idx {
+                    commands.entity(e).try_despawn();
                 }
             }
-            // A producer goes on the empty plot the hero is standing on.
-            BuildItem::Producer(kind) => {
-                let Some(idx) = target.0 else { continue };
-                if town.0.build(idx, kind, &mut bank.0) {
-                    // Rebuild-on-rubble: clear any stale mesh first.
-                    for (e, bm) in &existing {
-                        if bm.idx == idx {
-                            commands.entity(e).try_despawn();
-                        }
-                    }
-                    spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
-                    next_modal.set(Modal::None); // close after a successful build
-                }
-            }
+            spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
+            next_modal.set(Modal::None); // close after a successful build
         }
     }
 }

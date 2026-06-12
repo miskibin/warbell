@@ -1178,6 +1178,14 @@ fn houses() -> [(f32, f32); 12] {
     ]
 }
 
+/// World-XZ of the dwelling slot the NEXT house will occupy (`houses()[built]`), or `None`
+/// once all twelve stand. The on-site "Raise house" interaction + its pad anchor here, so a
+/// new home always rises exactly where the player chose to build it (`sync_castle` reveals
+/// the mesh at this same slot when `town.houses` increments).
+pub(crate) fn next_house_site(built: u32) -> Option<Vec2> {
+    houses().get(built as usize).map(|&(x, z)| Vec2::new(x, z))
+}
+
 /// True inside the castle footprint (+ margin) — scatter is cleared here.
 pub fn in_footprint(wx: f32, wz: f32) -> bool {
     wx.abs() <= HALF_X + 1.6 && wz.abs() <= HALF_Z + 1.6

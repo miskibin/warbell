@@ -524,7 +524,8 @@ fn tab_basics(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas
                 ));
                 point(c, fonts, atlas, None, Some("def_reinforce"), "At the keep", "Opens the War Table \u{2014} the upgrade tree.");
                 point(c, fonts, atlas, None, Some("branch:arsenal"), "At the merchant stall", "Opens the shop \u{2014} weapons, armor, potions.");
-                point(c, fonts, atlas, None, Some("stat:pop"), "On an empty plot", "Opens the build menu \u{2014} houses, farms, yards.");
+                point(c, fonts, atlas, None, Some("stat:pop"), "On an empty plot", "Opens the build menu \u{2014} farms and worker yards rise on that exact plot (a gold ring marks it).");
+                point(c, fonts, atlas, None, Some("stat:pop"), "At the timber site in the walls", "Raises a house on the spot \u{2014} beds for two more villagers.");
                 point(c, fonts, atlas, None, Some("buff:power"), "At the war bell", "Rings in the night early, once you're ready.");
             });
             section(l, fonts, "CAMERA", |c| {
@@ -641,13 +642,13 @@ fn tab_stronghold(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, a
             section(l, fonts, "BUILD ON PLOTS \u{2014} E", |c| {
                 c.spawn(label(
                     &fonts.regular,
-                    "Empty plots ring the castle. Stand on one and press E. Every producer needs a villager to staff it.",
+                    "Empty plots ring the castle. Stand on one and press E \u{2014} a gold ring marks the plot you're building on. Every producer needs a villager to staff it.",
                     13.0,
                     TEXT_DIM,
                 ));
                 // (icon, name, cost, effect) — costs straight from the parity-tested core.
                 let rows: [(&str, &str, f64, f64, String); 4] = [
-                    ("stat:pop", "House", HOUSE_COST.wood, HOUSE_COST.stone, format!("Shelters {POP_PER_HOUSE} more villagers.")),
+                    ("stat:pop", "House", HOUSE_COST.wood, HOUSE_COST.stone, format!("Shelters {POP_PER_HOUSE} more. Raised INSIDE the walls \u{2014} press E at the timber site pad.")),
                     ("stat:food", "Farm", BuildKind::Farm.cost().wood, BuildKind::Farm.cost().stone, "Grows food while staffed.".into()),
                     ("stat:wood", "Woodcutter", BuildKind::Lumber.cost().wood, BuildKind::Lumber.cost().stone, "Its worker fells real trees \u{2014} wood per tree.".into()),
                     ("stat:stone", "Stone Miner", BuildKind::Mine.cost().wood, BuildKind::Mine.cost().stone, "Its worker picks apart ore boulders \u{2014} stone per haul.".into()),
@@ -711,7 +712,7 @@ fn tab_economy(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atla
     })
     .with_children(|row| {
         for (icon, name, from, spend) in [
-            ("sym:gold", "GOLD", "Ork bounties \u{00b7} chests across the island.", "Merchant gear & potions \u{00b7} War Table upgrades."),
+            ("sym:gold", "GOLD", "Ork bounties \u{00b7} the dawn tithe (every villager pays after a survived night) \u{00b7} chests (caches restock at dawn).", "Merchant gear & potions \u{00b7} War Table upgrades."),
             ("sym:stone", "STONE", "Smash ore boulders with your attack; Stone Miner workers cart it home.", "Walls, towers & defenses \u{00b7} the Woodcutter yard."),
             ("stat:wood", "WOOD", "Chop trees yourself; Woodcutter workers fell them all day.", "Houses & farms \u{00b7} the Miner camp."),
         ] {

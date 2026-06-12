@@ -50,6 +50,9 @@ pub const REPAIR_PER_SEC: f64 = 8.0;
 /// Cost to raise one House (inside the walls). Houses don't burn, so this is the only gate
 /// besides `MAX_HOUSES`.
 pub const HOUSE_COST: Cost = Cost { wood: 6.0, stone: 4.0 };
+/// Gold each villager pays at dawn after a survived night (the **tithe**) — the town IS the
+/// gold engine: grow the population to grow the income. The Tax Office upgrade doubles it.
+pub const TITHE_GOLD_PER_POP: i64 = 2;
 
 /// What you can build on an outer plot — the **producers**. Houses are not plots (they sit
 /// inside the walls; see [`Town::build_house`]).
@@ -198,6 +201,15 @@ impl Town {
 
     pub fn pop_cap(&self) -> u32 {
         self.houses * POP_PER_HOUSE
+    }
+
+    /// Gold the town pays the player at dawn after a survived night: [`TITHE_GOLD_PER_POP`]
+    /// per living villager, doubled by the Tax Office. Population-driven on purpose — the
+    /// settlement (not loot loops) is the economy's engine, and losing villagers to the
+    /// horde costs real income.
+    pub fn tithe(&self, tax_office: bool) -> i64 {
+        let base = self.population as i64 * TITHE_GOLD_PER_POP;
+        if tax_office { base * 2 } else { base }
     }
 
     // ── Houses (interior, protected — a count, not a plot) ─────────────────────────
@@ -501,6 +513,16 @@ mod tests {
         let before = bank.food();
         t.production_tick(5.0, &mut bank);
         assert_eq!(bank.food(), before); // food is a flow (food_rate), never hoarded
+    }
+
+    #[test]
+    fn tithe_scales_with_population_and_doubles_with_tax_office() {
+        let t = Town::new(0, 5);
+        assert_eq!(t.tithe(false), 5 * TITHE_GOLD_PER_POP);
+        assert_eq!(t.tithe(true), 10 * TITHE_GOLD_PER_POP);
+        // A wiped-out town pays nothing — protecting villagers protects income.
+        let empty = Town::new(0, 0);
+        assert_eq!(empty.tithe(true), 0);
     }
 
     #[test]
