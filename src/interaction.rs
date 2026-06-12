@@ -24,6 +24,8 @@ const KEEP_DIST: f32 = 4.2;
 const BELL_DIST: f32 = 4.2;
 const SHOP_DIST: f32 = 3.5;
 const BUILD_DIST: f32 = 3.0;
+/// Range around the next dwelling slot's construction pad (`castle::next_house_site`).
+const HOUSE_DIST: f32 = 3.0;
 /// Talk-back range: a bit over the villager-chatter trigger (`npc::NEAR_DIST` 7.0) so stepping
 /// back half a pace during the jab doesn't lose the prompt.
 const TALK_DIST: f32 = 8.0;
@@ -34,6 +36,10 @@ enum InteractKind {
     Shop,
     WarBell,
     Build,
+    /// Standing at the next dwelling slot's construction pad inside the walls — E raises the
+    /// house right there (houses left the plot Build menu: a building must rise where you
+    /// stand, never somewhere else).
+    RaiseHouse,
     /// A villager jabbed at the hero and a comeback is on offer (`director::OfferedReply`).
     TalkBack,
 }
@@ -44,6 +50,7 @@ impl InteractKind {
             InteractKind::Shop => "Shop",
             InteractKind::WarBell => "Ring the bell",
             InteractKind::Build => "Build",
+            InteractKind::RaiseHouse => "Raise house",
             InteractKind::TalkBack => "Talk back",
         }
     }
@@ -85,7 +92,9 @@ fn drive_interaction(
     mut cues: MessageWriter<AudioCue>,
     mut feedback: ResMut<HitFeedback>,
     plot_spots: Res<crate::town::PlotSpots>,
-    town: Res<crate::town::TownRes>,
+    mut town: ResMut<crate::town::TownRes>,
+    mut bank: ResMut<crate::economy::Bank>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut build_target: ResMut<crate::town::BuildTarget>,
     time: Res<Time>,
     mut offered: ResMut<crate::audio::director::OfferedReply>,
@@ -113,6 +122,12 @@ fn drive_interaction(
     ];
     if let Some((idx, _)) = nearest_plot {
         candidates.push((InteractKind::Build, plot_spots.0[idx], BUILD_DIST, true));
+    }
+    // The next free dwelling slot inside the walls (its pad is visible in the world): E here
+    // raises a House on the spot. Anchored to the site so the prompt and the building agree.
+    let house_site = crate::castle::next_house_site(town.0.houses);
+    if let Some(site) = house_site {
+        candidates.push((InteractKind::RaiseHouse, site, HOUSE_DIST, true));
     }
     // A villager jab on offer: the prompt anchors where the speaker stood (expiry is handled by
     // `tick_chains`; here we only range-gate it).
@@ -144,6 +159,32 @@ fn drive_interaction(
                 feedback.trauma = (feedback.trauma + 0.3).min(1.0);
             }
             InteractKind::Build => next_modal.set(Modal::Build),
+            InteractKind::RaiseHouse => {
+                // Build right here, right now — and ALWAYS answer the press: a float names
+                // either the new beds or exactly what's missing (no silent no-op).
+                let site = house_site.unwrap_or(p);
+                let y = crate::worldmap::ground_at_world(site.x, site.y).unwrap_or(0.0);
+                use tileworld_core::town_store::{HOUSE_COST, POP_PER_HOUSE};
+                if town.0.build_house(&mut bank.0) {
+                    cues.write(AudioCue::UiSelect);
+                    floats.0.push(crate::combat_fx::FloatReq {
+                        world: Vec3::new(site.x, y + 3.0, site.y),
+                        text: format!("\u{1f3e0} House raised \u{2014} beds for {POP_PER_HOUSE} more"),
+                        color: Color::srgb(0.55, 1.0, 0.6),
+                        scale: 1.25,
+                    });
+                } else {
+                    floats.0.push(crate::combat_fx::FloatReq {
+                        world: Vec3::new(site.x, y + 3.0, site.y),
+                        text: format!(
+                            "Need {} wood + {} stone",
+                            HOUSE_COST.wood as i64, HOUSE_COST.stone as i64
+                        ),
+                        color: Color::srgb(1.0, 0.5, 0.4),
+                        scale: 1.1,
+                    });
+                }
+            }
             InteractKind::TalkBack => {
                 if let Some(offer) = offered.0.take() {
                     voices.accept_reply(offer, time.elapsed_secs());

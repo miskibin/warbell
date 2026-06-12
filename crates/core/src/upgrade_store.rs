@@ -37,7 +37,8 @@ pub enum UpgradeEffect {
     // tree nodes that duplicated that have been removed.
     /// Bounty: ork-kill gold ×`mult` (sets `Player.bounty_mult`).
     Bounty(f64),
-    /// Tax office: collect a flat gold sum each cleared night (one-shot flag).
+    /// Tax office: doubles the population tithe paid each cleared night (one-shot flag;
+    /// the base tithe is `town_store::TITHE_GOLD_PER_POP` per villager).
     TaxOffice,
     /// Merchant Guild: shop price multiplier `mult` (e.g. 0.8 = −20%).
     MerchantGuild(f64),
@@ -139,7 +140,7 @@ pub static UPGRADE_NODES: &[UpgradeNode] = &[
         "+50% gold from every ork you slay — reach the costly upgrades sooner.",
         "💰", 60, 0, None, Bounty(1.5)),
     node("eco_tax_office", Economy, "Tax Office",
-        "Collect 25 gold every time you clear a night wave — steady income to rebuild.",
+        "Doubles the dawn tithe — every villager pays twice the gold each night you survive.",
         "🏛️", 75, 0, None, TaxOffice),
     node("eco_merchant_guild", Economy, "Merchant Guild",
         "−20% on everything the wandering merchant sells.",
