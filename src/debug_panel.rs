@@ -64,7 +64,9 @@ impl Plugin for DebugPanelPlugin {
             .insert_resource(DebugPanel { open: std::env::var("FOREST_PANEL").is_ok() })
             .init_resource::<LightOverride>()
             .init_resource::<EguiWantsPointer>()
-            .add_systems(Update, toggle_panel)
+            // `FOREST_HIDEHUD` boots with the HUD already hidden (clean stills/clips).
+            .insert_resource(HudHidden(std::env::var("FOREST_HIDEHUD").is_ok()))
+            .add_systems(Update, (toggle_panel, apply_hud_hidden))
             // The egui pass runs after `Update`, so the lighting override here lands after
             // `advance_sky` has set the cycle values — letting the panel win when enabled.
             .add_systems(EguiPrimaryContextPass, panel_ui);
@@ -75,6 +77,42 @@ fn toggle_panel(keys: Res<ButtonInput<KeyCode>>, mut panel: ResMut<DebugPanel>) 
     if keys.just_pressed(KeyCode::F1) {
         panel.open = !panel.open;
     }
+}
+
+/// Clean-recording toggle: hide ALL game HUD (objective banner, hotbar, HP/stamina bars,
+/// interaction prompts, subtitles, toasts) so a trailer shot shows only the 3D scene. **F3**
+/// flips it; the Director panel has a matching checkbox. (The F1 egui panel is hidden separately
+/// with F1 — it's immediate-mode, not a UI node.) Re-applies whenever the flag changes, so newly
+/// spawned HUD nodes are caught on the next toggle.
+#[derive(Resource, Default)]
+pub struct HudHidden(pub bool);
+
+fn apply_hud_hidden(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut hidden: ResMut<HudHidden>,
+    // Every ROOT UI node (a `Node` with no parent) — toggling its visibility cascades to the whole
+    // HUD subtree. World-space entities aren't `Node`s, so the scene itself is untouched.
+    mut roots: Query<&mut Visibility, (With<Node>, Without<ChildOf>)>,
+    mut was_hidden: Local<bool>,
+) {
+    if keys.just_pressed(KeyCode::F3) {
+        hidden.0 = !hidden.0;
+    }
+    if hidden.0 {
+        // Re-assert every frame so HUD that spawns AFTER the toggle (toasts, prompts, late banners)
+        // is caught too. Idempotent — only writes a root that isn't already hidden.
+        for mut vis in &mut roots {
+            if *vis != Visibility::Hidden {
+                *vis = Visibility::Hidden;
+            }
+        }
+    } else if *was_hidden {
+        // Turned back on: restore once.
+        for mut vis in &mut roots {
+            *vis = Visibility::Inherited;
+        }
+    }
+    *was_hidden = hidden.0;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -106,6 +144,8 @@ fn panel_ui(
     mut ambient: ResMut<GlobalAmbientLight>,
     mut egui_wants: ResMut<EguiWantsPointer>,
     mut director: ResMut<crate::cinematic::DirectorState>,
+    mut scene: ResMut<crate::scenes::SceneState>,
+    mut hud_hidden: ResMut<HudHidden>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     // Tell the camera controllers whether egui owns the pointer this frame (cursor over the
@@ -122,6 +162,12 @@ fn panel_ui(
 
             // ── Trailer Director: staged scenes/animations to film with the free-cam (`). ──
             egui::CollapsingHeader::new("🎬 Director").show(ui, |ui| {
+                // Clean-recording: hide all game HUD (also bound to F3). Only write on a real change
+                // so we don't re-hide every frame.
+                let mut h = hud_hidden.0;
+                if ui.checkbox(&mut h, "Hide HUD for recording (F3)").changed() {
+                    hud_hidden.0 = h;
+                }
                 use crate::cinematic::HeroGesture as G;
                 ui.checkbox(&mut director.sky_run, "Day→night→dawn timelapse");
                 ui.add(egui::Slider::new(&mut director.sky_speed, 0.01..=0.25).text("sky speed"));
@@ -140,12 +186,35 @@ fn panel_ui(
                     if ui.button("Cheer").clicked() { director.gesture = Some(G::Cheer); }
                     if ui.button("Work").clicked() { director.gesture = Some(G::Work); }
                 });
+                ui.checkbox(&mut director.hide_weapon, "Hide hero weapon");
                 ui.separator();
                 if ui.button("Build stronghold (timelapse)").clicked() { director.build_run = true; }
                 ui.horizontal(|ui| {
                     if ui.button("March orks from fortress").clicked() { director.march = true; }
                     if ui.button("Clear marchers").clicked() { director.clear_marchers = true; }
                 });
+                ui.checkbox(&mut director.gate_open, "Fortress gate open");
+                ui.separator();
+                ui.label("Staged scenes (looped tableaus):");
+                use crate::scenes::SceneId;
+                // (label, id) — a click toggles that scene on/off.
+                let want = scene.want;
+                let mut next = want;
+                for row in [
+                    [("Work site", SceneId::WorkSite), ("Wall patrol", SceneId::WallPatrol)],
+                    [("Orks flee", SceneId::OrksFlee), ("Night siege", SceneId::NightSiege)],
+                    [("Barrel peek", SceneId::BarrelPeek), ("Mason gag", SceneId::Mason)],
+                ] {
+                    ui.horizontal(|ui| {
+                        for (label, id) in row {
+                            if ui.selectable_label(want == Some(id), label).clicked() {
+                                next = if want == Some(id) { None } else { Some(id) };
+                            }
+                        }
+                    });
+                }
+                if ui.button("Clear scene").clicked() { next = None; }
+                scene.want = next;
             });
 
             if let Ok((

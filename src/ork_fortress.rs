@@ -197,6 +197,15 @@ struct Denizen {
     lod_cull: bool,
 }
 
+/// One swinging leaf of the fortress gate. `sign` is which side (−1 left / +1 right); `open` is
+/// the eased 0→1 swing amount the [`crate::cinematic`] gate system drives. The leaf is authored
+/// hinged about its own origin, so a Y-rotation about that origin swings it outward (−Z).
+#[derive(Component)]
+pub struct FortressGate {
+    pub sign: f32,
+    pub open: f32,
+}
+
 /// A watchtower's fire emitter (the muzzle sits at the crow's-nest rail).
 #[derive(Component)]
 struct WarTower {
@@ -455,8 +464,21 @@ pub fn build(
     }
     crate::blockers::add_obb(12.0, FRONT_Z, 3.2, 0.5, 0.0); // the shut gate itself
 
-    // ── The shut gate ──
-    spawn_solid(commands, meshes, &timber_mat, gate_mesh(), at(GATE), Quat::IDENTITY);
+    // ── The gate ── static frame (posts/lintel/skulls) + two hinged door leaves. The leaves are
+    // their own entities tagged `FortressGate` so the Director (and, later, the live game) can
+    // swing them open; the frame is fixed scenery.
+    spawn_solid(commands, meshes, &timber_mat, gate_frame_mesh(), at(GATE), Quat::IDENTITY);
+    for sign in [-1.0f32, 1.0] {
+        // Hinge post sits ~3u out from the gate centre; the leaf reaches inward to the gap middle.
+        let hinge = Vec2::new(GATE.x + sign * 3.0, GATE.y);
+        commands.spawn((
+            Mesh3d(meshes.add(gate_door_mesh(sign))),
+            MeshMaterial3d(timber_mat.clone()),
+            Transform::from_translation(at(hinge)),
+            FortressGate { sign, open: 0.0 },
+            BiomeEntity,
+        ));
+    }
 
     // ── Watchtowers (leaning, each its own tilt/yaw) + fire emitters + banners ──
     for (i, t) in TOWERS.iter().enumerate() {
@@ -1316,9 +1338,10 @@ fn palisade_segment(a: Vec2, b: Vec2, rng: &mut u32) -> Mesh {
     group(p)
 }
 
-/// The shut gate: heavy posts, skull-topped lintel, two studded plank doors. Faces −Z
-/// (the island); authored about its own origin.
-fn gate_mesh() -> Mesh {
+/// The gate **frame**: heavy posts, skull-topped lintel. Faces −Z (the island); authored about
+/// its own origin (the gate centre). The two door leaves are separate hinged entities
+/// ([`gate_door_mesh`]) so they can swing — this is the fixed surround only.
+fn gate_frame_mesh() -> Mesh {
     let mut p: Vec<Mesh> = Vec::new();
     for sx in [-1.0f32, 1.0] {
         p.push(cyl(0.28, 3.6, v(sx * 3.1, 1.8, 0.0), Quat::IDENTITY, lin(TIMBER)));
@@ -1332,25 +1355,32 @@ fn gate_mesh() -> Mesh {
         let dy = if i == 1 { 0.06 } else { 0.0 };
         p.push(bx(0.34, 0.30, 0.30, v(sx * 1.6, 3.75 + dy, 0.0), lin(BONE))); // skull row
     }
-    for sx in [-1.0f32, 1.0] {
-        // A door panel: planks + iron bands + outward spike studs.
-        p.push(bx(2.95, 3.0, 0.16, v(sx * 1.5, 1.5, 0.0), lin(TIMBER)));
-        for i in 0..4 {
-            p.push(bx(0.10, 2.9, 0.03, v(sx * 1.5 - 1.2 + i as f32 * 0.8, 1.5, -0.09), lin(TIMBER_DARK)));
-        }
-        for by in [0.7f32, 2.2] {
-            p.push(bx(2.85, 0.14, 0.05, v(sx * 1.5, by, -0.11), lin(IRON)));
-        }
-        for (ux, uy) in [(-0.8f32, 0.9f32), (0.8, 0.9), (-0.8, 2.0), (0.8, 2.0)] {
-            p.push(tinted(
-                Cone { radius: 0.07, height: 0.22 }
-                    .mesh()
-                    .build()
-                    .rotated_by(rx(-FRAC_PI_2))
-                    .translated_by(v(sx * 1.5 + ux, uy, -0.2)),
-                lin(IRON),
-            ));
-        }
+    group(p)
+}
+
+/// One door **leaf**, authored hinged about its own origin so a Y-rotation swings it. `sign`
+/// picks the side: the panel (planks + iron bands + outward spike studs) reaches *inward* from
+/// the hinge toward the gate centre — for `sign = +1` it occupies local x ∈ [−2.95, 0], for
+/// `sign = −1` it occupies x ∈ [0, 2.95]. Studs/bands face −Z (the island) on both.
+fn gate_door_mesh(sign: f32) -> Mesh {
+    let mut p: Vec<Mesh> = Vec::new();
+    let cx = -sign * 1.475; // panel centre, offset inward from the hinge at x = 0
+    p.push(bx(2.95, 3.0, 0.16, v(cx, 1.5, 0.0), lin(TIMBER)));
+    for i in 0..4 {
+        p.push(bx(0.10, 2.9, 0.03, v(cx - 1.2 + i as f32 * 0.8, 1.5, -0.09), lin(TIMBER_DARK)));
+    }
+    for by in [0.7f32, 2.2] {
+        p.push(bx(2.85, 0.14, 0.05, v(cx, by, -0.11), lin(IRON)));
+    }
+    for (ux, uy) in [(-0.8f32, 0.9f32), (0.8, 0.9), (-0.8, 2.0), (0.8, 2.0)] {
+        p.push(tinted(
+            Cone { radius: 0.07, height: 0.22 }
+                .mesh()
+                .build()
+                .rotated_by(rx(-FRAC_PI_2))
+                .translated_by(v(cx + ux, uy, -0.2)),
+            lin(IRON),
+        ));
     }
     group(p)
 }

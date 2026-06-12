@@ -57,6 +57,11 @@ pub struct HeroPartDef {
 pub struct KnightSpec {
     pub torso: Mesh,
     pub parts: Vec<HeroPartDef>,
+    /// The held weapon, as its OWN mesh + sword-group-local transform. Spawned as a child of the
+    /// `ArmR` entity (so it still swings with the arm) but kept separate so it can be *hidden* for
+    /// weapon-free staged gestures (the Director's "hide weapon" toggle).
+    pub weapon: Mesh,
+    pub weapon_xf: Transform,
 }
 
 // ── Mesh helpers (local copies of the orks/critters contract) ────────────────────────
@@ -103,12 +108,6 @@ fn cone(r: f32, h: f32, off: Vec3, rot: Quat, c: u32) -> Mesh {
 fn sphere(r: f32, off: Vec3, c: u32) -> Mesh {
     tinted(Sphere::new(r).mesh().ico(1).unwrap().translated_by(off), c)
 }
-/// Bake a sub-group (built in its own local space) into the parent: rotate about the group
-/// origin, then translate to the group's offset — matches three.js `<group rotation pos>`.
-fn baked(m: Mesh, rot: Quat, off: Vec3) -> Mesh {
-    m.rotated_by(rot).translated_by(off)
-}
-
 // ── Equip-driven palette + geometry selectors ────────────────────────────────────────
 /// Lerp an sRGB-hex colour `t` of the way toward `target` (in byte space — close enough for
 /// the "feels the same" parity bar; the TS derives plate light/dark the same way).
@@ -223,12 +222,10 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
         bxr(0.04, 0.08, 0.20, v(0.0, 0.24, -0.20), rx(0.75), PLUME), // plume tail
     ]);
 
-    // Right arm (sword hand): plate arm with the equipped weapon's parts baked
-    // individually at the hand so the blade swings with the arm. Sword sits at arm-local
-    // (0,-0.5,0.06) rotated x=-π/2 so it extends FORWARD (+Z). CRITICAL: every part is an
-    // indexed primitive merged by the SINGLE outer group() — do NOT pre-`group()` a sub-part
-    // and re-merge it (flat-shading makes it non-indexed → merge corrupts the geometry, which
-    // is what hid the sword). Matches the ork-club build in `orks.rs`.
+    // Right arm (sword hand): the bare plate arm. The equipped weapon is built as its OWN mesh
+    // ([`KnightSpec::weapon`]) and spawned as a child of the ArmR *entity* at the hand offset, so
+    // it still swings with the arm but can be hidden for weapon-free gestures. Sword sits at
+    // arm-local (0,-0.5,0.06) rotated x=-π/2 so it extends FORWARD (+Z).
     // Plate-arm dressing shared by both arms (`s` mirrors the pauldron tilt): a two-lame
     // pauldron, the upper arm, an elbow couter, the wrist cuff and a gauntleted fist.
     let plate_arm = |s: f32| {
@@ -245,11 +242,10 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
 
     let sw_rot = rx(-std::f32::consts::FRAC_PI_2);
     let sw_off = v(0.0, -0.5, 0.06);
-    let mut arm_r_parts = plate_arm(1.0);
-    for part in weapon_parts(weapon) {
-        arm_r_parts.push(baked(part, sw_rot, sw_off));
-    }
-    let arm_r = group(arm_r_parts);
+    let arm_r = group(plate_arm(1.0));
+    // The weapon is its own merged mesh (grouped once → no re-merge corruption) placed at the hand.
+    let weapon = group(weapon_parts(weapon));
+    let weapon_xf = Transform { translation: sw_off, rotation: sw_rot, ..default() };
 
     // Left arm (shield hand): same plate dressing, mirrored (shield is a separate part).
     let arm_l = group(plate_arm(-1.0));
@@ -290,5 +286,5 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
         HeroPartDef { limb: HeroLimb::Shield, pivot: SHIELD_REST_POS, rest: shield_rest_rot(), mesh: shield },
     ];
 
-    KnightSpec { torso, parts }
+    KnightSpec { torso, parts, weapon, weapon_xf }
 }

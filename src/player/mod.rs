@@ -43,6 +43,11 @@ pub struct HeroPart {
     pub limb: HeroLimb,
 }
 
+/// The held weapon mesh — a child of the `ArmR` entity (so it swings with the arm) that can be
+/// toggled `Visibility::Hidden` for weapon-free staged gestures (the Director's "hide weapon").
+#[derive(Component)]
+pub struct HeroWeapon;
+
 /// The hero's hot per-frame state (mutated directly each frame, never via events).
 #[derive(Component)]
 pub struct Hero {
@@ -265,16 +270,30 @@ fn spawn_hero_meshes(
     meshes: &mut Assets<Mesh>,
     mat: &Handle<StandardMaterial>,
 ) {
-    let torso = meshes.add(spec.torso);
+    let model::KnightSpec { torso, parts, weapon, weapon_xf } = spec;
+    let torso = meshes.add(torso);
+    let weapon = meshes.add(weapon);
     commands.entity(root).with_children(|p| {
         p.spawn((Mesh3d(torso), MeshMaterial3d(mat.clone()), Transform::default()));
-        for part in spec.parts {
-            p.spawn((
+        for part in parts {
+            let is_arm_r = part.limb == HeroLimb::ArmR;
+            let mut ec = p.spawn((
                 Mesh3d(meshes.add(part.mesh)),
                 MeshMaterial3d(mat.clone()),
                 Transform { translation: part.pivot, rotation: part.rest, ..default() },
                 HeroPart { limb: part.limb },
             ));
+            // Nest the weapon under the sword arm so it inherits the swing but can be hidden.
+            if is_arm_r {
+                ec.with_children(|a| {
+                    a.spawn((
+                        Mesh3d(weapon.clone()),
+                        MeshMaterial3d(mat.clone()),
+                        weapon_xf,
+                        HeroWeapon,
+                    ));
+                });
+            }
         }
     });
 }

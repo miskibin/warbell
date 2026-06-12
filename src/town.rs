@@ -796,11 +796,15 @@ pub fn director_build_timelapse(
     if !*primed {
         *primed = true;
         *last = -1;
-        *acc = 0.0;
+        // Start the step clock in the red: a camera-setting grace before the first piece rises.
+        *acc = -crate::cinematic::PRE_ROLL;
         bank.0.add_wood(4000.0);
         bank.0.add_stone(4000.0);
     }
     *acc += time.delta_secs();
+    if *acc < 0.0 {
+        return; // still in the pre-roll
+    }
     let step = ((*acc / SECS_PER_STEP) as i32).min(16);
     if step <= *last {
         return;

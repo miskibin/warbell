@@ -413,7 +413,7 @@ impl Siege {
 /// All 8 variant×faction invader meshes, built once and clone-spawned per wave ork (the camps
 /// build their own; this keeps the systems decoupled).
 #[derive(Resource)]
-struct InvaderArmory(orks::Armory);
+pub struct InvaderArmory(pub orks::Armory);
 
 /// Pause-aware siege clock. Accumulates frame time ONLY while the world runs (its advancing
 /// system is gated on `Modal::None`), so it does **not** tick during a pause or an open panel.
@@ -565,27 +565,33 @@ fn spawn_invader(
 /// exist). These carry [`DirectorMarcher`] (NOT `WaveInvader`), so neither the camp brain
 /// (`orks::ork_brain`, which excludes them) nor `invader_brain` touches them — this system owns
 /// their movement + transform entirely.
+#[allow(clippy::type_complexity)]
 pub fn director_march(
     mut state: ResMut<crate::cinematic::DirectorState>,
     armory: Option<Res<InvaderArmory>>,
     time: Res<Time>,
+    game: Res<GameTime>,
     mut commands: Commands,
     mut q: Query<
-        (Entity, &mut orks::Ork, &mut Transform),
+        (Entity, &mut orks::Ork, &mut crate::navgrid::NavPath, &mut Transform),
         With<crate::cinematic::DirectorMarcher>,
     >,
+    mut hold: Local<f32>,
 ) {
     if state.clear_marchers {
         state.clear_marchers = false;
-        for (e, _, _) in &q {
+        state.gate_open = false; // shut the gate behind them
+        for (e, _, _, _) in &q {
             commands.entity(e).try_despawn();
         }
         return;
     }
     if state.march {
         state.march = false;
+        state.gate_open = true; // throw the gate so the column can path out through the gap
         if let Some(armory) = armory.as_ref() {
-            // Gnashfang Hold gate ≈ (12, 80.9); fan a 3-wide column back from it.
+            // Form the column INSIDE the hold (gate centre ≈ (12, 80.9); higher z = deeper in), so
+            // they march out THROUGH the open gate. A 3-wide file stacked back from the threshold.
             let gate = Vec2::new(12.0, 80.9);
             let variants = [
                 orks::OrkVariant::Grunt, orks::OrkVariant::Scout, orks::OrkVariant::Berserker,
@@ -594,27 +600,79 @@ pub fn director_march(
             for i in 0u32..18 {
                 let col = (i % 3) as f32 - 1.0;
                 let row = (i / 3) as f32;
-                let pos = gate + Vec2::new(col * 2.4, row * 2.6);
+                // +Z is into the fortress; first rank just inside the threshold (z+3), back ranks deeper.
+                let pos = gate + Vec2::new(col * 2.2, 3.0 + row * 2.6);
                 let v = variants[(i as usize) % variants.len()];
                 let seed = i.wrapping_mul(0x9e37_79b1) ^ 0x55;
                 let e = armory.0.spawn(&mut commands, v, INVADER_FACTION, KEEP_POS, pos, seed);
-                commands.entity(e).insert(crate::cinematic::DirectorMarcher);
+                commands
+                    .entity(e)
+                    .insert((crate::cinematic::DirectorMarcher, crate::navgrid::NavPath::default()));
             }
+            *hold = crate::cinematic::PRE_ROLL; // column forms up, then waits out the camera grace
         }
     }
-    // March the column toward the keep; we drive the transform ourselves (no brain owns these).
-    let dt = time.delta_secs().min(0.05);
-    for (_, mut o, mut tf) in &mut q {
-        let speed = o.speed;
-        let to = KEEP_POS - o.pos;
-        let dist = to.length();
-        if dist > 6.0 {
-            let dir = to / dist;
-            o.pos += dir * speed * dt;
-            o.facing = dir.x.atan2(dir.y);
-            o.moving = true;
-        } else {
+    // Camera-setting grace: the freshly-formed column stands at attention facing the gate (-Z, the
+    // way out) until the pre-roll runs down, THEN marches. The gate's own swing shares the grace.
+    if *hold > 0.0 {
+        *hold -= time.delta_secs();
+        for (_, mut o, _, mut tf) in &mut q {
             o.moving = false;
+            o.facing = std::f32::consts::PI;
+            tf.rotation = Quat::from_rotation_y(o.facing);
+        }
+        return;
+    }
+    // March the column to the keep — A* through the (now open) gate, then `steer::advance` smooths
+    // it around walls/props, and `separation` keeps the file from merging. We own these transforms
+    // (no siege/camp brain touches a DirectorMarcher), but reuse the same nav stack the wave does.
+    let dt = time.delta_secs().min(0.05);
+    let now = game.0;
+    for (e, mut o, mut path, mut tf) in &mut q {
+        let dist = o.pos.distance(KEEP_POS);
+        if dist <= 6.0 {
+            // Arrived at the keep ring: hold and face it (the user clears them when the shot's done).
+            o.moving = false;
+            let to = KEEP_POS - o.pos;
+            if to.length_squared() > 1e-4 {
+                o.facing = to.x.atan2(to.y);
+            }
+        } else {
+            // (Re)plan the A* route to a standable point just inside the nearest gate, on a throttle.
+            let goal = keep_march_goal(o.pos);
+            if path.cursor >= path.waypoints.len()
+                || now >= path.next_replan
+                || path.goal_cached.distance(goal) > 2.0
+            {
+                path.waypoints = crate::navgrid::path_to(o.pos, goal);
+                path.cursor = 0;
+                path.goal_cached = goal;
+                path.next_replan = now + 0.75 + (e.to_bits() % 16) as f32 * 0.05;
+            }
+            while path.cursor < path.waypoints.len()
+                && o.pos.distance(path.waypoints[path.cursor]) < 1.2
+            {
+                path.cursor += 1;
+            }
+            let step_target = path.waypoints.get(path.cursor).copied().unwrap_or(goal);
+            let cur_y = crate::worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+            let speed = o.speed * 1.2;
+            match steer::advance(
+                o.pos,
+                o.facing,
+                step_target,
+                speed * dt,
+                o.body_r,
+                cur_y,
+                orks::ORK_MAX_TURN * 1.6 * dt,
+            ) {
+                Some(s) => {
+                    o.facing = s.facing;
+                    o.pos = s.pos;
+                    o.moving = s.moving;
+                }
+                None => o.moving = false,
+            }
         }
         let gy = crate::worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
         tf.translation = Vec3::new(o.pos.x, gy, o.pos.y);

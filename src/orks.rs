@@ -27,7 +27,7 @@ use crate::steer;
 use crate::worldmap;
 
 /// Base root scale (the TS group scale before the per-variant `cfg.scale`).
-const BASE_SCALE: f32 = 0.7;
+pub(crate) const BASE_SCALE: f32 = 0.7;
 /// Orks turn slower than wildlife — a lumbering pivot. rad/s.
 pub(crate) const ORK_MAX_TURN: f32 = 2.5;
 
@@ -303,6 +303,8 @@ fn ork_brain(
             Without<crate::dying::Dying>,
             // Staged fortress marchers are driven by `siege::director_march`, not the camp brain.
             Without<crate::cinematic::DirectorMarcher>,
+            // Staged-scene orks (trailer tableaus) are driven by `scenes.rs`, not the camp brain.
+            Without<crate::scenes::SceneActor>,
         ),
     >,
 ) {

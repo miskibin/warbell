@@ -80,6 +80,17 @@ pub fn add_obb(cx: f32, cz: f32, hw: f32, hd: f32, yaw: f32) {
     BOXES.write().unwrap().push([cx, cz, hw, hd, yaw.cos(), yaw.sin()]);
 }
 
+/// Remove every oriented-box obstacle whose centre lies within `eps` world-units of `(cx, cz)`,
+/// returning how many were dropped. Used to **swing the fortress gate open**: dropping the gate's
+/// OBB clears the wall-gap so A* (and the sallying ork column) can path straight through it. Pair
+/// with [`add_obb`] to re-register the box when the gate shuts again.
+pub fn remove_box_near(cx: f32, cz: f32, eps: f32) -> usize {
+    let mut boxes = BOXES.write().unwrap();
+    let before = boxes.len();
+    boxes.retain(|b| (b[0] - cx).hypot(b[1] - cz) > eps);
+    before - boxes.len()
+}
+
 /// True if any obstacle lies within `margin` world-units of `(wx, wz)` — a clearance test for
 /// placing standout props (apple trees) that must not crowd existing trunks/structures. `margin`
 /// of `0` is equivalent to [`is_blocked`]. Scans the neighbourhood widened by `margin` so circles

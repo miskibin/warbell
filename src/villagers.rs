@@ -98,9 +98,11 @@ impl Villager {
     }
 }
 
+/// An articulated body part under a villager root. `pub(crate)` so the staged-scene mime driver
+/// (`scenes::drive_scene_mason`) can pose limbs directly on actors that `villager_limbs` skips.
 #[derive(Component)]
-struct VilPart {
-    kind: PartKind,
+pub(crate) struct VilPart {
+    pub(crate) kind: PartKind,
 }
 
 /// A child villager — wanders fast in short bursts around a small play patch (and skips the
@@ -375,6 +377,38 @@ pub fn spawn_courtyard_guard(
     spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.4, SCALE, next_u32(&mut rng));
 }
 
+/// Spawn a plain **peasant** for a staged trailer scene at `pos`/`facing`, tagged
+/// [`crate::scenes::SceneActor`] so the wander brain leaves it alone (the scene poses it). Returns
+/// the root so the caller can drive it. `held` picks a baked tool (None / a farmer's hoe, etc.).
+pub fn spawn_scene_peasant(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec2,
+    facing: f32,
+    worker: Option<Trade>,
+    seed: u32,
+) -> Entity {
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    let mut rng = seed | 1;
+    let skin = SKIN[(seed as usize) % SKIN.len()];
+    let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
+    let kind = match worker {
+        Some(trade) => Kind::Worker { trade, skin, tunic },
+        None => Kind::Peasant { skin, tunic, hat: seed & 1 == 0 },
+    };
+    let e = spawn(commands, meshes, &mat, kind, pos, pos, 1.4, 1.0, SCALE, next_u32(&mut rng));
+    commands
+        .entity(e)
+        .insert(crate::scenes::SceneActor)
+        .insert(Transform {
+            translation: Vec3::new(pos.x, worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0), pos.y),
+            rotation: Quat::from_rotation_y(facing),
+            scale: Vec3::splat(SCALE),
+        });
+    e
+}
+
 /// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): one
 /// joins the castle as militia (a new guard) and grows the bloodline, with a float over the cage
 /// so you see it happen. `seen` gates against freeing a camp before its orks have even spawned.
@@ -465,6 +499,8 @@ fn villager_brain(
             Without<FightBack>,
             Without<crate::lumberjack::Fleeing>,
             Without<crate::dying::Dying>,
+            // Staged-scene villagers (trailer tableaus) are posed by `scenes.rs`, not the brain.
+            Without<crate::scenes::SceneActor>,
         ),
     >,
 ) {
@@ -1142,7 +1178,12 @@ fn villager_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     hero: Query<&crate::player::Hero>,
-    mut vils: Query<(&mut Villager, &Children, &GlobalTransform, Option<&crate::town::Worker>, Option<&Role>)>,
+    // The staged mason mime owns its WHOLE rig (scenes::drive_scene_mason) — skip it here or the
+    // two writers fight over the limb transforms every frame.
+    mut vils: Query<
+        (&mut Villager, &Children, &GlobalTransform, Option<&crate::town::Worker>, Option<&Role>),
+        Without<crate::scenes::SceneMason>,
+    >,
     mut parts: Query<(&VilPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();

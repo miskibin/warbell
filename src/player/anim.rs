@@ -99,22 +99,33 @@ pub fn hero_anim(
 fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<Quat>, Option<Quat>) {
     use crate::cinematic::HeroGesture::*;
     let e = |x: f32, y: f32, z: f32| Quat::from_euler(EulerRot::XYZ, x, y, z);
+    // Ease-in raise (0→1 over ~0.45s) so a gesture lifts smoothly into place rather than snapping.
+    let raise = (ph / 0.45).clamp(0.0, 1.0);
+    let ease = raise * raise * (3.0 - 2.0 * raise); // smoothstep
     match g {
-        // Arm overhead, hand flicking side to side.
-        Wave => (Some(e(-2.5, 0.0, 0.30 + (ph * 7.0).sin() * 0.40)), None),
-        // Hand snapped to the brow.
-        Salute => (Some(e(-2.55, 0.0, 0.95)), None),
-        // Arm thrust out horizontally, commanding.
-        Point => (Some(e(-1.55, 0.0, 0.05)), None),
-        // Both forearms folded across the chest.
-        ArmsCrossed => (Some(e(-1.15, 0.0, 0.80)), Some(e(-1.15, 0.0, -0.80))),
-        // Both arms thrown overhead, a small triumphant pump.
+        // Arm raised overhead, hand flicking side to side (weapon auto-hidden for this one).
+        Wave => (Some(e(-2.55 * ease, 0.0, 0.20 + (ph * 5.0).sin() * 0.45 * ease)), None),
+        // Sword arm snapped up in a blade salute (weapon kept — it suits the pose).
+        Salute => (Some(e(-2.6 * ease, 0.0, 0.85 * ease)), None),
+        // Arm thrust out horizontally, commanding (weapon kept — points the blade).
+        Point => (Some(e(-1.6 * ease, 0.0, 0.05)), None),
+        // Both forearms folded across the chest — the "supervise" idle.
+        ArmsCrossed => (
+            Some(e(-1.15 * ease, 0.0, 0.85 * ease)),
+            Some(e(-1.15 * ease, 0.0, -0.85 * ease)),
+        ),
+        // Both arms thrown overhead, a small triumphant pump (weapon auto-hidden).
         Cheer => {
-            let p = (ph * 4.0).sin() * 0.15;
-            (Some(e(-2.7 + p, 0.0, -0.25)), Some(e(-2.7 + p, 0.0, 0.25)))
+            let pump = (ph * 4.0).sin() * 0.15;
+            (
+                Some(e((-2.75 + pump) * ease, 0.0, -0.35 * ease)),
+                Some(e((-2.75 + pump) * ease, 0.0, 0.35 * ease)),
+            )
         }
         // A repeating chop/hammer swing (reuses the attack arc on a loop) — "at work".
-        Work => (Some(attack_arm_quat((ph * 1.3).fract())), None),
+        // `max(0)`: during the director PRE_ROLL the phase is negative (a negative `fract()`
+        // would walk the swing backwards) — hold the rest pose instead.
+        Work => (Some(attack_arm_quat((ph.max(0.0) * 1.3).fract())), None),
     }
 }
 

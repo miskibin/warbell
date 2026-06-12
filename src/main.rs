@@ -65,6 +65,7 @@ mod quality;
 mod roads;
 mod ruins;
 mod savegame;
+mod scenes;
 mod scene;
 mod separation;
 mod shutters;
@@ -187,6 +188,9 @@ fn main() {
             ork_fortress::OrkFortressPlugin, // Gnashfang Hold + the Blight: fortress, patrols, hero-firing towers
             cinematic::CinematicPlugin, // keyframed camera paths for trailer shots (FOREST_SHOT_ID)
             build_fx::BuildFxPlugin, // construction pop-in + dust when structures raise
+        ))
+        .add_plugins((
+            scenes::ScenesPlugin, // hand-staged looped trailer tableaus (F1 Director → Scenes)
         ))
         .run();
 }

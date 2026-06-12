@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "warbell-site",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-l", "5500", "D:/warbell-game"],
+      "port": 5500
+    }
+  ]
+}
