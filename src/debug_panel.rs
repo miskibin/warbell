@@ -88,9 +88,10 @@ fn panel_ui(
             &mut Bloom,
             &mut ColorGrading,
             &mut Exposure,
-            &mut Outline,
-            // Optional: the Low graphics preset removes the volumetric-fog pass entirely, so this
-            // component may be absent — don't let that drop the whole camera row from the panel.
+            // Optional: the Low graphics preset removes the outline pass AND the volumetric-fog
+            // pass entirely, so these components may be absent — don't let that drop the whole
+            // camera row from the panel.
+            Option<&mut Outline>,
             Option<&mut VolumetricFog>,
         ),
         With<Camera3d>,
@@ -189,10 +190,14 @@ fn panel_ui(
 
                     ui.separator();
                     ui.label("Outline (crisp edges)");
-                    ui.add(egui::Slider::new(&mut outline.strength, 0.0..=1.0).text("outline strength"));
-                    ui.add(egui::Slider::new(&mut outline.thickness, 1.0..=4.0).text("outline thickness"));
-                    ui.add(egui::Slider::new(&mut outline.depth_threshold, 0.005..=0.2).text("silhouette sens"));
-                    ui.add(egui::Slider::new(&mut outline.normal_threshold, 0.1..=1.2).text("crease sens"));
+                    if let Some(outline) = outline.as_mut() {
+                        ui.add(egui::Slider::new(&mut outline.strength, 0.0..=1.0).text("outline strength"));
+                        ui.add(egui::Slider::new(&mut outline.thickness, 1.0..=4.0).text("outline thickness"));
+                        ui.add(egui::Slider::new(&mut outline.depth_threshold, 0.005..=0.2).text("silhouette sens"));
+                        ui.add(egui::Slider::new(&mut outline.normal_threshold, 0.1..=1.2).text("crease sens"));
+                    } else {
+                        ui.weak("pass off (Low graphics preset)");
+                    }
 
                     ui.separator();
                     ui.label("Pollen + prop specular");

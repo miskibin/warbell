@@ -33,6 +33,7 @@
 //! hardware-aware default.
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
+use bevy::core_pipeline::prepass::NormalPrepass;
 use bevy::light::{
     CascadeShadowConfig, DirectionalLightShadowMap, FogVolume, VolumetricFog, VolumetricLight,
 };
@@ -201,6 +202,17 @@ struct PresetVals {
     bloom: Option<f32>,
     /// Cascade shadow far-distance override; `None` restores the authored config.
     cascade_far: Option<f32>,
+    /// Whether the camera carries the prepass NORMAL texture. Only two passes consume normals:
+    /// SSAO (depth+normal) and the toon outline (depth+normal). When BOTH are off (Low), the
+    /// normal prepass is dead weight, so we strip `NormalPrepass`. **Depth is NOT optional**: the
+    /// bokeh DoF (`dof.rs`) and the outline (when on) both read prepass depth, and DoF is active
+    /// on every preset — so `DepthPrepass` always stays.
+    normal_prepass: bool,
+    /// Whether the toon outline post pass runs. `false` removes the `Outline` component from the
+    /// camera so `OutlineNode`'s ViewQuery no longer matches the view (the pass is skipped). Low
+    /// drops it: it's a subtle 0.15-strength cosmetic, and dropping it is what frees the normal
+    /// prepass above (outline is the only non-SSAO normal consumer).
+    outline: bool,
 }
 
 fn preset(quality: GraphicsQuality) -> PresetVals {
@@ -215,6 +227,8 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             fog: None,
             bloom: None,
             cascade_far: None,
+            normal_prepass: true, // SSAO consumes normals
+            outline: true,
         },
         GraphicsQuality::Ultra => PresetVals {
             god_rays: true,
@@ -232,6 +246,8 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             // shadows all the way to the fog line — the far ground stops going flat. Only worth
             // it with the 4096 atlas (at 2048 the stretched cascades visibly pixelate).
             cascade_far: Some(190.0),
+            normal_prepass: true, // SSAO + outline both consume normals
+            outline: true,
         },
         // Low: tuned for integrated GPUs. Key savings vs High:
         //   • SSAO removed (None): ~4.3 ms saved — the depth-buffer walk happens regardless of
@@ -239,7 +255,12 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
         //   • cascade_far 100 (vs 150 authored): shadows stop where the fog is already opaque,
         //     cutting the farthest cascade's redraw. Saves ~2-3 ms of the ~6-7 ms cascade total.
         //   • 1024 shadow atlas, SMAA Low.
-        // Manual cycling Low → High/Ultra re-inserts SSAO at the target preset's level.
+        //   • Toon outline OFF + `NormalPrepass` stripped: the only two normal-prepass consumers
+        //     are SSAO (already off) and the outline; with both gone the normal prepass is pure
+        //     waste, so we drop the component. The outline is a subtle 0.15-strength cosmetic and
+        //     isn't worth the normal write + fullscreen edge pass on an iGPU. (DoF still reads
+        //     prepass DEPTH, so `DepthPrepass` stays — see `normal_prepass`/`outline` docs.)
+        // Manual cycling Low → High/Ultra re-inserts SSAO + the outline + the normal prepass.
         GraphicsQuality::Low => PresetVals {
             god_rays: false,
             steps: 32,
@@ -249,6 +270,8 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             fog: None,
             bloom: None,
             cascade_far: Some(100.0),
+            normal_prepass: false,
+            outline: false,
         },
     }
 }
@@ -319,21 +342,42 @@ fn apply_quality(
         };
     }
 
-    // SSAO: Low removes the component entirely (saves the full depth-buffer walk cost on iGPUs);
-    // High/Ultra insert it with the preset's quality level. We act on every camera carrying
-    // Camera3d so flycam + follow-cam are both covered (scene.rs only spawns one camera, but
-    // this is robust to future additions).
+    // Per-camera component toggles (SSAO / outline / normal prepass). We act on every camera
+    // carrying Camera3d so flycam + follow-cam are both covered (scene.rs only spawns one camera,
+    // but this is robust to future additions).
     for cam_e in cam.iter() {
+        let mut e = commands.entity(cam_e);
+
+        // SSAO: Low removes the component entirely (saves the full depth-buffer walk cost on
+        // iGPUs); High/Ultra insert it with the preset's quality level.
         match p.ao {
             Some(level) => {
-                commands.entity(cam_e).insert(ScreenSpaceAmbientOcclusion {
-                    quality_level: level,
-                    ..default()
-                });
+                e.insert(ScreenSpaceAmbientOcclusion { quality_level: level, ..default() });
             }
             None => {
-                commands.entity(cam_e).remove::<ScreenSpaceAmbientOcclusion>();
+                e.remove::<ScreenSpaceAmbientOcclusion>();
             }
+        }
+
+        // Toon outline: removing the `Outline` component makes `OutlineNode`'s ViewQuery stop
+        // matching this view, so the fullscreen edge pass is skipped (Low). Re-inserting restores
+        // it. (The per-frame `fade_outline_toward_sun` system only mutates existing `Outline`s, so
+        // dropping the component just parks it until the preset puts it back.)
+        if p.outline {
+            e.insert(crate::outline::default_outline());
+        } else {
+            e.remove::<crate::outline::Outline>();
+        }
+
+        // Normal prepass: the only consumers are SSAO and the outline. When both are off (Low) the
+        // normal prepass is dead weight, so drop `NormalPrepass`. DEPTH is never dropped — the
+        // bokeh DoF reads prepass depth on every preset. `NormalPrepass` is `#[require]`d by SSAO,
+        // so when SSAO is present it would be re-added anyway; we manage it explicitly so the Low
+        // (no-SSAO, no-outline) case actually strips it.
+        if p.normal_prepass {
+            e.insert(NormalPrepass);
+        } else {
+            e.remove::<NormalPrepass>();
         }
     }
 

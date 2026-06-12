@@ -476,12 +476,15 @@ fn spawn_chunks(
     mat: &Handle<StandardMaterial>,
     chunks: std::collections::HashMap<(i32, i32), ChunkBucket>,
 ) {
-    // Cover fades out by ~90 units (the linear fog reaches the horizon by FOG_FULL ≈ 190, but
-    // small ground cover is already a sub-pixel speck well before that). A short crossfade
-    // band avoids a hard pop as the chunk centre crosses the cutoff.
+    // Cover cuts out abruptly at 80 units (the linear fog reaches the horizon by FOG_FULL ≈ 190,
+    // but small ground cover is already a sub-pixel speck well before that — a pop is invisible).
+    // An ABRUPT range (empty crossfade band, `is_abrupt()` true) is deliberate: a non-empty band
+    // routes the chunk through the dithered-crossfade pipeline (per-fragment `discard`), which
+    // defeats early-z on these large merged meshes. Collapsing both margins keeps it abrupt while
+    // preserving `use_aabb: true` (cutoff measured to the chunk AABB, like before).
     let cover_range = bevy::camera::visibility::VisibilityRange {
-        start_margin: 0.0..0.0, // always visible up close
-        end_margin: 72.0..90.0, // fade out across 72→90 world units
+        start_margin: 0.0..0.0,   // always visible up close
+        end_margin: 80.0..80.0,   // abrupt cutoff at 80 world units (no dithered fade band)
         use_aabb: true,
     };
     for (key, bucket) in chunks {

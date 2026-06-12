@@ -422,8 +422,11 @@ fn setup_camera(
         Tonemapping::AgX,
         // SSAO + SMAA path (mutually exclusive with MSAA). Bevy's built-in DepthOfField is
         // gone — it silently no-op'd next to SSAO and only did a single focal plane. Depth
-        // blur is now our own `depth_blur` post pass (below), which only READS the prepass
-        // depth, so SSAO + NormalPrepass are safe to keep.
+        // blur is now our own bokeh DoF post pass (`dof.rs`), which only READS the prepass
+        // depth. Prepass consumers: DoF (depth), outline (depth+normal), SSAO (depth+normal).
+        // DepthPrepass is load-bearing on EVERY preset (DoF runs always). NormalPrepass is only
+        // needed when SSAO or the outline is on — the Low preset strips it (and the outline) via
+        // `quality::apply_quality`, which inserts/removes these per-preset on this camera.
         Msaa::Off,
         Smaa { preset: SmaaPreset::High },
         ScreenSpaceAmbientOcclusion {
