@@ -101,7 +101,10 @@ impl Plugin for TownPlugin {
             )
             .add_systems(OnEnter(Modal::Build), spawn_build)
             .add_systems(OnExit(Modal::Build), despawn_build)
-            .add_systems(Update, (build_interact, build_hover_ghost).run_if(in_state(Modal::Build)))
+            .add_systems(
+                Update,
+                (build_interact, build_hover_ghost, build_hover_hint).run_if(in_state(Modal::Build)),
+            )
             // Self-explanation (ungated visuals): the gold ring marks WHICH plot the build
             // menu will use; the timber pad marks where the NEXT house will rise.
             .add_systems(Update, (sync_plot_highlight, sync_house_site_pad))
@@ -755,7 +758,7 @@ struct BuildOption(BuildKind);
 const MENU: [BuildKind; 3] = [BuildKind::Farm, BuildKind::Lumber, BuildKind::Mine];
 
 /// One-line "what it does", so players see that a Farm *feeds the town and grows population*,
-/// not just abstract stats.
+/// not just abstract stats. Shown in the hint line while the row is hovered.
 fn build_desc(kind: BuildKind) -> &'static str {
     match kind {
         BuildKind::Farm => "Grows food \u{2192} feeds the town so peasants settle in",
@@ -764,93 +767,136 @@ fn build_desc(kind: BuildKind) -> &'static str {
     }
 }
 
+/// The building's pictogram in the [`IconAtlas`] (the tintable stat-bar game-icons double as
+/// build icons: a Farm makes food, a Woodcutter wood, a Miner stone).
+fn build_icon_id(kind: BuildKind) -> &'static str {
+    match kind {
+        BuildKind::Farm => "stat:food",
+        BuildKind::Lumber => "stat:wood",
+        BuildKind::Mine => "stat:stone",
+    }
+}
+
+/// The hint line's resting text (no row hovered) — covers the two things the old footer said.
+const HINT_IDLE: &str = "Houses rise at the timber pad in the walls \u{b7} Esc to close";
+
+/// The one-line caption above the build rows; `build_hover_hint` swaps it to the hovered
+/// row's description (Anno-style tooltip) and back.
+#[derive(Component)]
+struct BuildHint;
+
 fn spawn_build(
     mut commands: Commands,
     fonts: Res<UiFonts>,
     bank: Res<Bank>,
     town: Res<TownRes>,
     target: Res<BuildTarget>,
+    icons: Res<crate::ui::icons::IconAtlas>,
 ) {
+    // Docked bottom-centre, just above the quick-bar — a slim icon column, not a screen-filling
+    // modal: the plot (gold ring) and the hover ghost stay visible behind it while choosing.
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                top: Val::Percent(50.0),
-                margin: UiRect::new(Val::Px(-180.0), Val::Auto, Val::Px(-140.0), Val::Auto),
-                width: Val::Px(360.0),
+                bottom: Val::Px(96.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(10.0),
-                padding: UiRect::all(Val::Px(20.0)),
-                border: border(1.0),
-                border_radius: radius(R_PANEL),
+                align_items: AlignItems::Center,
                 ..default()
             },
-            widgets::card_paint(),
+            bevy::ui::FocusPolicy::Pass,
             GlobalZIndex(60),
             BuildUi,
-            anim(AnimKind::PopIn, 0.0, 0.22),
         ))
         .with_children(|root| {
-            root.spawn(label(&fonts.extrabold, "BUILD ON THIS PLOT", 20.0, GOLD));
-            let on_plot = target.0.is_some();
-            if !on_plot {
-                root.spawn(label(&fonts.regular, "Stand on an empty plot to build a producer.", 13.0, GREY));
-            }
-            for item in MENU {
-                let c = item.cost();
-                let afford = on_plot && town.0.can_afford(item, &bank.0);
-                let col = if afford { Color::WHITE } else { TEXT_FAINT };
-                root.spawn((
-                    Button,
-                    Interaction::default(),
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::SpaceBetween,
-                        padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
-                        border: border(1.0),
-                        border_radius: radius(R_CARD),
-                        ..default()
-                    },
-                    BorderColor::all(if afford { GOLD_DEEP } else { BORDER_SOFT }),
-                    BuildOption(item),
-                ))
-                .with_children(|b| {
-                    // Left column: name + a plain-language line on what the building does.
-                    let desc_col = if afford { GREY } else { TEXT_FAINT };
-                    b.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(2.0),
-                        ..default()
-                    })
-                    .with_children(|l| {
-                        l.spawn(label(&fonts.semibold, item.label(), 14.0, col));
-                        l.spawn(label(&fonts.regular, build_desc(item), 11.0, desc_col));
-                    });
-                    // Right: cost (only the resources actually needed).
-                    let mut cost = String::new();
-                    if c.wood > 0.0 {
-                        cost.push_str(&format!("{} wood", c.wood as i64));
-                    }
-                    if c.stone > 0.0 {
-                        if !cost.is_empty() {
-                            cost.push_str("  ");
+            root.spawn((
+                Node {
+                    width: Val::Px(248.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(5.0),
+                    padding: UiRect::all(Val::Px(8.0)),
+                    border: border(1.0),
+                    border_radius: radius(R_PANEL),
+                    ..default()
+                },
+                widgets::card_paint(),
+                anim(AnimKind::PopIn, 0.0, 0.18),
+            ))
+            .with_children(|card| {
+                let on_plot = target.0.is_some();
+                card.spawn((
+                    Node { max_width: Val::Px(232.0), ..default() },
+                    label(
+                        &fonts.regular,
+                        if on_plot { HINT_IDLE } else { "Stand on an empty plot to build." },
+                        11.0,
+                        GREY,
+                    ),
+                    BuildHint,
+                ));
+                for item in MENU {
+                    let c = item.cost();
+                    let afford = on_plot && town.0.can_afford(item, &bank.0);
+                    let col = if afford { Color::WHITE } else { TEXT_FAINT };
+                    let tint = if afford { GOLD } else { TEXT_FAINT };
+                    card.spawn((
+                        Button,
+                        Interaction::default(),
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(8.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(6.0)),
+                            border: border(1.0),
+                            border_radius: radius(R_CARD),
+                            ..default()
+                        },
+                        BackgroundColor(BTN_BG),
+                        BorderColor::all(if afford { GOLD_DEEP } else { BORDER_SOFT }),
+                        BuildOption(item),
+                    ))
+                    .with_children(|b| {
+                        if let Some(entry) = icons.get_tintable(build_icon_id(item)) {
+                            b.spawn(widgets::icon_tinted(entry, 20.0, tint));
                         }
-                        cost.push_str(&format!("{} stone", c.stone as i64));
-                    }
-                    b.spawn(label(&fonts.semibold, &cost, 13.0, col));
-                });
-            }
-            // Houses moved out of this menu (see `BuildOption` doc) — point at their new home
-            // so a returning player isn't left hunting for them.
-            root.spawn(label(
-                &fonts.regular,
-                "Houses: walk to the timber site inside the walls and press E.",
-                11.0,
-                GREY,
-            ));
-            root.spawn(label(&fonts.regular, "Esc to close", 11.0, GREY));
+                        b.spawn(label(&fonts.semibold, item.label(), 13.0, col));
+                        b.spawn(Node { flex_grow: 1.0, ..default() }); // cost hugs the right edge
+                        for (key, amount) in [("stat:wood", c.wood), ("stat:stone", c.stone)] {
+                            if amount <= 0.0 {
+                                continue;
+                            }
+                            if let Some(entry) = icons.get_tintable(key) {
+                                b.spawn(widgets::icon_tinted(entry, 11.0, col));
+                            }
+                            b.spawn(label(&fonts.semibold, format!("{}", amount as i64), 11.0, col));
+                        }
+                    });
+                }
+            });
         });
+}
+
+/// Swap the hint line to the hovered row's plain-language description, and back to the resting
+/// text when the pointer leaves — the rows themselves stay icon + name + cost only.
+fn build_hover_hint(
+    btns: Query<(&Interaction, &BuildOption)>,
+    target: Res<BuildTarget>,
+    mut hint: Query<&mut Text, With<BuildHint>>,
+) {
+    let Ok(mut text) = hint.single_mut() else { return };
+    let hovered = btns
+        .iter()
+        .find_map(|(i, o)| (*i == Interaction::Hovered).then_some(o.0));
+    let new = match hovered {
+        Some(kind) => build_desc(kind),
+        None if target.0.is_none() => "Stand on an empty plot to build.",
+        None => HINT_IDLE,
+    };
+    if text.0 != new {
+        text.0 = new.to_string();
+    }
 }
 
 fn despawn_build(mut commands: Commands, q: Query<Entity, Or<(With<BuildUi>, With<BuildGhost>)>>) {
