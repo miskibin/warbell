@@ -14,7 +14,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 const SENSITIVITY: f32 = 0.0022;
 const MOVE_SPEED: f32 = 9.0;
-const SPRINT_MULT: f32 = 3.5;
+const SPRINT_MULT: f32 = 2.33;
 /// Don't let the camera sink below the canopy floor.
 const MIN_Y: f32 = 0.4;
 
@@ -24,8 +24,8 @@ const MIN_Y: f32 = 0.4;
 /// glide that reads as a tripod/gimbal move in a trailer rather than a twitchy debug fly.
 /// Look lags the mouse so flicks settle smoothly; move builds/sheds momentum so dolly
 /// starts and stops ease instead of popping.
-const LOOK_SMOOTH: f32 = 11.0;
-const MOVE_SMOOTH: f32 = 4.5;
+const LOOK_SMOOTH: f32 = 7.0;
+const MOVE_SMOOTH: f32 = 3.0;
 
 /// Marks the camera as fly-controllable. Mouse/keys drive the `target_*`/desired velocity;
 /// the live `yaw`/`pitch`/`vel` chase those targets with damping for cinematic motion.
