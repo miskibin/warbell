@@ -71,9 +71,17 @@ fn sync_decor(
     def: Res<Defenses>,
     eco: Res<EconomyState>,
     town: Res<crate::town::TownRes>,
-    mut q: Query<(&Decor, &mut Visibility)>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &Decor, &mut Visibility, &mut Transform, Option<&crate::build_fx::RevealAt>)>,
+    mut seeded: Local<bool>,
 ) {
-    for (d, mut vis) in &mut q {
+    // Construction feedback (rise + dust) only on a live flag flip — never on the first pass
+    // (staging / loaded saves) or a biome rebuild's respawn (see `castle::sync_castle`).
+    let live = *seeded
+        && (up.is_changed() || def.is_changed() || eco.is_changed() || town.is_changed());
+    *seeded = true;
+    let mut dust: Vec<Vec3> = Vec::new();
+    for (e, d, mut vis, mut tf, at) in &mut q {
         let show = match d.gate {
             DecorGate::Always => true,
             DecorGate::House(n) => town.0.houses > n,
@@ -86,6 +94,18 @@ fn sync_decor(
             DecorGate::Weapon(id) => eco.unlocked_weapons.contains(&id),
             DecorGate::Purchased(id) => up.0.is_purchased(id),
         };
+        if live && show && *vis == Visibility::Hidden {
+            if let Some(crate::build_fx::RevealAt(pos)) = at {
+                let pop = crate::build_fx::BuildPop::rise();
+                tf.scale = pop.scale0(); // same-frame, so the piece never flashes full-size
+                commands.entity(e).try_insert(pop);
+                // One burst per set piece, not per material part.
+                if !dust.iter().any(|p| p.distance_squared(*pos) < 1.0) {
+                    dust.push(*pos);
+                    commands.spawn(crate::build_fx::DustBurst::part(*pos));
+                }
+            }
+        }
         *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
     }
 }
@@ -103,6 +123,8 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
                 Transform::default(),
                 vis,
                 Decor { gate },
+                // Authored position — `sync_decor` aims the construction dust burst with it.
+                crate::build_fx::RevealAt(pos),
                 BiomeEntity,
             ));
         }

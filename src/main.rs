@@ -21,6 +21,7 @@ mod biome_snow;
 mod biome_swamp;
 mod blockers;
 mod boats;
+mod build_fx;
 mod camps;
 mod capture;
 mod cinematic;
@@ -185,6 +186,7 @@ fn main() {
             castle_decor::CastleDecorPlugin, // courtyard dressing + upgrade-bought set pieces
             ork_fortress::OrkFortressPlugin, // Gnashfang Hold + the Blight: fortress, patrols, hero-firing towers
             cinematic::CinematicPlugin, // keyframed camera paths for trailer shots (FOREST_SHOT_ID)
+            build_fx::BuildFxPlugin, // construction pop-in + dust when structures raise
         ))
         .run();
 }

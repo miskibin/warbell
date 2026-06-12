@@ -1246,6 +1246,9 @@ pub fn build(
                 Transform::default(),
                 vis,
                 CastlePart { kind },
+                // Authored position — `sync_castle` aims the construction dust burst with it
+                // (the mesh is baked in world space, the Transform stays identity).
+                crate::build_fx::RevealAt(pos),
                 BiomeEntity,
             ));
         }
@@ -1609,10 +1612,18 @@ fn sync_castle(
     def: Res<Defenses>,
     town: Res<crate::town::TownRes>,
     mut built: ResMut<CastleBuilt>,
-    mut q: Query<(&CastlePart, &mut Visibility)>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &CastlePart, &mut Visibility, &mut Transform, Option<&crate::build_fx::RevealAt>)>,
+    mut seeded: Local<bool>,
 ) {
     let houses = town.0.houses;
-    for (part, mut vis) in &mut q {
+    // Construction feedback (rise + dust) fires only on a *live* flag flip — never on the first
+    // pass (FOREST_DEFEND staging / a loaded save start already-built) and never on a biome
+    // rebuild's respawn (parts respawn Hidden but def/town didn't change).
+    let live = *seeded && (def.is_changed() || town.is_changed());
+    *seeded = true;
+    let mut dust: Vec<Vec3> = Vec::new();
+    for (e, part, mut vis, mut tf, at) in &mut q {
         let show = match part.kind {
             CastleKind::Always => true,
             CastleKind::PreWalls => !def.walls, // the bare-yard look gives way to the cobbled courtyard
@@ -1621,6 +1632,18 @@ fn sync_castle(
             CastleKind::Towers => def.towers,
             CastleKind::House(i) => (i as u32) < houses,
         };
+        if live && show && *vis == Visibility::Hidden {
+            if let Some(crate::build_fx::RevealAt(pos)) = at {
+                let pop = crate::build_fx::BuildPop::rise();
+                tf.scale = pop.scale0(); // same-frame, so the part never flashes full-size
+                commands.entity(e).try_insert(pop);
+                // One burst per structure, not per material part (a house is ~4 entities).
+                if !dust.iter().any(|p| p.distance_squared(*pos) < 1.0) {
+                    dust.push(*pos);
+                    commands.spawn(crate::build_fx::DustBurst::part(*pos));
+                }
+            }
+        }
         *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
     }
     // Lazy, once-only collision registration on first reveal.

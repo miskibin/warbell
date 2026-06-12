@@ -780,7 +780,7 @@ pub fn director_build_timelapse(
     mut primed: Local<bool>,
     mut acc: Local<f32>,
 ) {
-    const SECS_PER_STEP: f32 = 0.7;
+    const SECS_PER_STEP: f32 = 0.35; // 1.5× slower than the old 0.233 — each pop+dust gets room to read
     if !state.build_run {
         if *primed {
             *primed = false;
@@ -1155,7 +1155,15 @@ fn spawn_building(
     spots: &PlotSpots,
 ) {
     let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
-    spawn_textured(commands, meshes, mats, BuildingMesh { idx }, building_parts(kind), pos);
+    let parent = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, building_parts(kind), pos);
+    // Construction feedback: the fresh building pops up out of its plot on a kick of dust
+    // (build_fx). Re-insert the parent transform pre-shrunk so it never flashes full-size.
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    let pop = crate::build_fx::BuildPop::pop();
+    commands
+        .entity(parent)
+        .try_insert((Transform::from_xyz(pos.x, y, pos.y).with_scale(pop.scale0()), pop));
+    commands.spawn(crate::build_fx::DustBurst::building(Vec3::new(pos.x, y, pos.y)));
     // Solid structure: register a collision box over the trade's building (the −X side of the
     // plot) so the hero + orks route around it. (The working yard on the +X side stays walkable.)
     crate::blockers::add_box(pos.x - 0.95, pos.y, 1.05, 0.95);

@@ -41,15 +41,18 @@ struct Ripple {
     mat: Handle<StandardMaterial>,
 }
 
-/// Shared footstep-fx assets, built once.
+/// Shared footstep-fx assets, built once. `puff` + `mortar` are crate-visible so
+/// [`build_fx`](crate::build_fx) can reuse the mote pipeline for construction dust.
 #[derive(Resource)]
-struct FxAssets {
-    puff: Handle<Mesh>,
+pub(crate) struct FxAssets {
+    pub(crate) puff: Handle<Mesh>,
     ring: Handle<Mesh>,
     dirt: Handle<StandardMaterial>,
     snow: Handle<StandardMaterial>,
     stone: Handle<StandardMaterial>,
     splash: Handle<StandardMaterial>,
+    /// Pale stone/mortar dust — construction bursts (`build_fx`), not footfalls.
+    pub(crate) mortar: Handle<StandardMaterial>,
 }
 
 pub struct FootstepFxPlugin;
@@ -85,6 +88,7 @@ fn setup(
         snow: mk(Color::srgb(0.95, 0.97, 1.0), 0.85),
         stone: mk(Color::srgb(0.62, 0.62, 0.66), 0.7),
         splash: mk(Color::srgb(0.70, 0.85, 1.0), 0.8),
+        mortar: mk(Color::srgb(0.74, 0.68, 0.56), 0.75),
     });
 }
 
@@ -120,7 +124,7 @@ fn emit(
 
     let p = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
     if worldmap::is_river_world(hero.pos.x, hero.pos.y) {
-        spawn_puffs(&mut commands, &fx.puff, &fx.splash, p, 6, 1.6, 0.9);
+        spawn_puffs(&mut commands, &fx.puff, &fx.splash, p, 6, 1.6, 0.9, 0.0);
         let mat = materials.add(StandardMaterial {
             base_color: Color::srgb(0.8, 0.9, 1.0).with_alpha(0.5),
             unlit: true,
@@ -139,12 +143,16 @@ fn emit(
         ));
     } else {
         let mat = surf_mat(&fx, hero.pos);
-        spawn_puffs(&mut commands, &fx.puff, &mat, p, 5, 1.1, 0.8);
+        spawn_puffs(&mut commands, &fx.puff, &mat, p, 5, 1.1, 0.8, 0.0);
     }
 }
 
 /// Fling `n` motes outward + up from `at` (golden-angle spread), each shrinking over its life.
-fn spawn_puffs(
+/// `radius` offsets each mote's start along its own fling direction — 0 for footfalls (open
+/// ground under the hero), the footprint half-width for construction dust (motes born at a
+/// building's centre die unseen inside its mesh).
+/// Crate-visible: `build_fx` borrows it for construction dust ([`fade_puffs`] settles those too).
+pub(crate) fn spawn_puffs(
     commands: &mut Commands,
     mesh: &Handle<Mesh>,
     mat: &Handle<StandardMaterial>,
@@ -152,16 +160,19 @@ fn spawn_puffs(
     n: u32,
     spd: f32,
     scale0: f32,
+    radius: f32,
 ) {
     for i in 0..n {
         let a = i as f32 * 2.399_963_2; // golden angle
+        let dir = Vec3::new(a.cos(), 0.0, a.sin());
         let mag = 0.5 + (i % 5) as f32 * 0.12;
-        let vel = Vec3::new(a.cos() * spd * mag, 0.6 + (i % 3) as f32 * 0.25, a.sin() * spd * mag);
+        let vel = dir * spd * mag + Vec3::Y * (0.6 + (i % 3) as f32 * 0.25);
         let life = 0.4 + (i % 3) as f32 * 0.06;
         commands.spawn((
             Mesh3d(mesh.clone()),
             MeshMaterial3d(mat.clone()),
-            Transform::from_translation(at + Vec3::Y * 0.08).with_scale(Vec3::splat(scale0)),
+            Transform::from_translation(at + dir * radius + Vec3::Y * 0.08)
+                .with_scale(Vec3::splat(scale0)),
             Puff { vel, life, life0: life, scale0 },
             NotShadowCaster,
         ));
