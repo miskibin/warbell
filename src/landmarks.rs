@@ -330,9 +330,12 @@ fn discover(
         }
         lm.discovered = true;
 
-        // One-time cache: gold + a frontier-graded relic (landmarks sit out at the rim → good tier).
+        // One-time cache: a frontier-graded relic + pocket gold. The relic, the shrine buff and
+        // the lore ARE the discovery reward — the purse is deliberately small (was 40+120f ≈ 160
+        // at the rim; five landmarks + the completion bonus out-earned whole nights of defending,
+        // so sightseeing trivialized the economy). Gold belongs to the town (tithe) + bounties.
         let factor = frontier_factor(p.x, p.z);
-        let gold = (40.0 + factor * 120.0).round() as i64;
+        let gold = (10.0 + factor * 30.0).round() as i64;
         player.0.add_gold(gold);
         let relic = frontier::roll_gear(factor, tile_hash(p.x, p.z));
         try_grant(&mut inv.0, &mut toasts.0, relic, 1, now as f64);
@@ -370,10 +373,10 @@ fn discover(
         disc.found += 1;
         if disc.total > 0 && disc.found >= disc.total && !disc.completed {
             disc.completed = true;
-            player.0.add_gold(200);
+            player.0.add_gold(75);
             floats.0.push(FloatReq {
                 world: Vec3::new(p.x, p.y + 4.0, p.z),
-                text: "The isle holds no more secrets — +200 gold".into(),
+                text: "The isle holds no more secrets — +75 gold".into(),
                 color: Color::srgb(1.0, 0.95, 0.6),
                 scale: 1.3,
             });

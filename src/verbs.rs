@@ -1228,24 +1228,26 @@ fn chest_interact(
             if tile_hash(p.x, p.z) > 0.7 {
                 loot.push("mercenary_contract");
             }
-            (loot, (6.0 + chest.factor * 48.0).round() as i64)
+            (loot, (4.0 + chest.factor * 24.0).round() as i64)
         } else if chest.hoard {
             // Deep-rim war hoard: FOUR guaranteed top-tier rolls (factor pinned to 1.0 so the
-            // best pool is certain even if the spot reads sub-rim) + a heavy 150–360 purse.
+            // best pool is certain even if the spot reads sub-rim) + a purse (~110–135). The
+            // gear is the prize; the old 300–360 purses let one biome tour fund half the tree.
             let h = tile_hash(p.x, p.z);
             let loot = (0..4)
                 .map(|i| frontier::roll_gear(1.0, (h + i as f64 * 0.37) % 1.0))
                 .collect();
-            (loot, (150.0 + chest.factor * 150.0 + h * 60.0).round() as i64)
+            (loot, (50.0 + chest.factor * 60.0 + h * 25.0).round() as i64)
         } else {
-            // Ordinary treasure: 1 item near → 3 at the rim; gold ~8 near → ~123–153 at the rim
-            // (was a flat 15 + f·60, so near is nerfed and the rim is a far bigger prize).
+            // Ordinary treasure: 1 item near → 3 at the rim; gold ~5 near → ~60–70 at the rim.
+            // (Exploration pays in GEAR — gold is the town's job: tithe + bounties. The whole
+            // one-time exploration purse is sized to ~a third of the upgrade tree, not all of it.)
             let h = tile_hash(p.x, p.z);
             let items = 1 + (chest.factor * 2.0).round() as i64;
             let loot = (0..items)
                 .map(|i| frontier::roll_gear(chest.factor, (h + i as f64 * 0.37) % 1.0))
                 .collect();
-            (loot, (8.0 + chest.factor * 130.0 + h * 15.0).round() as i64)
+            (loot, (5.0 + chest.factor * 55.0 + h * 10.0).round() as i64)
         };
         // Won't open if the bag can't hold the gear (TS: full bag rejects the chest).
         if !inv.0.has_room_for(&loot) {

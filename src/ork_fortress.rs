@@ -1099,7 +1099,7 @@ const BLIGHT_CAGES: [(Vec2, usize); 2] = [
 /// The war-hoard: a single one-shot plunder chest deep in the south-east mire, guarded by
 /// patrol 4. `(chest world XZ, gold, loot)` — fixed haul (consumables + a purse), no gear, so
 /// it rewards the trek without power-creeping the already-strong hero.
-const BLIGHT_HOARD: (Vec2, i64, &[&str]) = (Vec2::new(57.0, 119.0), 120, &["feast", "potion", "venom"]);
+const BLIGHT_HOARD: (Vec2, i64, &[&str]) = (Vec2::new(57.0, 119.0), 80, &["feast", "potion", "venom"]);
 
 /// One-time freed/seen flags per [`BLIGHT_CAGES`] slot (re-inserted fresh each world build, so
 /// a new game re-stocks the cages). `seen` guards against freeing before the patrol spawns.
