@@ -14,7 +14,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 const SENSITIVITY: f32 = 0.0022;
 const MOVE_SPEED: f32 = 9.0;
-const SPRINT_MULT: f32 = 2.33;
+const SPRINT_MULT: f32 = 1.53;
 /// Don't let the camera sink below the canopy floor.
 const MIN_Y: f32 = 0.4;
 
@@ -23,8 +23,11 @@ const MIN_Y: f32 = 0.4;
 /// independent), so raw mouse jitter and instant key on/off become eased ramps — the slow
 /// glide that reads as a tripod/gimbal move in a trailer rather than a twitchy debug fly.
 /// Look lags the mouse so flicks settle smoothly; move builds/sheds momentum so dolly
-/// starts and stops ease instead of popping.
-const LOOK_SMOOTH: f32 = 7.0;
+/// starts and stops ease instead of popping. BOTH run their rate through TWO cascaded
+/// filters (target → mid → rendered): one stage alone starts every direction change at
+/// max rate (a visible kick); the cascade ramps the rate itself, so look pans and dolly
+/// turns blend as S-curves instead of corners.
+const LOOK_SMOOTH: f32 = 3.0;
 const MOVE_SMOOTH: f32 = 3.0;
 
 /// Marks the camera as fly-controllable. Mouse/keys drive the `target_*`/desired velocity;
@@ -34,16 +37,32 @@ pub struct FlyCam {
     /// Smoothed (rendered) yaw/pitch — what the transform actually uses.
     pub yaw: f32,
     pub pitch: f32,
-    /// Where the mouse wants the look to be; `yaw`/`pitch` ease toward these.
+    /// Where the mouse wants the look to be; `mid_*` ease toward these.
     pub target_yaw: f32,
     pub target_pitch: f32,
-    /// Smoothed world-space velocity (momentum), eased toward the keyboard's desired velocity.
+    /// First look-smoothing stage between `target_*` and the rendered `yaw`/`pitch` — gives
+    /// pans an S-curve response so a mouse flick ramps in instead of snapping to full rate.
+    pub mid_yaw: f32,
+    pub mid_pitch: f32,
+    /// Smoothed world-space velocity (momentum), eased toward `vel_target`.
     pub vel: Vec3,
+    /// First smoothing stage between the keyboard's desired velocity and `vel` — gives the
+    /// velocity an S-curve response so direction changes have no acceleration pop.
+    pub vel_target: Vec3,
 }
 
 impl FlyCam {
     pub fn new(yaw: f32, pitch: f32) -> Self {
-        FlyCam { yaw, pitch, target_yaw: yaw, target_pitch: pitch, vel: Vec3::ZERO }
+        FlyCam {
+            yaw,
+            pitch,
+            target_yaw: yaw,
+            target_pitch: pitch,
+            mid_yaw: yaw,
+            mid_pitch: pitch,
+            vel: Vec3::ZERO,
+            vel_target: Vec3::ZERO,
+        }
     }
 }
 
@@ -99,8 +118,11 @@ fn fly_camera(
             cam.target_yaw -= d.x * SENSITIVITY;
             cam.target_pitch = (cam.target_pitch - d.y * SENSITIVITY).clamp(-1.54, 1.54);
         }
-        cam.yaw += (cam.target_yaw - cam.yaw) * look_a;
-        cam.pitch += (cam.target_pitch - cam.pitch) * look_a;
+        // Two cascaded stages (target → mid → rendered) so the pan rate itself eases in/out.
+        cam.mid_yaw += (cam.target_yaw - cam.mid_yaw) * look_a;
+        cam.mid_pitch += (cam.target_pitch - cam.mid_pitch) * look_a;
+        cam.yaw += (cam.mid_yaw - cam.yaw) * look_a;
+        cam.pitch += (cam.mid_pitch - cam.pitch) * look_a;
         tf.rotation = Quat::from_euler(EulerRot::YXZ, cam.yaw, cam.pitch, 0.0);
 
         let forward = tf.forward();
@@ -125,17 +147,22 @@ fn fly_camera(
             dir -= Vec3::Y;
         }
 
-        // Desired velocity from keys; the live velocity eases toward it so dolly moves ramp up
-        // and coast to a stop instead of popping on/off — the momentum that reads as a gimbal.
+        // Desired velocity from keys, eased through two cascaded stages (desired → vel_target
+        // → vel) so direction changes ramp their acceleration — soft S-curve turns, no kick.
         let speed = if keys.pressed(KeyCode::ShiftLeft) { MOVE_SPEED * SPRINT_MULT } else { MOVE_SPEED };
         let desired = dir.normalize_or_zero() * speed;
-        let vel = cam.vel + (desired - cam.vel) * move_a;
+        let vel_target = cam.vel_target + (desired - cam.vel_target) * move_a;
+        cam.vel_target = vel_target;
+        let vel = cam.vel + (vel_target - cam.vel) * move_a;
         cam.vel = vel;
         tf.translation += vel * dt;
         if tf.translation.y < MIN_Y {
             tf.translation.y = MIN_Y;
             if cam.vel.y < 0.0 {
                 cam.vel.y = 0.0;
+            }
+            if cam.vel_target.y < 0.0 {
+                cam.vel_target.y = 0.0;
             }
         }
     }
