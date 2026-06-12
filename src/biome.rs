@@ -359,9 +359,22 @@ fn pick_weighted(weights: &[f32], r: f32) -> usize {
     weights.len().saturating_sub(1)
 }
 
-/// A class with its variant meshes uploaded to handles (ready to spawn-clone).
+/// A class with its (tinted) variant meshes prepared for placement.
+///
+/// Passive (`tree == false`) props are **merged** into per-chunk meshes (see
+/// [`scatter_region`]'s chunk-merge), so we keep the raw [`Mesh`] data around to feed
+/// `Mesh::transformed_by` + `Mesh::merge`. Trees stay individual entities (they carry
+/// [`crate::verbs::ChopTree`] + wind [`Sway`] and so can't be baked into a shared mesh),
+/// so their variants are *also* uploaded to handles up front — every tree instance shares
+/// one handle per variant, which the renderer auto-batches.
 struct ClassHandles {
-    variants: Vec<Handle<Mesh>>,
+    /// The tinted variant meshes (post tree/bush/cover build pipeline — already
+    /// flat-normalled with vertex `ATTRIBUTE_COLOR`). Kept as data so passive props can be
+    /// transformed-and-merged into chunk meshes.
+    variants: Vec<Mesh>,
+    /// Per-variant uploaded handle — populated ONLY for `tree` classes (individual entities
+    /// share these); empty for passive classes, which merge their `variants` data instead.
+    handles: Vec<Handle<Mesh>>,
     weights: Vec<f32>,
     chance: f32,
     scale: (f32, f32),
@@ -388,12 +401,28 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
             let mut weights = Vec::with_capacity(n);
             for (m, w) in &c.variants {
                 for t in PROP_TINTS {
-                    variants.push(meshes.add(crate::trees::tint_mesh(m.clone(), t)));
+                    // Bake the per-variant tint into the raw mesh, then NORMALISE its attribute
+                    // set: drop UV_0 so every passive variant in the biome carries the exact same
+                    // attributes (POSITION/NORMAL/COLOR). `Mesh::merge` extends `self`'s attributes
+                    // from `other` and silently corrupts the result if the sets differ — and we
+                    // never sample a texture (the shared white material reads vertex colour), so
+                    // UVs are dead weight in a merged chunk anyway.
+                    let mut mesh = crate::trees::tint_mesh(m.clone(), t);
+                    mesh.remove_attribute(Mesh::ATTRIBUTE_UV_0);
+                    variants.push(mesh);
                     weights.push(*w / PROP_TINTS.len() as f32);
                 }
             }
+            // Trees spawn as individual entities sharing one handle per variant; passive props
+            // merge their `variants` data into chunk meshes, so they need no handles.
+            let handles = if c.tree {
+                variants.iter().map(|m| meshes.add(m.clone())).collect()
+            } else {
+                Vec::new()
+            };
             ClassHandles {
                 variants,
+                handles,
                 weights,
                 chance: c.chance,
                 scale: c.scale,
@@ -402,6 +431,94 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
             }
         })
         .collect()
+}
+
+/// Chunk edge length (world units / tiles) for the passive-prop merge. ~16×16 tiles per
+/// chunk keeps each merged mesh modestly sized (a few hundred small props) while collapsing
+/// the ~60k individual scatter entities down to ≈2 merged entities per occupied chunk.
+const CHUNK: f32 = 16.0;
+
+/// A passive prop queued for its chunk: its (already tinted, UV-stripped) mesh and the world
+/// transform to bake into the vertices. Accumulated, then merged per chunk in [`spawn_chunks`].
+struct PendingProp {
+    mesh: Mesh,
+    transform: Transform,
+}
+
+/// One spatial chunk's two merge buckets, keyed by integer chunk coords.
+#[derive(Default)]
+struct ChunkBucket {
+    /// Small ground cover (tufts/flowers/clover/mushrooms/ferns/litter): no shadow, fades out.
+    cover: Vec<PendingProp>,
+    /// Larger passive scatter (bushes/rocks/litter): casts shadows, no distance fade.
+    props: Vec<PendingProp>,
+}
+
+/// World-XZ → integer chunk coordinate.
+fn chunk_key(x: f32, z: f32) -> (i32, i32) {
+    ((x / CHUNK).floor() as i32, (z / CHUNK).floor() as i32)
+}
+
+/// Centre of the chunk that owns `(key)` — the chunk entity's translation. Prop vertices are
+/// baked RELATIVE to this, so the merged mesh's auto-computed `Aabb` stays local (not a
+/// world-spanning box) and the entity transform places it correctly.
+fn chunk_center(key: (i32, i32)) -> Vec3 {
+    Vec3::new(key.0 as f32 * CHUNK + CHUNK * 0.5, 0.0, key.1 as f32 * CHUNK + CHUNK * 0.5)
+}
+
+/// Merge each chunk bucket's queued props into ONE mesh and spawn ONE entity per non-empty
+/// bucket. Cover buckets skip the shadow pass and fade out before the fog hides them; props
+/// buckets keep shadows. Every chunk entity is tagged [`BiomeEntity`] so the biome-swap path
+/// (keys 1–5) despawns + rebuilds them with the rest of the scene.
+fn spawn_chunks(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mat: &Handle<StandardMaterial>,
+    chunks: std::collections::HashMap<(i32, i32), ChunkBucket>,
+) {
+    // Cover fades out by ~90 units (the linear fog reaches the horizon by FOG_FULL ≈ 190, but
+    // small ground cover is already a sub-pixel speck well before that). A short crossfade
+    // band avoids a hard pop as the chunk centre crosses the cutoff.
+    let cover_range = bevy::camera::visibility::VisibilityRange {
+        start_margin: 0.0..0.0, // always visible up close
+        end_margin: 72.0..90.0, // fade out across 72→90 world units
+        use_aabb: true,
+    };
+    for (key, bucket) in chunks {
+        let center = chunk_center(key);
+        if let Some(mesh) = merge_props(bucket.cover) {
+            commands.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_translation(center),
+                bevy::light::NotShadowCaster,
+                cover_range.clone(),
+                BiomeEntity,
+            ));
+        }
+        if let Some(mesh) = merge_props(bucket.props) {
+            commands.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_translation(center),
+                BiomeEntity,
+            ));
+        }
+    }
+}
+
+/// Bake each prop's transform into its vertices and merge the bucket into one mesh
+/// (`None` if empty). All parts share POSITION/NORMAL/COLOR (UV stripped at upload), so the
+/// merge always succeeds; the transform is already relative to the chunk centre.
+fn merge_props(props: Vec<PendingProp>) -> Option<Mesh> {
+    let mut it = props.into_iter();
+    let first = it.next()?;
+    let mut base = first.mesh.transformed_by(first.transform);
+    for p in it {
+        let part = p.mesh.transformed_by(p.transform);
+        base.merge(&part).expect("scatter props share attributes");
+    }
+    Some(base)
 }
 
 /// The grid scatter over `[lo, hi]²`. One roll per tile; classes consume cumulative
@@ -441,6 +558,25 @@ pub fn scatter_region(
     let mut tree_pts: Vec<Vec2> = Vec::new();
     let min_d2 = cfg.tree_min_dist * cfg.tree_min_dist;
 
+    // Passive props accumulate here by chunk (one bucket per spatial cell), then get baked into
+    // a single merged mesh per chunk in `spawn_chunks` below — collapsing tens of thousands of
+    // individual entities into ≈2 per occupied chunk. Trees stay individual (they need per-tree
+    // chop HP + wind sway), so only non-tree scatter + ground cover lands here. A prop's world
+    // transform is rebased onto its chunk centre so the merged vertices stay local.
+    let mut chunks: std::collections::HashMap<(i32, i32), ChunkBucket> = std::collections::HashMap::new();
+    // Queue a passive prop into a chunk bucket: stash mesh + chunk-relative transform.
+    let mut queue = |cover_bucket: bool, mesh: Mesh, world: Vec3, rot: Quat, scale: f32| {
+        let key = chunk_key(world.x, world.z);
+        let transform = Transform {
+            translation: world - chunk_center(key),
+            rotation: rot,
+            scale: Vec3::splat(scale),
+        };
+        let bucket = chunks.entry(key).or_default();
+        let dst = if cover_bucket { &mut bucket.cover } else { &mut bucket.props };
+        dst.push(PendingProp { mesh, transform });
+    };
+
     // ── Main per-tile scatter ──
     let mut gx = lo;
     while gx < hi {
@@ -465,25 +601,16 @@ pub fn scatter_region(
             }
             if let Some(c) = chosen {
                 let vi = pick_weighted(&c.weights, r.next());
-                let mesh = c.variants[vi].clone();
                 let s = r.range(c.scale.0, c.scale.1);
                 if c.tree {
                     let p = Vec2::new(cx, cz);
                     if tree_pts.iter().any(|q| q.distance_squared(p) < min_d2) {
-                        // Too close — drop the fallback prop (e.g. a bush) here instead.
+                        // Too close — drop the fallback prop (e.g. a bush) here instead. It's a
+                        // passive non-tree prop, so it merges into the chunk's props bucket.
                         if let Some(fb) = fallback {
                             let fi = pick_weighted(&fb.weights, r.next());
                             let fs = r.range(fb.scale.0, fb.scale.1);
-                            commands.spawn((
-                                Mesh3d(fb.variants[fi].clone()),
-                                MeshMaterial3d(mat.clone()),
-                                Transform {
-                                    translation: Vec3::new(cx, py, cz),
-                                    rotation: yaw(&mut r),
-                                    scale: Vec3::splat(fs),
-                                },
-                                BiomeEntity,
-                            ));
+                            queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), yaw(&mut r), fs);
                         }
                     } else {
                         tree_pts.push(p);
@@ -494,8 +621,10 @@ pub fn scatter_region(
                         let trunk_r = (0.16 * s).min(0.8);
                         crate::blockers::add(cx, cz, trunk_r);
                         let base = cardinal(&mut r);
+                        // Trees stay individual entities (chop HP + wind sway) sharing one
+                        // uploaded handle per variant — the renderer auto-batches the instances.
                         let mut tree = commands.spawn((
-                            Mesh3d(mesh),
+                            Mesh3d(c.handles[vi].clone()),
                             MeshMaterial3d(mat.clone()),
                             // Identity rotation — wind `Sway` overwrites it each frame.
                             Transform {
@@ -526,16 +655,11 @@ pub fn scatter_region(
                             crate::blockers::add(cx, cz, rad);
                         }
                     }
-                    commands.spawn((
-                        Mesh3d(mesh),
-                        MeshMaterial3d(mat.clone()),
-                        Transform {
-                            translation: Vec3::new(cx, py, cz),
-                            rotation: yaw(&mut r),
-                            scale: Vec3::splat(s),
-                        },
-                        BiomeEntity,
-                    ));
+                    // Passive scatter (bushes/rocks/litter) — merge into the chunk's props
+                    // bucket. The blocker above is registered independently of the entity, so a
+                    // boulder still stops you even though its mesh now lives in a shared chunk.
+                    let rot = yaw(&mut r);
+                    queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);
                 }
             }
             gz += 1.0;
@@ -564,17 +688,10 @@ pub fn scatter_region(
                         if roll < acc {
                             let vi = pick_weighted(&c.weights, r.next());
                             let s = r.range(c.scale.0, c.scale.1);
-                            commands.spawn((
-                                Mesh3d(c.variants[vi].clone()),
-                                MeshMaterial3d(mat.clone()),
-                                Transform {
-                                    translation: Vec3::new(x, py, z),
-                                    rotation: yaw(&mut r),
-                                    scale: Vec3::splat(s),
-                                },
-                                bevy::light::NotShadowCaster,
-                                BiomeEntity,
-                            ));
+                            // Ground cover → the chunk's cover bucket (NotShadowCaster +
+                            // distance-fade, applied once per merged chunk in `spawn_chunks`).
+                            let rot = yaw(&mut r);
+                            queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
                             break;
                         }
                     }
@@ -584,6 +701,12 @@ pub fn scatter_region(
             gx += 1.0;
         }
     }
+
+    // Bake every accumulated chunk bucket into its merged mesh + spawn one entity each. The
+    // `queue` closure's mutable borrow of `chunks` has ended (no more queueing), so we can move
+    // the map in. `drop(queue)` makes that explicit (and silences any "borrowed after move").
+    drop(queue);
+    spawn_chunks(commands, meshes, &mat, chunks);
 }
 
 fn cardinal(r: &mut Rng) -> Quat {

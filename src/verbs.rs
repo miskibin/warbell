@@ -223,8 +223,9 @@ fn regrow_ore(
 
 // ── Tree chopping (1 tree = TREE_WOOD wood) — the wood mirror of ore mining ──────────
 
-/// A choppable tree: an individual entity (the decorative scattered trees are merged, so
-/// can't carry per-tree HP). Looks like any forest tree; fell it for wood.
+/// A choppable tree: an individual entity. Trees stay individual (decorative passive scatter
+/// — bushes/rocks/ground cover — is batched into per-chunk merged meshes, but trees carry
+/// per-tree chop HP + wind sway so they can't be baked in). Fell it for wood.
 #[derive(Component)]
 pub struct ChopTree {
     hp: f64,
