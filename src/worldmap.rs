@@ -1011,7 +1011,9 @@ pub fn build(
     // (Roads are NOT spawned as geometry — they're baked into the ground colour by
     //  `ground_color` via `roads::road_strength`, so they read as a brown blend in the terrain.)
 
-    // No distant horizon hills — open ocean fading into fog reads cleaner.
+    // Distant background islands: faint terraced landmasses ringing the open sea, sitting past
+    // the fog wall so they ghost in only as the hero nears a far shore (see `distant_isles.rs`).
+    crate::distant_isles::build(commands, meshes, std_mats);
 }
 
 fn config_for(b: Biome) -> BiomeConfig {
