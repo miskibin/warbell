@@ -110,6 +110,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_AUDIOTEST` / `FOREST_GRADETEST` | isolate audio / reactive-grade for testing |
 | `FOREST_FLOATTEST=1` | continuously stage sample floating combat numbers near the hero (style preview) |
 | `FOREST_FLAGTEST=1` | park one cloth banner in open air at `(0, 6, -22)` to frame the flutter in isolation (`banner.rs`). NB the cloth streams along world ≈`(0.9, 0, -0.43)` — shoot from a spot perpendicular to that or it reads edge-on |
+| `FOREST_TREE=1` / `FOREST_TREE="x,z"` | POC: spawn a row of 5 **realistic textured trees** (web CC0 bark + leaf atlas; normal-mapped trunk + alpha-cutout leaf cards — `realtree.rs`) centred on a world XZ (default `0,16`). Each variant is height-normalised to ~2u so it matches the low-poly scatter trees |
 | `BEVY_ASSET_ROOT` | point at this dir if running the binary from elsewhere (WGSL loads from `assets/shaders/`) |
 
 ## Architecture

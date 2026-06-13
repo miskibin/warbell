@@ -65,6 +65,7 @@ mod player;
 mod projectile;
 mod props;
 mod quality;
+mod realtree;
 mod roads;
 mod ruins;
 mod savegame;
@@ -221,6 +222,7 @@ fn main() {
             scenes::ScenesPlugin, // hand-staged looped trailer tableaus (F1 Director → Scenes)
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
+            realtree::RealTreePlugin, // POC: textured/normal-mapped tree staged by FOREST_TREE
         ))
         .run();
 }
