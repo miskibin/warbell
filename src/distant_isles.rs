@@ -323,10 +323,13 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
         };
 
         // Random ring scatter: fan the islands evenly around the origin with jitter (keeps them
-        // non-overlapping for free), out past the fog wall. Near edge stays ≥120 units off our
-        // coast (island reaches ~106×80), so they never touch the playable land.
+        // non-overlapping for free), pushed as FAR out as still reads. The hero can only ever
+        // glimpse them from a far shore — the camera far plane is 230 and fog goes solid by ~190
+        // (both camera-relative) — so the near edge sits ~210-250 units off the origin: invisible
+        // from the castle, fading in only as the hero reaches a coast facing them. Our island
+        // reaches ~106×80, so this leaves a wide band of open sea between us and them.
         let base_angle = TAU * (i as f32 / COUNT as f32) + rng_range(&mut s, -0.38, 0.38);
-        let mut dist = 120.0 + isle.radius + rng_range(&mut s, 8.0, 30.0);
+        let mut dist = 200.0 + isle.radius + rng_range(&mut s, 10.0, 50.0);
         let yaw = rng_range(&mut s, 0.0, TAU);
 
         // Nudge outward if the island (centre or its near edge) would land on the southern
