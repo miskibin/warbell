@@ -31,8 +31,10 @@ const SEA_Y: f32 = -0.4;
 /// World units per terrain tile in an island's local grid. Coarser than the real map's 1.0 —
 /// these are blurred and fog-bound, so finer tiling would only cost verts no one can see.
 const TILE: f32 = 2.0;
-/// World-Y per height class. Bigger than the map's 0.5 so terraces still read from ~150 units.
-const STEP: f32 = 1.1;
+/// World-Y per height class. Much bigger than the map's 0.5 so the islands rise as real relief
+/// — they're tiny in footprint vs the main island, so they need exaggerated height to read as
+/// landmasses (not flat reefs) from across the sea.
+const STEP: f32 = 1.7;
 /// How high the lowest land (the class-1 beach) sits above the sea. Must be a solid margin: the
 /// sea is a *translucent* alpha-blended sheet, so any land at/below the waterline shows THROUGH
 /// the blue water and reads as ghostly/transparent. Coast cliffs then drop only to `SEA_Y` (no
@@ -159,9 +161,11 @@ fn class_at(isle: &Isle, cx: f32, cz: f32) -> i32 {
     c.clamp(1, peak) // any land tile is at least a class-1 beach
 }
 
-/// Tallest height class this island reaches (drives both geometry and the colour ramp).
+/// Tallest height class this island reaches (drives both geometry and the colour ramp). Spans
+/// flat sandbars (~3 classes) to dramatic peaks (~16) so the `mountain` roll gives real variety:
+/// at STEP 1.7 that's roughly 4 to 27 world units of relief.
 fn peak_classes(isle: &Isle) -> i32 {
-    (2.0 + 11.0 * isle.mountain).round() as i32
+    (3.0 + 13.0 * isle.mountain).round() as i32
 }
 
 /// World-Y of the top surface of a given land class. The class-1 beach sits [`BEACH_LIFT`]
@@ -294,10 +298,17 @@ fn build_mesh(isle: &Isle) -> Mesh {
 /// Spawn the ring of distant islands. Called once from `worldmap::build`.
 pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
     // One shared white material — vertex colours carry the look, so all islands auto-batch.
+    // DOUBLE-SIDED: these islands are tall (peaks ~9-11 units) but are viewed from the hero at
+    // sea level, i.e. from BELOW their up-facing top surfaces. With normal back-face culling
+    // those tops are culled and you see straight through to the sea — a hollow ring. Rendering
+    // both faces (and flipping the normal for back-faces via `double_sided`) keeps them solid
+    // from any angle. Cheap: only 5 small, usually-fogged meshes.
     let mat = std_mats.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.93,
         reflectance: 0.15,
+        double_sided: true,
+        cull_mode: None,
         ..default()
     });
 
