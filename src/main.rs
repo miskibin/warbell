@@ -38,6 +38,7 @@ mod debug_stats;
 mod decor;
 mod demo;
 mod defenses;
+mod distant_isles;
 mod dof;
 mod dying;
 mod economy;
