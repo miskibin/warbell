@@ -187,7 +187,7 @@ fn apply_scene_change(
     mut clock: ResMut<crate::scene::SkyClock>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     old: Query<Entity, Or<(With<SceneActor>, With<SceneProp>)>>,
 ) {
     if state.want == state.active {
@@ -221,14 +221,14 @@ fn apply_scene_change(
             // Three farmhands hauling/hoeing, facing the camera side.
             for (i, (x, z)) in [(0.0, 8.0), (2.2, 8.7), (4.2, 8.2)].into_iter().enumerate() {
                 let e = crate::villagers::spawn_scene_peasant(
-                    &mut commands, &mut meshes, &mut materials,
+                    &mut commands, &mut meshes, &mut creature_mats,
                     Vec2::new(x, z), 0.0, Some(crate::villagers::Trade::Farmer), 31 + i as u32 * 17,
                 );
                 commands.entity(e).insert(SceneLabor { period: 1.6, phase: i as f32 * 0.37, last: -1.0 });
             }
             // A fourth peasant loafing, leaning by a planted shovel.
             crate::villagers::spawn_scene_peasant(
-                &mut commands, &mut meshes, &mut materials, Vec2::new(-2.0, 6.6), 0.5, None, 7,
+                &mut commands, &mut meshes, &mut creature_mats, Vec2::new(-2.0, 6.6), 0.5, None, 7,
             );
             spawn_prop_mesh(&mut commands, &mut meshes, &assets, shovel_mesh(), Vec3::new(-1.4, 0.0, 6.7), 0.4, 0.55);
             spawn_prop_mesh(&mut commands, &mut meshes, &assets, stone_pile_mesh(), Vec3::new(1.2, 0.0, 9.6), 0.0, 1.0);
@@ -291,7 +291,7 @@ fn apply_scene_change(
             pin_sky(&mut clock, 0.25); // midday
             // The mason himself — a plain peasant at his mark before the half-built wall.
             let e = crate::villagers::spawn_scene_peasant(
-                &mut commands, &mut meshes, &mut materials, MASON_MARK, 0.0, None, 11,
+                &mut commands, &mut meshes, &mut creature_mats, MASON_MARK, 0.0, None, 11,
             );
             commands.entity(e).insert(SceneMason);
             // The half-built wall he's "working" on (gap in the top course for his three stones),
@@ -318,7 +318,7 @@ fn apply_scene_change(
             // Two labourers grinding at the wall's flanks — the ones he ends up "supervising".
             for (i, dx) in [-1.05f32, 1.05].into_iter().enumerate() {
                 let e = crate::villagers::spawn_scene_peasant(
-                    &mut commands, &mut meshes, &mut materials,
+                    &mut commands, &mut meshes, &mut creature_mats,
                     MASON_MARK + Vec2::new(dx, 0.1), 0.0, Some(crate::villagers::Trade::Miner), 41 + i as u32 * 13,
                 );
                 commands.entity(e).insert(SceneLabor { period: 1.5, phase: i as f32 * 0.43, last: -1.0 });
@@ -329,7 +329,7 @@ fn apply_scene_change(
             // A peasant peeking out from behind a barrel in the yard.
             spawn_prop_mesh(&mut commands, &mut meshes, &assets, barrel_mesh(), Vec3::new(6.0, world_y(6.0, 2.0).y, 2.0), 0.0, 1.0);
             crate::villagers::spawn_scene_peasant(
-                &mut commands, &mut meshes, &mut materials, Vec2::new(6.0, 2.7), std::f32::consts::PI, None, 5,
+                &mut commands, &mut meshes, &mut creature_mats, Vec2::new(6.0, 2.7), std::f32::consts::PI, None, 5,
             );
             spawn_torch(&mut commands, &mut meshes, &assets, Vec3::new(8.5, world_y(8.5, 1.0).y, 1.0));
             // Three orks rampaging across the yard toward the keep, looping.

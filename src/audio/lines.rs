@@ -157,6 +157,9 @@ pub const LINES: &[Line] = &[
     Line { priority: 30,              ..line("night",         Speaker::Hero, Concept::NightWarning, "Getting dark. Night soon. Maybe I wandered too far.") },
     Line { floor: 300.0, priority: 15, ..line("hurt",         Speaker::Hero, Concept::LowHp,        "I'm hurt. Could use some herbs.") },
     Line { once: true,  priority: 15, ..line("home",          Speaker::Hero, Concept::Home,         "Home. Finally. Safe here. Guess I ring the bell when I'm ready. Then they come.") },
+    // Fires once per run the first time GEAR — armour OR a weapon — lands in the bag (see
+    // `detect_gear_found`); the one armour-flavoured clip covers either find. Text == the `equip.ogg`
+    // transcript (don't reword without re-recording, or the subtitle desyncs from the audio).
     Line { once: true,  priority: 15, ..line("equip",         Speaker::Hero, Concept::Equip,        "Mm, new armor. I should look it over in my satchel.") },
     Line { floor: 300.0, priority: 15, ..line("levelup",      Speaker::Hero, Concept::LevelUp,      "Stronger. The blade feels lighter than it did.") },
     Line { floor: 300.0, priority: 20, ..line("wave_survived", Speaker::Hero, Concept::WaveSurvived, "Dawn. We held. ...this time.") },

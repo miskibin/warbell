@@ -75,11 +75,8 @@ impl Plugin for EconomyPlugin {
             // Fresh run wipes the economy (gold resets with PlayerRes).
             .add_systems(OnExit(AppState::StartScreen), reset_economy)
             .add_systems(OnExit(AppState::GameOver), reset_economy)
-            // Pause-menu Restart / Load also begins a fresh run (gated; see game_state).
-            .add_systems(
-                OnExit(AppState::Paused),
-                reset_economy.run_if(crate::game_state::restart_requested),
-            )
+            // (Pause-menu Restart / Load now relaunch the process — see game_state::RestartProcess —
+            // so the run restarts in a clean world; no in-process OnExit(Paused) reset needed.)
             // (The War Table tree panel itself lives in `tree_ui.rs` — TreeUiPlugin.)
             // Merchant shop (open with T; buys land in the bag).
             .add_systems(Update, open_shop.run_if(in_state(Modal::None)))

@@ -297,10 +297,10 @@ fn work_drive(
 fn defend_setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
 ) {
     for i in 0..26u32 {
-        crate::villagers::spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, 1009 + i * 97);
+        crate::villagers::spawn_courtyard_guard(&mut commands, &mut meshes, &mut creature_mats, 1009 + i * 97);
     }
 }
 

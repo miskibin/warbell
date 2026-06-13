@@ -722,12 +722,12 @@ pub fn config() -> BiomeConfig {
             streak: 0.30,
         },
 
-        // Neutral hazy daylight.
-        sky: 0xc6cbd0,
-        fog_density: 0.010,
-        sun_color: 0xffe9c4,
-        sun_illuminance: 10_800.0,
-        ambient_color: 0xe6e2d8,
+        // Dry, dusty highland daylight — a warm tan-grey haze, not neutral.
+        sky: 0xccc8be,
+        fog_density: 0.012, // faint dust haze
+        sun_color: 0xffe6b8, // dustier warm sun
+        sun_illuminance: 11_000.0,
+        ambient_color: 0xe4ddca, // warm tan fill
         ambient_brightness: 88.0,
         sun_pos: Vec3::new(18.0, 38.0, 12.0),
 

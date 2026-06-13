@@ -38,11 +38,33 @@ const IBL_INTENSITY: f32 = 520.0;
 
 /// How strongly the hero's current biome tints the DAYTIME light's mood (0 = none, 1 = the
 /// biome's authored colour fully). Scaled by `day`, so night stays the tuned moonlit look.
-const BIOME_TINT_W: f32 = 0.7;
+/// 0.82 (was 0.7): the authored biome colours sit close together, so a timid weight left
+/// neighbouring biomes reading nearly the same in daylight — this pushes each mood to register.
+const BIOME_TINT_W: f32 = 0.82;
+/// The biome tint on the AMBIENT fill is held to this fraction of [`BIOME_TINT_W`]. The ambient
+/// lights every surface uniformly (no depth), so a strong tint here paints the whole frame one
+/// flat colour — a "green wall" in the swamp. Keeping it low lets the per-distance FOG carry the
+/// colour gradient while the fill only leans gently toward the biome's mood.
+const AMBIENT_TINT_SCALE: f32 = 0.42;
 /// How fast the biome tint eases as you cross a region boundary (exponential, per second).
 const BIOME_ATMO_LERP: f32 = 0.9;
 /// Island-wide reference sun lux the per-biome illuminance nudge is measured against.
 const BASE_SUN_LUX: f32 = 11_000.0;
+
+/// Per-region fog distance (mirrors `biome.rs` `FOG_CLEAR`/`FOG_FULL` — the open-island Linear
+/// fog). `advance_sky` maps the eased biome `fog_density` onto these: at the clearest density
+/// (forest, [`FOG_REF_DENSITY`]) the fog wall is the full open distance; at the thickest
+/// ([`FOG_MAX_DENSITY`], the Blight) it pulls in by the two `*_PULL` amounts → ~(42, 115).
+/// Swamp (`0.034`) lands at ~(45, 121). Daytime-gated, so night returns to the open baseline.
+const FOG_REF_DENSITY: f32 = 0.009;
+const FOG_MAX_DENSITY: f32 = 0.036;
+const FOG_BASE_START: f32 = 85.0;
+const FOG_BASE_END: f32 = 190.0;
+/// How far the foggy regions pull the clear radius / horizon IN. Kept gentle (was 43/75) so the
+/// fog reads as a long, gradual gradient that EXPANDS with distance — a sharp pull walled the
+/// swamp green close to the camera. Swamp (`d=0.034`) now ≈ (61, 153); Blight (`0.036`) ≈ (59, 150).
+const FOG_PULL_START: f32 = 26.0;
+const FOG_PULL_END: f32 = 40.0;
 
 pub struct ScenePlugin;
 
@@ -180,7 +202,10 @@ fn track_biome_atmo(
     mut state: ResMut<SmoothBiomeAtmo>,
 ) {
     let (Some(hero), Some(ambiences)) = (hero, ambiences) else { return };
-    let target = ambiences.sample(crate::worldmap::biome_at_world(hero.pos.x, hero.pos.y)).atmo;
+    // World-space lookup: the Blight (ork castle) eases toward its own red-ember mood; every other
+    // region eases toward its biome's atmosphere. (`sample_world`, not `sample`, is what stops the
+    // ork castle inheriting swamp's grey-green sky.)
+    let target = ambiences.sample_world(hero.pos.x, hero.pos.y).atmo;
     let k = 1.0 - (-time.delta_secs() * BIOME_ATMO_LERP).exp();
     match &mut state.0 {
         None => state.0 = Some(target), // snap on the first frame the world exists
@@ -190,6 +215,7 @@ fn track_biome_atmo(
             cur.sky = lerp_col(cur.sky, target.sky, k);
             cur.sun_illuminance += (target.sun_illuminance - cur.sun_illuminance) * k;
             cur.ambient_brightness += (target.ambient_brightness - cur.ambient_brightness) * k;
+            cur.fog_density += (target.fog_density - cur.fog_density) * k;
         }
     }
 }
@@ -336,9 +362,14 @@ fn advance_sky(
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.
     ambient.color = lerp_col(ambient.color, Color::srgb(1.0, 0.80, 0.62), horizon * 0.40);
-    // Biome tint on the ambient fill colour (brightness stays on the scene's tuned curve).
+    // Biome tint on the ambient fill colour (brightness stays on the scene's tuned curve). Held to
+    // a FRACTION of the full tint weight: the ambient fill lights every surface uniformly — near
+    // and far alike — so a full-strength biome tint here reads as a flat colour "wall" over the
+    // whole frame (swamp went pea-green) instead of a depth gradient. The mood gradient should come
+    // from the FOG (which builds with distance), not the flat fill, so the ambient only leans
+    // gently toward the biome colour.
     if let Some(t) = tint {
-        ambient.color = lerp_col(ambient.color, t.ambient_color, bw);
+        ambient.color = lerp_col(ambient.color, t.ambient_color, bw * AMBIENT_TINT_SCALE);
     }
 
     // IBL (baked daytime) dimmed at night to a ≈360 floor (was 400) so surfaces still catch
@@ -367,12 +398,24 @@ fn advance_sky(
     // is lifted off near-black so the world isn't swallowed by black fog after dark.
     let mut fog_col = lerp_col(Color::srgb(0.06, 0.08, 0.15), FOG_DAY, day);
     fog_col = lerp_col(fog_col, Color::srgb(1.0, 0.5, 0.3), horizon * 0.6);
-    // Biome tint on the daytime fog/haze colour (snow pale-cool, desert warm).
+    // Biome tint on the daytime fog/haze colour (snow pale-cool, desert warm, Blight blood-red).
     if let Some(t) = tint {
         fog_col = lerp_col(fog_col, t.sky, bw);
     }
+    // Per-region fog DISTANCE from the eased fog_density: dense biomes (swamp/Blight) pull the
+    // fog wall in close; the open island stays clear. `* day` gates it daytime-only — at night
+    // it eases back to the open baseline so the moonlit siege stays readable. Skipped entirely
+    // when `FOREST_FOG` pins the distances by hand (that override, set in `biome.rs`, wins).
+    let region_fog = std::env::var("FOREST_FOG").is_err().then(|| {
+        let d = tint.map(|t| t.fog_density).unwrap_or(FOG_REF_DENSITY);
+        let t01 = ((d - FOG_REF_DENSITY) / (FOG_MAX_DENSITY - FOG_REF_DENSITY)).clamp(0.0, 1.0) * day;
+        (FOG_BASE_START - FOG_PULL_START * t01, FOG_BASE_END - FOG_PULL_END * t01)
+    });
     for mut fog in &mut fog_q {
         fog.color = fog_col;
+        if let Some((start, end)) = region_fog {
+            fog.falloff = bevy::pbr::FogFalloff::Linear { start, end };
+        }
         // Sun-toward-camera in-scatter glow — warm by day, but faded out into the plain fog
         // colour after dark (else the below-horizon "sun" paints a warm-orange dusk band on
         // the night horizon).
@@ -494,6 +537,11 @@ fn drive_dof_focus(
     let Ok((cam_tf, mut dof)) = cam_q.single_mut() else {
         return;
     };
+    // Screenshot knob: FOREST_NOBLUR disables the depth-of-field blur entirely (zero CoC radius)
+    // so staged model close-ups stay crisp edge-to-edge.
+    if std::env::var("FOREST_NOBLUR").is_ok() {
+        dof.max_radius = 0.0;
+    }
     // Screenshot knob: FOREST_FOCAL="tiles" pins the focal plane (free-cam parks it at a
     // fixed 28, which blurs close-up staged subjects).
     if let Some(f) = std::env::var("FOREST_FOCAL").ok().and_then(|s| s.trim().parse::<f32>().ok())

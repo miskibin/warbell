@@ -58,10 +58,33 @@ impl InteractKind {
 
 /// The interactable the hero is currently in range of (nearest wins), or `None`.
 #[derive(Resource, Default)]
-struct ActiveInteraction(Option<InteractKind>);
+struct ActiveInteraction {
+    kind: Option<InteractKind>,
+    /// When the active interaction can't be acted on *right now* (e.g. Raise house with too
+    /// little wood/stone), the player-facing reason — `None` means actionable. Drives the
+    /// prompt's red "can't afford" state + the shortfall line, so the player sees *why* before
+    /// pressing E (not a silent no-op).
+    blocked: Option<String>,
+}
+
+/// Wood/stone the player is still short of for a House, as a prompt line — `None` if affordable.
+fn house_shortfall(bank: &tileworld_core::resource_store::ResourceState) -> Option<String> {
+    use tileworld_core::town_store::HOUSE_COST;
+    let nw = (HOUSE_COST.wood - bank.wood()).max(0.0).ceil() as i64;
+    let ns = (HOUSE_COST.stone - bank.stone()).max(0.0).ceil() as i64;
+    match (nw, ns) {
+        (0, 0) => None,
+        (w, 0) => Some(format!("need {w} more wood")),
+        (0, s) => Some(format!("need {s} more stone")),
+        (w, s) => Some(format!("need {w} wood + {s} stone")),
+    }
+}
 
 #[derive(Component)]
 struct PromptRoot;
+/// The bordered chip inside `PromptRoot` — recoloured red when the active interaction is blocked.
+#[derive(Component)]
+struct PromptChip;
 #[derive(Component)]
 struct PromptLabel;
 
@@ -147,9 +170,15 @@ fn drive_interaction(
             best = Some((kind, d));
         }
     }
-    active.0 = best.map(|(k, _)| k);
+    active.kind = best.map(|(k, _)| k);
+    // Surface affordability on the prompt itself (red + shortfall) so the player knows *before*
+    // pressing E — only Raise house carries a cost gate today.
+    active.blocked = match active.kind {
+        Some(InteractKind::RaiseHouse) => house_shortfall(&bank.0),
+        _ => None,
+    };
 
-    if let (true, Some(kind)) = (keys.just_pressed(KeyCode::KeyE), active.0) {
+    if let (true, Some(kind)) = (keys.just_pressed(KeyCode::KeyE), active.kind) {
         match kind {
             InteractKind::Upgrades => next_modal.set(Modal::UpgradeTree),
             InteractKind::Shop => next_modal.set(Modal::Shop),
@@ -164,7 +193,7 @@ fn drive_interaction(
                 // either the new beds or exactly what's missing (no silent no-op).
                 let site = house_site.unwrap_or(p);
                 let y = crate::worldmap::ground_at_world(site.x, site.y).unwrap_or(0.0);
-                use tileworld_core::town_store::{HOUSE_COST, POP_PER_HOUSE};
+                use tileworld_core::town_store::POP_PER_HOUSE;
                 if town.0.build_house(&mut bank.0) {
                     cues.write(AudioCue::UiSelect);
                     floats.0.push(crate::combat_fx::FloatReq {
@@ -174,13 +203,12 @@ fn drive_interaction(
                         scale: 1.25,
                     });
                 } else {
+                    // Can't afford — name exactly what's short (the prompt already warned in red).
+                    let why = house_shortfall(&bank.0).unwrap_or_else(|| "need more resources".into());
                     floats.0.push(crate::combat_fx::FloatReq {
                         world: Vec3::new(site.x, y + 3.0, site.y),
-                        text: format!(
-                            "Need {} wood + {} stone",
-                            HOUSE_COST.wood as i64, HOUSE_COST.stone as i64
-                        ),
-                        color: Color::srgb(1.0, 0.5, 0.4),
+                        text: format!("Can't raise house \u{2014} {why}"),
+                        color: Color::srgb(1.0, 0.4, 0.35),
                         scale: 1.1,
                     });
                 }
@@ -194,64 +222,97 @@ fn drive_interaction(
     }
 }
 
+/// Default chip border (gold hairline) — `update_prompt` flips to `RED_BORDER` when blocked.
+const PROMPT_BORDER: Color = rgba(255, 213, 140, 0.5);
+
 fn setup_prompt(mut commands: Commands, fonts: Res<UiFonts>) {
+    // A full-width centring band so the chip can grow with its text (the shortfall line can be
+    // long) and stay centred — the chip used to be fixed-width and centred by a margin hack.
     commands
         .spawn((
             PromptRoot,
             Node {
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(110.0),
-                left: Val::Percent(50.0),
-                margin: UiRect::left(Val::Px(-90.0)),
-                width: Val::Px(180.0),
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
                 display: Display::None,
                 flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                column_gap: Val::Px(8.0),
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
-                border: border(1.0),
-                border_radius: radius(R_CARD),
                 ..default()
             },
-            BackgroundColor(PANEL_HUD),
-            BorderColor::all(rgba(255, 213, 140, 0.5)),
-            shadow_hud(),
             bevy::ui::FocusPolicy::Pass,
         ))
-        .with_children(|p| {
-            // Keycap "E".
-            p.spawn((
+        .with_children(|root| {
+            root.spawn((
+                PromptChip,
                 Node {
-                    padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
                     border: border(1.0),
-                    border_radius: radius(5.0),
+                    border_radius: radius(R_CARD),
                     ..default()
                 },
-                widgets::keycap_paint(),
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(PROMPT_BORDER),
+                shadow_hud(),
             ))
-            .with_children(|k| {
-                k.spawn(label(&fonts.extrabold, "E", 12.0, rgba(255, 224, 170, 0.92)));
+            .with_children(|p| {
+                // Keycap "E".
+                p.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                        border: border(1.0),
+                        border_radius: radius(5.0),
+                        ..default()
+                    },
+                    widgets::keycap_paint(),
+                ))
+                .with_children(|k| {
+                    k.spawn(label(&fonts.extrabold, "E", 12.0, rgba(255, 224, 170, 0.92)));
+                });
+                p.spawn((label(&fonts.bold, "Upgrades", 14.0, GOLD), PromptLabel));
             });
-            p.spawn((label(&fonts.bold, "Upgrades", 14.0, GOLD), PromptLabel));
         });
 }
 
-/// Show the prompt for the active interactable, but only while actually playing with no panel open.
+/// Show the prompt for the active interactable, but only while actually playing with no panel
+/// open. A *blocked* interaction (can't afford it) recolours the whole chip red and appends the
+/// shortfall ("Raise house — need 4 wood + 2 stone") so the press is never a silent no-op.
 fn update_prompt(
     active: Res<ActiveInteraction>,
     modal: Option<Res<State<Modal>>>,
     mut root_q: Query<&mut Node, With<PromptRoot>>,
-    mut label_q: Query<&mut Text, With<PromptLabel>>,
+    mut chip_q: Query<(&mut BorderColor, &mut BackgroundColor), With<PromptChip>>,
+    mut label_q: Query<(&mut Text, &mut TextColor), With<PromptLabel>>,
 ) {
     let playing = modal.map_or(false, |m| *m.get() == Modal::None);
-    let kind = if playing { active.0 } else { None };
+    let kind = if playing { active.kind } else { None };
     if let Ok(mut node) = root_q.single_mut() {
         node.display = if kind.is_some() { Display::Flex } else { Display::None };
     }
-    if let (Some(k), Ok(mut t)) = (kind, label_q.single_mut()) {
-        if t.as_str() != k.prompt() {
-            **t = k.prompt().to_string();
+    let Some(k) = kind else { return };
+    let blocked = active.blocked.as_deref();
+
+    if let Ok((mut t, mut col)) = label_q.single_mut() {
+        let want = match blocked {
+            Some(detail) => format!("{}  \u{2014}  {detail}", k.prompt()),
+            None => k.prompt().to_string(),
+        };
+        if t.as_str() != want {
+            **t = want;
+        }
+        col.0 = if blocked.is_some() { RED_HI } else { GOLD };
+    }
+    if let Ok((mut bc, mut bg)) = chip_q.single_mut() {
+        if blocked.is_some() {
+            *bc = BorderColor::all(RED_BORDER);
+            bg.0 = rgba(64, 18, 18, 0.88); // red-tinted HUD chrome — reads "can't"
+        } else {
+            *bc = BorderColor::all(PROMPT_BORDER);
+            bg.0 = PANEL_HUD;
         }
     }
 }

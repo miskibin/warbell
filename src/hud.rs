@@ -14,6 +14,7 @@ use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
+use crate::ui::notice::Notice;
 use crate::inventory::{Buffs, Inventory, QuickFlash, Toasts};
 
 #[derive(Component)]
@@ -38,6 +39,10 @@ struct WoodText;
 struct PopText;
 #[derive(Component)]
 struct PopGrowthText;
+/// The stat-bar people/house icon — tinted red when the town is capped so the housing gate
+/// reads at a glance (`update_town_stats`).
+#[derive(Component)]
+struct PopIcon;
 
 /// Which derived quick-slot a node belongs to.
 #[derive(Clone, Copy, PartialEq)]
@@ -262,7 +267,7 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
             });
             let p = atlas.get_tintable("stat:pop");
             row.spawn(cell(5.0)).with_children(|c| {
-                if let Some(e) = p { c.spawn(widgets::icon_tinted(e, 17.0, rgb(235, 224, 180))); }
+                if let Some(e) = p { c.spawn((widgets::icon_tinted(e, 17.0, rgb(235, 224, 180)), PopIcon)); }
                 c.spawn((label(&fonts.extrabold, "4/4", 14.0, rgb(235, 224, 180)), PopText));
                 // Progress of the settle/starve meter toward the next ±1 peasant: green +% when a
                 // settler is incoming, red -% when one is starving away (colour set in update).
@@ -533,15 +538,39 @@ fn flash_quick_slots(
 /// (production − upkeep), colour-coded green surplus / red deficit so it's clear at a glance why
 /// peasants arrive or leave. (More detail could live in a hover tooltip later.)
 fn update_town_stats(
+    time: Res<Time>,
     town: Res<crate::town::TownRes>,
-    mut q_pop: Query<&mut Text, (With<PopText>, Without<FoodText>, Without<PopGrowthText>)>,
+    mut notice: ResMut<Notice>,
+    mut q_pop: Query<(&mut Text, &mut TextColor), (With<PopText>, Without<FoodText>, Without<PopGrowthText>)>,
     mut q_food: Query<(&mut Text, &mut TextColor), (With<FoodText>, Without<PopText>, Without<PopGrowthText>)>,
     mut q_growth: Query<(&mut Text, &mut TextColor), (With<PopGrowthText>, Without<PopText>, Without<FoodText>)>,
+    mut pop_icon: Query<&mut ImageNode, With<PopIcon>>,
+    mut was_full: Local<bool>,
+    mut next_toast: Local<f64>,
 ) {
+    /// Stat-bar pop colour when the town has room.
+    const POP_OK: Color = rgb(235, 224, 180);
     let t = &town.0;
-    if let Ok(mut text) = q_pop.single_mut() {
+    // Capped *and* a settler is ready to move in but has no bed — the actionable "build houses"
+    // moment (same condition the amber "full" growth readout uses below). The headcount + icon go
+    // red so the housing gate reads at a glance, not just the small growth meter.
+    let blocked_full = t.growth_fraction() > 0.005 && t.population >= t.pop_cap();
+
+    if let Ok((mut text, mut col)) = q_pop.single_mut() {
         **text = format!("{}/{}", t.population, t.pop_cap());
+        col.0 = if blocked_full { RED_HI } else { POP_OK };
     }
+    if let Ok(mut img) = pop_icon.single_mut() {
+        img.color = if blocked_full { RED_HI } else { POP_OK };
+    }
+    // Edge-triggered nudge the first time the cap bites, with a re-trigger floor so loitering at
+    // the cap doesn't spam — the red icon is the persistent reminder, the notice is the heads-up.
+    let now = time.elapsed_secs_f64();
+    if blocked_full && !*was_full && now >= *next_toast {
+        notice.push("Town's full \u{2014} raise more houses for room", now);
+        *next_toast = now + 20.0;
+    }
+    *was_full = blocked_full;
     // How close to the next ±1 peasant: the growth meter as a percent toward the settle (+) or
     // starve (-) rail. A full meter blocked by no free house reads "full" so the gate is obvious.
     if let Ok((mut text, mut col)) = q_growth.single_mut() {

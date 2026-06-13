@@ -24,7 +24,6 @@ use crate::steer;
 use crate::town::Worker;
 use crate::verbs::{deplete_ore, DepletedOre, OreNode, TrunkShake};
 use crate::villagers::{FightBack, Guard, Townsfolk, Villager};
-use crate::worldmap;
 
 /// …and no closer than this to any ork camp centre (a miner never picks ore in a warband's lap).
 const CAMP_AVOID: f32 = 22.0;
@@ -36,8 +35,10 @@ const DANGER_BLACKLIST_R: f32 = 16.0;
 /// the old 120s (×16u radius, in the SHARED `DangerSpots`) let one passing wolf shut down a
 /// whole ore field for two minutes, which read as the miner "refusing to work".
 const DANGER_TTL: f32 = 45.0;
-/// Pick damage per work swing — with ore's `ORE_HP` 354, ~7 swings (≈15s) to deplete a boulder.
-const PICK_DMG: f64 = 50.0;
+/// Pick damage per work swing — scaled with ore's `ORE_HP` (600) to hold the town miner's dig pace
+/// at ~7 swings (≈15s) per boulder, so raising hero-mining difficulty didn't quietly halve the
+/// town's stone income.
+const PICK_DMG: f64 = 85.0;
 /// Seconds between work swings — matches the overhead-swing work loop in `villager_limbs` (~2.1s).
 const PICK_CD: f32 = 2.1;
 /// Swing reach BEYOND the boulder's own blocker radius (centre-to-centre gate =
@@ -49,8 +50,18 @@ const PICK_REACH: f32 = 0.85;
 const RETRY_SECS: f32 = 3.0;
 /// A flight home gives up after this long even if the walls weren't reached.
 const FLEE_SECS: f32 = 9.0;
-/// No steering progress toward the boulder for this long → wedged; abandon + blacklist briefly.
+/// No steering progress toward the boulder for this long → wedged; force a replan ([`cart_home`]
+/// still uses this for its way-home recovery).
 const STALL_SECS: f32 = 4.0;
+/// Outbound (to-ore) march: no steering progress for this long while FOLLOWING the A* route → a
+/// local wedge on the road (gate lip, riverbank). Re-path from here rather than abandon — the ore
+/// is A*-reachable (assignment checks), so the wedge is on the route, not at the boulder.
+const STALL_REPLAN_SECS: f32 = 1.5;
+/// Total time genuinely wedged (NOT reset by a replan, only by real progress). Past this the miner
+/// abandons + briefly shuns the spot — a reactive trap A* keeps routing back into.
+const WEDGE_GIVEUP_SECS: f32 = 14.0;
+/// How many nearest candidate boulders `assign_ore` A*-probes for reachability before giving up.
+const REACH_CHECK_K: usize = 6;
 /// Time allowed inside the direct-steer ring (≤6u of the boulder) without actually reaching it.
 /// A reachable rock is reached from 6u out in ~3–4s; a rock one terrace UP keeps the miner
 /// wall-following along the cliff face — `moving` stays true, so [`STALL_SECS`] never trips and
@@ -73,8 +84,10 @@ const REPLAN_SECS: f32 = 2.5;
 pub struct MineJob {
     ore: Entity,
     atk_cd: f32,
-    /// Seconds without steering progress (wedged on a river/prop) — bail at [`STALL_SECS`].
+    /// Seconds without steering progress since the last replan — re-path at [`STALL_REPLAN_SECS`].
     stall: f32,
+    /// Total time wedged, reset only by real forward progress — abandon at [`WEDGE_GIVEUP_SECS`].
+    stuck: f32,
     /// Seconds spent inside the direct-steer ring without reaching the rock — catches cliff
     /// pacing under a boulder one terrace up; bail at [`CLOSE_GIVEUP_SECS`].
     close: f32,
@@ -173,25 +186,32 @@ fn assign_ore(
         if town.0.plots.get(worker.idx).and_then(|p| p.kind) != Some(BuildKind::Mine) {
             continue; // farmers/woodcutters keep their own jobs — only miners roam to ore
         }
-        let mut best: Option<(Entity, f32)> = None;
-        for (oe, node, otf) in &ores {
-            if node.ore.hp <= 0.0 {
-                continue;
-            }
-            let op = Vec2::new(otf.translation.x, otf.translation.z);
-            if crate::camps::in_clearing(op.x, op.y)
-                || camps.iter().any(|c| c.distance(op) < CAMP_AVOID)
-                || danger.0.iter().any(|(d, _)| d.distance(op) < DANGER_BLACKLIST_R)
-            {
-                continue;
-            }
-            let d = v.pos.distance(op);
-            if best.is_none_or(|(_, bd)| d < bd) {
-                best = Some((oe, d));
-            }
-        }
-        if let Some((oe, _)) = best {
-            commands.entity(e).try_insert(MineJob { ore: oe, atk_cd: 0.0, stall: 0.0, close: 0.0 });
+        // Gather every live, eligible boulder (safe ground, not blacklisted), nearest first.
+        let mut cands: Vec<(Entity, Vec2, f32)> = ores
+            .iter()
+            .filter_map(|(oe, node, otf)| {
+                if node.ore.hp <= 0.0 {
+                    return None;
+                }
+                let op = Vec2::new(otf.translation.x, otf.translation.z);
+                if crate::camps::in_clearing(op.x, op.y)
+                    || camps.iter().any(|c| c.distance(op) < CAMP_AVOID)
+                    || danger.0.iter().any(|(d, _)| d.distance(op) < DANGER_BLACKLIST_R)
+                {
+                    return None;
+                }
+                Some((oe, op, v.pos.distance(op)))
+            })
+            .collect();
+        // Ore A* spans the island (bridges included), so the capped probe uses the budgeted variant.
+        let from = v.pos;
+        let chosen = crate::lumberjack::pick_nearest_reachable(&mut cands, REACH_CHECK_K, |op| {
+            !crate::navgrid::path_to_budget(from, op, NAV_NODES).is_empty()
+        });
+        if let Some(oe) = chosen {
+            commands
+                .entity(e)
+                .try_insert(MineJob { ore: oe, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 });
         }
     }
 }
@@ -303,28 +323,41 @@ fn pick_work(
                 path.cursor = 0;
                 op
             };
-            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            // Apply the step on ANY result, including a PIVOT (`Some`, `moving:false`) so the miner
+            // can turn toward an opening instead of freezing facing a wall — see `chop_work`'s note;
+            // this pivot-facing drop was the courtyard/gate "standing still" wedge.
             match steer::advance(v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, 3.0 * dt) {
-                Some(s) if s.moving => {
-                    v.pos = s.pos;
+                Some(s) => {
                     v.facing = s.facing;
-                    v.moving = true;
-                    job.stall = 0.0;
+                    v.pos = s.pos;
+                    v.moving = s.moving;
                 }
-                _ => {
-                    v.moving = false;
-                    job.stall += dt;
-                    if job.stall > STALL_SECS {
-                        // Wedged (river bend, prop knot) — abandon this boulder and shun the spot
-                        // briefly so the next pick is a different one.
-                        danger.0.push((op, now + 45.0));
-                        commands.entity(self_e).try_remove::<MineJob>();
-                    }
+                None => v.moving = false,
+            }
+            if v.moving {
+                job.stall = 0.0;
+                job.stuck = 0.0; // real forward progress clears the wedge clock
+            } else {
+                job.stall += dt;
+                job.stuck += dt;
+                if job.stuck > WEDGE_GIVEUP_SECS {
+                    // Wedged for a long stretch despite pivots + replans — a genuine trap. Abandon
+                    // + briefly shun so the repick differs.
+                    danger.0.push((op, now + 30.0));
+                    commands.entity(self_e).try_remove::<MineJob>();
+                } else if job.stall > STALL_REPLAN_SECS {
+                    // Re-path from here (bridges now steerable) — the wedge is on the route, not at
+                    // the (A*-reachable) rock. Mirrors the carter's replan-on-stall in `cart_home`.
+                    path.waypoints.clear();
+                    path.cursor = 0;
+                    path.next_replan = now;
+                    job.stall = 0.0;
                 }
             }
         }
         // Ground-follow + bob (this system owns the transform while the job is on).
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
@@ -389,28 +422,31 @@ fn cart_home(
             path.cursor = 0;
             yard
         };
-        let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        // Apply the step on ANY result, including a PIVOT (`Some`, `moving:false`) so the carter can
+        // turn toward an opening instead of freezing facing a wall — see `chop_work`.
         match steer::advance(v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, 3.0 * dt) {
-            Some(s) if s.moving => {
-                v.pos = s.pos;
+            Some(s) => {
                 v.facing = s.facing;
-                v.moving = true;
-                carting.stall = 0.0;
+                v.pos = s.pos;
+                v.moving = s.moving;
             }
-            _ => {
-                v.moving = false;
-                carting.stall += dt;
-                if carting.stall > STALL_SECS {
-                    // Wedged on the way home — drop the cached route and replan now.
-                    path.waypoints.clear();
-                    path.cursor = 0;
-                    path.next_replan = now;
-                    carting.stall = 0.0;
-                }
+            None => v.moving = false,
+        }
+        if v.moving {
+            carting.stall = 0.0;
+        } else {
+            carting.stall += dt;
+            if carting.stall > STALL_SECS {
+                // Wedged on the way home — drop the cached route and replan now.
+                path.waypoints.clear();
+                path.cursor = 0;
+                path.next_replan = now;
+                carting.stall = 0.0;
             }
         }
         // Ground-follow + bob (this system owns the transform while the haul is on).
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);

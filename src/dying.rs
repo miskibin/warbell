@@ -39,15 +39,21 @@ impl Plugin for DyingPlugin {
 }
 
 /// Crumple each dying entity: shrink, sink, tip over (delta-based so no initial pose is stored).
-fn drive_death_fade(time: Res<Time>, mut q: Query<&mut Transform, With<Dying>>) {
+/// Topple direction + speed vary per-entity (a stable hash of the entity bits) so a cleared wave
+/// doesn't fall as a row of identical clones.
+fn drive_death_fade(time: Res<Time>, mut q: Query<(Entity, &mut Transform), With<Dying>>) {
     let rate = time.delta_secs() / FADE_SECS;
     if rate <= 0.0 {
         return; // hit-stop freeze — corpses hang with the rest of the world
     }
-    for mut tf in &mut q {
+    for (e, mut tf) in &mut q {
+        let bits = e.to_bits();
+        let h = (bits & 0xff) as f32 / 255.0; // 0..1, stable per corpse
+        let dir = if bits & 1 == 0 { 1.0 } else { -1.0 }; // tip left or right
+        let speed = 1.1 + h * 0.7; // 1.1..1.8 — some crumple fast, some slow
         tf.scale *= 1.0 - 0.85 * rate;
         tf.translation.y -= SINK * rate;
-        tf.rotate_local_z(1.4 * rate);
+        tf.rotate_local_z(dir * speed * rate);
     }
 }
 

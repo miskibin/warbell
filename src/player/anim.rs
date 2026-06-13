@@ -78,7 +78,11 @@ pub fn hero_anim(
                     _ => Quat::from_rotation_x(-arm_swing - idle_sway),
                 };
             }
-            HeroLimb::Head => tf.rotation = Quat::from_rotation_y(head_scan),
+            HeroLimb::Head => {
+                // Idle breathing pitch (gated off while walking — the gait has its own bob).
+                let (breath, _) = crate::creature_anim::idle_micro(t);
+                tf.rotation = Quat::from_euler(EulerRot::XYZ, breath * (1.0 - m), head_scan, 0.0);
+            }
             HeroLimb::Shield => {
                 let (tp, tr) = if blocking {
                     (SHIELD_BLOCK_POS, shield_block_rot())

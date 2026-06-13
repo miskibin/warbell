@@ -26,7 +26,6 @@ use crate::economy::Bank;
 use crate::steer;
 use crate::town::Worker;
 use crate::villagers::{FightBack, Guard, Townsfolk, Villager};
-use crate::worldmap;
 
 /// Trees are only worked this close to the castle origin (the safe heart of the island)…
 const WORK_R: f32 = 45.0;
@@ -65,8 +64,23 @@ const FLEE_SECS: f32 = 9.0;
 const HAUL_GIVEUP_SECS: f32 = 12.0;
 /// Reaching this close to the castle origin counts as "safe — stop running".
 const FLEE_HOME_R: f32 = 14.0;
-/// No steering progress toward the tree for this long → wedged; abandon + blacklist briefly.
+/// No steering progress for this long → wedged; [`haul_home`] uses it to force a replan on the
+/// way back to the yard.
 const STALL_SECS: f32 = 4.0;
+/// No steering progress toward the tree for this long while FOLLOWING the A* route → the route
+/// has a local wedge (a courtyard corner, a gate lip). Re-path from here rather than abandon —
+/// the goal is A*-reachable (assignment checks), so the wedge is on the road, not at the tree.
+const STALL_REPLAN_SECS: f32 = 1.5;
+/// Total time genuinely wedged (NOT reset by a replan, only by real forward progress). Past this
+/// the cutter abandons the job and briefly shuns the spot — a reactive trap A* keeps routing back
+/// into. Generous so a normal jam (one replan past a prop) recovers without ever tripping it.
+const WEDGE_GIVEUP_SECS: f32 = 12.0;
+/// How many nearest candidate trees `assign_tree` A*-probes for reachability before giving up —
+/// bounds the pathfinding cost while still skipping past a cluster of walled-off trees.
+const REACH_CHECK_K: usize = 8;
+/// Inside this ring a worker just direct-steers, so [`pick_nearest_reachable`] takes the target
+/// without paying for an A* reachability probe.
+pub(crate) const CLOSE_RING: f32 = 6.0;
 /// Time allowed inside the direct-steer ring (≤6u of the tree) without actually reaching it.
 /// A reachable tree is reached from 6u out in ~3–4s; a tree up a terrace lip keeps the cutter
 /// wall-following along the cliff face — `moving` stays true, so [`STALL_SECS`] never trips and
@@ -82,8 +96,10 @@ const HAUL_REACH: f32 = 1.8;
 pub struct ChopJob {
     tree: Entity,
     atk_cd: f32,
-    /// Seconds without steering progress (wedged on a river/prop) — bail at [`STALL_SECS`].
+    /// Seconds without steering progress since the last replan — re-path at [`STALL_REPLAN_SECS`].
     stall: f32,
+    /// Total time wedged, reset only by real forward progress — abandon at [`WEDGE_GIVEUP_SECS`].
+    stuck: f32,
     /// Seconds spent inside the direct-steer ring without reaching the tree — catches cliff
     /// pacing under a tree up a terrace lip; bail at [`CLOSE_GIVEUP_SECS`].
     close: f32,
@@ -167,6 +183,26 @@ fn lumber_danger(
     }
 }
 
+/// From a distance-tagged candidate list `(entity, pos, dist-from-worker)`, pick the nearest one
+/// the worker can actually WALK to: sort ascending by distance, then probe up to `k` candidates and
+/// return the first that's either inside the close direct-steer ring ([`CLOSE_RING`]) or
+/// `reachable` (an A* path exists). Picking the Euclidean-nearest blindly is what marched workers at
+/// targets across a stream / up a cliff, where they wedged, abandoned, and re-picked the next
+/// equally-unreachable target — reading as "standing still". The probe is capped because A* over
+/// the island isn't free. Shared by `assign_tree`/`assign_ore`.
+pub(crate) fn pick_nearest_reachable(
+    cands: &mut [(Entity, Vec2, f32)],
+    k: usize,
+    reachable: impl Fn(Vec2) -> bool,
+) -> Option<Entity> {
+    cands.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    cands
+        .iter()
+        .take(k)
+        .find(|(_, p, d)| *d <= CLOSE_RING || reachable(*p))
+        .map(|(e, _, _)| *e)
+}
+
 /// Hand each idle Lumber-plot worker the nearest workable tree (safe ground, not blacklisted).
 /// Throttled to every [`RETRY_SECS`] — the tree set is large and assignment isn't urgent.
 #[allow(clippy::type_complexity)]
@@ -208,23 +244,29 @@ fn assign_tree(
         if town.0.plots.get(worker.idx).and_then(|p| p.kind) != Some(BuildKind::Lumber) {
             continue; // farmers keep their field mime — only woodcutters roam
         }
-        let mut best: Option<(Entity, f32)> = None;
-        for (te, tf) in &trees {
-            let tp = Vec2::new(tf.translation.x, tf.translation.z);
-            if tp.length() > WORK_R
-                || crate::camps::in_clearing(tp.x, tp.y)
-                || live_camps.iter().any(|c| c.distance(tp) < LIVE_CAMP_AVOID)
-                || danger.0.iter().any(|(d, _)| d.distance(tp) < DANGER_BLACKLIST_R)
-            {
-                continue;
-            }
-            let d = v.pos.distance(tp);
-            if best.is_none_or(|(_, bd)| d < bd) {
-                best = Some((te, d));
-            }
-        }
-        if let Some((te, _)) = best {
-            commands.entity(e).try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0, close: 0.0 });
+        // Gather every eligible tree (safe ground, not blacklisted), nearest first.
+        let mut cands: Vec<(Entity, Vec2, f32)> = trees
+            .iter()
+            .filter_map(|(te, tf)| {
+                let tp = Vec2::new(tf.translation.x, tf.translation.z);
+                if tp.length() > WORK_R
+                    || crate::camps::in_clearing(tp.x, tp.y)
+                    || live_camps.iter().any(|c| c.distance(tp) < LIVE_CAMP_AVOID)
+                    || danger.0.iter().any(|(d, _)| d.distance(tp) < DANGER_BLACKLIST_R)
+                {
+                    return None;
+                }
+                Some((te, tp, v.pos.distance(tp)))
+            })
+            .collect();
+        let from = v.pos;
+        let chosen = pick_nearest_reachable(&mut cands, REACH_CHECK_K, |tp| {
+            !crate::navgrid::path_to(from, tp).is_empty()
+        });
+        if let Some(te) = chosen {
+            commands
+                .entity(e)
+                .try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 });
         }
     }
 }
@@ -341,7 +383,7 @@ fn chop_work(
                 path.cursor = 0;
                 tp
             };
-            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
             let advanced = steer::advance(
                 v.pos,
                 v.facing,
@@ -351,27 +393,42 @@ fn chop_work(
                 cur_y,
                 3.0 * dt,
             );
+            // Apply the step on ANY result — crucially the PIVOT case (`Some` with `moving:false`),
+            // where the steerer turned toward an opening but couldn't step yet. Dropping that
+            // pivot-facing (the old `Some(s) if s.moving` arm did) froze the cutter facing a blocked
+            // heading so it could never rotate to round a wall/building corner — THE courtyard-wedge
+            // "standing still" bug. `villager_brain`/`guard_combat` already apply facing on any Some.
             match advanced {
-                Some(s) if s.moving => {
-                    v.pos = s.pos;
+                Some(s) => {
                     v.facing = s.facing;
-                    v.moving = true;
-                    job.stall = 0.0;
+                    v.pos = s.pos; // == old pos when !moving, so a pivot doesn't teleport
+                    v.moving = s.moving;
                 }
-                _ => {
-                    v.moving = false;
-                    job.stall += dt;
-                    if job.stall > STALL_SECS {
-                        // Wedged (river bend, prop knot) — abandon this tree and shun the spot
-                        // briefly so the next pick is a different one.
-                        danger.0.push((tp, now + 45.0));
-                        commands.entity(self_e).try_remove::<ChopJob>();
-                    }
+                None => v.moving = false,
+            }
+            if v.moving {
+                job.stall = 0.0;
+                job.stuck = 0.0; // real forward progress clears the wedge clock
+            } else {
+                job.stall += dt;
+                job.stuck += dt;
+                if job.stuck > WEDGE_GIVEUP_SECS {
+                    // Wedged for a long stretch despite pivots + replans — a genuine trap. Abandon
+                    // + briefly shun so the repick differs.
+                    danger.0.push((tp, now + 30.0));
+                    commands.entity(self_e).try_remove::<ChopJob>();
+                } else if job.stall > STALL_REPLAN_SECS {
+                    // Re-path from here (bridges now steerable) — the wedge is on the route, not at
+                    // the (A*-reachable) tree. Mirrors the hauler's replan-on-stall recovery.
+                    path.waypoints.clear();
+                    path.cursor = 0;
+                    path.next_replan = now;
+                    job.stall = 0.0;
                 }
             }
         }
         // Ground-follow + bob (this system owns the transform while the job is on).
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
@@ -437,49 +494,52 @@ fn haul_home(
             path.cursor = 0;
             yard
         };
-        let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        // Apply the step on ANY result, including a PIVOT (`Some`, `moving:false`) so the hauler can
+        // turn toward an opening instead of freezing facing a wall — see `chop_work`.
         match steer::advance(v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, 3.0 * dt) {
-            Some(s) if s.moving => {
-                v.pos = s.pos;
+            Some(s) => {
                 v.facing = s.facing;
-                v.moving = true;
-                hauling.stall = 0.0;
-                hauling.stuck = 0.0;
+                v.pos = s.pos;
+                v.moving = s.moving;
             }
-            _ => {
+            None => v.moving = false,
+        }
+        if v.moving {
+            hauling.stall = 0.0;
+            hauling.stuck = 0.0;
+        } else {
+            hauling.stall += dt;
+            hauling.stuck += dt;
+            if hauling.stuck > HAUL_GIVEUP_SECS {
+                // Truly wedged — replanning hasn't moved it for a long while. Dump the log
+                // where it stands (bank the wood; don't strand the town's only income) and
+                // free the worker so `assign_tree` hands it a fresh job, instead of looping
+                // replans forever in a corner A* can't escape.
+                bank.0.add_wood(hauling.amount);
+                floats.0.push(crate::combat_fx::FloatReq {
+                    world: Vec3::new(v.pos.x, tf.translation.y + 1.6, v.pos.y),
+                    text: format!("+{} wood", hauling.amount as i64),
+                    color: Color::srgb(0.78, 0.62, 0.36),
+                    scale: 1.1,
+                });
+                if let Some(log) = hauling.log {
+                    commands.entity(log).try_despawn();
+                }
+                commands.entity(self_e).try_remove::<Hauling>();
                 v.moving = false;
-                hauling.stall += dt;
-                hauling.stuck += dt;
-                if hauling.stuck > HAUL_GIVEUP_SECS {
-                    // Truly wedged — replanning hasn't moved it for a long while. Dump the log
-                    // where it stands (bank the wood; don't strand the town's only income) and
-                    // free the worker so `assign_tree` hands it a fresh job, instead of looping
-                    // replans forever in a corner A* can't escape.
-                    bank.0.add_wood(hauling.amount);
-                    floats.0.push(crate::combat_fx::FloatReq {
-                        world: Vec3::new(v.pos.x, tf.translation.y + 1.6, v.pos.y),
-                        text: format!("+{} wood", hauling.amount as i64),
-                        color: Color::srgb(0.78, 0.62, 0.36),
-                        scale: 1.1,
-                    });
-                    if let Some(log) = hauling.log {
-                        commands.entity(log).try_despawn();
-                    }
-                    commands.entity(self_e).try_remove::<Hauling>();
-                    v.moving = false;
-                    continue;
-                }
-                if hauling.stall > STALL_SECS {
-                    // Wedged on the way home — drop the cached route and replan now.
-                    path.waypoints.clear();
-                    path.cursor = 0;
-                    path.next_replan = now;
-                    hauling.stall = 0.0;
-                }
+                continue;
+            }
+            if hauling.stall > STALL_SECS {
+                // Wedged on the way home — drop the cached route and replan now.
+                path.waypoints.clear();
+                path.cursor = 0;
+                path.next_replan = now;
+                hauling.stall = 0.0;
             }
         }
         // Ground-follow + bob (this system owns the transform while the haul is on).
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
@@ -567,7 +627,7 @@ fn flee_steer(
         if let Some(mut w) = worker {
             w.at_post = false;
         }
-        let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         // Adrenaline sprint for the walls.
         match steer::advance(v.pos, v.facing, Vec2::ZERO, v.speed * 1.7 * dt, v.body_r, cur_y, 4.5 * dt) {
             Some(s) => {
@@ -577,7 +637,7 @@ fn flee_steer(
             }
             None => v.moving = false,
         }
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);

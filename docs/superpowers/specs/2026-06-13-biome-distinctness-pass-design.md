@@ -65,6 +65,17 @@ while standing in the open swamp still reads swamp.
 Dark embery motes with a faint warm glow and a slight *upward* drift (embers rise), modest
 count. Tuned next to the existing Dust/Snow entries.
 
+### 7. Swamp mist = soft fog-bank cards, NOT motes (`particles.rs`)
+The mote-sphere `Mist` preset read as cheap floating dots. **Reactive volumetric fog was tried
+first and abandoned** — the scene's `FogVolume` exists only as the medium for the separate
+screen-space god-ray pass (the camera's `VolumetricFog` runs `ambient_intensity: 0`), so driving
+its `density_factor`/`fog_color` produces no visible haze (proven: forcing `density 0.6` magenta
+rendered nothing). Instead `ParticleKind::Mist` now spawns a handful (~34) of BIG soft-alpha,
+camera-facing cards (a procedural radial-alpha sprite on a unit quad) hovering low over the mire,
+drifting slowly — rolling ground-fog banks. Reuses the weather fade/despawn lifecycle and the
+`Particle` drift box; a new `billboard` flag makes `drift` yaw the cards to face the camera
+(upright). Renders on **every** preset, unlike the Ultra-only volumetric pass.
+
 ## Authored atmosphere targets
 
 Final values dialed in via the `FOREST_SHOT` / `FOREST_HERO="x,z"` harness; these are the
@@ -74,7 +85,7 @@ starting points (sRGB hex).
 |---|---|---|---|---|---|---|---|
 | Forest | `0xaed3e6` | `0xffe9bb` | 10500 | `0xd8ecd6` | 85 | 0.009 | **Pollen** (was None) |
 | Snow | `0xd4e6fb` | `0xfaf0e6` | **12000** | `0xb6d2f7` | **128** | 0.013 | Snow |
-| Swamp | `0x76857a` | `0xb6c499` | **6400** | `0x97aa8e` | **64** | **0.034** | **Mist** (was None) |
+| Swamp | `0x76857a` | `0xb6c499` | **6400** | `0x97aa8e` | **64** | **0.034** | **Mist** = fog-bank cards (was None) |
 | Rocky | `0xccc8be` | `0xffe6b8` | 11000 | `0xe4ddca` | 88 | 0.012 | Dust |
 | Desert | `0xf2e0a8` | `0xfff0c4` | **15500** | `0xffeec2` | **136** | 0.013 | Dust |
 | **Blight** | `0x5a2418` | `0xa8895a` | 6000 | `0x6a6048` | 58 | **0.036** | **Ash** |

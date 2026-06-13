@@ -235,7 +235,7 @@ pub(crate) fn apply_knockback(o: &mut Ork, dt: f32) {
         o.kb = Vec2::ZERO;
         return;
     }
-    let cur_y = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(0.0);
+    let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(0.0);
     let step = o.kb * dt;
     let nx = o.pos.x + step.x;
     let nz = o.pos.y + step.y;
@@ -370,7 +370,7 @@ fn ork_brain(
         let was_engaged = matches!(prev_mode, OrkMode::Hunt | OrkMode::Attack);
         let now_engaged = matches!(o.mode, OrkMode::Hunt | OrkMode::Attack);
         if (!was_engaged && now_engaged) || (prev_mode == OrkMode::Hunt && o.mode == OrkMode::Attack) {
-            let gy = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(0.0);
+            let gy = steer::footing(o.pos.x, o.pos.y).unwrap_or(0.0);
             cues.write(crate::audio::AudioCue::OrkGrunt(Vec3::new(o.pos.x, gy + 1.0, o.pos.y)));
         }
         if now_engaged {
@@ -391,7 +391,7 @@ fn ork_brain(
                     o.timer = rng_range(&mut o.rng, 1.5, 4.0);
                     o.moving = false;
                 } else {
-                    let cur_y = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+                    let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
                     match steer::advance(o.pos, o.facing, o.target, o.speed * dt, o.body_r, cur_y, ORK_MAX_TURN * dt) {
                         Some(s) => {
                             o.facing = s.facing;
@@ -410,7 +410,7 @@ fn ork_brain(
                 // Charge faster than a patrol, steering around props/cliffs. When chasing the
                 // HERO, follow an A* route (around walls); a rival brawl stays direct (close
                 // range, same clearing) so it doesn't thrash the pathfinder.
-                let cur_y = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+                let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
                 let speed = o.speed * 1.4 * if frenzied { 1.4 } else { 1.0 };
                 let step_target = if o.brawl_target.is_none() {
                     let now = time.elapsed_secs();
@@ -458,7 +458,7 @@ fn ork_brain(
                     let (_, dmg_mul) = crate::verbs::frontier_threat(o.pos.x, o.pos.y);
                     if o.shaman {
                         o.atk_cd = SHAMAN_CAST_CD;
-                        let gy = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(0.0);
+                        let gy = steer::footing(o.pos.x, o.pos.y).unwrap_or(0.0);
                         bolts.0.push(crate::projectile::BoltSpawn {
                             origin: Vec3::new(o.pos.x, gy + 1.4, o.pos.y),
                             damage: SHAMAN_BOLT_DAMAGE * dmg_mul,
@@ -475,7 +475,7 @@ fn ork_brain(
 
         apply_knockback(&mut o, dt);
 
-        let gy = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+        let gy = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
         let bob = if o.moving { (tw * o.gait + o.phase).sin().abs() * o.bob } else { 0.0 };
         // A melee ork steps into its club-chop (visual only — `pos` is untouched). The shaman
         // casts at range, so it doesn't lunge.
@@ -572,6 +572,7 @@ const LIMB_CULL2: f32 = 70.0 * 70.0;
 fn ork_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
+    hero: Res<crate::player::HeroState>,
     orks: Query<(&Ork, &Children, &GlobalTransform)>,
     mut parts: Query<(&OrkPart, &mut Transform)>,
 ) {
@@ -591,12 +592,15 @@ fn ork_limbs(
             tf.rotation = match part.kind {
                 // Legs stride; arms swing opposite the legs (and opposite each other via sign).
                 PartKind::Leg(sign) => {
-                    let s = if o.moving { (t * o.gait).sin() * o.swing } else { (t * 0.8).sin() * 0.03 };
+                    // Charging orks stride wider (run gait) than a patrol walk.
+                    let amp = crate::creature_anim::gait_amp(matches!(o.mode, OrkMode::Hunt), 1.35);
+                    let s = if o.moving { (t * o.gait).sin() * o.swing * amp } else { (t * 0.8).sin() * 0.03 };
                     Quat::from_rotation_x(sign * s)
                 }
                 PartKind::Arm(sign) => {
                     // Rest pose = walk swing / idle sway.
-                    let s = if o.moving { -(t * o.gait).sin() * 0.42 } else { (t * 0.8).sin() * 0.05 };
+                    let amp = crate::creature_anim::gait_amp(matches!(o.mode, OrkMode::Hunt), 1.3);
+                    let s = if o.moving { -(t * o.gait).sin() * 0.42 * amp } else { (t * 0.8).sin() * 0.05 };
                     let arm_gait = Quat::from_rotation_x(sign * s);
                     // The right arm (sign > 0) carries the club / staff → it does the striking.
                     if sign > 0.0 && o.shaman {
@@ -615,9 +619,17 @@ fn ork_limbs(
                     }
                 }
                 PartKind::Head => {
-                    let bob = (t * 0.5).sin() * 0.06;
-                    let scan = if o.moving { 0.0 } else { (t * 0.4).sin() * 0.25 };
-                    Quat::from_euler(EulerRot::XYZ, bob, scan, 0.0)
+                    // Idle orks glance toward the hero (menacing awareness); else a slow scan.
+                    // Alert only when not mid-Attack; the shared helper handles range + scan + bob.
+                    let target = (hero.alive && !matches!(o.mode, OrkMode::Attack)).then_some(hero.pos);
+                    crate::creature_anim::idle_head_glance(
+                        o.pos,
+                        o.facing,
+                        t,
+                        o.moving,
+                        target,
+                        crate::creature_anim::GlanceCfg { range: 14.0, max_yaw: 0.5, scan_amp: 0.25, bob_amp: 0.06 },
+                    )
                 }
                 PartKind::Tail => Quat::IDENTITY, // orks have no tail
             };
@@ -966,10 +978,10 @@ struct Template {
 }
 
 pub struct Armory {
-    mat: Handle<StandardMaterial>,
+    mat: Handle<crate::creature::CreatureMaterial>,
     tmpl: Vec<((OrkVariant, Faction), Template)>,
     eye_mesh: Handle<Mesh>,
-    eye_mat: Handle<StandardMaterial>,
+    eye_mat: Handle<StandardMaterial>, // glowing eyes stay a plain emissive StandardMaterial
 }
 
 impl Armory {
@@ -977,8 +989,8 @@ impl Armory {
     /// shared glowing-eye mesh/material (an unlit hot-amber emissive → bloom catches it at night).
     pub fn new(
         meshes: &mut Assets<Mesh>,
-        materials: &mut Assets<StandardMaterial>,
-        mat: Handle<StandardMaterial>,
+        materials: &mut Assets<StandardMaterial>, // still used for the glowing-eye material
+        mat: Handle<crate::creature::CreatureMaterial>,
     ) -> Armory {
         let mut tmpl = Vec::new();
         for faction in [Faction::Red, Faction::Blue] {

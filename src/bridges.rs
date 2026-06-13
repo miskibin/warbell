@@ -248,6 +248,25 @@ mod tests {
              north_horiz={north_horiz} south_horiz={south_horiz}); spans: {dump:?}"
         );
     }
+
+    /// A mover standing on a deck must FOOT on the deck, not on the (missing) terrain under it.
+    /// `worldmap::ground_at_world` reads `None` over the carved river, so any mover that grounds
+    /// off raw terrain freezes its Y at the bank and floats/wedges on the planks (the wildlife +
+    /// NPC bridge bug). `steer::footing` ORs the deck in — this asserts that for every span centre
+    /// the deck overrides the empty terrain, so the shared footing keeps movers flush on the deck.
+    #[test]
+    fn movers_foot_on_the_deck_not_the_void() {
+        for s in spans() {
+            let deck = deck_y_at(s.cx, s.cz).expect("a span centre is on its own deck");
+            let foot = crate::steer::footing(s.cx, s.cz).expect("footing falls back to the deck");
+            assert!(
+                (foot - deck).abs() < 1e-3,
+                "footing {foot} != deck {deck} at span ({}, {})",
+                s.cx,
+                s.cz
+            );
+        }
+    }
 }
 
 /// Spawn a deck at each river crossing. Called from `worldmap::build` (after terrain).

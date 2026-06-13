@@ -126,15 +126,15 @@ const REGIONS: [Region; 6] = [
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
     // the safe-zone fray instead of a 33-unit trek) and LOWERED (peak 15→9) so most faces are
     // 1-class terraces the nav-grid can climb; less coast-clipping on the far side too.
-    Region { x: 116.0, z: 57.0, r: 28.0, biome: TB::Rock, peak: 9 },
+    Region { x: 116.0, z: 57.0, r: 34.0, biome: TB::Rock, peak: 9 },
     Region { x: 32.0, z: 80.0, r: 34.0, biome: TB::Forest, peak: 0 }, // SW forest
-    Region { x: 72.0, z: 92.0, r: 32.0, biome: TB::Swamp, peak: 0 }, // S swamp
+    Region { x: 72.0, z: 92.0, r: 26.0, biome: TB::Swamp, peak: 0 }, // S swamp
     // Eastern marsh arm: fills the open grass strip that ran between the S swamp and the
     // rocky mine range (world x +30…+66, z +15…+60), so the marsh laps right up to the
     // foot of the mines instead of leaving a grass corridor. Rock's mountain priority in
     // `region_at` auto-clips the east edge (the mines stay rock), and the castle safe-ring
     // forces grass at the centre, so this only eats the in-between grass.
-    Region { x: 102.0, z: 78.0, r: 27.0, biome: TB::Swamp, peak: 0 },
+    Region { x: 102.0, z: 78.0, r: 22.0, biome: TB::Swamp, peak: 0 },
 ];
 
 struct Plateau {
@@ -457,8 +457,66 @@ fn tiles() -> &'static Vec<Option<(TB, i32)>> {
                 v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
             }
         }
+        terrace_inland(&mut v);
         v
     })
+}
+
+/// Post-process the heightfield so every **inland** land tile sits at most ONE height class
+/// above its lowest land neighbour. NPC movement — the nav-grid (`navgrid::can_step`) and the
+/// local steering both ambient wildlife and camp orks use (`steer::can_stand`) — refuses any
+/// step across a >1-class face, so a 2+-class cliff between two otherwise-walkable tiles wedges
+/// a wandering NPC at its base (it pivots in place with nowhere to go). The per-biome height
+/// generators already AIM for ≤1-class terraces, but `mountain_height`/`inland_hills` noise still
+/// stamps the occasional sheer pocket; this relaxation enforces the invariant globally, so hills,
+/// dunes, plateaus and the mountain bulk are fully climbable instead of penning creatures in.
+///
+/// The OUTER coastal ridge band (`dist_from_coast ≤ 7`, where `coast_hill_class` lives) is left
+/// alone on purpose: those seaward faces are DELIBERATELY sheer (ridge tops reachable from the
+/// inland ramp only — see `coast_hill_class`), and terracing them down to the beach would melt
+/// the island's coastal silhouette. Relaxation only lowers, never raises, so the forced-flat
+/// castle safe-zone / town plots (class 1) and every approach lane stay open.
+fn terrace_inland(v: &mut [Option<(TB, i32)>]) {
+    // Precompute the coastal-band mask once (dist_from_coast is an 8-ray probe — too costly to
+    // recompute per relaxation pass).
+    let band: Vec<bool> = (0..(COLS * ROWS) as usize)
+        .map(|i| {
+            let ix = (i as i32) % COLS;
+            let iz = (i as i32) / COLS;
+            dist_from_coast(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) <= 7
+        })
+        .collect();
+    // Iterate to a fixpoint: each pass terraces an offending tile down one class toward its
+    // lowest neighbour; a tall sheer pocket converges in ≤peak passes (≤~10).
+    loop {
+        let mut changed = false;
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                let idx = (iz * COLS + ix) as usize;
+                let Some((tb, h)) = v[idx] else { continue };
+                if h <= 1 || band[idx] {
+                    continue;
+                }
+                let mut min_n = i32::MAX;
+                for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let (nx, nz) = (ix + dx, iz + dz);
+                    if nx < 0 || nz < 0 || nx >= COLS || nz >= ROWS {
+                        continue;
+                    }
+                    if let Some((_, nh)) = v[(nz * COLS + nx) as usize] {
+                        min_n = min_n.min(nh);
+                    }
+                }
+                if min_n != i32::MAX && h > min_n + 1 {
+                    v[idx] = Some((tb, min_n + 1));
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 fn tile_at(ix: i32, iz: i32) -> Option<(TB, i32)> {
     if ix < 0 || iz < 0 || ix >= COLS || iz >= ROWS {
@@ -712,6 +770,7 @@ pub fn build(
     std_mats: &mut Assets<StandardMaterial>,
     terrain_mats: &mut Assets<TerrainMaterial>,
     water_mats: &mut Assets<WaterMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
     // ── Terraced ground mesh (blended vertex colours, per-face normals) — two sheets:
     //    the island proper on the grass detail texture, and the Blight on its own
@@ -719,16 +778,16 @@ pub fn build(
     let ground = build_terrain_mesh(|tb| tb != TB::Blight);
     let grass_detail = GroundDetail {
         scale: 0.18,
-        strength: 0.40,
+        strength: 0.52, // a touch rougher/grainier grass (was 0.40)
         variation: 0.70,
         seed: 1.0,
         dark: 0x356b28,
         base: 0x5d9e44,
         light: 0x95d162,
-        grain: 0.55,
+        grain: 0.72, // more blade-grain speckle (was 0.55)
         streak: 0.5,
     };
-    let ground_mat = crate::terrain::make_material(&grass_detail, 0.95, images, terrain_mats);
+    let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, images, terrain_mats);
     commands.spawn((
         Mesh3d(meshes.add(ground)),
         MeshMaterial3d(ground_mat),
@@ -832,13 +891,16 @@ pub fn build(
         );
     }
     // Island-wide base ambience (grass / sand / water): the shared daytime atmosphere, no weather.
-    let (sky, _fog, sun_c, sun_i, amb_c, amb_b, _sun_p) = ATMOSPHERE;
+    let (sky, fog, sun_c, sun_i, amb_c, amb_b, _sun_p) = ATMOSPHERE;
     commands.insert_resource(BiomeAmbiences {
         base: BiomeAmbience {
-            atmo: AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b),
+            atmo: AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b, fog),
             particle: ParticleKind::None,
         },
         list: ambiences,
+        // The ork castle's own red-ember mood (the Blight reads as swamp to gameplay, but its
+        // atmosphere is bespoke — see `ork_fortress::blight_ambience`).
+        blight: crate::ork_fortress::blight_ambience(),
     });
     // ── Snow drifts banked against terrace walls: where a snow tile abuts a higher
     // neighbour, pile a wind-drift mound into the corner so the cliff faces rise out of
@@ -912,22 +974,22 @@ pub fn build(
     let village_mats = crate::castle::build(commands, meshes, images, std_mats);
 
     // ── Ork camps: tents/fire/banner/cage + a patrolling warband (registers blockers). ──
-    crate::camps::build(commands, meshes, images, std_mats);
+    crate::camps::build(commands, meshes, images, std_mats, creature_mats);
 
     // ── Castle townsfolk: ambient villagers milling the courtyard + gates. ──
-    crate::villagers::populate(commands, meshes, std_mats);
+    crate::villagers::populate(commands, meshes, std_mats, creature_mats);
 
     // ── Training dummies: practice pells in the keep courtyard (hit-feedback only). ──
     crate::training_dummies::populate(commands, meshes, std_mats);
 
     // ── Ambient wildlife — biome-placed animals that wander/graze/startle ──
-    crate::wildlife::populate(commands, meshes, std_mats);
+    crate::wildlife::populate(commands, meshes, creature_mats);
 
     // ── Biome verbs: mineable ore (rock), forage (swamp herbs / forest apples), chests ──
     crate::verbs::populate_ore(commands, meshes, std_mats);
     crate::town::populate_plots(commands, meshes, &village_mats);
     crate::verbs::populate_forage(commands, meshes, std_mats);
-    crate::verbs::populate_chests(commands, meshes, std_mats);
+    crate::chest::populate_chests(commands, meshes, std_mats);
 
     // ── Castle defenses: tower/archer/ballista fire emitters (upgrade-gated at runtime) ──
     crate::defenses::populate_defenders(commands, meshes, std_mats);
@@ -942,7 +1004,7 @@ pub fn build(
 
     // ── Gnashfang Hold + the Blight: the ork fortress and its walkable poisoned landmass
     //    south of the old coast (camp props, patrols, watchtowers; see `ork_fortress.rs`).
-    crate::ork_fortress::build(commands, meshes, images, std_mats);
+    crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats);
 
     // ── River bridges: plank decks at the real river crossings (also nav-grid walkable). ──
     crate::bridges::populate(commands, meshes, std_mats);
@@ -979,12 +1041,30 @@ fn grass_config() -> BiomeConfig {
         tree_min_dist: 2.0,
         classes: vec![],
         cover: vec![
-            PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.26, scale: (0.45, 0.8), tree: false, block_radius: 0.0 },
-            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.30, scale: (0.7, 1.2), tree: false, block_radius: 0.0 },
-            PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.10, scale: (0.5, 0.85), tree: false, block_radius: 0.0 },
             PropClass {
-                variants: (0..3).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
-                chance: 0.12,
+                variants: (0..gc::NUM_GRASS_VARIANTS).map(|v| (gc::build_grass_tuft_mesh(v), 1.0)).collect(),
+                chance: 0.32,
+                scale: (0.6, 1.25),
+                tree: false,
+                block_radius: 0.0,
+            },
+            PropClass {
+                variants: (0..gc::NUM_CLOVER_VARIANTS).map(|v| (gc::build_clover_mesh(v), 1.0)).collect(),
+                chance: 0.30,
+                scale: (0.7, 1.2),
+                tree: false,
+                block_radius: 0.0,
+            },
+            PropClass {
+                variants: (0..gc::NUM_FERN_VARIANTS).map(|v| (gc::build_fern_mesh(v), 1.0)).collect(),
+                chance: 0.10,
+                scale: (0.5, 0.95),
+                tree: false,
+                block_radius: 0.0,
+            },
+            PropClass {
+                variants: (0..gc::NUM_FLOWER_VARIANTS).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
+                chance: 0.16,
                 scale: (0.8, 1.4),
                 tree: false,
                 block_radius: 0.0,
@@ -1110,5 +1190,42 @@ fn build_terrain_mesh(keep: impl Fn(TB) -> bool) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
     mesh
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every pair of adjacent LAND tiles outside the coastal ridge band must differ by ≤1
+    /// height class. NPC movement (nav-grid `can_step`, local `steer::can_stand`) refuses any
+    /// >1-class step, so a 2+-class inland cliff wedges wandering NPCs at its base. Regression
+    /// for "NPCs stuck at the mountain near the castle" — guarded by `terrace_inland`.
+    #[test]
+    fn inland_terrain_is_climbable() {
+        let band = |ix: i32, iz: i32| dist_from_coast(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) <= 7;
+        let mut cliffs: Vec<((i32, i32), (i32, i32), i32, i32)> = Vec::new();
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                let Some((_, h)) = tile_at(ix, iz) else { continue };
+                // Only +x / +z neighbours so each edge is counted once.
+                for (dx, dz) in [(1, 0), (0, 1)] {
+                    let (nx, nz) = (ix + dx, iz + dz);
+                    let Some((_, nh)) = tile_at(nx, nz) else { continue };
+                    if band(ix, iz) || band(nx, nz) {
+                        continue; // seaward cliffs are deliberately sheer
+                    }
+                    if (h - nh).abs() >= 2 {
+                        cliffs.push(((ix, iz), (nx, nz), h, nh));
+                    }
+                }
+            }
+        }
+        assert!(
+            cliffs.is_empty(),
+            "{} inland 2+-class cliffs (unclimbable for NPCs), e.g. {:?}",
+            cliffs.len(),
+            &cliffs[..cliffs.len().min(8)]
+        );
+    }
 }
 

@@ -20,8 +20,9 @@ use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
+use crate::creature::{surf, Surf};
 use crate::critters::PartKind;
-use crate::palette::lin;
+use crate::palette::{lin, lin_scaled};
 use crate::steer;
 use crate::worldmap;
 
@@ -31,16 +32,27 @@ const SCALE: f32 = 0.63; // the TS villager group scale, ×1.15 (townsfolk read 
 /// Child villagers — the same rig scaled right down, so the suburbs have kids underfoot.
 const KID_SCALE: f32 = SCALE * 0.6;
 
-// Palette (sRGB hex, from Villager.tsx).
-const SKIN: [u32; 3] = [0xdca78a, 0xc08866, 0xa36b4a];
-const TUNIC: [u32; 4] = [0x5a8fc8, 0x7a3a26, 0x4a6a3a, 0x8a6a3a];
-const PANT: u32 = 0x3a2a18;
+// Palette (sRGB hex, from Villager.tsx) — widened for per-villager cosmetic variety.
+const SKIN: [u32; 6] = [0xe8c4a0, 0xdca78a, 0xc89070, 0xc08866, 0xa36b4a, 0x8a5638];
+const TUNIC: [u32; 6] = [0x5a8fc8, 0x7a3a26, 0x4a6a3a, 0x8a6a3a, 0x3a7a72, 0x6a4a6a];
+const PANT_TONES: [u32; 4] = [0x3a2a18, 0x2e2620, 0x4a3a2a, 0x33302a];
+const PANT: u32 = 0x3a2a18; // == PANT_TONES[0] (kept as an alias)
+/// Natural hair colours: brown / dark-brown / near-black / chestnut / auburn / sandy / ash / dark-ash.
+const HAIR_TONES: [u32; 8] = [0x3a2418, 0x2a1c12, 0x1c1410, 0x6b4a2a, 0x7a3b1e, 0x8a7a5a, 0xa9854e, 0x5a4636];
+const HAIR: u32 = 0x3a2418; // == HAIR_TONES[0] (kept as an alias)
+const GREY_HAIR: [u32; 3] = [0x9a9488, 0xcfc8be, 0x7d7872]; // elder grey / white / steel
 const HAT: u32 = 0xa02a26;
-const HAIR: u32 = 0x3a2418;
 const EYE: u32 = 0x141414;
+const LIP: u32 = 0x7a4a44; // mouth / lip box
 const ARMOR: u32 = 0x9aa0aa;
 const SWORD_BLADE: u32 = 0xd8dde6;
 const SWORD_GUARD: u32 = 0xcaa23a;
+const BELT: u32 = 0x4a3526; // leather belt
+const BUCKLE: u32 = 0xb9962e; // brass buckle
+const BOOT: u32 = 0x33241a; // dark leather boot
+const SOOT: u32 = 0x2a241f; // miner grime on the lower face
+const MINER_LAMP: u32 = 0xffd27a; // brass lamp clip on the miner cap
+const STRAP: u32 = 0x3a2e22; // guard helmet chin-strap leather
 /// Dusky cloak of the wandering pilgrims who trek between the island's old landmarks.
 const PILGRIM_ROBE: u32 = 0x6a5a8a;
 
@@ -366,10 +378,10 @@ fn reset_rescues(mut r: ResMut<RescuedCamps>) {
 pub fn spawn_courtyard_guard(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
     seed: u32,
 ) {
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    let mat = crate::creature::make_creature_material(creature_mats);
     let mut rng = seed | 1;
     let half = crate::castle::courtyard_half();
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
@@ -383,13 +395,13 @@ pub fn spawn_courtyard_guard(
 pub fn spawn_scene_peasant(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
     pos: Vec2,
     facing: f32,
     worker: Option<Trade>,
     seed: u32,
 ) -> Entity {
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    let mat = crate::creature::make_creature_material(creature_mats);
     let mut rng = seed | 1;
     let skin = SKIN[(seed as usize) % SKIN.len()];
     let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
@@ -528,7 +540,7 @@ fn villager_brain(
                     };
                     v.moving = false;
                 } else {
-                    let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+                    let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
                     match steer::advance(v.pos, v.facing, v.target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                         Some(s) => {
                             v.facing = s.facing;
@@ -545,7 +557,7 @@ fn villager_brain(
             }
         }
 
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
@@ -620,14 +632,14 @@ fn worker_steer(
                 path.cursor = 0;
                 post
             };
-            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
             if let Some(s) = steer::advance(v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                 v.facing = s.facing;
                 v.pos = s.pos;
                 v.moving = s.moving;
             }
         }
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
@@ -671,7 +683,7 @@ fn pilgrim_brain(
             pil.target = dests[(next_u32(&mut pil.rng) as usize) % dests.len()];
             v.moving = false;
         } else {
-            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
             match steer::advance(v.pos, v.facing, pil.target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                 Some(s) => {
                     v.facing = s.facing;
@@ -687,7 +699,7 @@ fn pilgrim_brain(
             }
         }
 
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
@@ -875,7 +887,7 @@ fn npc_fight_back(
             }
         } else {
             // Close the gap (a touch faster than the work amble — adrenaline).
-            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
             match steer::advance(v.pos, v.facing, tp, v.speed * 1.25 * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
                 Some(s) => {
                     v.facing = s.facing;
@@ -885,7 +897,7 @@ fn npc_fight_back(
                 None => v.moving = false,
             }
         }
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
@@ -1013,7 +1025,7 @@ fn guard_combat(
                     path.cursor = 0;
                     tp
                 };
-                let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+                let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
                 if let Some(s) = steer::advance(v.pos, v.facing, step_target, GUARD_SPEED * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
                     v.facing = s.facing;
                     v.pos = s.pos;
@@ -1052,7 +1064,7 @@ fn guard_combat(
                     path.cursor = 0;
                     g.post
                 };
-                let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+                let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
                 if let Some(s) = steer::advance(v.pos, v.facing, step_target, GUARD_SPEED * 0.6 * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                     v.facing = s.facing;
                     v.pos = s.pos;
@@ -1066,7 +1078,7 @@ fn guard_combat(
         }
 
         // Ground-follow (guards own their full transform since they're out of villager_brain).
-        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
@@ -1269,9 +1281,12 @@ fn villager_limbs(
                     if working {
                         Quat::from_rotation_x((t * nod_rate).sin() * 0.06) // small nod toward the work
                     } else {
-                        // Yaw = tracked/scanning look; pitch = greeting nod + fidget peer; roll = tilt.
+                        // Yaw = tracked/scanning look; pitch = greeting nod + fidget peer + a gentle
+                        // idle breath (so a standing villager visibly breathes); roll = tilt.
+                        let (breath, _) = crate::creature_anim::idle_micro(t);
+                        let breath = if idle { breath } else { 0.0 };
                         Quat::from_rotation_y(v.head_yaw + fid.head_yaw)
-                            * Quat::from_rotation_x(greet_nod + fid.head_pitch)
+                            * Quat::from_rotation_x(greet_nod + fid.head_pitch + breath)
                             * Quat::from_rotation_z(fid.head_roll)
                     }
                 }
@@ -1343,6 +1358,9 @@ pub enum Role {
 pub struct Folk {
     skin: u32,
     tunic: u32,
+    /// The villager's cosmetic seed — kept so `reskin_townsfolk` rebuilds the SAME face/build when
+    /// the person changes job (guard ↔ worker), instead of becoming a stranger.
+    seed: u32,
 }
 
 /// Marks a body sub-mesh (torso / limb / head) under a villager root, so a re-skin can despawn
@@ -1353,7 +1371,7 @@ struct VilBodyPart;
 /// The villager's body material, kept on the root so a re-skin redresses it with the same handle
 /// (no material churn).
 #[derive(Component)]
-struct BodyMat(Handle<StandardMaterial>);
+struct BodyMat(Handle<crate::creature::CreatureMaterial>);
 
 // Work-clothes palette.
 const STRAW_HAT: u32 = 0xc9a85a;
@@ -1373,8 +1391,12 @@ struct VSpec {
     parts: Vec<PartDef>,
 }
 
-fn spec(kind: Kind) -> VSpec {
-    let (skin_hex, tunic_hex) = match kind {
+/// Build a villager body. Cosmetics (colour, face) are deterministic from `seed` via a dedicated
+/// COSMETIC rng stream `cr` that NEVER touches the gameplay `Villager.rng`. Every roll is drawn
+/// UP FRONT in a fixed, append-only order, so a guard and the worker they're re-skinned into (same
+/// seed, different `kind`) get the identical face. `kid` forces a child look (no beard, simple hair).
+fn spec(kind: Kind, seed: u32, kid: bool) -> VSpec {
+    let (id_skin, id_tunic) = match kind {
         Kind::Peasant { skin, tunic, .. } => (skin, tunic),
         Kind::Guard { skin, tunic } => (skin, tunic),
         Kind::Worker { skin, tunic, .. } => (skin, tunic),
@@ -1393,85 +1415,220 @@ fn spec(kind: Kind) -> VSpec {
         Kind::Worker { trade: Trade::Miner, .. } => Held::Pick,
         _ => Held::None,
     };
+
+    // ── Cosmetic rolls (fixed order, drawn unconditionally so re-skin keeps the same face) ──
+    let mut cr = (seed ^ 0x9E37_79B9) | 1;
+    let r_skin = next_u32(&mut cr);
+    let r_tunic = next_u32(&mut cr);
+    let r_pant = next_u32(&mut cr);
+    let r_weather = next_u32(&mut cr);
+    let r_hair = next_u32(&mut cr);
+    let r_elder = next_u32(&mut cr);
+    let r_grey = next_u32(&mut cr);
+    let r_style = next_u32(&mut cr);
+    let r_tonsure = next_u32(&mut cr);
+    let r_mood = next_u32(&mut cr);
+    let r_es = next_u32(&mut cr);
+    let r_ex = next_u32(&mut cr);
+    let r_ey = next_u32(&mut cr);
+    let r_squint = next_u32(&mut cr);
+    let r_mouth = next_u32(&mut cr);
+    let r_facial = next_u32(&mut cr);
+    let r_fstyle = next_u32(&mut cr);
+
+    // Guards/workers keep their identity colours (a re-skin stays the same person); ambient
+    // peasants/kids reroll skin+tunic for crowd variety.
+    let has_identity = guard || trade.is_some();
+    let skin_hex = if has_identity { id_skin } else { SKIN[r_skin as usize % SKIN.len()] };
+    let tunic_hex = if has_identity { id_tunic } else { TUNIC[r_tunic as usize % TUNIC.len()] };
+    let pant_hex = PANT_TONES[r_pant as usize % PANT_TONES.len()];
+    let weathered = !has_identity && r_weather % 3 == 0; // ~1/3 of ambient cloth reads worn
+    let elder = !kid && r_elder % 100 < 14; // ~14% grey-haired elders
+    let hair_hex = if elder {
+        GREY_HAIR[r_grey as usize % GREY_HAIR.len()]
+    } else {
+        HAIR_TONES[r_hair as usize % HAIR_TONES.len()]
+    };
+
     let skin = lin(skin_hex);
-    let tunic = lin(tunic_hex);
-    let pant = lin(PANT);
-    let hair = lin(HAIR);
+    let tunic = if weathered { lin_scaled(tunic_hex, 0.82) } else { lin(tunic_hex) };
+    let pant = lin(pant_hex);
+    let hair = lin(hair_hex);
     let armor = lin(ARMOR);
 
-    // Static torso: tunic + a role overlay (guard chestplate / farmer apron / woodcutter vest).
-    let mut torso_parts = vec![bx(0.42, 0.48, 0.26, v(0.0, 0.7, 0.0), tunic)];
+    // Static torso: tunic + a cinched belt + a role overlay (guard chestplate / farmer apron /
+    // woodcutter vest). Cloth surface on the fabric, Metal on the guard plate.
+    let mut torso_parts = vec![
+        surf(bx(0.42, 0.48, 0.26, v(0.0, 0.7, 0.0), tunic), Surf::Cloth),
+        surf(bx(0.06, 0.18, 0.27, v(0.0, 0.72, 0.0), lin(0xece8e0)), Surf::Cloth), // tunic placket
+        surf(bx(0.44, 0.07, 0.28, v(0.0, 0.5, 0.0), lin(BELT)), Surf::Cloth), // belt
+        surf(bx(0.09, 0.06, 0.02, v(0.0, 0.5, 0.135), lin(BUCKLE)), Surf::Metal), // belt buckle
+    ];
     match (guard, trade) {
-        (true, _) => torso_parts.push(bx(0.46, 0.4, 0.3, v(0.0, 0.7, 0.0), armor)),
-        (_, Some(Trade::Farmer)) => torso_parts.push(bx(0.4, 0.4, 0.28, v(0.0, 0.62, 0.04), lin(APRON))),
-        (_, Some(Trade::Woodcutter)) => torso_parts.push(bx(0.44, 0.42, 0.29, v(0.0, 0.72, 0.0), lin(VEST))),
-        (_, Some(Trade::Miner)) => torso_parts.push(bx(0.45, 0.44, 0.3, v(0.0, 0.7, 0.0), lin(VEST))),
+        (true, _) => torso_parts.push(surf(bx(0.46, 0.4, 0.3, v(0.0, 0.7, 0.0), armor), Surf::Metal)),
+        (_, Some(Trade::Farmer)) => torso_parts.push(surf(bx(0.4, 0.4, 0.28, v(0.0, 0.62, 0.04), lin(APRON)), Surf::Cloth)),
+        (_, Some(Trade::Woodcutter)) => torso_parts.push(surf(bx(0.44, 0.42, 0.29, v(0.0, 0.72, 0.0), lin(VEST)), Surf::Cloth)),
+        (_, Some(Trade::Miner)) => torso_parts.push(surf(bx(0.45, 0.44, 0.3, v(0.0, 0.7, 0.0), lin(VEST)), Surf::Cloth)),
         _ => {}
     }
     let torso = group(torso_parts);
 
-    // Head: skull + hair + eyes + headgear (helmet / straw hat / flat cap / peasant hat).
+    // ── Head: deterministic face kit (skull + ears + nose + varied eyes/brows/mouth/hair/beard) ──
+    // Bare-skin/hair/beard parts stay untagged (→ Skin in the shader). `bare` = no headgear, so
+    // clip-prone tall hair only spawns then.
+    let bare = !(guard || peasant_hat || trade.is_some());
     let mut head_parts = vec![
-        bx(0.3, 0.3, 0.3, Vec3::ZERO, skin),
-        bx(0.31, 0.08, 0.31, v(0.0, 0.13, 0.0), hair),
-        bx(0.04, 0.04, 0.02, v(-0.07, 0.03, 0.16), lin(EYE)),
-        bx(0.04, 0.04, 0.02, v(0.07, 0.03, 0.16), lin(EYE)),
+        bx(0.3, 0.3, 0.3, Vec3::ZERO, skin),            // skull
+        bx(0.04, 0.08, 0.06, v(-0.16, 0.0, 0.0), skin), // ears
+        bx(0.04, 0.08, 0.06, v(0.16, 0.0, 0.0), skin),
+        bx(0.06, 0.05, 0.05, v(0.0, -0.02, 0.16), skin), // nose
     ];
+    // Eyes — varied size / spacing / height, occasional squint.
+    let es = 0.035 + (r_es % 3) as f32 * 0.012;
+    let ex = 0.06 + (r_ex % 3) as f32 * 0.015;
+    let ey = 0.02 + (r_ey % 3) as f32 * 0.012;
+    let eh = if r_squint % 7 == 0 { 0.025 } else { es };
+    head_parts.push(bx(es, eh, 0.02, v(-ex, ey, 0.16), lin(EYE)));
+    head_parts.push(bx(es, eh, 0.02, v(ex, ey, 0.16), lin(EYE)));
+    // Brows — hair-coloured, angled by mood (guards never look surprised).
+    let mood = if guard { r_mood % 2 } else { r_mood % 3 };
+    let (bl, brr) = match mood {
+        1 => (0.5_f32, -0.5), // angry V (inner ends low)
+        2 => (-0.30, 0.30),   // raised / surprised
+        _ => (0.0, 0.0),      // neutral
+    };
+    let by = ey + 0.055;
+    head_parts.push(bxr(0.10, 0.035, 0.04, v(-ex, by, 0.155), Quat::from_rotation_z(bl), hair));
+    head_parts.push(bxr(0.10, 0.035, 0.04, v(ex, by, 0.155), Quat::from_rotation_z(brr), hair));
+    // Mouth — guards grim, kids smile, others vary.
+    let mshape = if guard {
+        r_mouth % 2
+    } else if kid {
+        3
+    } else {
+        r_mouth % 4
+    };
+    let (mw, my) = match mshape {
+        1 => (0.07, -0.10),  // grim
+        2 => (0.09, -0.095), // frown
+        3 => (0.10, -0.08),  // smile
+        _ => (0.08, -0.085), // flat
+    };
+    head_parts.push(bx(mw, 0.022, 0.02, v(0.0, my, 0.16), lin(LIP)));
+    // Hair style — CROP / MOP / BALD / LONG; clip-prone LONG falls back to CROP under headgear.
+    let mut style = r_style % 4;
+    if !bare && style == 3 {
+        style = 0;
+    }
+    match style {
+        1 => {
+            // MOP — shaggy: top + side flaps + back.
+            head_parts.push(bx(0.32, 0.10, 0.32, v(0.0, 0.14, 0.0), hair));
+            head_parts.push(bx(0.06, 0.16, 0.30, v(-0.155, 0.04, 0.0), hair));
+            head_parts.push(bx(0.06, 0.16, 0.30, v(0.155, 0.04, 0.0), hair));
+            head_parts.push(bx(0.30, 0.14, 0.06, v(0.0, 0.02, -0.155), hair));
+        }
+        2 => {
+            // BALD — bare skull, sometimes a tonsure rim.
+            if r_tonsure % 2 == 0 {
+                head_parts.push(bx(0.31, 0.03, 0.31, v(0.0, 0.10, 0.0), hair));
+            }
+        }
+        3 => {
+            // LONG — top + a back curtain to the neck (bare heads only).
+            head_parts.push(bx(0.31, 0.08, 0.31, v(0.0, 0.13, 0.0), hair));
+            head_parts.push(bx(0.30, 0.26, 0.07, v(0.0, -0.06, -0.155), hair));
+        }
+        _ => {
+            // CROP — the classic top slab.
+            head_parts.push(bx(0.31, 0.08, 0.31, v(0.0, 0.13, 0.0), hair));
+        }
+    }
+    // Beard / moustache / stubble — a minority; forced for woodcutters + elders, never for kids.
+    let has_facial = !kid
+        && (r_facial % 20 < 11 || elder || matches!(trade, Some(Trade::Woodcutter)));
+    if has_facial {
+        let beard = if elder { lin(GREY_HAIR[r_grey as usize % GREY_HAIR.len()]) } else { hair };
+        match r_fstyle % 4 {
+            0 => head_parts.push(bx(0.20, 0.10, 0.04, v(0.0, -0.10, 0.145), lin_scaled(skin_hex, 0.78))), // stubble
+            1 => head_parts.push(bx(0.14, 0.035, 0.03, v(0.0, -0.055, 0.155), beard)), // moustache
+            2 => {
+                head_parts.push(bx(0.22, 0.12, 0.06, v(0.0, -0.12, 0.13), beard)); // short beard
+                head_parts.push(bx(0.05, 0.12, 0.10, v(-0.13, -0.10, 0.08), beard));
+                head_parts.push(bx(0.05, 0.12, 0.10, v(0.13, -0.10, 0.08), beard));
+            }
+            _ => {
+                head_parts.push(bx(0.22, 0.12, 0.06, v(0.0, -0.12, 0.13), beard)); // long beard
+                head_parts.push(bx(0.05, 0.12, 0.10, v(-0.13, -0.10, 0.08), beard));
+                head_parts.push(bx(0.05, 0.12, 0.10, v(0.13, -0.10, 0.08), beard));
+                head_parts.push(bx(0.18, 0.16, 0.07, v(0.0, -0.22, 0.11), beard));
+            }
+        }
+    }
+    // Per-type headgear (pushed AFTER the face) + small recognition props.
     match (guard, trade, peasant_hat) {
         (true, _, _) => {
-            head_parts.push(bx(0.34, 0.16, 0.34, v(0.0, 0.16, 0.0), armor)); // helmet
-            head_parts.push(cone(0.1, 0.16, v(0.0, 0.3, 0.0), Quat::IDENTITY, armor)); // crest spike
+            head_parts.push(surf(bx(0.34, 0.16, 0.34, v(0.0, 0.16, 0.0), armor), Surf::Metal)); // helmet
+            head_parts.push(surf(cone(0.1, 0.16, v(0.0, 0.3, 0.0), Quat::IDENTITY, armor), Surf::Metal)); // crest spike
+            head_parts.push(surf(bx(0.04, 0.20, 0.05, v(-0.155, 0.0, 0.05), lin(STRAP)), Surf::Cloth)); // chin-strap
+            head_parts.push(surf(bx(0.04, 0.20, 0.05, v(0.155, 0.0, 0.05), lin(STRAP)), Surf::Cloth));
         }
         (_, Some(Trade::Farmer), _) => {
-            head_parts.push(bx(0.5, 0.04, 0.5, v(0.0, 0.18, 0.0), lin(STRAW_HAT))); // wide straw brim
-            head_parts.push(cone(0.18, 0.14, v(0.0, 0.2, 0.0), Quat::IDENTITY, lin(STRAW_HAT))); // crown
+            head_parts.push(surf(bx(0.5, 0.04, 0.5, v(0.0, 0.18, 0.0), lin(STRAW_HAT)), Surf::Cloth)); // wide straw brim
+            head_parts.push(surf(cone(0.18, 0.14, v(0.0, 0.2, 0.0), Quat::IDENTITY, lin(STRAW_HAT)), Surf::Cloth)); // crown
         }
         (_, Some(Trade::Woodcutter), _) => {
-            head_parts.push(bx(0.34, 0.1, 0.34, v(0.0, 0.18, 0.0), lin(CAP))); // flat cap
-            head_parts.push(bx(0.34, 0.05, 0.14, v(0.0, 0.16, 0.2), lin(CAP))); // peak
+            head_parts.push(surf(bx(0.34, 0.1, 0.34, v(0.0, 0.18, 0.0), lin(CAP)), Surf::Cloth)); // flat cap
+            head_parts.push(surf(bx(0.34, 0.05, 0.14, v(0.0, 0.16, 0.2), lin(CAP)), Surf::Cloth)); // peak
         }
         (_, Some(Trade::Miner), _) => {
-            // A snug skullcap (no peak) — reads as a digger's cap, distinct from the woodcutter.
-            head_parts.push(bx(0.35, 0.13, 0.35, v(0.0, 0.16, 0.0), lin(CAP)));
+            head_parts.push(surf(bx(0.35, 0.13, 0.35, v(0.0, 0.16, 0.0), lin(CAP)), Surf::Cloth)); // skullcap
+            head_parts.push(bx(0.30, 0.14, 0.04, v(0.0, -0.08, 0.155), lin(SOOT))); // soot smudge (Skin)
+            head_parts.push(surf(bx(0.05, 0.05, 0.05, v(0.0, 0.16, 0.18), lin(MINER_LAMP)), Surf::Metal)); // brass lamp clip
         }
-        (_, _, true) => head_parts.push(cone(0.22, 0.2, v(0.0, 0.22, 0.0), Quat::IDENTITY, lin(HAT))),
+        (_, _, true) => head_parts.push(surf(cone(0.22, 0.2, v(0.0, 0.22, 0.0), Quat::IDENTITY, lin(HAT)), Surf::Cloth)),
         _ => {}
     }
     let head = group(head_parts);
 
-    // Legs (top at the hip pivot).
-    let leg = || group(vec![bx(0.16, 0.36, 0.18, v(0.0, -0.18, 0.0), pant)]);
+    // Legs (top at the hip pivot) — trousers + a leather boot at the foot (added detail).
+    let leg = || {
+        group(vec![
+            surf(bx(0.16, 0.36, 0.18, v(0.0, -0.18, 0.0), pant), Surf::Cloth),
+            bx(0.17, 0.1, 0.22, v(0.0, -0.36, 0.03), lin(BOOT)), // boot (leather → Skin default)
+        ])
+    };
 
-    // Arms — the right arm carries the role's held item (sword / hoe / axe).
+    // Arms — sleeve (Cloth) + bare hand (Skin) + the role's held item; metal heads tagged Metal.
     let arm = |held: Held| {
         let mut p = vec![
-            bx(0.13, 0.36, 0.22, v(0.0, -0.18, 0.0), tunic), // sleeve
-            bx(0.12, 0.1, 0.2, v(0.0, -0.42, 0.0), skin),    // hand
+            surf(bx(0.13, 0.36, 0.22, v(0.0, -0.18, 0.0), tunic), Surf::Cloth), // sleeve
+            bx(0.12, 0.1, 0.2, v(0.0, -0.42, 0.0), skin),                       // hand
         ];
         if guard {
-            p.push(bx(0.18, 0.16, 0.26, v(0.0, 0.02, 0.0), armor)); // pauldron
+            p.push(surf(bx(0.18, 0.16, 0.26, v(0.0, 0.02, 0.0), armor), Surf::Metal)); // pauldron
         }
         let hand = v(0.0, -0.46, 0.1);
         match held {
             Held::None => {}
             Held::Sword => {
-                p.push(bx(0.18, 0.06, 0.05, hand, lin(SWORD_GUARD)));
-                p.push(bx(0.05, 0.06, 0.5, hand + v(0.0, 0.0, 0.32), lin(SWORD_BLADE)));
+                p.push(surf(bx(0.18, 0.06, 0.05, hand, lin(SWORD_GUARD)), Surf::Metal));
+                p.push(surf(bx(0.05, 0.06, 0.5, hand + v(0.0, 0.0, 0.32), lin(SWORD_BLADE)), Surf::Metal));
             }
             Held::Hoe => {
                 // A long shaft forward-down + a small blade at the tip.
                 p.push(bx(0.05, 0.05, 0.66, hand + v(0.0, -0.06, 0.28), lin(TOOL_WOOD)));
-                p.push(bx(0.16, 0.04, 0.1, hand + v(0.0, -0.12, 0.6), lin(TOOL_METAL)));
+                p.push(surf(bx(0.16, 0.04, 0.1, hand + v(0.0, -0.12, 0.6), lin(TOOL_METAL)), Surf::Metal));
             }
             Held::Axe => {
                 // A shaft + a wedge head near the tip.
                 p.push(bx(0.05, 0.05, 0.56, hand + v(0.0, -0.04, 0.24), lin(TOOL_WOOD)));
-                p.push(bx(0.16, 0.18, 0.06, hand + v(0.0, 0.0, 0.5), lin(TOOL_METAL)));
+                p.push(surf(bx(0.16, 0.18, 0.06, hand + v(0.0, 0.0, 0.5), lin(TOOL_METAL)), Surf::Metal));
             }
             Held::Pick => {
                 // A shaft + a crossways double-pointed pick head (a bar across the tip).
                 p.push(bx(0.05, 0.05, 0.58, hand + v(0.0, -0.04, 0.25), lin(TOOL_WOOD)));
-                p.push(bx(0.46, 0.05, 0.05, hand + v(0.0, 0.02, 0.52), lin(TOOL_METAL)));
+                p.push(surf(bx(0.46, 0.05, 0.05, hand + v(0.0, 0.02, 0.52), lin(TOOL_METAL)), Surf::Metal));
             }
         }
         group(p)
@@ -1494,8 +1651,16 @@ fn spec(kind: Kind) -> VSpec {
 /// after the castle. The town's actual **population** (the 4 starting peasants, and any grown or
 /// rescued since) are NOT spawned here — `town::sync_population_bodies` reconciles those bodies to
 /// `town.population`, so the headcount you see always equals the headcount the HUD reports.
-pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+pub fn populate(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+) {
+    // `mat` dresses the static PROPS (stall/well/woodpile) — they stay on the plain white
+    // material. `body_mat` is the textured creature material the villager BODIES draw against.
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    let body_mat = crate::creature::make_creature_material(creature_mats);
     let mut rng: u32 = 0x5117_aced;
     let mut placed: Vec<Vec2> = Vec::new();
     let half = crate::castle::courtyard_half();
@@ -1521,7 +1686,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         let g = gates[i % gates.len()];
         let home = g + (-g).normalize_or_zero() * 2.0;
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: PILGRIM_ROBE, hat: true };
-        let e = spawn(commands, meshes, &mat, kind, home, home, 1.5, 2.0, SCALE, next_u32(&mut rng));
+        let e = spawn(commands, meshes, &body_mat, kind, home, home, 1.5, 2.0, SCALE, next_u32(&mut rng));
         commands.entity(e).insert(Pilgrim {
             target: home,
             pause: 0.0,
@@ -1567,8 +1732,41 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     for i in 0..4 {
         let home = play + Vec2::new(rng_range(&mut rng, -1.6, 1.6), rng_range(&mut rng, -1.6, 1.6));
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: TUNIC[(i + 1) % TUNIC.len()], hat: i % 2 == 0 };
-        let e = spawn(commands, meshes, &mat, kind, home, home, 2.8, 1.7, KID_SCALE, next_u32(&mut rng));
+        let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.8, 1.7, KID_SCALE, next_u32(&mut rng));
         commands.entity(e).insert(Kid);
+    }
+
+    // Screenshot hook: `FOREST_VILLINE="x,z"` parks one of each townsperson look in a line at the
+    // given world XZ for model/texture close-ups (mirrors `FOREST_ORKLINE`/`FOREST_WILDLINE`):
+    // peasant · farmer · woodcutter · miner · guard. Tiny wander radius so they idle in place.
+    if let Ok(s) = std::env::var("FOREST_VILLINE") {
+        let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        if p.len() == 2 {
+            let kinds = [
+                Kind::Peasant { skin: SKIN[0], tunic: TUNIC[0], hat: false },
+                Kind::Worker { trade: Trade::Farmer, skin: SKIN[1], tunic: TUNIC[2] },
+                Kind::Worker { trade: Trade::Woodcutter, skin: SKIN[2], tunic: TUNIC[1] },
+                Kind::Worker { trade: Trade::Miner, skin: SKIN[0], tunic: TUNIC[3] },
+                Kind::Guard { skin: SKIN[1], tunic: TUNIC[0] },
+            ];
+            for (i, k) in kinds.into_iter().enumerate() {
+                let x = p[0] + i as f32 * 1.5 - 3.0;
+                let home = Vec2::new(x, p[1]);
+                // speed 0 + wander 0 → they stand stock-still for the capture.
+                let e = spawn(commands, meshes, &body_mat, k, home, home, 0.0, 0.0, SCALE, 50 + i as u32 * 13);
+                // Face the camera (−Z) + tag SceneActor so the wander brain leaves the transform
+                // alone and the facing sticks (clean front-on face shots).
+                let y = worldmap::ground_at_world(x, p[1]).unwrap_or(0.0);
+                commands.entity(e).insert((
+                    crate::scenes::SceneActor,
+                    Transform {
+                        translation: Vec3::new(x, y, p[1]),
+                        rotation: Quat::from_rotation_y(std::f32::consts::PI),
+                        scale: Vec3::splat(SCALE),
+                    },
+                ));
+            }
+        }
     }
 }
 
@@ -1665,7 +1863,7 @@ fn courtyard_spot(rng: &mut u32, half: (f32, f32), placed: &[Vec2]) -> Option<Ve
 fn spawn(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    mat: &Handle<StandardMaterial>,
+    mat: &Handle<crate::creature::CreatureMaterial>,
     kind: Kind,
     home: Vec2,
     pos: Vec2,
@@ -1710,7 +1908,8 @@ fn spawn(
             BiomeEntity,
         ))
         .id();
-    build_body(&mut commands.entity(root), spec(kind), mat, meshes);
+    // Kids pass KID_SCALE (< SCALE) — detect that here so spec() gives them a child look.
+    build_body(&mut commands.entity(root), spec(kind, seed, scale < SCALE), mat, meshes);
 
     // Armoured townsfolk double as town guards — they fight invaders at night and can be pulled to
     // staff a producer by day (the `Townsfolk` pool). They carry their identity colours [`Folk`] +
@@ -1722,7 +1921,7 @@ fn spawn(
             NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
             crate::navgrid::NavPath::default(),
             Townsfolk,
-            Folk { skin, tunic },
+            Folk { skin, tunic, seed },
             Role::Guard,
             BodyMat(mat.clone()),
         ));
@@ -1732,7 +1931,7 @@ fn spawn(
 
 /// Spawn a villager's body (torso + limbs + head) as children of `root`, each tagged
 /// [`VilBodyPart`] so a re-skin can despawn exactly the body. Shared by [`spawn`] + [`reskin_townsfolk`].
-fn build_body(root: &mut bevy::ecs::system::EntityCommands, s: VSpec, mat: &Handle<StandardMaterial>, meshes: &mut Assets<Mesh>) {
+fn build_body(root: &mut bevy::ecs::system::EntityCommands, s: VSpec, mat: &Handle<crate::creature::CreatureMaterial>, meshes: &mut Assets<Mesh>) {
     let torso = meshes.add(s.torso);
     let parts: Vec<(PartKind, Vec3, Handle<Mesh>)> =
         s.parts.into_iter().map(|p| (p.kind, p.pivot, meshes.add(p.mesh))).collect();
@@ -1782,7 +1981,7 @@ fn reskin_townsfolk(
             Role::Guard => Kind::Guard { skin: f.skin, tunic: f.tunic },
             Role::Working(trade) => Kind::Worker { trade, skin: f.skin, tunic: f.tunic },
         };
-        build_body(&mut commands.entity(e), spec(kind), &body_mat.0, &mut meshes);
+        build_body(&mut commands.entity(e), spec(kind, f.seed, false), &body_mat.0, &mut meshes);
         *role = desired;
     }
 }
@@ -1809,6 +2008,9 @@ fn group(parts: Vec<Mesh>) -> Mesh {
 }
 fn bx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
     tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
+}
+fn bxr(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
+    tinted(Cuboid::new(w, h, d).mesh().build().rotated_by(rot).translated_by(off), c)
 }
 fn cone(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
     tinted(Cone { radius: r, height: h }.mesh().build().rotated_by(rot).translated_by(off), c)

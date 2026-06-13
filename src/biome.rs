@@ -36,7 +36,7 @@ const FOG_FULL: f32 = 190.0;
 /// rolls per tile. One lever each, applied uniformly across all biomes + the grass
 /// frontier. Back these down if the enlarged + denser map stutters.
 const SCATTER_DENSITY: f32 = 1.35;
-const COVER_DENSITY: f32 = 1.5;
+const COVER_DENSITY: f32 = 1.8;
 
 /// Fog knobs: `FOREST_FOG="clear,full"` overrides at runtime (no rebuild). `clear` = the
 /// fully-clear radius; `full` = distance the fog reaches the horizon colour (smaller = thicker).
@@ -78,6 +78,11 @@ pub struct AtmoSample {
     pub sun_illuminance: f32,
     pub ambient_color: Color,
     pub ambient_brightness: f32,
+    /// Authored fog thickness (TS `fog_density`). `scene::advance_sky` maps this to a per-region
+    /// fog distance so dense biomes (swamp/Blight) pull the fog wall in close, clear ones (forest)
+    /// keep the open-island distance. Eased like the colours so crossing a region edge ramps the
+    /// fog rather than popping. Previously dead authored data.
+    pub fog_density: f32,
 }
 
 impl AtmoSample {
@@ -90,16 +95,25 @@ impl AtmoSample {
             sun_illuminance: c.sun_illuminance,
             ambient_color: srgb(c.ambient_color),
             ambient_brightness: c.ambient_brightness,
+            fog_density: c.fog_density,
         }
     }
     /// Build from the island-wide [`crate::worldmap::ATMOSPHERE`] tuple (the grass/ocean base).
-    pub fn from_raw(sky: u32, sun_color: u32, sun_illuminance: f32, ambient_color: u32, ambient_brightness: f32) -> Self {
+    pub fn from_raw(
+        sky: u32,
+        sun_color: u32,
+        sun_illuminance: f32,
+        ambient_color: u32,
+        ambient_brightness: f32,
+        fog_density: f32,
+    ) -> Self {
         Self {
             sky: srgb(sky),
             sun_color: srgb(sun_color),
             sun_illuminance,
             ambient_color: srgb(ambient_color),
             ambient_brightness,
+            fog_density,
         }
     }
 }
@@ -111,12 +125,16 @@ pub struct BiomeAmbience {
     pub particle: ParticleKind,
 }
 
-/// Captured at world build: the island base (grass/ocean) ambience + one per biome. The
-/// atmosphere system and the weather system both read this to know the hero region's target.
+/// Captured at world build: the island base (grass/ocean) ambience + one per biome + the
+/// Blight's bespoke red-ember ambience. The atmosphere system and the weather system both read
+/// this to know the hero region's target.
 #[derive(Resource)]
 pub struct BiomeAmbiences {
     pub base: BiomeAmbience,
     pub list: Vec<(Biome, BiomeAmbience)>,
+    /// The ork castle (the Blight) reads as [`Biome::Swamp`] to gameplay, but its *mood* is its
+    /// own — a sooty blood-red horizon + ash, not swamp green. Surfaced only by [`Self::sample_world`].
+    pub blight: BiomeAmbience,
 }
 
 impl BiomeAmbiences {
@@ -125,6 +143,16 @@ impl BiomeAmbiences {
         match b {
             Some(b) => self.list.iter().find(|(k, _)| *k == b).map(|(_, a)| *a).unwrap_or(self.base),
             None => self.base,
+        }
+    }
+    /// World-space ambience lookup: the Blight gets its own red-ember mood; everywhere else falls
+    /// back to the biome-keyed [`Self::sample`]. This is the single lookup the per-region
+    /// atmosphere + weather systems use, so the ork castle stops inheriting swamp's grey-green sky.
+    pub fn sample_world(&self, wx: f32, wz: f32) -> BiomeAmbience {
+        if crate::ork_fortress::in_blight_world(wx, wz) {
+            self.blight
+        } else {
+            self.sample(crate::worldmap::biome_at_world(wx, wz))
         }
     }
 }
@@ -199,7 +227,7 @@ pub struct Backdrop {
 
 /// Ambient weather particle drifting over the patch.
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Fireflies/Pollen are available presets not used by a biome yet
+#[allow(dead_code)] // Fireflies is an available preset not used by a biome yet
 pub enum ParticleKind {
     None,
     Snow,
@@ -207,6 +235,8 @@ pub enum ParticleKind {
     Fireflies,
     Pollen,
     Mist,
+    /// Dark embery motes drifting + rising over the Blight (the ork castle burned the forest).
+    Ash,
 }
 
 /// Everything that describes a biome. The world map consumes the **scatter** fields (per-tile
@@ -280,6 +310,7 @@ fn apply_build(
     mut std_mats: ResMut<Assets<StandardMaterial>>,
     mut terrain_mats: ResMut<Assets<TerrainMaterial>>,
     mut water_mats: ResMut<Assets<WaterMaterial>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     existing: Query<Entity, With<BiomeEntity>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
@@ -304,7 +335,7 @@ fn apply_build(
     // tracker but have no blocker — you walk straight through them.
     *castle_built = crate::castle::CastleBuilt::default();
 
-    crate::worldmap::build(&mut commands, &mut meshes, &mut images, &mut std_mats, &mut terrain_mats, &mut water_mats);
+    crate::worldmap::build(&mut commands, &mut meshes, &mut images, &mut std_mats, &mut terrain_mats, &mut water_mats, &mut creature_mats);
     info!("view → world map");
     let atmo: Atmo = crate::worldmap::ATMOSPHERE;
 
@@ -513,12 +544,28 @@ fn spawn_chunks(
 /// Bake each prop's transform into its vertices and merge the bucket into one mesh
 /// (`None` if empty). All parts share POSITION/NORMAL/COLOR (UV stripped at upload), so the
 /// merge always succeeds; the transform is already relative to the chunk centre.
+///
+/// Cover props MIX indexed-ness: the grass tuft is NON-indexed (its `blade()`s call
+/// `duplicate_vertices` for the crisp flat facets), while clover/fern/flower/mushroom stay
+/// INDEXED. `Mesh::merge` only concatenates index buffers when BOTH meshes are indexed —
+/// otherwise it appends the vertices but DROPS the incoming indices (see bevy_mesh `merge`).
+/// So an indexed prop merged onto a non-indexed base (any chunk whose first cover prop is a
+/// grass tuft) loses its triangle ordering and renders as huge garbage triangles fanning
+/// across the chunk. Normalise every part to non-indexed FIRST so the merge is always a clean
+/// vertex-soup concat regardless of bucket order. (Cover/scatter meshes are tiny, so the extra
+/// duplicated verts are negligible; trees are spawned as individual entities, not bucketed.)
 fn merge_props(props: Vec<PendingProp>) -> Option<Mesh> {
+    fn unindex(mut m: Mesh) -> Mesh {
+        if m.indices().is_some() {
+            m.duplicate_vertices(); // → non-indexed (panics on None indices, hence the guard)
+        }
+        m
+    }
     let mut it = props.into_iter();
     let first = it.next()?;
-    let mut base = first.mesh.transformed_by(first.transform);
+    let mut base = unindex(first.mesh.transformed_by(first.transform));
     for p in it {
-        let part = p.mesh.transformed_by(p.transform);
+        let part = unindex(p.mesh.transformed_by(p.transform));
         base.merge(&part).expect("scatter props share attributes");
     }
     Some(base)

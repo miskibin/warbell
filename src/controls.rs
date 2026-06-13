@@ -1,34 +1,18 @@
-//! Free-look fly camera so the scene can be explored.
-//!
-//! - **WASD** — move (relative to look direction)
-//! - **Space / Left-Ctrl** — up / down
-//! - **Left-Shift** — sprint
-//! - **Hold Right-Mouse** — look around (cursor is locked + hidden while held)
-//!
-//! The capture harness still works: with `FOREST_SHOT` set there's no input, so the
-//! camera holds its initial pose for the screenshot.
+//! Free-look fly camera. WASD move · Space/Ctrl up·down · Shift sprint · RMB look.
 
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 const SENSITIVITY: f32 = 0.0022;
-const MOVE_SPEED: f32 = 9.0;
-const SPRINT_MULT: f32 = 1.53;
+const MOVE_SPEED: f32 = 22.0;
+const SPRINT_MULT: f32 = 3.5;
 /// Don't let the camera sink below the canopy floor.
 const MIN_Y: f32 = 0.4;
 
-/// Cinematic smoothing rates (1/sec). Higher = snappier, lower = more floaty/filmic.
-/// The smoothed value chases its target by `1 - exp(-rate*dt)` each frame (frame-rate
-/// independent), so raw mouse jitter and instant key on/off become eased ramps — the slow
-/// glide that reads as a tripod/gimbal move in a trailer rather than a twitchy debug fly.
-/// Look lags the mouse so flicks settle smoothly; move builds/sheds momentum so dolly
-/// starts and stops ease instead of popping. BOTH run their rate through TWO cascaded
-/// filters (target → mid → rendered): one stage alone starts every direction change at
-/// max rate (a visible kick); the cascade ramps the rate itself, so look pans and dolly
-/// turns blend as S-curves instead of corners.
-const LOOK_SMOOTH: f32 = 3.0;
-const MOVE_SMOOTH: f32 = 3.0;
+/// Smoothing rates (1/sec). High = snappy, low = floaty.
+const LOOK_SMOOTH: f32 = 18.0;
+const MOVE_SMOOTH: f32 = 12.0;
 
 /// Marks the camera as fly-controllable. Mouse/keys drive the `target_*`/desired velocity;
 /// the live `yaw`/`pitch`/`vel` chase those targets with damping for cinematic motion.
@@ -37,18 +21,11 @@ pub struct FlyCam {
     /// Smoothed (rendered) yaw/pitch — what the transform actually uses.
     pub yaw: f32,
     pub pitch: f32,
-    /// Where the mouse wants the look to be; `mid_*` ease toward these.
+    /// Where the mouse wants the look to be; the rendered `yaw`/`pitch` ease toward these.
     pub target_yaw: f32,
     pub target_pitch: f32,
-    /// First look-smoothing stage between `target_*` and the rendered `yaw`/`pitch` — gives
-    /// pans an S-curve response so a mouse flick ramps in instead of snapping to full rate.
-    pub mid_yaw: f32,
-    pub mid_pitch: f32,
-    /// Smoothed world-space velocity (momentum), eased toward `vel_target`.
+    /// Smoothed world-space velocity (momentum); eased toward the keyboard's desired velocity.
     pub vel: Vec3,
-    /// First smoothing stage between the keyboard's desired velocity and `vel` — gives the
-    /// velocity an S-curve response so direction changes have no acceleration pop.
-    pub vel_target: Vec3,
 }
 
 impl FlyCam {
@@ -58,10 +35,7 @@ impl FlyCam {
             pitch,
             target_yaw: yaw,
             target_pitch: pitch,
-            mid_yaw: yaw,
-            mid_pitch: pitch,
             vel: Vec3::ZERO,
-            vel_target: Vec3::ZERO,
         }
     }
 }
@@ -118,11 +92,8 @@ fn fly_camera(
             cam.target_yaw -= d.x * SENSITIVITY;
             cam.target_pitch = (cam.target_pitch - d.y * SENSITIVITY).clamp(-1.54, 1.54);
         }
-        // Two cascaded stages (target → mid → rendered) so the pan rate itself eases in/out.
-        cam.mid_yaw += (cam.target_yaw - cam.mid_yaw) * look_a;
-        cam.mid_pitch += (cam.target_pitch - cam.mid_pitch) * look_a;
-        cam.yaw += (cam.mid_yaw - cam.yaw) * look_a;
-        cam.pitch += (cam.mid_pitch - cam.pitch) * look_a;
+        cam.yaw += (cam.target_yaw - cam.yaw) * look_a;
+        cam.pitch += (cam.target_pitch - cam.pitch) * look_a;
         tf.rotation = Quat::from_euler(EulerRot::YXZ, cam.yaw, cam.pitch, 0.0);
 
         let forward = tf.forward();
@@ -147,22 +118,15 @@ fn fly_camera(
             dir -= Vec3::Y;
         }
 
-        // Desired velocity from keys, eased through two cascaded stages (desired → vel_target
-        // → vel) so direction changes ramp their acceleration — soft S-curve turns, no kick.
         let speed = if keys.pressed(KeyCode::ShiftLeft) { MOVE_SPEED * SPRINT_MULT } else { MOVE_SPEED };
         let desired = dir.normalize_or_zero() * speed;
-        let vel_target = cam.vel_target + (desired - cam.vel_target) * move_a;
-        cam.vel_target = vel_target;
-        let vel = cam.vel + (vel_target - cam.vel) * move_a;
-        cam.vel = vel;
-        tf.translation += vel * dt;
+        let new_vel = cam.vel + (desired - cam.vel) * move_a;
+        cam.vel = new_vel;
+        tf.translation += cam.vel * dt;
         if tf.translation.y < MIN_Y {
             tf.translation.y = MIN_Y;
             if cam.vel.y < 0.0 {
                 cam.vel.y = 0.0;
-            }
-            if cam.vel_target.y < 0.0 {
-                cam.vel_target.y = 0.0;
             }
         }
     }

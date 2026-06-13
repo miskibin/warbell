@@ -36,10 +36,8 @@ impl Plugin for SuccessionPlugin {
         app.init_resource::<Lives>()
             .add_systems(OnExit(AppState::StartScreen), reset_lives)
             .add_systems(OnExit(AppState::GameOver), reset_lives)
-            .add_systems(
-                OnExit(AppState::Paused),
-                reset_lives.run_if(crate::game_state::restart_requested),
-            )
+            // `OnExit(GameOver)` fires on an in-process Continue (fresh runs relaunch instead);
+            // `reset_lives` clears the defeat flag before `apply_pending_load` restores the save.
             // Ungated: the heir count shown in the HUD tracks the town even while frozen.
             .add_systems(Update, mirror_heirs)
             .add_systems(Update, watch_bloodline.run_if(in_state(AppState::Playing)));

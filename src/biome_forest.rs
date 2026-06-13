@@ -42,11 +42,12 @@ pub fn config() -> BiomeConfig {
             streak: 0.5,
         },
 
-        sky: 0xb2d1ed,
-        fog_density: 0.009,
-        sun_color: 0xffedc7,
+        // Lush home woodland: soft blue sky, warm dappled sun, a green-tinged canopy-bounce fill.
+        sky: 0xaed3e6,
+        fog_density: 0.009, // clearest on the map — the open-island fog baseline
+        sun_color: 0xffe9bb,
         sun_illuminance: 10_500.0,
-        ambient_color: 0xe0edff,
+        ambient_color: 0xd8ecd6,
         ambient_brightness: 85.0,
         sun_pos: Vec3::new(16.0, 40.0, 10.0),
 
@@ -130,8 +131,20 @@ pub fn config() -> BiomeConfig {
             },
         ],
         cover: vec![
-            PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.15, scale: (0.45, 0.7), tree: false, block_radius: 0.0 },
-            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.30, scale: (0.7, 1.2), tree: false, block_radius: 0.0 },
+            PropClass {
+                variants: (0..gc::NUM_GRASS_VARIANTS).map(|v| (gc::build_grass_tuft_mesh(v), 1.0)).collect(),
+                chance: 0.22,
+                scale: (0.6, 1.2),
+                tree: false,
+                block_radius: 0.0,
+            },
+            PropClass {
+                variants: (0..gc::NUM_CLOVER_VARIANTS).map(|v| (gc::build_clover_mesh(v), 1.0)).collect(),
+                chance: 0.30,
+                scale: (0.7, 1.2),
+                tree: false,
+                block_radius: 0.0,
+            },
             PropClass {
                 variants: (0..4).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
                 chance: 0.13,
@@ -148,7 +161,13 @@ pub fn config() -> BiomeConfig {
                 tree: false,
                 block_radius: 0.0,
             },
-            PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.08, scale: (0.7, 1.1), tree: false, block_radius: 0.0 },
+            PropClass {
+                variants: (0..gc::NUM_FERN_VARIANTS).map(|v| (gc::build_fern_mesh(v), 1.0)).collect(),
+                chance: 0.08,
+                scale: (0.7, 1.1),
+                tree: false,
+                block_radius: 0.0,
+            },
             // Forest-floor litter — pinecones, acorns, pebbles, fallen leaves.
             PropClass {
                 variants: (0..gc::NUM_LITTER_VARIANTS).map(|v| (gc::build_floor_litter_mesh(v), 1.0)).collect(),
@@ -175,7 +194,8 @@ pub fn config() -> BiomeConfig {
             treeline_mid: 0x365c3e,
             hill_h: (34.0, 78.0),
         },
-        particle: ParticleKind::None,
+        // Drifting golden pollen — a gentle sunlit-glade shimmer that marks the forest as alive.
+        particle: ParticleKind::Pollen,
     }
 }
 

@@ -37,34 +37,52 @@ pub const PREP_DURATION: f32 = 195.0;
 pub const MIN_PREP_SECONDS: f32 = 3.0;
 
 /// One escalating assault wave. `variants` is sampled round-robin by spawn index; `hp_scale`
-/// multiplies each ork's base HP; `count` orks spawn `spawn_interval` seconds apart.
+/// multiplies each ork's base HP; `dmg_scale` multiplies every invader attack (melee/bolt/keep/
+/// building) that night; `count` orks spawn `spawn_interval` seconds apart.
 pub struct WaveDef {
     pub count: u32,
     pub hp_scale: f32,
+    /// Per-night attack multiplier on all invader damage (see [`night_dmg_scale`]). 1.0 = base.
+    pub dmg_scale: f32,
     pub variants: &'static [OrkVariant],
     pub spawn_interval: f32,
 }
 
 use OrkVariant::{Berserker, Grunt, Scout, Shaman};
 
-/// The eight waves. Night 1 is an easy opener (grunts + a scout, base HP); counts and HP ramp
-/// steeper each night (hp_scale ≈ 1.1·1.15^n); the final wave is a lone giant boss.
+/// The eight waves. Night 1 is a gentle opener (a small grunt+scout band at base HP/damage, spawned
+/// slowly so few are alive at once); counts, HP **and** per-night attack then ramp HARD each night
+/// — the later sieges are meant to be a swarm, not a stroll. The final wave is a lone giant boss.
+///
+/// Tuning history: night 1 used to be 6 orks at a 1.2s interval which read as too punishing before
+/// any upgrades, while the mid/late nights plateaued too soft. This pass eased night 1 (5 orks, no
+/// dmg/hp bonus, 1.3s spawn → less early swarm) and steepened nights 4–7 in count, `hp_scale` and
+/// the new `dmg_scale` (later orks both endure and hit far harder), with tighter intervals up top
+/// so more of the warband is alive at once.
 pub const WAVES: [WaveDef; 8] = [
-    WaveDef { count: 6, hp_scale: 1.0, variants: &[Grunt, Grunt, Scout, Grunt], spawn_interval: 1.2 },
-    WaveDef { count: 8, hp_scale: 1.18, variants: &[Grunt, Scout, Grunt, Berserker], spawn_interval: 1.1 },
-    WaveDef { count: 12, hp_scale: 1.45, variants: &[Grunt, Scout, Berserker, Shaman], spawn_interval: 1.1 },
-    WaveDef { count: 15, hp_scale: 1.67, variants: &[Grunt, Berserker, Scout, Shaman], spawn_interval: 1.0 },
-    WaveDef { count: 18, hp_scale: 1.92, variants: &[Berserker, Scout, Grunt, Shaman], spawn_interval: 0.95 },
-    WaveDef { count: 22, hp_scale: 2.21, variants: &[Berserker, Scout, Shaman, Grunt], spawn_interval: 0.85 },
-    WaveDef { count: 26, hp_scale: 2.54, variants: &[Berserker, Shaman, Scout, Grunt], spawn_interval: 0.75 },
-    WaveDef { count: 1, hp_scale: 14.0, variants: &[Berserker], spawn_interval: 0.5 }, // boss
+    WaveDef { count: 5, hp_scale: 1.0, dmg_scale: 1.0, variants: &[Grunt, Grunt, Scout, Grunt], spawn_interval: 1.3 },
+    WaveDef { count: 8, hp_scale: 1.2, dmg_scale: 1.1, variants: &[Grunt, Scout, Grunt, Berserker], spawn_interval: 1.1 },
+    WaveDef { count: 12, hp_scale: 1.5, dmg_scale: 1.25, variants: &[Grunt, Scout, Berserker, Shaman], spawn_interval: 1.0 },
+    WaveDef { count: 16, hp_scale: 1.9, dmg_scale: 1.45, variants: &[Grunt, Berserker, Scout, Shaman], spawn_interval: 0.9 },
+    WaveDef { count: 21, hp_scale: 2.35, dmg_scale: 1.7, variants: &[Berserker, Scout, Grunt, Shaman], spawn_interval: 0.8 },
+    WaveDef { count: 27, hp_scale: 2.9, dmg_scale: 2.0, variants: &[Berserker, Scout, Shaman, Grunt], spawn_interval: 0.7 },
+    WaveDef { count: 33, hp_scale: 3.55, dmg_scale: 2.35, variants: &[Berserker, Shaman, Scout, Grunt], spawn_interval: 0.6 },
+    WaveDef { count: 1, hp_scale: 14.0, dmg_scale: 2.6, variants: &[Berserker], spawn_interval: 0.5 }, // boss
 ];
+
+/// The current night's attack multiplier — every invader melee blow, shaman bolt, keep hammer and
+/// building burn is scaled by this (see `invader_brain`). Clamps the wave index so the prep-day
+/// (`wave_index == -1`) and any over-run read the opener's base 1.0×.
+pub fn night_dmg_scale(wave_index: i32) -> f32 {
+    let i = wave_index.clamp(0, WAVES.len() as i32 - 1) as usize;
+    WAVES[i].dmg_scale
+}
 
 /// Per-variant base HP for a wave (and camp) ork — the **full old-game** `orkConfig.ts` values
 /// straight from core (grunt 254 / scout 136 / berserker 306 / shaman 201). The earlier ×0.35
 /// rescale left orks far too soft against a hero that's already at full old-game power (25 base
-/// dmg + weapons/crit/levels), so they're back to parity. Per-night growth still comes from
-/// `hp_scale` below (1.1·1.15^n) → orks gain HP every night exactly as in the original.
+/// dmg + weapons/crit/levels), so they're back to parity. Per-night growth comes from the
+/// `hp_scale`/`dmg_scale` columns in `WAVES` (re-tuned to ramp steeply after a gentle night 1).
 pub fn base_hp(v: OrkVariant) -> f32 {
     tileworld_core::ork_config::ork_config(orks::core_variant(v)).hp as f32
 }
@@ -469,12 +487,9 @@ impl Plugin for SiegePlugin {
             // Fresh run: reset on leaving the start screen or game-over (NOT on un-pausing,
             // which is a Playing↔Paused transition and never touches these).
             .add_systems(OnExit(AppState::StartScreen), reset_siege)
-            .add_systems(OnExit(AppState::GameOver), reset_siege)
-            // Pause-menu Restart / Load also begins a fresh run (gated so a plain resume is inert).
-            .add_systems(
-                OnExit(AppState::Paused),
-                reset_siege.run_if(crate::game_state::restart_requested),
-            );
+            .add_systems(OnExit(AppState::GameOver), reset_siege);
+        // (Pause-menu Restart / Load relaunch the process now — see game_state::RestartProcess —
+        // so the run restarts in a clean world; no in-process OnExit(Paused) reset needed.)
     }
 }
 
@@ -520,12 +535,9 @@ fn setup_invader_armory(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
 ) {
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.9,
-        ..default()
-    });
+    let mat = crate::creature::make_creature_material(&mut creature_mats);
     commands.insert_resource(InvaderArmory(orks::Armory::new(&mut meshes, &mut materials, mat)));
 }
 
@@ -655,7 +667,7 @@ pub fn director_march(
                 path.cursor += 1;
             }
             let step_target = path.waypoints.get(path.cursor).copied().unwrap_or(goal);
-            let cur_y = crate::worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+            let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
             let speed = o.speed * 1.2;
             match steer::advance(
                 o.pos,
@@ -674,7 +686,7 @@ pub fn director_march(
                 None => o.moving = false,
             }
         }
-        let gy = crate::worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+        let gy = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
         tf.translation = Vec3::new(o.pos.x, gy, o.pos.y);
         tf.rotation = Quat::from_rotation_y(o.facing);
     }
@@ -833,6 +845,8 @@ fn invader_brain(
     let dt = time.delta_secs().min(0.05);
     let now = game.0; // pause-aware clock for logic (replan throttle, stuck-net)
     let rnow = time.elapsed_secs(); // raw clock for visuals/corpse-fade (matches ork_limbs & dying.rs)
+    // Per-night attack ramp: later sieges hit much harder than the opener (see WAVES.dmg_scale).
+    let dmg_scale = night_dmg_scale(siege.wave_index);
 
     // Living guards this frame (the dying are already filtered out — death is permanent now).
     let live_guards: Vec<(Entity, Vec2)> = guards
@@ -886,7 +900,7 @@ fn invader_brain(
         } else if let Some((bidx, bpos)) = building_goal {
             // Batter the building when in range; else march toward it.
             if o.pos.distance(bpos) < BUILDING_ATTACK_RANGE {
-                building_dmg.0.push((bidx, BUILDING_DPS * dt));
+                building_dmg.0.push((bidx, BUILDING_DPS * dmg_scale * dt));
             }
             bpos
         } else {
@@ -924,18 +938,18 @@ fn invader_brain(
                         let gy = ground_at_world(o.pos.x, o.pos.y).unwrap_or(0.0);
                         bolts.0.push(BoltSpawn {
                             origin: Vec3::new(o.pos.x, gy + 1.4, o.pos.y),
-                            damage: orks::SHAMAN_BOLT_DAMAGE,
+                            damage: orks::SHAMAN_BOLT_DAMAGE * dmg_scale,
                         });
                     } else {
                         o.atk_cd = orks::ORK_ATTACK_CD * frenzy_cd;
-                        pending.0 += orks::variant_melee(o.variant);
+                        pending.0 += orks::variant_melee(o.variant) * dmg_scale;
                     }
                 } else if at_guard {
                     // Trading blows with a town-guard (armour blunts the hit).
                     o.atk_cd =
                         if o.shaman { orks::SHAMAN_CAST_CD } else { orks::ORK_ATTACK_CD * frenzy_cd };
                     if let Some((ge, _)) = guard_tgt {
-                        let dmg = orks::variant_melee(o.variant) * crate::villagers::GUARD_ARMOR_MULT;
+                        let dmg = orks::variant_melee(o.variant) * crate::villagers::GUARD_ARMOR_MULT * dmg_scale;
                         guard_dmg.0.push(crate::villagers::NpcHit {
                             victim: ge,
                             amount: dmg,
@@ -946,7 +960,7 @@ fn invader_brain(
                     // Hammering the keep.
                     o.atk_cd =
                         if o.shaman { orks::SHAMAN_CAST_CD } else { orks::ORK_ATTACK_CD * frenzy_cd };
-                    keep.hp = (keep.hp - KEEP_DAMAGE).max(0.0);
+                    keep.hp = (keep.hp - KEEP_DAMAGE * dmg_scale).max(0.0);
                 }
             }
         } else {
@@ -988,7 +1002,7 @@ fn invader_brain(
             };
 
             // March toward the step target, steering around props/cliffs (faster than a patrol).
-            let cur_y = ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+            let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
             let speed = o.speed * 1.4 * if frenzied { 1.4 } else { 1.0 };
             match steer::advance(o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, orks::ORK_MAX_TURN * 1.6 * dt) {
                 Some(s) => {
@@ -1026,7 +1040,7 @@ fn invader_brain(
 
         orks::apply_knockback(&mut o, dt);
 
-        let gy = ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+        let gy = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
         tf.translation = Vec3::new(o.pos.x, gy, o.pos.y);
         // Springy recoil-wobble on a blow taken — same as the camp orks.
         tf.rotation = Quat::from_rotation_y(o.facing) * Quat::from_rotation_x(orks::recoil_tilt(o.hit_recoil, rnow));
@@ -1267,8 +1281,8 @@ mod tests {
 
     #[test]
     fn effective_count_scales_and_floors_at_one() {
-        assert_eq!(effective_count(0, normal()), 6);
-        assert_eq!(effective_count(0, mods_for(Difficulty::Hard)), 8); // round(6·1.25=7.5)=8
+        assert_eq!(effective_count(0, normal()), 5);
+        assert_eq!(effective_count(0, mods_for(Difficulty::Hard)), 6); // round(5·1.25=6.25)=6
         let boss = WAVES.len() - 1; // count 1; easy round(0.8)=1 floored, never 0
         assert_eq!(effective_count(boss, mods_for(Difficulty::Easy)), 1);
     }
@@ -1280,6 +1294,18 @@ mod tests {
         assert_eq!(boss.count, 1);
         assert_eq!(boss.hp_scale, 14.0);
         assert_eq!(boss.variants, &[OrkVariant::Berserker]);
+    }
+
+    #[test]
+    fn night_dmg_scale_ramps_and_clamps() {
+        // Opener is base; every later night hits strictly harder; prep/over-run clamp to the ends.
+        assert_eq!(night_dmg_scale(0), 1.0);
+        assert_eq!(night_dmg_scale(-1), WAVES[0].dmg_scale); // prep day → opener
+        assert!(night_dmg_scale(6) > night_dmg_scale(3));
+        for w in WAVES.windows(2) {
+            assert!(w[1].dmg_scale >= w[0].dmg_scale, "dmg_scale must be monotonic");
+        }
+        assert_eq!(night_dmg_scale(99), WAVES[WAVES.len() - 1].dmg_scale); // over-run clamps
     }
 
     #[test]

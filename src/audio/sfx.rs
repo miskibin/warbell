@@ -10,6 +10,52 @@ use bevy::prelude::*;
 use super::synth::{Sting, StingBank};
 use super::{jitter, pick, AudioConfig, AudioCue, Surface};
 
+// ── Stacking guard for background combat stings ──────────────────────────────────────────
+// Each ork / guard / beast emits its OWN sting per blow, so a melee of many of them spawns
+// dozens of identical sinks in a single frame and the mix clips into a wall of mush. We cap
+// the stacking-prone categories centrally here: each may retrigger no faster than its gap,
+// and at most N may play in any one frame, so a same-frame pile-up collapses to one or two
+// voices. The hero's own Impact/Swing are NOT throttled — those are foreground, one-per-swing
+// already, and the player wants to hear every one.
+const THROTTLE_N: usize = 4;
+const T_GRUNT: usize = 0;
+const T_ROAR: usize = 1;
+const T_BITE: usize = 2;
+const T_GUARD: usize = 3;
+/// Min seconds between two plays of each throttled category.
+const THROTTLE_GAP: [f32; THROTTLE_N] = [0.18, 0.30, 0.10, 0.12];
+/// Max plays of each category within a single frame.
+const THROTTLE_FRAME_CAP: [u8; THROTTLE_N] = [1, 1, 2, 1];
+
+/// Per-category rate limiter for the background combat stings (see above).
+#[derive(Default)]
+pub(crate) struct SfxThrottle {
+    /// Last play time per category.
+    last: [f32; THROTTLE_N],
+    /// Time-stamp of the frame `count` belongs to. `Default` zero-inits this and `count` together,
+    /// so the first frame needs no special reset — the `frame != now` check just re-zeros `count`
+    /// whenever the timestamp moves on.
+    frame: f32,
+    /// How many of each category have played in `frame` so far.
+    count: [u8; THROTTLE_N],
+}
+
+impl SfxThrottle {
+    /// Returns true and books a slot if `cat` may play now; false if it's still throttled.
+    fn allow(&mut self, cat: usize, now: f32) -> bool {
+        if self.frame != now {
+            self.frame = now;
+            self.count = [0; THROTTLE_N];
+        }
+        if self.count[cat] >= THROTTLE_FRAME_CAP[cat] || now - self.last[cat] < THROTTLE_GAP[cat] {
+            return false;
+        }
+        self.last[cat] = now;
+        self.count[cat] += 1;
+        true
+    }
+}
+
 /// All one-shot SFX handles, loaded once at startup.
 #[derive(Resource)]
 pub(crate) struct SfxBank {
@@ -125,12 +171,15 @@ fn spatial_shot(commands: &mut Commands, clip: Handle<AudioSource>, vol: f32, sp
 
 pub(crate) fn play_cues(
     mut commands: Commands,
+    time: Res<Time>,
     cfg: Res<AudioConfig>,
     bank: Res<SfxBank>,
     stings: Res<StingBank>,
     mut seed: Local<u32>,
+    mut throttle: Local<SfxThrottle>,
     mut cues: MessageReader<AudioCue>,
 ) {
+    let now = time.elapsed_secs();
     // Base gains below are the old game's per-`playSfx` values; `sfx`/`voice` (≈ 0.6) is the
     // `audioMix.voice` master every sampled sting passed through. Keep them in sync with
     // `D:/tileworld/src/audio/sfx.ts` if retuning.
@@ -179,16 +228,25 @@ pub(crate) fn play_cues(
             // vol 0.38). Replaces the synth arpeggio for the hero level-up + landmark/shrine rewards.
             AudioCue::LevelUp => one_shot(&mut commands, bank.level_up.clone(), 0.38 * sfx, jitter(&mut seed, 0.04)),
             AudioCue::OrkGrunt(pos) => {
+                if !throttle.allow(T_GRUNT, now) {
+                    continue;
+                }
                 let clip = pick(&bank.ork_grunts, &mut seed);
                 spatial_shot(&mut commands, clip, 0.55 * voice, jitter(&mut seed, 0.14), pos);
             }
             AudioCue::OrkRoar(pos) => {
+                if !throttle.allow(T_ROAR, now) {
+                    continue;
+                }
                 let clip = pick(&bank.ork_roars, &mut seed);
                 spatial_shot(&mut commands, clip, 0.50 * voice, jitter(&mut seed, 0.08), pos);
             }
             // A predator's bite snarl — wide pitch jitter so a flurry of bites never repeats. A
             // heavy beast (bear/croc/golem) gets the deeper roar set, louder + pitched down.
             AudioCue::CreatureBite { at, big } => {
+                if !throttle.allow(T_BITE, now) {
+                    continue;
+                }
                 let (set, vol, pitch) = if big {
                     (&bank.beast_roars, 0.62, jitter(&mut seed, 0.10) * 0.85)
                 } else {
@@ -200,6 +258,9 @@ pub(crate) fn play_cues(
             // well under the hero's own hit (≈⅓) so nearby militia skirmishes are heard as
             // background clash, not foreground combat. Earshot is gated by the emitter.
             AudioCue::GuardStrike(at) => {
+                if !throttle.allow(T_GUARD, now) {
+                    continue;
+                }
                 spatial_shot(&mut commands, bank.swing.clone(), 0.16 * sfx, jitter(&mut seed, 0.14), at);
                 spatial_shot(&mut commands, bank.flesh.clone(), 0.26 * sfx, jitter(&mut seed, 0.10), at);
             }

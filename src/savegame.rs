@@ -1,17 +1,19 @@
 //! **Save / Continue** — one-slot autosave at every dawn, and resume a run after a defeat or
 //! after quitting.
 //!
-//! The world is built once at `Startup` and is *persistent* (restarting a run only resets
-//! resources, never rebuilds the island), so a save is a **logic snapshot**, not an ECS dump:
+//! The world is built once at `Startup` and is otherwise *persistent* within a process (in-run
+//! state changes never rebuild the island; a *fresh-run* reset relaunches the process — see
+//! `game_state::RestartProcess`), so a save is a **logic snapshot**, not an ECS dump:
 //! we capture the run-state resources (hero / economy / town / upgrades / keep / heirs / night)
 //! plus a few world flags (looted treasure chests, rescued camps, discovered landmarks), write
 //! them as JSON, and on load overwrite those same resources + mark the already-spawned entities.
 //!
 //! - **Autosave** fires on the `Wave → Prep` edge (a cleared night) — see [`autosave_on_dawn`].
-//! - **Continue** loads the file into [`PendingLoad`]; [`apply_pending_load`] writes it back over
-//!   the fresh-run defaults the moment the run starts, then emits [`GameLoaded`] so `town.rs`
-//!   reconciles its building meshes. The start / game-over screens (in `game_state.rs`) show a
-//!   Continue button when [`SaveExists`].
+//! - **Continue** resumes the save **in-process** (no relaunch / new window): `game_state`'s
+//!   `begin_continue` drops it into [`PendingLoad`] + flags the battlefield sweep, then
+//!   [`apply_pending_load`] writes it back over the live run-state the moment the run plays and
+//!   emits [`GameLoaded`] so `town.rs` reconciles its building meshes. The start / game-over
+//!   screens (in `game_state.rs`) show a Continue button when [`SaveExists`].
 //!
 //! Serialization rides `tileworld_core`'s optional `serde` feature (Player/Bag/Town/ResourceState);
 //! `UpgradeState.purchased` is `&'static str`, so the save stores the id strings and
@@ -36,7 +38,7 @@ use crate::player::PlayerRes;
 use crate::siege::{Difficulty, GamePhase, KeepHp, Siege};
 use crate::succession::Lives;
 use crate::town::TownRes;
-use crate::verbs::{Chest, ChestId, ChestLid, CHEST_LID_OPEN};
+use crate::chest::{Chest, ChestId, ChestLid, CHEST_LID_OPEN};
 use crate::villagers::RescuedCamps;
 
 /// Bump on any breaking change to [`SaveData`] — an older/garbage file is then treated as "no

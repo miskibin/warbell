@@ -1396,12 +1396,19 @@ pub fn build(
             reflectance: 0.5,
             ..default()
         });
-        let tuft = meshes.add(crate::groundcover::build_grass_tuft_mesh());
-        let clover = meshes.add(crate::groundcover::build_clover_mesh());
+        use crate::groundcover as gc;
+        let tufts: Vec<Handle<Mesh>> =
+            (0..gc::NUM_GRASS_VARIANTS).map(|v| meshes.add(gc::build_grass_tuft_mesh(v))).collect();
+        let clovers: Vec<Handle<Mesh>> =
+            (0..gc::NUM_CLOVER_VARIANTS).map(|v| meshes.add(gc::build_clover_mesh(v))).collect();
         let mut r = Rng(0x9ea5);
-        let sprig = |x: f32, z: f32, mesh: &Handle<Mesh>, s: f32, r: &mut Rng, commands: &mut Commands| {
+        // Pick a random variant handle from a set.
+        let pick = |set: &[Handle<Mesh>], r: &mut Rng| -> Handle<Mesh> {
+            set[((r.f() * set.len() as f32) as usize).min(set.len() - 1)].clone()
+        };
+        let sprig = |x: f32, z: f32, mesh: Handle<Mesh>, s: f32, r: &mut Rng, commands: &mut Commands| {
             commands.spawn((
-                Mesh3d(mesh.clone()),
+                Mesh3d(mesh),
                 MeshMaterial3d(cover_mat.clone()),
                 Transform {
                     translation: Vec3::new(x, 0.02, z),
@@ -1428,7 +1435,7 @@ pub fn build(
             if near_gate {
                 continue;
             }
-            let mesh = if r.f() < 0.55 { &tuft } else { &clover };
+            let mesh = if r.f() < 0.55 { pick(&tufts, &mut r) } else { pick(&clovers, &mut r) };
             let s = 0.45 + r.f() * 0.45;
             sprig(x, z, mesh, s, &mut r, commands);
         }
@@ -1440,7 +1447,7 @@ pub fn build(
             if on_paving(x, z) {
                 continue;
             }
-            let mesh = if r.f() < 0.35 { &tuft } else { &clover };
+            let mesh = if r.f() < 0.35 { pick(&tufts, &mut r) } else { pick(&clovers, &mut r) };
             let s = 0.35 + r.f() * 0.3;
             sprig(x, z, mesh, s, &mut r, commands);
         }

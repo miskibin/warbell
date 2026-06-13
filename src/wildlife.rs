@@ -19,7 +19,7 @@ use bevy::prelude::*;
 
 use crate::biome::{Biome, BiomeEntity};
 use crate::critters::{self, PartKind, Species};
-use crate::steer;
+use crate::steer::{self, footing};
 use crate::worldmap;
 
 /// Max facing turn rate (rad/s). Caps how fast an animal can rotate so it never snaps
@@ -305,7 +305,7 @@ fn animal_brain(
                     a.moving = false;
                 } else {
                     let spd = if a.mode == Mode::Flee { a.speed } else { a.wander_speed };
-                    let cur_y = worldmap::ground_at_world(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
+                    let cur_y = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
                     // Shared local steering (escape-fan + continuity bias + turn-rate cap) —
                     // the anti-flicker logic, identical for orks (see `steer.rs`).
                     match steer::advance(a.pos, a.facing, a.target, spd * dt, a.body_r, cur_y, MAX_TURN * dt) {
@@ -371,7 +371,7 @@ fn animal_brain(
                         }
                     }
                 } else {
-                    let cur_y = worldmap::ground_at_world(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
+                    let cur_y = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
                     match steer::advance(a.pos, a.facing, a.target, a.speed * dt, a.body_r, cur_y, MAX_TURN * 1.8 * dt) {
                         Some(s) => {
                             a.facing = s.facing;
@@ -387,7 +387,7 @@ fn animal_brain(
         // Decaying knockback shove from a recent hero blow — slid against terrain (so a shove
         // can't punt an animal through a cliff/water), mirroring `orks::apply_knockback`.
         if a.kb.length_squared() > 0.0025 {
-            let cur_y = worldmap::ground_at_world(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
+            let cur_y = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
             let step = a.kb * dt;
             if steer::can_stand(a.pos.x + step.x, a.pos.y, a.body_r, cur_y) {
                 a.pos.x += step.x;
@@ -403,7 +403,7 @@ fn animal_brain(
         // Ground-follow + heading + a small bob while moving. A quick forward lunge over the
         // strike beat sells the bite's weight — visual only (`pos` is untouched, so collision and
         // gameplay are unaffected).
-        let gy = worldmap::ground_at_world(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
+        let gy = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
         let bob = if a.moving { (tw * a.gait + a.phase).sin().abs() * a.bob } else { 0.0 };
         let lunge = strike_p(a.atk_anim, now, arch_dur(strike_arch(a.species)))
             .map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.4);
@@ -511,6 +511,7 @@ const LIMB_CULL2: f32 = 70.0 * 70.0;
 fn animal_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
+    hero: Res<crate::player::HeroState>,
     animals: Query<(&Animal, &Children, &GlobalTransform)>,
     mut parts: Query<(&AnimPart, &mut Transform)>,
 ) {
@@ -538,9 +539,17 @@ fn animal_limbs(
                 PartKind::Head => match (arch, strike) {
                     (StrikeArch::Bite, Some(p)) => Quat::from_rotation_x(head_bite_x(p)),
                     _ => {
-                        let bob = (t * 0.5).sin() * 0.07;
-                        let scan = if a.moving { 0.0 } else { (t * 0.4).sin() * 0.22 };
-                        Quat::from_euler(EulerRot::XYZ, bob, scan, 0.0)
+                        // Idle/grazing animals lift the head toward the hero (alert glance);
+                        // the shared helper handles range + scan + breathing bob.
+                        let target = hero.alive.then_some(hero.pos);
+                        crate::creature_anim::idle_head_glance(
+                            a.pos,
+                            a.facing,
+                            t,
+                            a.moving,
+                            target,
+                            crate::creature_anim::GlanceCfg { range: 12.0, max_yaw: 0.45, scan_amp: 0.22, bob_amp: 0.07 },
+                        )
                     }
                 },
                 PartKind::Tail => match (arch, strike) {
@@ -765,7 +774,7 @@ struct Template {
 /// can be respawned later. Inserted by [`populate`].
 #[derive(Resource)]
 struct WildlifeAssets {
-    mat: Handle<StandardMaterial>,
+    mat: Handle<crate::creature::CreatureMaterial>,
     templates: Vec<(Species, Template)>,
 }
 impl WildlifeAssets {
@@ -788,15 +797,11 @@ struct RespawnSlot {
 pub fn populate(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
-    // One shared white vertex-colour material — every part bakes its hue into the mesh,
-    // so the renderer batches all wildlife into few draw calls (same as the scatter).
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.85,
-        ..default()
-    });
+    // One shared creature material — hue bakes into the mesh vertex colours; per-surface texture
+    // (fur/scale/stone) comes from the alpha-packed surf code in the shader.
+    let mat = crate::creature::make_creature_material(creature_mats);
 
     let mut rng: u32 = 0x0a17_5eed;
     let mut templates: Vec<(Species, Template)> = Vec::new();
@@ -876,6 +881,34 @@ pub fn populate(
         }
     }
 
+    // Screenshot hook: `FOREST_WILDLINE="x,z"` parks one of each surface-type exemplar in a line
+    // at the given world XZ for model/texture close-ups (mirrors `FOREST_ORKLINE`). All five are
+    // apex predators (`flee_r == 0`), so they don't bolt from the capture camera, and with no prey
+    // or hero in range they idle in place — covering Fur (wolf/bear), Stone (golem), Scale
+    // (scorpion/croc).
+    if let Ok(s) = std::env::var("FOREST_WILDLINE") {
+        let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        if p.len() == 2 {
+            let line = [
+                Species::Wolf,
+                Species::PolarBear,
+                Species::Golem,
+                Species::Scorpion,
+                Species::BogCroc,
+            ];
+            for (i, sp) in line.iter().enumerate() {
+                if let (Some(plan), Some((_, tmpl))) = (
+                    PLANS.iter().find(|pl| pl.species == *sp),
+                    templates.iter().find(|(t, _)| t == sp),
+                ) {
+                    let x = p[0] + i as f32 * 2.6 - 5.2;
+                    let z = p[1];
+                    spawn_one(commands, &mat, tmpl, plan, x, z, Vec2::new(x, z), 7 + i as u32);
+                }
+            }
+        }
+    }
+
     // Retain the templates + material so slain animals can be respawned.
     commands.insert_resource(WildlifeAssets { mat, templates });
 }
@@ -883,7 +916,7 @@ pub fn populate(
 #[allow(clippy::too_many_arguments)]
 fn spawn_one(
     commands: &mut Commands,
-    mat: &Handle<StandardMaterial>,
+    mat: &Handle<crate::creature::CreatureMaterial>,
     tmpl: &Template,
     plan: &Plan,
     x: f32,

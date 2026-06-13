@@ -20,7 +20,7 @@ use bevy::prelude::*;
 use crate::orks::Ork;
 use crate::villagers::Villager;
 use crate::wildlife::Animal;
-use crate::{blockers, steer, worldmap};
+use crate::{blockers, steer};
 
 pub struct SeparationPlugin;
 
@@ -148,7 +148,7 @@ fn apply(pos: &mut Vec2, tf: &mut Transform, body_r: f32, mut push: Vec2) {
     if len > MAX_PUSH {
         push *= MAX_PUSH / len;
     }
-    let cur_y = worldmap::ground_at_world(pos.x, pos.y).unwrap_or(tf.translation.y);
+    let cur_y = steer::footing(pos.x, pos.y).unwrap_or(tf.translation.y);
     let nx = pos.x + push.x;
     let nz = pos.y + push.y;
     if steer::can_stand(nx, pos.y, body_r, cur_y) && !blockers::is_blocked(nx, pos.y) {

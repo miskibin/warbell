@@ -908,13 +908,16 @@ pub fn config() -> BiomeConfig {
             streak: 0.6,
         },
 
-        // Dim, desaturated greenish daylight under dense green-grey fog.
-        sky: 0x8a968a,
-        fog_density: 0.030,
-        sun_color: 0xc7d0b0,
-        sun_illuminance: 7_200.0,
-        ambient_color: 0xaebaa6,
-        ambient_brightness: 70.0,
+        // Dim marsh daylight under a NEUTRAL cool-grey damp mist — NOT a green fog. A green-tinted
+        // haze painted the whole distance a flat colour wall; a plain desaturated grey reads as
+        // proper marsh mist you see into. The swamp's green identity comes entirely from its
+        // vegetation + the glowing herbs + the dim, low light — never from a coloured fog.
+        sky: 0xbcc2c2,
+        fog_density: 0.022, // foggy enough to feel close & damp, but no longer a wall
+        sun_color: 0xdadbce, // near-neutral, faintly cool (no green cast)
+        sun_illuminance: 7_000.0,
+        ambient_color: 0xb6bdbc, // neutral cool-grey fill
+        ambient_brightness: 68.0,
         sun_pos: Vec3::new(12.0, 30.0, 14.0),
 
         seed: 5005,
@@ -1015,9 +1018,10 @@ pub fn config() -> BiomeConfig {
             treeline_mid: 0x2e4530,
             hill_h: (26.0, 58.0),
         },
-        // No weather: the flat-disc Mist read as hard-edged translucent shards from a low
-        // camera. Left as `None` until a soft volumetric-ish swamp haze exists.
-        particle: ParticleKind::None,
+        // Mist: drifting soft fog-BANK cards (not mote-spheres) — big camera-facing soft-alpha
+        // quads hugging the mire, so the swamp air reads as rolling ground fog. See
+        // `particles::spawn_fog_banks`. Renders on every preset (unlike the Ultra-only volumetric).
+        particle: ParticleKind::Mist,
     }
 }
 

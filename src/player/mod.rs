@@ -101,10 +101,11 @@ impl Default for HeroHealth {
 #[derive(Resource, Default)]
 pub struct PlayerRes(pub tileworld_core::player::Player);
 
-/// The shared white material every hero mesh uses (vertex colours carry the look). Stored so
-/// [`reskin_hero`] can rebuild the limb meshes against the same material on an equip change.
+/// The shared creature material every hero mesh uses (vertex colours carry the hue; the shader
+/// adds per-surface texture from the alpha-packed surf code). Stored so [`reskin_hero`] can
+/// rebuild the limb meshes against the same material on an equip change.
 #[derive(Resource)]
-pub struct HeroMaterial(pub Handle<StandardMaterial>);
+pub struct HeroMaterial(pub Handle<crate::creature::CreatureMaterial>);
 
 /// Control mode. **Play** drives the knight + follow-cam; **FreeRoam** hands the camera back
 /// to `controls::FlyCam` for debugging. Toggle with the backtick key.
@@ -195,16 +196,12 @@ impl Plugin for PlayerPlugin {
 fn spawn_hero(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::creature::CreatureMaterial>>,
     inv: Res<Inventory>,
 ) {
-    // One shared material; colour lives in the mesh vertex colours (orks/critters pattern).
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.45,
-        metallic: 0.3,
-        ..default()
-    });
+    // One shared creature material; colour lives in the mesh vertex colours and surface texture
+    // comes from the alpha-packed surf code (plate=Metal recreates the old metallic sheen).
+    let mat = crate::creature::make_creature_material(&mut materials);
     commands.insert_resource(HeroMaterial(mat.clone()));
 
     // Spawn just outside the north gate, facing into the courtyard (+Z toward origin).
@@ -268,7 +265,7 @@ fn spawn_hero_meshes(
     root: Entity,
     spec: model::KnightSpec,
     meshes: &mut Assets<Mesh>,
-    mat: &Handle<StandardMaterial>,
+    mat: &Handle<crate::creature::CreatureMaterial>,
 ) {
     let model::KnightSpec { torso, parts, weapon, weapon_xf } = spec;
     let torso = meshes.add(torso);
@@ -332,8 +329,11 @@ fn reskin_hero(
 }
 
 /// Reset the hero to a fresh run: wipe progression (`Player::reset` → full HP, 30 gold, level 1,
-/// neutral combat stats) and revive him at the north gate. Runs only when a new run begins
-/// (leaving the start screen / game-over), never on un-pause.
+/// neutral combat stats) and revive him at the north gate. Runs when a run (re)starts — leaving the
+/// start screen, or leaving game-over (a fresh run relaunches, but an in-process **Continue** also
+/// exits game-over here: the wipe is harmless then, as `savegame::apply_pending_load` immediately
+/// overwrites the progression from the save while this revival of the hero entity stands). Never
+/// on un-pause.
 fn reset_player(
     mut player: ResMut<PlayerRes>,
     siege: Option<Res<crate::siege::Siege>>,

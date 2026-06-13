@@ -117,11 +117,7 @@ impl Plugin for InventoryPlugin {
             // Fresh run wipes bag, buffs and toasts (with the rest of progression).
             .add_systems(OnExit(AppState::StartScreen), reset_inventory)
             .add_systems(OnExit(AppState::GameOver), reset_inventory)
-            // Pause-menu Restart / Load also begins a fresh run (gated; see game_state).
-            .add_systems(
-                OnExit(AppState::Paused),
-                reset_inventory.run_if(crate::game_state::restart_requested),
-            )
+            // (Pause-menu Restart / Load relaunch the process now — see game_state::RestartProcess.)
             // Quick-bar (Q/Z/X/C) + open the satchel (Tab/I): only while playing with no panel up.
             .add_systems(Update, (quickbar_input, open_inventory).run_if(in_state(Modal::None)))
             // The satchel modal (freezes the world like the tree).

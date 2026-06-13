@@ -124,7 +124,8 @@ pub(crate) struct HeroLineGates {
     pub home: bool,
     pub been_away: bool,
     /// Once-per-run gates for the new spoken reactions (the rest are repeatable / floor-capped).
-    pub equip: bool,
+    /// (Gear-found "equip" is no longer gated here — it's driven off the director's `once` latch in
+    /// `detect_gear_found`, so a request dropped by the hero-speech window isn't lost.)
     pub first_kill: bool,
     pub gold_rich: bool,
     // `spoken_biomes` removed — biome dedup is now the catalog `once` flag (director tracks it).
@@ -278,7 +279,7 @@ impl Plugin for GameAudioPlugin {
                     detect_home_return,
                     detect_biome_entry,
                     detect_siege_voice,
-                    detect_armor_found,
+                    detect_gear_found,
                     synth::debug_play_stings,
                     stop_displaced_hero_lines,
                     fade_out_hero_lines,
@@ -667,25 +668,33 @@ fn detect_siege_voice(
     }
 }
 
-/// Emit the "new armor / check my satchel" line the first time an armour piece ENTERS the bag —
-/// i.e. when the hero finds, loots or buys armour, NOT when he equips/wears it (the line tells him
-/// to go look it over in his satchel, so it belongs at the moment of acquiring it). Detected
-/// centrally off the bag so no pickup call-site needs to know about audio. Once per run
-/// (`gates.equip` is the per-run latch).
-fn detect_armor_found(
+/// Emit the "new gear / check my satchel" line the first time a piece of GEAR — armour OR a
+/// weapon — enters the bag, i.e. when the hero finds, loots or buys gear, NOT when he equips/wears
+/// it (the line tells him to go look it over in his satchel, so it belongs at the moment of
+/// acquiring it). One shared clip covers either find. Detected centrally off the bag so no pickup
+/// call-site needs to know about audio.
+///
+/// We re-request the line every frame while gear sits in the bag, until it has ACTUALLY played
+/// (the director's per-run `once` latch for `"equip"`), rather than latching a gate the instant we
+/// *request* it: a request dropped by the ~20 s hero-speech window would otherwise burn the
+/// one-shot and the hero would never comment. The catalog line's `once: true` stops it repeating
+/// once it lands, so the spam is just a handful of cheap, deduped requests until the window clears.
+fn detect_gear_found(
     inv: Res<crate::inventory::Inventory>,
-    mut gates: ResMut<HeroLineGates>,
+    mgr: Res<director::VoiceManager>,
     mut speak: MessageWriter<Speak>,
 ) {
     use tileworld_core::inventory::{item_def, ItemKind};
-    if gates.equip {
-        return;
+    if mgr.played_once.contains("equip") {
+        return; // already commented this run
     }
-    let has_armor = inv.0.bag.iter().any(|s| {
-        s.item_id.as_deref().and_then(item_def).is_some_and(|d| d.kind == ItemKind::Armor)
+    let has_gear = inv.0.bag.iter().any(|s| {
+        s.item_id
+            .as_deref()
+            .and_then(item_def)
+            .is_some_and(|d| matches!(d.kind, ItemKind::Armor | ItemKind::Weapon))
     });
-    if has_armor {
-        gates.equip = true;
+    if has_gear {
         speak.write(Speak::new(Concept::Equip));
     }
 }

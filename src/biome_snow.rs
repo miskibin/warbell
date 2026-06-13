@@ -890,12 +890,12 @@ pub fn config() -> BiomeConfig {
         // Bright winter daylight built on the warm/cool split that sells stylized snow:
         // a decisively COOL blue ambient (so shadowed snow goes blue, not grey-cream)
         // under a slightly warmer sun, + denser cool fog so peaks fade into pale haze.
-        sky: 0xcedef0,
+        sky: 0xd4e6fb,
         fog_density: 0.013,
-        sun_color: 0xffeed2,
-        sun_illuminance: 11_500.0,
-        ambient_color: 0xc6d9f4,
-        ambient_brightness: 120.0,
+        sun_color: 0xfaf0e6, // near-white cold glare off the snow
+        sun_illuminance: 12_000.0,
+        ambient_color: 0xb6d2f7, // decisively cold-blue shadow fill
+        ambient_brightness: 128.0,
         sun_pos: Vec3::new(18.0, 42.0, 12.0),
 
         seed: 4127,

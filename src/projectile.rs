@@ -63,7 +63,7 @@ pub struct BoltSpawns(pub Vec<BoltSpawn>);
 
 /// A live homing bolt flying at the hero.
 #[derive(Component)]
-struct Bolt {
+pub(crate) struct Bolt {
     damage: f32,
     speed: f32,
     ttl: f32,

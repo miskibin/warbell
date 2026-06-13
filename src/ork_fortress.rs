@@ -25,7 +25,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
-use crate::biome::{BiomeEntity, GroundDetail};
+use crate::biome::{AtmoSample, BiomeAmbience, BiomeEntity, GroundDetail, ParticleKind};
 use crate::critters::PartKind;
 use crate::firelight::{self, FireLight};
 use crate::game_state::Modal;
@@ -91,6 +91,26 @@ pub fn blight_edge_world(wx: f32, wz: f32) -> f32 {
 /// Is world `(wx, wz)` on the Blight landmass? (Placement exclusions: camps, swamp scatter.)
 pub fn in_blight_world(wx: f32, wz: f32) -> bool {
     blight_edge_world(wx, wz) > 0.0
+}
+
+/// The Blight's bespoke daytime ambience — the ork castle's *visual mood*, distinct from the
+/// swamp it reads as for gameplay. A sooty **blood-red sky** (which `scene::advance_sky` lerps
+/// the daytime fog toward, so the horizon over the mire glows red), a dim sickly-bronze sun, a
+/// murky ash-green fill, the thickest fog on the map, and drifting **ash** instead of weather.
+/// Captured into [`crate::biome::BiomeAmbiences::blight`] at world build; surfaced by
+/// `sample_world` whenever the hero stands on the Blight landmass.
+pub fn blight_ambience() -> BiomeAmbience {
+    BiomeAmbience {
+        atmo: AtmoSample::from_raw(
+            0x5a2418, // sky: sooty blood-red → reddens the daytime fog horizon
+            0xa8895a, // sun: dim sickly amber-bronze
+            6000.0,   // illuminance: oppressively dim
+            0x6a6048, // ambient: murky ash-green-grey fill
+            58.0,
+            0.036, // fog: thickest on the map (fog wall pulls in to ~42–115 tiles)
+        ),
+        particle: ParticleKind::Ash,
+    }
 }
 
 /// BASE-space twin of [`blight_edge_world`] for `worldmap::ground_color`'s blend band
@@ -338,6 +358,7 @@ pub fn build(
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     std_mats: &mut Assets<StandardMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
     // (The ground itself is worldmap terrain now — `TB::Blight` tiles via
     // `blight_class_base`; this fn only dresses it.)
@@ -412,12 +433,8 @@ pub fn build(
         images,
         std_mats,
     );
-    // The orks themselves stay clean vertex-colour (grime on a face-sized limb is noise).
-    let ork_mat = std_mats.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.9,
-        ..default()
-    });
+    // The orks draw against the shared creature material (per-surface texture from the surf code).
+    let ork_mat = crate::creature::make_creature_material(creature_mats);
     // Orange campfire flame + green warp flame (emissive, bloom-lit) + translucent smoke.
     let flame_mat = std_mats.add(StandardMaterial {
         base_color: crate::palette::srgb(0xff8a30),
@@ -1069,7 +1086,7 @@ pub fn build(
 
     // ── The war-hoard: one authored plunder chest deep in the south-east mire. ──
     let (hx, gold, loot) = BLIGHT_HOARD;
-    crate::verbs::spawn_trophy_chest(
+    crate::chest::spawn_trophy_chest(
         commands,
         meshes,
         std_mats,

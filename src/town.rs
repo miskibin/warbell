@@ -92,13 +92,7 @@ impl Plugin for TownPlugin {
                 OnExit(AppState::GameOver),
                 reset_town.after(crate::economy::reset_economy),
             )
-            // Pause-menu Restart / Load also begins a fresh run (gated; see game_state).
-            .add_systems(
-                OnExit(AppState::Paused),
-                reset_town
-                    .after(crate::economy::reset_economy)
-                    .run_if(crate::game_state::restart_requested),
-            )
+            // (Pause-menu Restart / Load relaunch the process now — see game_state::RestartProcess.)
             .add_systems(OnEnter(Modal::Build), spawn_build)
             .add_systems(OnExit(Modal::Build), despawn_build)
             .add_systems(
@@ -292,11 +286,16 @@ fn sync_population_bodies(
     town: Res<TownRes>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     // The dying are already subtracted from `population` (see `villagers::npc_damage_apply`) —
     // counting their still-fading bodies would make this reaper cull a second, living villager.
-    folk: Query<Entity, (With<Townsfolk>, Without<crate::dying::Dying>)>,
-    idle_guards: Query<Entity, (With<Townsfolk>, With<Guard>, Without<Worker>, Without<crate::dying::Dying>)>,
+    // `Without<SceneActor>` so a screenshot-staged body (e.g. FOREST_VILLINE's guard) isn't
+    // counted against the live population or culled by the over-count branch — the scene owns it.
+    folk: Query<Entity, (With<Townsfolk>, Without<crate::dying::Dying>, Without<crate::scenes::SceneActor>)>,
+    idle_guards: Query<
+        Entity,
+        (With<Townsfolk>, With<Guard>, Without<Worker>, Without<crate::dying::Dying>, Without<crate::scenes::SceneActor>),
+    >,
     mut next_seed: Local<u32>,
 ) {
     let want = town.0.population as i64;
@@ -304,7 +303,7 @@ fn sync_population_bodies(
     if have < want {
         *next_seed = next_seed.wrapping_add(1);
         let seed = 0xb0d1_0000u32.wrapping_add(next_seed.wrapping_mul(2654435761));
-        crate::villagers::spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, seed);
+        crate::villagers::spawn_courtyard_guard(&mut commands, &mut meshes, &mut creature_mats, seed);
     } else if have > want {
         // Prefer culling a standing guard; fall back to any townsperson.
         let victim = idle_guards.iter().next().or_else(|| folk.iter().next());

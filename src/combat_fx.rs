@@ -358,15 +358,15 @@ impl HurtFlash {
 /// A target's own (cloned) skin material handle, so we can flash one ork / animal without
 /// touching the rest of the warband / herd (both ship sharing one material for batching).
 #[derive(Component)]
-struct HurtSkin(Handle<StandardMaterial>);
+struct HurtSkin(Handle<crate::creature::CreatureMaterial>);
 
 /// Give every ork its own material clone (orks ship sharing one for batching).
 /// Cheap — there are only dozens of orks — and keeps `orks.rs` untouched.
 fn ensure_ork_skin(
     mut commands: Commands,
-    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     orks: Query<(Entity, &Children), (With<Ork>, Without<HurtSkin>)>,
-    child_mats: Query<&MeshMaterial3d<StandardMaterial>>,
+    child_mats: Query<&MeshMaterial3d<crate::creature::CreatureMaterial>>,
     eyes: Query<(), With<crate::orks::OrkEye>>,
 ) {
     for (e, children) in &orks {
@@ -398,9 +398,9 @@ fn ensure_ork_skin(
 /// `wildlife.rs` untouched.
 fn ensure_animal_skin(
     mut commands: Commands,
-    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     animals: Query<(Entity, &Children), (With<crate::wildlife::Animal>, Without<HurtSkin>)>,
-    child_mats: Query<&MeshMaterial3d<StandardMaterial>>,
+    child_mats: Query<&MeshMaterial3d<crate::creature::CreatureMaterial>>,
 ) {
     for (e, children) in &animals {
         let Some(shared) = children.iter().find_map(|c| child_mats.get(c).ok()) else { continue };
@@ -420,7 +420,7 @@ fn ensure_animal_skin(
 fn hurt_flash(
     time: Res<Time>,
     mut commands: Commands,
-    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     q: Query<(Entity, &HurtFlash, &HurtSkin)>,
 ) {
     let now = time.elapsed_secs();
@@ -428,7 +428,7 @@ fn hurt_flash(
         let remain = hf.until - now;
         if remain <= 0.0 {
             if let Some(m) = mats.get_mut(&skin.0) {
-                m.emissive = LinearRgba::BLACK;
+                m.base.emissive = LinearRgba::BLACK;
             }
             commands.entity(e).remove::<HurtFlash>();
             continue;
@@ -438,7 +438,7 @@ fn hurt_flash(
             // A subtle whiten, not a strobe — kept low so rapid hits don't blow out the model
             // (and so the squash/recoil pose stays readable through the flash).
             let v = k * HURT_FLASH_PEAK;
-            m.emissive = LinearRgba::rgb(v, v, v);
+            m.base.emissive = LinearRgba::rgb(v, v, v);
         }
     }
 }

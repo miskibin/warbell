@@ -119,7 +119,7 @@ fn legs(hip_y: f32, hx: f32, front_z: f32, back_z: f32, mk: &dyn Fn() -> Mesh) -
 // ─── Dispatch ─────────────────────────────────────────────────────────────────────
 
 pub fn build(s: Species) -> CreatureSpec {
-    match s {
+    let spec = match s {
         Species::Wolf => wolf(),
         Species::Deer => deer(),
         Species::Boar => boar(),
@@ -133,6 +133,29 @@ pub fn build(s: Species) -> CreatureSpec {
         Species::Golem => golem(),
         Species::Scorpion => scorpion(),
         Species::BogCroc => bog_croc(),
+    };
+    // Tag every part with the species' dominant surface so the shader applies fur / scale /
+    // stone texture. Group-level (the whole animal) — accents like antlers/horns read as the
+    // dominant surface too; a per-primitive bone pass can refine later.
+    let sf = surf_for_species(s);
+    CreatureSpec {
+        torso: crate::creature::surf(spec.torso, sf),
+        parts: spec
+            .parts
+            .into_iter()
+            .map(|p| PartDef { mesh: crate::creature::surf(p.mesh, sf), ..p })
+            .collect(),
+    }
+}
+
+/// The dominant surface family for a species: stone for the golem, scale for the reptilian
+/// menaces, fur for every mammal.
+fn surf_for_species(s: Species) -> crate::creature::Surf {
+    use crate::creature::Surf;
+    match s {
+        Species::Golem => Surf::Stone,
+        Species::Scorpion | Species::BogCroc => Surf::Scale,
+        _ => Surf::Fur,
     }
 }
 

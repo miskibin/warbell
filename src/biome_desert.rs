@@ -585,13 +585,13 @@ pub fn config() -> BiomeConfig {
             streak: 0.85,
         },
 
-        // Bright hot hazy desert: pale warm sky, high sun illuminance, warm ambient.
-        sky: 0xeadcb6,
-        fog_density: 0.011,
-        sun_color: 0xfff1d0,
-        sun_illuminance: 15_000.0,
-        ambient_color: 0xfff0d2,
-        ambient_brightness: 130.0,
+        // Blazing hot hazy desert: hot pale-amber sky, fierce sun, warm amber ambient.
+        sky: 0xf2e0a8,
+        fog_density: 0.013, // shimmering heat haze
+        sun_color: 0xfff0c4, // hot white-gold
+        sun_illuminance: 15_500.0,
+        ambient_color: 0xffeec2,
+        ambient_brightness: 136.0,
         sun_pos: Vec3::new(20.0, 38.0, 6.0),
 
         seed: 4044,

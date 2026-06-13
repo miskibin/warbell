@@ -53,11 +53,8 @@ impl Plugin for SuccessionFxPlugin {
             .add_systems(Startup, setup_fx_assets)
             .add_systems(Update, (spawn_succession_fx, drive_souls))
             .add_systems(OnExit(AppState::StartScreen), clear_graves)
-            .add_systems(OnExit(AppState::GameOver), clear_graves)
-            .add_systems(
-                OnExit(AppState::Paused),
-                clear_graves.run_if(crate::game_state::restart_requested),
-            );
+            .add_systems(OnExit(AppState::GameOver), clear_graves);
+        // (Pause-menu Restart / Load relaunch the process now — see game_state::RestartProcess.)
     }
 }
 

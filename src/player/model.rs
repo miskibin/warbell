@@ -10,6 +10,7 @@
 use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
+use crate::creature::{surf, Surf};
 use crate::palette::lin;
 
 use super::HeroLimb;
@@ -205,6 +206,7 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
         bx(0.30, 0.34, 0.02, v(0.0, 0.68, -0.135), ad), // backplate
         bx(0.26, 0.10, 0.30, v(0.0, 0.92, 0.0), ad), // gorget (neck ring)
     ]);
+    let torso = surf(torso, Surf::Metal); // plate sheen (mail/belt read metal-subtle; hue unchanged)
 
     // Head: helm + stepped crown + visor slit, breath holes, gilded brow band, cheek guards,
     // the dark crest brim and a crimson plume sweeping back over the crown.
@@ -221,6 +223,7 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
         bxr(0.05, 0.10, 0.26, v(0.0, 0.27, -0.02), rx(0.22), PLUME), // plume crest
         bxr(0.04, 0.08, 0.20, v(0.0, 0.24, -0.20), rx(0.75), PLUME), // plume tail
     ]);
+    let head = surf(head, Surf::Metal); // helm plate (plume keeps its crimson hue)
 
     // Right arm (sword hand): the bare plate arm. The equipped weapon is built as its OWN mesh
     // ([`KnightSpec::weapon`]) and spawned as a child of the ArmR *entity* at the hand offset, so
@@ -242,13 +245,13 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
 
     let sw_rot = rx(-std::f32::consts::FRAC_PI_2);
     let sw_off = v(0.0, -0.5, 0.06);
-    let arm_r = group(plate_arm(1.0));
+    let arm_r = surf(group(plate_arm(1.0)), Surf::Metal);
     // The weapon is its own merged mesh (grouped once → no re-merge corruption) placed at the hand.
-    let weapon = group(weapon_parts(weapon));
+    let weapon = surf(group(weapon_parts(weapon)), Surf::Metal);
     let weapon_xf = Transform { translation: sw_off, rotation: sw_rot, ..default() };
 
     // Left arm (shield hand): same plate dressing, mirrored (shield is a separate part).
-    let arm_l = group(plate_arm(-1.0));
+    let arm_l = surf(group(plate_arm(-1.0)), Surf::Metal);
 
     // Shield (own pivot): heater plate + raised rim + recessed field + gold cross emblem,
     // with a rotated-square lower point (reads as the heater taper) and corner rivets.
@@ -265,16 +268,20 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
         bx(0.035, 0.035, 0.02, v(-0.17, -0.18, 0.03), SHIELD_EMBLEM),
         bx(0.035, 0.035, 0.02, v(0.17, -0.18, 0.03), SHIELD_EMBLEM),
     ]);
+    let shield = surf(shield, Surf::Metal); // heater plate sheen
 
     // Legs (built top-at-hip so the pivot sits at the hip; foot rests at root y≈0):
     // cuisse → poleyn (knee) → greave → sabaton, replacing the old single box.
     let leg = || {
-        group(vec![
-            bx(0.17, 0.17, 0.19, v(0.0, -0.085, 0.0), a), // cuisse (thigh plate)
-            bx(0.10, 0.06, 0.06, v(0.0, -0.175, 0.08), al), // poleyn (knee cap)
-            bx(0.15, 0.17, 0.17, v(0.0, -0.255, 0.0), ad), // greave
-            bx(0.15, 0.05, 0.24, v(0.0, -0.335, 0.04), al), // sabaton (foot)
-        ])
+        surf(
+            group(vec![
+                bx(0.17, 0.17, 0.19, v(0.0, -0.085, 0.0), a), // cuisse (thigh plate)
+                bx(0.10, 0.06, 0.06, v(0.0, -0.175, 0.08), al), // poleyn (knee cap)
+                bx(0.15, 0.17, 0.17, v(0.0, -0.255, 0.0), ad), // greave
+                bx(0.15, 0.05, 0.24, v(0.0, -0.335, 0.04), al), // sabaton (foot)
+            ]),
+            Surf::Metal,
+        )
     };
 
     let parts = vec![

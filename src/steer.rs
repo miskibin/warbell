@@ -16,13 +16,33 @@ use bevy::prelude::*;
 /// around them and never walk into water (`ground_at_world` → `None`).
 pub const MAX_STEP: f32 = 0.6;
 
+/// Footing height at `(x, z)`: terrain, or the bridge deck where the river shows through.
+/// `worldmap::ground_at_world` is terrain-only (`None` over the river), but `can_stand` lets a
+/// mover step ONTO a deck (A* threads NPCs across the river over the planks), so EVERY mover that
+/// follows a steered/A* route must ground off this — not raw `ground_at_world`. If it doesn't, its
+/// render/step `cur_y` freezes at the bank height the moment it walks onto the deck: it then floats
+/// above the planks and wedges (every deck cell reads `> MAX_STEP` from the stale height, so
+/// `can_stand` rejects every step). This is THE shared footing — the hero's `player::movement`
+/// copy mirrors it; wildlife / villagers / lumberjack / miner / camp orks / siege invaders all use
+/// it directly.
+pub fn footing(x: f32, z: f32) -> Option<f32> {
+    crate::worldmap::ground_at_world(x, z).or_else(|| crate::bridges::deck_y_at(x, z))
+}
+
 /// True if a mover with footprint radius `r` can stand at `(x, z)`: its centre and the four
-/// cardinal footprint edges must all be on land within `MAX_STEP` of the current height. Keeps
-/// the whole body off water and from overhanging cliff faces.
+/// cardinal footprint edges must all be on land (**or a bridge deck**, via [`footing`]) within
+/// `MAX_STEP` of the current height. Keeps the whole body off water and from overhanging cliff
+/// faces.
+///
+/// The bridge fallback mirrors the hero's footing (`player::movement`) and the nav-grid's own
+/// `standable`/`can_step`: A* threads NPCs across the river over a deck, so the local steering that
+/// FOLLOWS that route must agree the deck is solid — otherwise the deck reads as open water and the
+/// mover wedges at the bank, abandoning every cross-river goal (the stone miner's ore trip).
 pub fn can_stand(x: f32, z: f32, r: f32, cur_y: f32) -> bool {
     const OFF: [(f32, f32); 5] = [(0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
     for (dx, dz) in OFF {
-        match crate::worldmap::ground_at_world(x + dx * r, z + dz * r) {
+        let (sx, sz) = (x + dx * r, z + dz * r);
+        match footing(sx, sz) {
             Some(y) if (y - cur_y).abs() <= MAX_STEP => {}
             _ => return false,
         }

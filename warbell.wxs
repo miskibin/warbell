@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="Warbell"
+           Manufacturer="miskibin"
+           Version="0.4.0"
+           UpgradeCode="153DC597-1BAA-4427-946B-2C3F407A01B3"
+           Language="1033"
+           Scope="perMachine">
+
+    <SummaryInformation Description="Warbell — Defend the Keep. A medieval action-strategy game."/>
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Warbell is already installed. Please uninstall it first."/>
+    <MediaTemplate EmbedCab="yes"/>
+    <ui:WixUI Id="WixUI_Minimal"/>
+
+    <Property Id="ARPURLINFOABOUT" Value="https://miskibin.github.io/warbell-game/"/>
+    <Property Id="ARPCONTACT"      Value="miskibin"/>
+    <Property Id="ARPHELPLINK"     Value="https://github.com/miskibin/warbell-game"/>
+    <Property Id="ARPNOREPAIR"     Value="1"/>
+
+    <Feature Id="MainFeature" Title="Warbell" Level="1">
+      <ComponentGroupRef Id="GameFiles"/>
+      <ComponentGroupRef Id="Shortcuts"/>
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Warbell"/>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder"/>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StartMenuDir" Name="Warbell"/>
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="GameFiles" Directory="INSTALLFOLDER">
+      <Component Id="MainExe">
+        <File Id="WarbellExe"
+              Source="target\release\tileworld_bevy_forest.exe"
+              Name="warbell.exe"
+              KeyPath="yes"/>
+      </Component>
+      <Files Include="assets\**\*.*"/>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="Shortcuts">
+      <Component Id="DesktopShortcut" Directory="DesktopFolder" Guid="A2F3B891-CC14-4E9A-8D12-5F6E7C3A0B11">
+        <Shortcut Id="DesktopLnk" Name="Warbell"
+                  Description="Defend the keep against nightly ork sieges"
+                  Target="[INSTALLFOLDER]warbell.exe"
+                  WorkingDirectory="INSTALLFOLDER"/>
+        <RemoveFolder Id="DesktopFolderCleanup" Directory="DesktopFolder" On="uninstall"/>
+        <RegistryValue Root="HKCU" Key="Software\miskibin\Warbell" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+      <Component Id="StartMenuShortcut" Directory="StartMenuDir" Guid="B4D1C902-DD25-5F0B-9E23-6A7F8D4B1C22">
+        <Shortcut Id="StartMenuLnk" Name="Warbell"
+                  Description="Defend the keep against nightly ork sieges"
+                  Target="[INSTALLFOLDER]warbell.exe"
+                  WorkingDirectory="INSTALLFOLDER"/>
+        <RemoveFolder Id="StartMenuDirCleanup" Directory="StartMenuDir" On="uninstall"/>
+        <RegistryValue Root="HKCU" Key="Software\miskibin\Warbell" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>

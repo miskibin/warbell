@@ -190,7 +190,10 @@ fn site_ok(cx: f32, cz: f32, biome: Biome, placed: &[CampSite]) -> bool {
             }
         }
     }
-    if crate::castle::in_footprint(cx, cz) || Vec2::new(cx, cz).length() < 24.0 {
+    // Keep camps off the castle's doorstep — 24→40 so a biome camp can't reject-sample onto
+    // the grass apron right against the keep wall (the biome blobs sit 70+ units out, so this
+    // only rejects the too-close apron, never a real biome clearing).
+    if crate::castle::in_footprint(cx, cz) || Vec2::new(cx, cz).length() < 40.0 {
         return false;
     }
     // The Blight is Gnashfang Hold's own ground (it reads as Swamp to `biome_at_world`) —
@@ -231,14 +234,15 @@ pub fn build(
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     materials: &mut Assets<StandardMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
     let sites = plan();
     if sites.is_empty() {
         return;
     }
 
-    // Shared vertex-colour material for the ORKS (grime on a face-sized limb is noise).
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
+    // The orks draw against the shared creature material (per-surface texture from the surf code).
+    let mat = crate::creature::make_creature_material(creature_mats);
     // The structural props (tents, cage, totem, banner, fire ring) carry a FAINT grime-grain
     // detail texture multiplied over their vertex colours — same trick as Gnashfang Hold, but
     // kept subtle (`strength` 0.3) so the camps don't read over-textured against the other

@@ -1,6 +1,6 @@
 //! **Biome verbs** — acting on the world to feed the bag + stone bank. This module owns the
 //! [`HeroSwing`] broadcast (combat publishes one cone per swing-hit; mining reads it) and the
-//! ore-mining loop. Foraging, chests and hunt drops land alongside it in P2c/P2d.
+//! ore-mining loop. Foraging and hunt drops land alongside it (chests moved to `chest.rs`).
 //!
 //! Placement is forest-coord native: [`populate_ore`] (called from `worldmap::build`)
 //! reject-samples the rock biome and constructs the test-gated `ore_store::Ore` directly,
@@ -17,12 +17,15 @@ use crate::economy::Bank;
 use crate::game_state::Modal;
 use crate::inventory::{try_grant, Inventory, Toasts};
 use crate::palette::lin;
-use crate::player::{HeroState, PlayerRes};
+use crate::player::HeroState;
 use crate::worldmap;
 
-/// Forest ore HP — rescaled from core's TS-anchored 500 into forest's combat units, then ×3 so a
-/// boulder is a real dig: ~14 swings at the hero's base 25 damage (was ~5).
-const ORE_HP: f64 = 354.0;
+/// Forest ore HP — rescaled from core's TS-anchored 500 into forest's combat units, then bumped so
+/// a boulder is a REAL dig even for an upgraded hero: at base 25 dmg ≈24 swings, and a leveled hero
+/// (weapon bonus + power buff, ~55 dmg) still spends ~11 — long enough to feel like quarrying, not
+/// a one-combo pop. Ore takes the NON-crit `base_dmg`, so crit/lifesteal never shortcut a dig. The
+/// per-hit erosion (`drive_ore_wear`) makes the longer dig read as visible progress, not grind.
+const ORE_HP: f64 = 600.0;
 /// Front-cone reach the swing checks ore against (the hero melee cone + the boulder radius).
 const SWING_RANGE: f32 = 1.9;
 const SWING_CONE_DOT: f32 = 0.5;
@@ -53,6 +56,19 @@ pub struct OreNode {
     /// Footprint blocker radius registered at spawn, so a regrown node can re-block (mirror of
     /// `ChopTree::trunk_r`). Also the miner's swing-reach anchor (`miner::pick_work`).
     pub(crate) blocker_r: f32,
+    /// Rest scale at full HP — `drive_ore_wear` erodes the rock down from this as the boulder is
+    /// mined, and `regrow_ore` springs it back to this. Stored so the wear curve and regrow pop
+    /// both anchor on the true rest size, not whatever shrunken scale the node was last left at.
+    pub(crate) base_scale: f32,
+}
+
+/// Per-boulder wear state: the settled (no-punch) scale eased toward the HP-driven target each
+/// frame by [`drive_ore_wear`]. The shrinking rock is the "every hit takes a real bite — keep
+/// digging" feedback; the glowing gem core stays the prize as the grey stone wears off around it.
+#[derive(Component)]
+struct OreWear {
+    /// Settled scale (sans the per-hit bite), exponentially chased toward the worn target.
+    cur: f32,
 }
 
 /// A depleted boulder waiting to regrow: hidden in place (blocker lifted), restored to full HP by
@@ -95,8 +111,6 @@ impl Plugin for VerbsPlugin {
                     apple_harvest,
                     apple_tree_shake,
                     apple_regrow,
-                    chest_interact,
-                    chest_respawn,
                     animal_drops,
                     ground_pickup,
                 )
@@ -108,7 +122,7 @@ impl Plugin for VerbsPlugin {
             // these layer the chop shudder / felling topple on top of that write.
             .add_systems(
                 Update,
-                (drive_trunk_shake, drive_felling, drive_regrow_pop, drive_lid_swing)
+                (drive_trunk_shake, drive_felling, drive_regrow_pop, drive_ore_wear)
                     .after(crate::wind::sway_system),
             );
     }
@@ -204,19 +218,22 @@ fn mine_ore(
 fn regrow_ore(
     time: Res<Time>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut OreNode, &DepletedOre, &Transform, &mut Visibility)>,
+    mut q: Query<(Entity, &mut OreNode, &mut OreWear, &DepletedOre, &Transform, &mut Visibility)>,
 ) {
     let now = time.elapsed_secs();
-    for (e, mut node, dep, tf, mut vis) in &mut q {
+    for (e, mut node, mut wear, dep, tf, mut vis) in &mut q {
         if now < dep.regrow_at {
             continue;
         }
         node.ore.hp = node.ore.max_hp;
+        // Reset the eroded scale to full so the freshly-regrown boulder doesn't lurch from its old
+        // worn size up to rest the instant the pop ends; the pop springs it in from the rest scale.
+        wear.cur = node.base_scale;
         *vis = Visibility::Visible;
         crate::blockers::add(tf.translation.x, tf.translation.z, node.blocker_r);
         commands
             .entity(e)
-            .try_insert(RegrowPop { started: now, base: tf.scale })
+            .try_insert(RegrowPop { started: now, base: Vec3::splat(node.base_scale) })
             .try_remove::<DepletedOre>();
     }
 }
@@ -673,7 +690,8 @@ pub fn populate_ore(
                     .with_rotation(Quat::from_rotation_y(yaw))
                     .with_scale(Vec3::splat(scale)),
                 Visibility::Visible,
-                OreNode { ore, blocker_r },
+                OreNode { ore, blocker_r, base_scale: scale },
+                OreWear { cur: scale },
                 crate::biome::BiomeEntity,
             ))
             .with_children(|p| {
@@ -717,6 +735,50 @@ fn ore_glow_pulse(time: Res<Time>, mut q: Query<(&mut PointLight, &OreGlow)>) {
     let t = time.elapsed_secs();
     for (mut light, glow) in &mut q {
         light.intensity = ORE_GLOW_BASE * (1.0 + 0.35 * (t * 2.1 + glow.phase).sin());
+    }
+}
+
+/// How small a boulder erodes by the depleting blow, as a fraction of its rest scale. The visible
+/// "I'm eating this rock" payoff — but it stops well above pebble size so the glowing gem core
+/// stays a clear, worth-hitting target right up to the shatter.
+const ORE_WEAR_MIN: f32 = 0.5;
+/// Per-hit inward "bite" (fraction of scale) layered on the shudder, decaying over [`ORE_PUNCH_DUR`]
+/// — a quick squash so EVERY swing reads as biting in, on top of the slow HP-driven shrink.
+const ORE_PUNCH_AMP: f32 = 0.13;
+const ORE_PUNCH_DUR: f32 = 0.18;
+/// Exponential approach rate (per second) of the settled scale toward its HP target — fast enough
+/// that a single blow's worth of shrink lands within the shudder, not seconds later.
+const ORE_WEAR_LERP: f32 = 16.0;
+
+/// Erode each boulder toward its remaining-HP scale every frame, plus a transient bite read straight
+/// off the active [`TrunkShake`]. Driving the bite from the shake means BOTH hit paths — the hero's
+/// swing ([`mine_ore`]) and the town miner's pick (`miner::pick_work`) — feed it with no extra
+/// wiring, since both insert a `TrunkShake` on each non-shattering blow. Skips depleted/regrowing
+/// nodes so it never fights the hide or the [`RegrowPop`] spring.
+#[allow(clippy::type_complexity)]
+fn drive_ore_wear(
+    time: Res<Time>,
+    mut q: Query<
+        (&OreNode, &mut OreWear, &mut Transform, Option<&TrunkShake>),
+        (Without<DepletedOre>, Without<RegrowPop>),
+    >,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let now = time.elapsed_secs();
+    for (node, mut wear, mut tf, shake) in &mut q {
+        let frac = (node.ore.hp / node.ore.max_hp).clamp(0.0, 1.0) as f32;
+        let target = node.base_scale * (ORE_WEAR_MIN + (1.0 - ORE_WEAR_MIN) * frac);
+        // Ease the settled scale toward the worn target — each blow drops `frac`, so the rock
+        // visibly takes a notch off with every hit instead of holding full size until it shatters.
+        wear.cur += (target - wear.cur) * (1.0 - (-ORE_WEAR_LERP * dt).exp());
+        let punch = match shake {
+            Some(s) => {
+                let t = now - s.started;
+                if t < ORE_PUNCH_DUR { (1.0 - t / ORE_PUNCH_DUR) * ORE_PUNCH_AMP } else { 0.0 }
+            }
+            None => 0.0,
+        };
+        tf.scale = Vec3::splat((wear.cur * (1.0 - punch)).max(0.02));
     }
 }
 
@@ -787,11 +849,19 @@ pub fn populate_forage(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    // Swamp brambles: a low leafy mound studded with near-black blackberries (vertex-coloured,
-    // so it shares the white prop material like the apple tree). Reads as a gatherable berry bush.
-    let herb_mesh = meshes.add(bramble_mesh());
-    let herb_mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
-    seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 0.9, crate::biome::Biome::Swamp, 20, 0x4e_b5_1c_0d);
+    // Swamp herbs: glowing green sprigs (vertex-coloured stalks + bright buds) under a soft
+    // emissive green material, so the healing herbs GLOW out of the murk and are actually findable
+    // — the old near-black bramble was invisible in the swamp. Plentiful (the swamp is big and
+    // poisons you, so the cure should be easy to spot). Gathering banks a `marsh_herb` (heals +
+    // resist when eaten with Q, exactly like a forest apple).
+    let herb_mesh = meshes.add(marsh_herb_mesh());
+    let herb_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::rgb(0.16, 0.52, 0.20), // soft green glow → "shiny" healing herb
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 1.0, crate::biome::Biome::Swamp, 55, 0x4e_b5_1c_0d);
 
     // Forest apples: standout apple TREES (permanent scenery) carrying a cluster of apples that
     // you strip the WHOLE tree at once by walking up — the apples pop off in a satisfying burst.
@@ -1078,82 +1148,6 @@ fn seed_forage(
     }
 }
 
-// ─── Chests (F-to-open) ────────────────────────────────────────────────────────────
-//
-// Treasure chests give one-shot frontier gear; supply caches give repeatable gold + food,
-// re-closing after a delay. Loot tier climbs with distance from the castle (forest-native
-// frontier gradient), reusing core's pure `roll_gear` pool picks.
-
-const CHEST_INTERACT_DIST: f32 = 2.2;
-// Caches no longer refill on a wall-clock timer (the old 150s→450s delays still made waiting
-// out the day a gold tap): they restock at DAWN, once per survived night — see `chest_respawn`.
-// Canonical divergence from core's `chests::CACHE_RESPAWN` (the TS parity record).
-
-#[derive(Component)]
-pub(crate) struct Chest {
-    /// true = repeatable supply cache (gold + food), false = one-shot treasure (gear).
-    pub(crate) cache: bool,
-    pub(crate) opened: bool,
-    pub(crate) opened_at: f32,
-    /// Frontier factor at placement → loot tier.
-    factor: f64,
-    /// Hand-authored one-shot loot `(gold, item ids)` — set for the Blight war-hoard so it
-    /// pays a fixed plunder haul instead of frontier-rolled gear. `None` for scattered chests.
-    trophy: Option<(i64, &'static [&'static str])>,
-    /// A deep-rim **war hoard**: a one-shot treasure that pays a guaranteed top-tier haul + a
-    /// heavy purse (`chest_interact`), placed only out in the dangerous deep biomes. The reward
-    /// for ranging far past the distance-scaled wildlife/camps.
-    hoard: bool,
-}
-
-/// ChestId for the one war-hoard at Gnashfang Hold — one past `populate_chests`' `0..CHEST_COUNT`
-/// range, so the looted-treasure save flag keys it without colliding with a scattered chest.
-pub(crate) const TROPHY_CHEST_ID: usize = 12;
-
-/// Stable index of a chest over the spawn order (`0..CHEST_COUNT`). The save keys a
-/// looted-treasure flag by this so a re-launched world re-opens the right chests.
-#[derive(Component)]
-pub(crate) struct ChestId(pub usize);
-
-/// The hinged lid (a child of the chest) — rotated open on loot, closed on a cache respawn.
-#[derive(Component)]
-pub(crate) struct ChestLid;
-
-/// Lid hinge angle when open (front swings up + back). Shared by `chest_interact` and the
-/// save-restore pass so a loaded looted chest shows its lid open.
-pub(crate) const CHEST_LID_OPEN: f32 = -1.7;
-
-/// A chest lid swinging on its hinge: opening flings it past the catch with an overshoot
-/// (treasure!), re-closing (cache respawn) is a plain ease. The save-restore pass still sets a
-/// loaded chest's lid rotation directly — no swing on load.
-#[derive(Component)]
-struct LidSwing {
-    started: f32,
-    from: f32,
-    to: f32,
-}
-
-/// How long a lid swing takes (s).
-const LID_SWING_DUR: f32 = 0.4;
-
-fn drive_lid_swing(
-    time: Res<Time>,
-    mut commands: Commands,
-    mut q: Query<(Entity, &LidSwing, &mut Transform)>,
-) {
-    let now = time.elapsed_secs();
-    for (e, swing, mut tf) in &mut q {
-        let k = (now - swing.started) / LID_SWING_DUR;
-        if k >= 1.0 {
-            tf.rotation = Quat::from_rotation_x(swing.to);
-            commands.entity(e).try_remove::<LidSwing>();
-            continue;
-        }
-        // Opening (toward the negative hinge angle) gets the springy overshoot; closing eases.
-        let eased = if swing.to < swing.from { ease_out_back(k) } else { k * k * (3.0 - 2.0 * k) };
-        tf.rotation = Quat::from_rotation_x(swing.from + (swing.to - swing.from) * eased);
-    }
-}
 
 /// Forest-native frontier gradient: 0 across the safe core around the castle (the world
 /// origin), smoothly → 1 toward the rim. (Core's `frontier_factor` is anchored to its own
@@ -1180,345 +1174,6 @@ pub(crate) fn frontier_threat(x: f32, z: f32) -> (f32, f32) {
     (1.0 + f, 1.0 + 0.6 * f)
 }
 
-/// Deterministic [0,1) per-position hash — stable loot per chest.
-fn tile_hash(x: f32, z: f32) -> f64 {
-    let s = (x as f64 * 127.1 + z as f64 * 311.7).sin() * 43758.5453;
-    s - s.floor()
-}
-
-/// Press **F** near a closed chest to loot it: gold to the purse + items to the bag (blocked
-/// if the bag can't hold the gear), lid swings open. Caches re-close + refill after a delay.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn chest_interact(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    hero: Res<HeroState>,
-    mut inv: ResMut<Inventory>,
-    mut toasts: ResMut<Toasts>,
-    mut player: ResMut<PlayerRes>,
-    mut cues: MessageWriter<AudioCue>,
-    mut speak: MessageWriter<crate::audio::Speak>,
-    mut floats: ResMut<crate::combat_fx::FloatQueue>,
-    mut commands: Commands,
-    mut chests: Query<(&mut Chest, &Transform, &Children), Without<ChestLid>>,
-    lids: Query<(), (With<ChestLid>, Without<Chest>)>,
-) {
-    if !keys.just_pressed(KeyCode::KeyF) || !hero.alive {
-        return;
-    }
-    let now = time.elapsed_secs();
-    for (mut chest, tf, children) in &mut chests {
-        if chest.opened {
-            continue;
-        }
-        let p = tf.translation;
-        if Vec2::new(p.x, p.z).distance(hero.pos) > CHEST_INTERACT_DIST {
-            continue;
-        }
-        let head = Vec3::new(p.x, p.y + 1.4, p.z);
-        // Resolve loot: hand-authored trophy → fixed haul; caches → gold + a loaf; deep-rim
-        // hoard → guaranteed top-tier haul + heavy purse; ordinary treasure → frontier gear +
-        // gold. The gold/item curves steepen hard with distance (near is stingy, the rim is
-        // rich) so the frontier pulls the hero outward.
-        let (loot, gold): (Vec<&'static str>, i64) = if let Some((g, ids)) = chest.trophy {
-            (ids.to_vec(), g)
-        } else if chest.cache {
-            // Some caches also hold a Mercenary Contract (spent via R to hire a guard). Gold is
-            // distance-graded: a stingy ~6 near the keep climbing to ~54 out at the rim.
-            let mut loot = vec!["bread"];
-            if tile_hash(p.x, p.z) > 0.7 {
-                loot.push("mercenary_contract");
-            }
-            (loot, (4.0 + chest.factor * 24.0).round() as i64)
-        } else if chest.hoard {
-            // Deep-rim war hoard: FOUR guaranteed top-tier rolls (factor pinned to 1.0 so the
-            // best pool is certain even if the spot reads sub-rim) + a purse (~110–135). The
-            // gear is the prize; the old 300–360 purses let one biome tour fund half the tree.
-            let h = tile_hash(p.x, p.z);
-            let loot = (0..4)
-                .map(|i| frontier::roll_gear(1.0, (h + i as f64 * 0.37) % 1.0))
-                .collect();
-            (loot, (50.0 + chest.factor * 60.0 + h * 25.0).round() as i64)
-        } else {
-            // Ordinary treasure: 1 item near → 3 at the rim; gold ~5 near → ~60–70 at the rim.
-            // (Exploration pays in GEAR — gold is the town's job: tithe + bounties. The whole
-            // one-time exploration purse is sized to ~a third of the upgrade tree, not all of it.)
-            let h = tile_hash(p.x, p.z);
-            let items = 1 + (chest.factor * 2.0).round() as i64;
-            let loot = (0..items)
-                .map(|i| frontier::roll_gear(chest.factor, (h + i as f64 * 0.37) % 1.0))
-                .collect();
-            (loot, (5.0 + chest.factor * 55.0 + h * 10.0).round() as i64)
-        };
-        // Won't open if the bag can't hold the gear (TS: full bag rejects the chest).
-        if !inv.0.has_room_for(&loot) {
-            floats.0.push(FloatReq { world: head, text: "Bag full".into(), color: crate::combat_fx::col_block(), scale: 1.0 });
-            cues.write(AudioCue::UiSelect);
-            return;
-        }
-        player.0.add_gold(gold);
-        for id in &loot {
-            try_grant(&mut inv.0, &mut toasts.0, id, 1, now as f64);
-        }
-        floats.0.push(FloatReq { world: head, text: format!("+{gold} gold"), color: crate::combat_fx::col_kill(), scale: 1.1 });
-        cues.write(AudioCue::ChestOpen);
-        cues.write(AudioCue::Gold); // a coin chime layered over the chest creak
-        speak.write(crate::audio::Speak::new(crate::audio::Concept::ChestOpen)); // hero muses
-
-        chest.opened = true;
-        chest.opened_at = now;
-        for &c in children {
-            if lids.get(c).is_ok() {
-                // Swing the hinge open (overshooting past the catch) instead of snapping.
-                commands.entity(c).try_insert(LidSwing { started: now, from: 0.0, to: CHEST_LID_OPEN });
-            }
-        }
-        return; // one chest per press
-    }
-}
-
-/// Re-close + refill supply caches at dawn (the Wave→Prep clear) — once per survived night.
-/// Time alone never restocks them, so loitering through a long prep day earns nothing; the
-/// world resupplies only when the town wins a new day.
-#[allow(clippy::type_complexity)]
-fn chest_respawn(
-    time: Res<Time>,
-    siege: Option<Res<crate::siege::Siege>>,
-    mut prev_phase: Local<Option<crate::siege::GamePhase>>,
-    mut commands: Commands,
-    mut chests: Query<(&mut Chest, &Children), Without<ChestLid>>,
-    lids: Query<(), (With<ChestLid>, Without<Chest>)>,
-) {
-    let Some(siege) = siege else { return };
-    let dawned = matches!(
-        (*prev_phase, siege.phase),
-        (Some(crate::siege::GamePhase::Wave), crate::siege::GamePhase::Prep)
-    );
-    *prev_phase = Some(siege.phase);
-    if !dawned {
-        return;
-    }
-    let now = time.elapsed_secs();
-    for (mut chest, children) in &mut chests {
-        if chest.cache && chest.opened {
-            chest.opened = false;
-            for &c in children {
-                if lids.get(c).is_ok() {
-                    // Ease the lid back shut (no overshoot — it's just falling closed).
-                    commands.entity(c).try_insert(LidSwing { started: now, from: CHEST_LID_OPEN, to: 0.0 });
-                }
-            }
-        }
-    }
-}
-
-/// Scatter chests across the island (called from `worldmap::build`). Alternating treasure /
-/// cache, varied distance so loot tiers spread; avoids the courtyard, camps and water.
-pub fn populate_chests(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) {
-    const CHEST_COUNT: u32 = 12;
-    // Vertex-coloured (flat-shaded) chest: a rounded iron-banded lid on a strapped wooden body
-    // with a brass lock and stub feet. One white material tints by vertex colour, so body + lid
-    // batch into two meshes shared across all chests.
-    let base_mesh = meshes.add(chest_body_mesh());
-    let lid_mesh = meshes.add(chest_lid_mesh());
-    let chest_mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.78,
-        ..default()
-    });
-
-    let mut rng: u32 = 0xc4e5_7a1b;
-    let (mut placed, mut attempts) = (0u32, 0u32);
-    while placed < CHEST_COUNT && attempts < CHEST_COUNT * 500 + 1000 {
-        attempts += 1;
-        let x = crate::wildlife::rng_range(&mut rng, -worldmap::GX + 6.0, worldmap::GX - 6.0);
-        let z = crate::wildlife::rng_range(&mut rng, -worldmap::GZ + 6.0, worldmap::GZ - 6.0);
-        // Keep chests out of the courtyard and off water / blockers / camps / build plots / bridges.
-        if (x * x + z * z).sqrt() < 14.0
-            || worldmap::ground_at_world(x, z).is_none()
-            || crate::blockers::is_blocked(x, z)
-            || crate::camps::in_clearing(x, z)
-            || crate::castle::in_footprint(x, z)
-            || crate::town::near_build_plot(x, z)
-            || crate::bridges::near_bridge(x, z, 1.0)
-        {
-            continue;
-        }
-        let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
-        let cache = placed % 2 == 0;
-        let factor = forest_frontier(x, z);
-        let parent = commands
-            .spawn((
-                Transform::from_xyz(x, y, z),
-                Visibility::Visible,
-                Chest { cache, opened: false, opened_at: 0.0, factor, trophy: None, hoard: false },
-                ChestId(placed as usize),
-                crate::biome::BiomeEntity,
-            ))
-            .id();
-        commands.entity(parent).with_children(|p| {
-            p.spawn((Mesh3d(base_mesh.clone()), MeshMaterial3d(chest_mat.clone()), Transform::default()));
-            // Lid pivots on the back-top edge (its entity origin), so the open-tilt swings the
-            // front up and back like a real hinge.
-            p.spawn((
-                Mesh3d(lid_mesh.clone()),
-                MeshMaterial3d(chest_mat.clone()),
-                Transform::from_xyz(0.0, 0.40, -0.25),
-                ChestLid,
-            ));
-        });
-        placed += 1;
-    }
-
-    // ── Deep-rim war hoards ──────────────────────────────────────────────────────────
-    // One rare hoard per biome, parked out at the deep-biome heart (the signature-landmark
-    // ground, far past the safe zone). Each pays a guaranteed top-tier haul (`chest_interact`'s
-    // `hoard` branch) but sits among the distance-scaled wildlife/camps — high risk, high loot,
-    // the carrot that pulls the hero off the home grass. ChestIds run past `TROPHY_CHEST_ID` so
-    // the save's looted-flag vec keys them without colliding with the scatter or the trophy.
-    // (Anchors are the biome region centres from the worldmap; see CLAUDE.md's biome table.)
-    const HOARD_SPOTS: [(f32, f32); 5] = [
-        (-69.0, -45.0), // snow massif
-        (60.0, -39.0),  // desert deep
-        (66.0, 4.0),    // rocky highlands
-        (-60.0, 39.0),  // forest heart
-        (0.0, 57.0),    // swamp mire
-    ];
-    for (i, &(ax, az)) in HOARD_SPOTS.iter().enumerate() {
-        // Settle onto the nearest valid ground near the anchor (spiral out a little if the exact
-        // spot is water/blocked/a build plot), so a hoard never lands in a lake or a wall.
-        let mut spot = None;
-        'search: for ring in 0..6 {
-            let r = ring as f32 * 3.0;
-            for k in 0..8 {
-                let ang = k as f32 * std::f32::consts::FRAC_PI_4;
-                let (x, z) = (ax + ang.cos() * r, az + ang.sin() * r);
-                if worldmap::ground_at_world(x, z).is_some()
-                    && !crate::blockers::is_blocked(x, z)
-                    && !crate::camps::in_clearing(x, z)
-                    && !crate::town::near_build_plot(x, z)
-                    && !crate::bridges::near_bridge(x, z, 1.0)
-                {
-                    spot = Some((x, z));
-                    break 'search;
-                }
-                if r == 0.0 {
-                    break; // ring 0 is the single centre point
-                }
-            }
-        }
-        let Some((x, z)) = spot else { continue };
-        let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
-        let factor = forest_frontier(x, z);
-        let parent = commands
-            .spawn((
-                Transform::from_xyz(x, y, z),
-                Visibility::Visible,
-                Chest { cache: false, opened: false, opened_at: 0.0, factor, trophy: None, hoard: true },
-                ChestId(TROPHY_CHEST_ID + 1 + i),
-                crate::biome::BiomeEntity,
-            ))
-            .id();
-        commands.entity(parent).with_children(|p| {
-            p.spawn((Mesh3d(base_mesh.clone()), MeshMaterial3d(chest_mat.clone()), Transform::default()));
-            p.spawn((
-                Mesh3d(lid_mesh.clone()),
-                MeshMaterial3d(chest_mat.clone()),
-                Transform::from_xyz(0.0, 0.40, -0.25),
-                ChestLid,
-            ));
-        });
-    }
-}
-
-/// Spawn the single hand-authored war-hoard chest (Gnashfang Hold's plunder) at a fixed mire
-/// spot. One-shot treasure with authored `gold` + `loot` instead of a frontier roll, so the
-/// deep-Blight raid pays a known haul, not power-creeping gear. Keyed [`TROPHY_CHEST_ID`] for
-/// the save flag. Called from `ork_fortress::build`.
-pub fn spawn_trophy_chest(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    pos: Vec3,
-    rot: f32,
-    gold: i64,
-    loot: &'static [&'static str],
-) {
-    let base_mesh = meshes.add(chest_body_mesh());
-    let lid_mesh = meshes.add(chest_lid_mesh());
-    let chest_mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.78,
-        ..default()
-    });
-    let parent = commands
-        .spawn((
-            Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(rot)),
-            Visibility::Visible,
-            Chest { cache: false, opened: false, opened_at: 0.0, factor: 1.0, trophy: Some((gold, loot)), hoard: false },
-            ChestId(TROPHY_CHEST_ID),
-            crate::biome::BiomeEntity,
-        ))
-        .id();
-    commands.entity(parent).with_children(|p| {
-        p.spawn((Mesh3d(base_mesh.clone()), MeshMaterial3d(chest_mat.clone()), Transform::default()));
-        p.spawn((
-            Mesh3d(lid_mesh.clone()),
-            MeshMaterial3d(chest_mat.clone()),
-            Transform::from_xyz(0.0, 0.40, -0.25),
-            ChestLid,
-        ));
-    });
-}
-
-// ─── Chest model (vertex-coloured, flat-shaded) ─────────────────────────────────────
-//
-// Authored in parent-local space with the body resting on the ground (bottom at y=0). The lid
-// is a SEPARATE child whose entity origin sits on the back-top hinge edge — `chest_lid_mesh`
-// builds the lid forward of that origin (+Z = front) so the hinge rotation reads naturally.
-
-const CW_BODY: u32 = 0x6b4a2a; // chest wood (body)
-const CW_LID: u32 = 0x7a5530; // chest wood (lid — lighter)
-const CW_IRON: u32 = 0x2c2c34; // dark iron straps / bands
-const CW_BRASS: u32 = 0xc9962f; // brass lock + clasp
-const CW_FOOT: u32 = 0x3a2818; // dark stub feet
-
-/// Strapped wooden body: a box with iron side-bands, a brass lock plate, a top rim and four
-/// stub feet. Bottom sits at local y=0 so it rests on the ground.
-fn chest_body_mesh() -> Mesh {
-    let iron = lin(CW_IRON);
-    cgroup(vec![
-        cbx(0.70, 0.40, 0.50, v(0.0, 0.20, 0.0), lin(CW_BODY)), // body
-        cbx(0.74, 0.05, 0.54, v(0.0, 0.40, 0.0), iron),         // top rim band
-        cbx(0.07, 0.42, 0.54, v(-0.24, 0.20, 0.0), iron),       // left strap (wraps front↔back)
-        cbx(0.07, 0.42, 0.54, v(0.24, 0.20, 0.0), iron),        // right strap
-        cbx(0.18, 0.20, 0.04, v(0.0, 0.27, 0.26), lin(CW_BRASS)), // front lock plate
-        cbx(0.04, 0.07, 0.06, v(0.0, 0.25, 0.28), iron),        // keyhole
-        cbx(0.10, 0.10, 0.10, v(-0.28, 0.05, 0.18), lin(CW_FOOT)), // feet
-        cbx(0.10, 0.10, 0.10, v(0.28, 0.05, 0.18), lin(CW_FOOT)),
-        cbx(0.10, 0.10, 0.10, v(-0.28, 0.05, -0.18), lin(CW_FOOT)),
-        cbx(0.10, 0.10, 0.10, v(0.28, 0.05, -0.18), lin(CW_FOOT)),
-    ])
-}
-
-/// Banded plank lid: a flat wooden slab with a slightly raised centre crown, two iron straps
-/// running front↔back (aligned with the body's), and a brass clasp at the front that meets the
-/// lock when closed. Built around the hinge origin with its underside on local y=0 and the body
-/// forward (+Z), so it rests flush on the chest top and swings up cleanly on the back-edge hinge.
-fn chest_lid_mesh() -> Mesh {
-    let iron = lin(CW_IRON);
-    cgroup(vec![
-        cbx(0.72, 0.12, 0.52, v(0.0, 0.06, 0.25), lin(CW_LID)),    // lid slab — underside flush at y=0
-        cbx(0.52, 0.09, 0.34, v(0.0, 0.155, 0.25), lin(CW_LID)),   // raised centre crown
-        cbx(0.07, 0.18, 0.56, v(-0.24, 0.09, 0.25), iron),         // left strap (over the lid)
-        cbx(0.07, 0.18, 0.56, v(0.24, 0.09, 0.25), iron),          // right strap
-        cbx(0.14, 0.12, 0.06, v(0.0, -0.04, 0.50), lin(CW_BRASS)), // front clasp (drops to meet the lock)
-    ])
-}
 
 // Local flat-shaded mesh helpers (vertex-coloured; mirror the camps/orks prop builders).
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
@@ -1662,27 +1317,32 @@ fn apple_tree_mesh() -> Mesh {
     cgroup(parts)
 }
 
-/// Gatherable swamp bramble: a squat dark-green leaf mound dotted with near-black blackberries
-/// + a couple ripe red ones. Vertex-coloured (shares the white prop material). Base at y=0.
-fn bramble_mesh() -> Mesh {
-    let leaf = lin(0x3f6e30);
-    let leaf_dk = lin(0x2b4d22);
-    let berry = lin(0x271338); // blackberry — near-black purple
-    let ripe = lin(0x5a1230); // a few unripe-red
-    cgroup(vec![
-        // Low leafy mound.
-        csph(0.20, v(0.0, 0.15, 0.0), leaf),
-        csph(0.15, v(0.16, 0.12, 0.06), leaf_dk),
-        csph(0.15, v(-0.14, 0.13, -0.05), leaf_dk),
-        csph(0.13, v(0.04, 0.25, -0.10), leaf),
-        csph(0.12, v(-0.06, 0.21, 0.14), leaf),
-        // Berries clustered over the crown.
-        csph(0.055, v(0.10, 0.29, 0.05), berry),
-        csph(0.05, v(-0.08, 0.27, -0.02), berry),
-        csph(0.055, v(0.02, 0.33, -0.06), ripe),
-        csph(0.045, v(0.15, 0.19, 0.12), berry),
-        csph(0.05, v(-0.12, 0.23, 0.10), ripe),
-    ])
+/// A glowing marsh herb — a low tuft sprouting several slender stalks, each tipped with a bright
+/// luminous bud. Paired with a soft EMISSIVE green material (see [`populate_forage`]) the whole
+/// sprig glows out of the swamp murk so the healing herbs are actually findable — the old
+/// near-black bramble vanished into the mire. Vertex-coloured to share the prop material contract.
+fn marsh_herb_mesh() -> Mesh {
+    let stem = lin(0x5aa84a); // fresh green stalk
+    let leaf = lin(0x3f8a30); // deeper green blade
+    let bud = lin(0xcaffa0); // bright tip — reads luminous under the emissive lift
+    let mut parts = vec![csph(0.12, v(0.0, 0.06, 0.0), leaf)]; // root tuft
+    const N: usize = 6;
+    for i in 0..N {
+        let a = i as f32 / N as f32 * std::f32::consts::TAU + 0.5;
+        let r = 0.07;
+        let base = v(a.cos() * r, 0.06, a.sin() * r);
+        let h = 0.40 + (i % 3) as f32 * 0.10; // varied stalk heights
+        let spread = 0.14;
+        let tip = v(a.cos() * (r + spread), h, a.sin() * (r + spread));
+        let dir = (tip - base).normalize_or_zero();
+        let rot = Quat::from_rotation_arc(Vec3::Y, dir);
+        let len = (tip - base).length();
+        let mid = (base + tip) * 0.5;
+        parts.push(ccyl(0.016, len, mid, rot, stem)); // slender stalk
+        parts.push(csph(0.055, tip, bud)); // glowing bud at the tip
+        parts.push(cbxr(0.12, 0.015, 0.05, mid, rot, leaf)); // a leaf blade midway
+    }
+    cgroup(parts)
 }
 
 // ─── Hunting: per-species drops + ground pickups ───────────────────────────────────
