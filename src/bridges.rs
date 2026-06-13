@@ -10,7 +10,7 @@ use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
-use crate::palette::lin;
+use crate::palette::{lin, lin_scaled};
 use crate::worldmap::{is_river_world, GX, GZ};
 
 /// Half-width along the bank (the deck's SHORT axis) of a deck.
@@ -184,36 +184,95 @@ fn bank_y(s: &Span) -> f32 {
 }
 
 // ── mesh ───────────────────────────────────────────────────────────────────────────
-fn tinted(mut m: Mesh, c: u32) -> Mesh {
+// All colour lives in `ATTRIBUTE_COLOR` (the shared white prop material batches every
+// deck), so the planks' "texture" is faked the only way the contract allows: per-plank
+// tone jitter, a damp moss tint over the deep-water span, iron nail heads, and a dark
+// sub-deck so the inter-plank gaps read as shadow grooves instead of see-through holes.
+
+/// Weathered plank tones: warm-light, dark, mid-warm, sun-bleached grey.
+const PLANK_TONES: [u32; 4] = [0x8a5a32, 0x664020, 0x7c4d28, 0x6f5e46];
+const MOSS_TINT: u32 = 0x46552c; // damp algae on the planks over open water
+const GROOVE: u32 = 0x32241a; // gap / under-plank shadow
+const RAIL: u32 = 0x5a3a22;
+const RAIL_DK: u32 = 0x45301c;
+const NAIL: u32 = 0x2a221a; // dark iron spike head
+
+/// Small deterministic 0..1 hash so each deck weathers the same way every run.
+fn hash01(mut s: u32) -> f32 {
+    s ^= s >> 16;
+    s = s.wrapping_mul(0x7feb_352d);
+    s ^= s >> 15;
+    s = s.wrapping_mul(0x846c_a68b);
+    s ^= s >> 16;
+    (s & 0x00ff_ffff) as f32 / 16_777_216.0
+}
+fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
     let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![lin(c); n]);
+    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
     m
 }
-fn bx(w: f32, h: f32, d: f32, off: Vec3, c: u32) -> Mesh {
+/// A tinted cuboid taking a linear colour directly (so callers can pass jittered tones).
+fn bx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
     tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
 }
+fn mix4(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 1.0]
+}
 
-/// One deck mesh spanning `2·half_x` across X (local space; deck top at y≈0).
-fn deck_mesh(half_x: f32) -> Mesh {
-    const LIGHT: u32 = 0x8a5a32;
-    const DARK: u32 = 0x6b4222;
-    const RAIL: u32 = 0x5a3a22;
+/// One deck mesh spanning `2·half_x` across X (local space; deck top at y≈0). `seed`
+/// drives the per-plank weathering so the deck looks worn but stays deterministic.
+fn deck_mesh(half_x: f32, seed: u32) -> Mesh {
     let len = half_x * 2.0;
+    let dz = DECK_HALF_Z;
     let mut parts: Vec<Mesh> = Vec::new();
-    let planks = (len * 2.0).max(4.0) as i32;
+
+    // Dark continuous sub-deck just under the planks → plank gaps read as shadow lines.
+    parts.push(bx(len, 0.06, dz * 2.0 - 0.06, Vec3::new(0.0, -0.04, 0.0), lin(GROOVE)));
+
+    let planks = (len * 1.6).max(4.0) as i32;
+    let cell = len / planks as f32;
     for i in 0..planks {
-        let x = -half_x + (i as f32 + 0.5) / planks as f32 * len;
-        let c = if i % 2 == 0 { LIGHT } else { DARK };
-        parts.push(bx(len / planks as f32 * 0.92, 0.1, DECK_HALF_Z * 2.0, Vec3::new(x, 0.0, 0.0), c));
-    }
-    for sz in [-DECK_HALF_Z, DECK_HALF_Z] {
-        parts.push(bx(len, 0.08, 0.1, Vec3::new(0.0, 0.45, sz), RAIL)); // side rail
-        for sx in [-half_x + 0.2, half_x - 0.2] {
-            parts.push(bx(0.12, 0.55, 0.12, Vec3::new(sx, 0.22, sz), RAIL)); // end post
+        let x = -half_x + (i as f32 + 0.5) * cell;
+        let h = hash01(seed ^ (i as u32).wrapping_mul(0x9e37_79b1));
+        let tone = if h < 0.18 {
+            PLANK_TONES[3] // weathered grey
+        } else if h < 0.52 {
+            PLANK_TONES[0] // warm light
+        } else if h < 0.82 {
+            PLANK_TONES[2] // mid-warm
+        } else {
+            PLANK_TONES[1] // dark
+        };
+        let v = 0.82 + hash01(seed.wrapping_add((i as u32).wrapping_mul(0x2545_f491))) * 0.34; // brightness jitter
+        // Damp moss creeps in over the centre span (the deepest, dankest water).
+        let center = (1.0 - (x / half_x).abs()).clamp(0.0, 1.0);
+        let moss = center * center * 0.4 * hash01(seed ^ 0x55 ^ i as u32);
+        let col = mix4(lin_scaled(tone, v), lin(MOSS_TINT), moss);
+        // A touch of per-plank warp/wear so the deck surface isn't dead-flat.
+        let warp = (hash01(seed ^ 0xab ^ i as u32) - 0.5) * 0.02;
+        parts.push(bx(cell * 0.84, 0.1, dz * 2.0, Vec3::new(x, warp, 0.0), col));
+        // Two iron spike heads pinning each plank down at the cross-beams.
+        for sz in [-dz * 0.78, dz * 0.78] {
+            parts.push(bx(0.05, 0.03, 0.05, Vec3::new(x, 0.065 + warp, sz), lin(NAIL)));
         }
     }
-    for sz in [-DECK_HALF_Z + 0.3, DECK_HALF_Z - 0.3] {
-        parts.push(bx(len, 0.12, 0.14, Vec3::new(0.0, -0.12, sz), DARK)); // underbeam
+
+    // Proper hand-railing on each side: a top rail, a mid rail, balusters and end posts.
+    for (si, sz) in [-dz, dz].into_iter().enumerate() {
+        parts.push(bx(len, 0.08, 0.1, Vec3::new(0.0, 0.5, sz), lin(RAIL))); // top rail
+        parts.push(bx(len, 0.06, 0.08, Vec3::new(0.0, 0.26, sz), lin(RAIL_DK))); // mid rail
+        let bals = (len / 1.3).max(2.0) as i32;
+        for b in 0..=bals {
+            let bxp = -half_x + b as f32 / bals as f32 * len;
+            let j = 1.0 + (hash01(seed ^ (b as u32 * 131) ^ si as u32 * 7) - 0.5) * 0.12;
+            parts.push(bx(0.07, 0.5, 0.07, Vec3::new(bxp, 0.22, sz), lin_scaled(RAIL, j)));
+        }
+        for sx in [-half_x + 0.2, half_x - 0.2] {
+            parts.push(bx(0.15, 0.62, 0.15, Vec3::new(sx, 0.26, sz), lin(RAIL_DK))); // end post
+        }
+    }
+    for sz in [-dz + 0.3, dz - 0.3] {
+        parts.push(bx(len, 0.12, 0.14, Vec3::new(0.0, -0.12, sz), lin(PLANK_TONES[1]))); // underbeam
     }
     let mut it = parts.into_iter();
     let mut base = it.next().unwrap();
@@ -279,8 +338,10 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         } else {
             Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
         };
+        // Stable per-deck weathering seed from its world position (order-independent).
+        let seed = s.cx.to_bits() ^ s.cz.to_bits().rotate_left(13) ^ 0x9e37_79b9;
         commands.spawn((
-            Mesh3d(meshes.add(deck_mesh(s.half))),
+            Mesh3d(meshes.add(deck_mesh(s.half, seed))),
             MeshMaterial3d(mat.clone()),
             Transform {
                 translation: Vec3::new(s.cx, bank_y(s) + 0.2, s.cz),

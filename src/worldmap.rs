@@ -77,12 +77,19 @@ const COL_ROCK: u32 = 0x8d847a;
 const COL_SNOW: u32 = 0xe4ecf5;
 const COL_DESERT: u32 = 0xddc189;
 const COL_SWAMP: u32 = 0x55613a;
-/// The Blight: trampled ork mud (interior mottle adds churned-black, ash and a sickly
-/// warp-green tinge — see `biome_col_at`).
+/// Swamp-interior mottle (see `biome_col_at`): dark standing-water muck pools, mossy
+/// sunlit hummocks and a green algae seep, so the marsh floor reads wet and blotchy
+/// instead of one flat olive sheet.
+const COL_SWAMP_DARK: u32 = 0x363f27; // dark muck / standing-water pools
+const COL_SWAMP_MOSS: u32 = 0x6e7c48; // mossy sunlit hummocks
+const COL_SWAMP_ALGAE: u32 = 0x4c6232; // green algae seep
+/// The Blight: trampled ork mud (interior mottle adds churned-black, ash, a sickly
+/// warp-green tinge and dried-blood rust — see `biome_col_at`).
 const COL_BLIGHT: u32 = 0x4d3e2a;
-const COL_BLIGHT_DARK: u32 = 0x332817;
+const COL_BLIGHT_DARK: u32 = 0x2c2113; // churned-black trample troughs (deepened)
 const COL_BLIGHT_ASH: u32 = 0x6f695c;
 const COL_BLIGHT_GREEN: u32 = 0x59653a;
+const COL_BLIGHT_RUST: u32 = 0x5a3320; // dried-blood / rust-stained patches
 /// Snow-interior mottle (see `biome_col_at`): cool drift-shadow troughs + wind-polished
 /// bright crests, so the snowfield reads as wind-shaped drifts instead of one cream sheet.
 const COL_SNOW_SHADE: u32 = 0xc9d6e8;
@@ -619,16 +626,31 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
             let col = mix3(base, lin3(COL_FOREST_DARK), moist * 0.50);
             mix3(col, lin3(COL_FOREST_DRY), dry * 0.35)
         }
+        TB::Swamp => {
+            // Standing-water muck pools + mossy hummocks + a green algae seep — the marsh
+            // floor should read wet and blotchy, not one flat olive (the island swamp had
+            // NO interior mottle, so big stretches near the ork mire read dead-flat).
+            let pool = smoothstep(0.15, 1.20, noise_a(x * 3.4 + 5.0, z * 3.4 - 11.0));
+            let moss = smoothstep(0.45, 1.30, noise_b(x * 7.0 - 17.0, z * 7.0 + 9.0));
+            let algae = smoothstep(0.50, 1.25, noise_a(x * 1.9 - 41.0, z * 1.9 + 23.0));
+            let col = mix3(base, lin3(COL_SWAMP_DARK), pool * 0.58);
+            let col = mix3(col, lin3(COL_SWAMP_MOSS), moss * 0.42);
+            mix3(col, lin3(COL_SWAMP_ALGAE), algae * 0.32)
+        }
         TB::Blight => {
-            // Churned-black trample troughs, dead-ash patches, and a sickly warp-green
-            // seep — the mud should read beaten flat by ten thousand ork feet. Weights
-            // run HOT (first pass read as one flat tan sheet from gameplay height).
-            let churn = smoothstep(0.10, 1.10, noise_a(x * 4.1 + 11.0, z * 4.1 - 5.0));
-            let ash = smoothstep(0.50, 1.25, noise_b(x * 2.6 - 9.0, z * 2.6 + 17.0));
+            // Churned-black trample troughs, dead-ash patches, a sickly warp-green seep and
+            // dried-blood rust stains — the mud should read beaten flat and filthy by ten
+            // thousand ork feet. Weights run HOT (an earlier "too busy" pass softened this
+            // to one flat tan sheet from gameplay height; the ground near the keep reads
+            // blank without the harder contrast).
+            let churn = smoothstep(0.08, 1.05, noise_a(x * 4.1 + 11.0, z * 4.1 - 5.0));
+            let ash = smoothstep(0.48, 1.22, noise_b(x * 2.6 - 9.0, z * 2.6 + 17.0));
             let seep = smoothstep(0.40, 1.20, noise_a(x * 1.8 + 31.0, z * 1.8 + 3.0));
-            let col = mix3(base, lin3(COL_BLIGHT_DARK), churn * 0.70);
-            let col = mix3(col, lin3(COL_BLIGHT_ASH), ash * 0.45);
-            mix3(col, lin3(COL_BLIGHT_GREEN), seep * 0.40)
+            let rust = smoothstep(0.55, 1.30, noise_b(x * 5.3 + 19.0, z * 5.3 - 7.0));
+            let col = mix3(base, lin3(COL_BLIGHT_DARK), churn * 0.78);
+            let col = mix3(col, lin3(COL_BLIGHT_ASH), ash * 0.48);
+            let col = mix3(col, lin3(COL_BLIGHT_GREEN), seep * 0.42);
+            mix3(col, lin3(COL_BLIGHT_RUST), rust * 0.30)
         }
         _ => base,
     }
@@ -772,10 +794,12 @@ pub fn build(
     water_mats: &mut Assets<WaterMaterial>,
     creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
-    // ── Terraced ground mesh (blended vertex colours, per-face normals) — two sheets:
-    //    the island proper on the grass detail texture, and the Blight on its own
-    //    trampled-mud detail so the ork ground reads filthy instead of lawn-grained. ──
-    let ground = build_terrain_mesh(|tb| tb != TB::Blight);
+    // ── Terraced ground mesh (blended vertex colours, per-face normals) — THREE sheets,
+    //    each with its own baked detail texture so the wrong grain never bleeds across a
+    //    biome: the island proper on a grass blade-grain, the SWAMP on a wet blotchy
+    //    mottle (it used to share the grass blades — that's why the marsh read blank), and
+    //    the Blight on its own filthy trampled-mud grain. ──
+    let ground = build_terrain_mesh(|tb| tb != TB::Blight && tb != TB::Swamp);
     let grass_detail = GroundDetail {
         scale: 0.18,
         strength: 0.52, // a touch rougher/grainier grass (was 0.40)
@@ -794,19 +818,42 @@ pub fn build(
         Transform::default(),
         crate::biome::BiomeEntity,
     ));
+    // The swamp gets the bespoke wet mottle from `biome_swamp::config` — broad blotchy
+    // wet/dry patches with a damp streak, NOT the island's vertical grass blades. Lower
+    // roughness than grass so the dim sun throws a faint bog-water sheen across the muck.
+    let swamp_ground = build_terrain_mesh(|tb| tb == TB::Swamp);
+    let swamp_detail = GroundDetail {
+        scale: 0.16,
+        strength: 0.55,
+        variation: 0.95, // high → blotchy wet/dry mottle
+        seed: 11.0,
+        dark: 0x2c3522,
+        base: 0x49543a,
+        light: 0x687a4a,
+        grain: 0.7,
+        streak: 0.6,
+    };
+    let swamp_mat = crate::terrain::make_material(&swamp_detail, 0.82, images, terrain_mats);
+    commands.spawn((
+        Mesh3d(meshes.add(swamp_ground)),
+        MeshMaterial3d(swamp_mat),
+        Transform::default(),
+        crate::biome::BiomeEntity,
+    ));
     let blight_ground = build_terrain_mesh(|tb| tb == TB::Blight);
     let blight_detail = GroundDetail {
-        // Strength pulled to grass-parity (0.40): the 0.62 first pass read as a busy,
-        // over-grained sheet next to the other biomes' calmer ground.
-        scale: 0.22,
-        strength: 0.42,
-        variation: 0.75,
+        // Pushed back up toward the first pass: the 0.42 "calm" tune read blank/flat-brown
+        // near the keep where props are sparse. Finer scale + harder grain gives the mud a
+        // beaten-earth tooth without the old over-grained busyness.
+        scale: 0.26,
+        strength: 0.52,
+        variation: 0.78,
         seed: 7.0,
         dark: 0x2c2114,
         base: 0x4d3e2a,
-        light: 0x675840,
-        grain: 0.6,
-        streak: 0.5,
+        light: 0x6b5c42,
+        grain: 0.74,
+        streak: 0.55,
     };
     let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, images, terrain_mats);
     commands.spawn((
@@ -1092,9 +1139,11 @@ fn grass_config() -> BiomeConfig {
 }
 
 // ── Terraced terrain mesh ─────────────────────────────────────────────────────────
-/// Build the terraced ground mesh over every tile `keep` accepts. Called twice from
-/// `build`: once for everything but the Blight (grass detail texture), once for the
-/// Blight alone (its own trampled-mud detail) — two sheets, identical recipe.
+/// Build the terraced ground mesh over every tile `keep` accepts. Called three times from
+/// `build` — island-minus-swamp-minus-Blight (grass detail), the swamp (wet-mottle detail)
+/// and the Blight (trampled-mud detail) — so each sheet bakes its own grain. Walls key off
+/// the neighbour's `tile_at` height, not `keep`, so a split never opens a seam: the wall is
+/// always owned (and drawn) by the higher tile's sheet.
 fn build_terrain_mesh(keep: impl Fn(TB) -> bool) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
