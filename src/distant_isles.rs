@@ -33,8 +33,11 @@ const SEA_Y: f32 = -0.4;
 const TILE: f32 = 2.0;
 /// World-Y per height class. Bigger than the map's 0.5 so terraces still read from ~150 units.
 const STEP: f32 = 1.1;
-/// How far a coast cliff descends below the waterline (a solid skirt — no see-through edges).
-const SKIRT_BOTTOM: f32 = SEA_Y - 3.0;
+/// How high the lowest land (the class-1 beach) sits above the sea. Must be a solid margin: the
+/// sea is a *translucent* alpha-blended sheet, so any land at/below the waterline shows THROUGH
+/// the blue water and reads as ghostly/transparent. Coast cliffs then drop only to `SEA_Y` (no
+/// submerged geometry), exactly like the real island's coast.
+const BEACH_LIFT: f32 = 0.8;
 /// Number of distant islands (one palette each).
 const COUNT: usize = 5;
 
@@ -161,9 +164,10 @@ fn peak_classes(isle: &Isle) -> i32 {
     (2.0 + 11.0 * isle.mountain).round() as i32
 }
 
-/// World-Y of the top surface of a given land class.
+/// World-Y of the top surface of a given land class. The class-1 beach sits [`BEACH_LIFT`]
+/// above the sea so the island reads as solid land, not a half-submerged reef.
 fn top_y(c: i32) -> f32 {
-    SEA_Y + 0.15 + (c - 1) as f32 * STEP
+    SEA_Y + BEACH_LIFT + (c - 1) as f32 * STEP
 }
 
 // ── Colour ramp ──────────────────────────────────────────────────────────────────
@@ -202,7 +206,7 @@ fn top_color(isle: &Isle, c: i32, peak: i32, cx: f32, cz: f32) -> [f32; 4] {
 // ── Mesh ─────────────────────────────────────────────────────────────────────────
 /// Build one island's terraced mesh in local space (centred at origin, Y already in world
 /// terms). Same flat-shaded quad recipe as `worldmap::build_terrain_mesh`: a top quad per land
-/// tile plus cliff walls down to lower neighbours / a sea-skirt at the coast.
+/// tile plus cliff walls down to lower neighbours / the waterline at the coast.
 fn build_mesh(isle: &Isle) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -250,14 +254,16 @@ fn build_mesh(isle: &Isle) -> Mesh {
                 [tc, tc, tc, tc],
             );
 
-            // Cliff walls down to each lower neighbour (or the sea-skirt at the coast).
+            // Cliff walls down to each lower neighbour (or the waterline at the coast).
             let cliff = lin(isle.palette.cliff);
             let wall_top = [cliff[0] * 0.95, cliff[1] * 0.95, cliff[2] * 0.95, 1.0];
             let wall_bot = [cliff[0] * 0.62, cliff[1] * 0.60, cliff[2] * 0.58, 1.0];
             let wc = [wall_bot, wall_bot, wall_top, wall_top];
             for (dx, dz) in NB {
                 let nc = cls(ix + dx, iz + dz);
-                let nh = if nc >= 1 { top_y(nc) } else { SKIRT_BOTTOM };
+                // Inland steps drop to the lower neighbour; coast tiles drop to the waterline
+                // (SEA_Y) and no further — nothing goes below the translucent sea sheet.
+                let nh = if nc >= 1 { top_y(nc) } else { SEA_Y };
                 if top <= nh + 1e-4 {
                     continue;
                 }
