@@ -53,6 +53,8 @@ pub enum UpgradeEffect {
     ReinforceKeep,
     /// Town-guard arms tier: villagers hit harder / watch wider (bumps a tier).
     VillagerArmor,
+    /// Town-guard vigor: +`n` max HP to every militia member (additive, stacks).
+    GuardHealth(f64),
     Ballista,
     HealingShrine,
 
@@ -171,6 +173,15 @@ pub static UPGRADE_NODES: &[UpgradeNode] = &[
     node("def_armor_2", Defense, "Veteran Guard",
         "Steel arms and drilling: guards hit harder still (23 dmg) and hold a wider watch.",
         "🛡️", 90, 0, Some("def_armor_1"), VillagerArmor),
+    node("def_armor_3", Defense, "Town Champions",
+        "Masterwork blades for the militia: guards hit like knights (32 dmg).",
+        "⚔️", 150, 0, Some("def_armor_2"), VillagerArmor),
+    node("def_guard_hp_1", Defense, "Garrison Infirmary",
+        "A healer's hall for the watch — every guard soaks +30 max HP.",
+        "❤️", 55, 0, None, GuardHealth(30.0)),
+    node("def_guard_hp_2", Defense, "Iron Constitution",
+        "Hardened, well-fed militia: another +55 max HP per guard.",
+        "💗", 100, 0, Some("def_guard_hp_1"), GuardHealth(55.0)),
     node("def_ballista", Defense, "Ballista",
         "A heavy bolt-thrower at the north gate: long range, big single hits.",
         "🎱", 110, 0, None, Ballista),
@@ -431,6 +442,19 @@ mod tests {
             node_by_id("ars_sword").unwrap().effect,
             UpgradeEffect::UnlockWeapon("sword_gold")
         );
+    }
+
+    #[test]
+    fn guard_upgrade_nodes_carry_the_right_effects_and_gating() {
+        // Three arms tiers, each bumping the militia weapon tier.
+        for id in ["def_armor_1", "def_armor_2", "def_armor_3"] {
+            assert_eq!(node_by_id(id).unwrap().effect, UpgradeEffect::VillagerArmor);
+        }
+        assert_eq!(node_by_id("def_armor_3").unwrap().prereq_id, Some("def_armor_2"));
+        // Two stacking guard-health lines.
+        assert_eq!(node_by_id("def_guard_hp_1").unwrap().effect, UpgradeEffect::GuardHealth(30.0));
+        assert_eq!(node_by_id("def_guard_hp_2").unwrap().effect, UpgradeEffect::GuardHealth(55.0));
+        assert_eq!(node_by_id("def_guard_hp_2").unwrap().prereq_id, Some("def_guard_hp_1"));
     }
 
     #[test]

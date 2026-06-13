@@ -913,7 +913,7 @@ pub fn config() -> BiomeConfig {
         // proper marsh mist you see into. The swamp's green identity comes entirely from its
         // vegetation + the glowing herbs + the dim, low light — never from a coloured fog.
         sky: 0xbcc2c2,
-        fog_density: 0.022, // foggy enough to feel close & damp, but no longer a wall
+        fog_density: 0.004, // BELOW the island baseline → fog pushes OUT; the swamp reads open, not hazy
         sun_color: 0xdadbce, // near-neutral, faintly cool (no green cast)
         sun_illuminance: 7_000.0,
         ambient_color: 0xb6bdbc, // neutral cool-grey fill
@@ -1018,10 +1018,9 @@ pub fn config() -> BiomeConfig {
             treeline_mid: 0x2e4530,
             hill_h: (26.0, 58.0),
         },
-        // Mist: drifting soft fog-BANK cards (not mote-spheres) — big camera-facing soft-alpha
-        // quads hugging the mire, so the swamp air reads as rolling ground fog. See
-        // `particles::spawn_fog_banks`. Renders on every preset (unlike the Ultra-only volumetric).
-        particle: ParticleKind::Mist,
+        // No weather: the swamp reads CLEAR (the fog pushes out), so no mist/fog cards either —
+        // the player didn't want haze here. Identity comes from the green plants + glowing herbs.
+        particle: ParticleKind::None,
     }
 }
 

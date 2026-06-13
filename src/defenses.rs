@@ -137,6 +137,7 @@ fn debug_enable_defenses(mut defenses: ResMut<Defenses>) {
             // (castle_decor) so a defended shot shows the full courtyard.
             reinforced: true,
             villager_arms_tier: 2,
+            guard_hp_bonus: 0.0,
         };
     }
 }

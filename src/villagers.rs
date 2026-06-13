@@ -199,8 +199,22 @@ fn arm_as_guard(commands: &mut Commands, e: Entity, post: Vec2) {
 // NPC combat tuning. Townsfolk take damage ONLY through the [`NpcDamage`] channel (ork blades
 // from `siege.rs`, predator bites from `wildlife.rs`) — no self-inflicted melt — so guards are
 // beefy enough that a pair wins a 1v1 but a wave still overwhelms them.
-const NPC_MAX_HP: f32 = 117.0; // +80% over the old 65: townsfolk soak much more punishment now
+const NPC_MAX_HP: f32 = 140.0; // +20% over the prior 117: the militia stands its ground longer
+/// Base unarmed-guard strike. Each `villager_arms_tier` (the Defense "Guard Arms" line) lifts this
+/// to the advertised figure via [`guard_damage`]; the guard-vigor line adds flat HP atop NPC_MAX_HP.
 const GUARD_DAMAGE: f32 = 6.3; // −30% off the old 9: guards trade slower, lean on staying power
+
+/// A guard's per-strike damage for arms tier `t`. Honours the upgrade-tree copy: tier 1 → 16,
+/// tier 2 → 23, tier 3 ("Town Champions") → 32, +9 per tier beyond. Tier 0 is the unarmed base.
+/// (Previously the tier was unwired — guards always hit [`GUARD_DAMAGE`] no matter the upgrades.)
+fn guard_damage(tier: u32) -> f32 {
+    match tier {
+        0 => GUARD_DAMAGE,
+        1 => 16.0,
+        2 => 23.0,
+        n => 23.0 + (n - 2) as f32 * 9.0,
+    }
+}
 /// How far a guard will march to hunt an invader at night. Large enough to cover the whole
 /// defended area, so the reserve actively goes out to meet the wave instead of standing idle until
 /// an ork wanders within arm's reach (the old 12-unit passive radius left guards doing nothing).
@@ -280,6 +294,7 @@ impl Plugin for VillagersPlugin {
                     pilgrim_hint,
                     npc_damage_apply,
                     npc_fight_back,
+                    guard_arms_upkeep,
                     guard_combat,
                     rearm_townsfolk,
                     reskin_townsfolk,
@@ -904,6 +919,24 @@ fn npc_fight_back(
     }
 }
 
+/// Keep every militia member's max HP in step with the guard-vigor upgrades. The target is
+/// `NPC_MAX_HP + guard_hp_bonus`; a townsperson below it (a fresh spawn at the base, or anyone when
+/// a `GuardHealth` node is just bought) is raised, and the freshly granted HP is healed in so the
+/// upgrade is felt at once. Only ever raises `max` — a wounded guard keeps its current `hp`.
+fn guard_arms_upkeep(
+    def: Res<crate::economy::Defenses>,
+    mut q: Query<&mut NpcHp, Without<crate::dying::Dying>>,
+) {
+    let target = NPC_MAX_HP + def.guard_hp_bonus;
+    for mut hp in &mut q {
+        if hp.max < target {
+            let gained = target - hp.max;
+            hp.max = target;
+            hp.hp += gained;
+        }
+    }
+}
+
 /// Town-guard AI. During a wave: chase the nearest invader inside the big hunt radius and trade
 /// blows in melee. In peacetime: mend slowly, and sally out after any hostile — an ork **or a
 /// predator** (wolf, bear, golem…) — that prowls within [`GUARD_DETECT`] of the post, chasing it
@@ -912,6 +945,7 @@ fn npc_fight_back(
 fn guard_combat(
     time: Res<Time>,
     siege: Res<crate::siege::Siege>,
+    def: Res<crate::economy::Defenses>,
     mut commands: Commands,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut kills: MessageWriter<crate::verbs::AnimalKilled>,
@@ -941,6 +975,8 @@ fn guard_combat(
     let in_wave = siege.phase == crate::siege::GamePhase::Wave;
     // Hero (≈ listener) position, for the small-earshot gate on guard clash SFX.
     let hero_pos = hero.single().ok().map(|h| h.pos);
+    // Effective strike for the town's current arms tier (Defense "Guard Arms" upgrades).
+    let guard_dmg = guard_damage(def.villager_arms_tier);
     // Everything a guard may engage: every ork, plus the predator species only — the militia
     // doesn't slaughter the deer herds.
     let inv: Vec<(Entity, Vec2, bool)> = hostiles
@@ -994,7 +1030,7 @@ fn guard_combat(
                 if g.atk_cd <= 0.0 {
                     g.atk_cd = GUARD_ATTACK_CD;
                     v.atk_anim = now; // fire the sword-swing (read by villager_limbs)
-                    dealt.push((te, self_e, GUARD_DAMAGE));
+                    dealt.push((te, self_e, guard_dmg));
                     // Clash SFX, but only when the fight is close to the hero (small earshot).
                     if hero_pos.is_some_and(|hp| v.pos.distance(hp) < GUARD_SFX_RADIUS) {
                         let at = Vec3::new(v.pos.x, tf.translation.y + 1.0, v.pos.y);

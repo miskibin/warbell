@@ -65,6 +65,12 @@ const FOG_BASE_END: f32 = 190.0;
 /// swamp green close to the camera. Swamp (`d=0.034`) now ≈ (61, 153); Blight (`0.036`) ≈ (59, 150).
 const FOG_PULL_START: f32 = 26.0;
 const FOG_PULL_END: f32 = 40.0;
+/// Clear-side push for biomes authored CLEARER than the island reference (e.g. the swamp): how
+/// far their fog start/horizon move OUT, and how fast a sub-reference density reaches full push.
+/// Big so the swamp reads genuinely open — you see across it instead of into a haze.
+const FOG_CLEAR_PUSH_START: f32 = 95.0;
+const FOG_CLEAR_PUSH_END: f32 = 150.0;
+const FOG_CLEAR_GAIN: f32 = 5.0;
 
 pub struct ScenePlugin;
 
@@ -408,8 +414,18 @@ fn advance_sky(
     // when `FOREST_FOG` pins the distances by hand (that override, set in `biome.rs`, wins).
     let region_fog = std::env::var("FOREST_FOG").is_err().then(|| {
         let d = tint.map(|t| t.fog_density).unwrap_or(FOG_REF_DENSITY);
-        let t01 = ((d - FOG_REF_DENSITY) / (FOG_MAX_DENSITY - FOG_REF_DENSITY)).clamp(0.0, 1.0) * day;
-        (FOG_BASE_START - FOG_PULL_START * t01, FOG_BASE_END - FOG_PULL_END * t01)
+        // Signed: 0 at the island reference, +1 at the densest (pull the fog IN, foggier), and
+        // NEGATIVE for biomes authored CLEARER than the island — those PUSH the fog OUT so you see
+        // right across them (the swamp is meant to read open, not hazy). The clear side is scaled
+        // up so a small dip below the reference opens the view a lot.
+        let dn = (d - FOG_REF_DENSITY) / (FOG_MAX_DENSITY - FOG_REF_DENSITY);
+        if dn >= 0.0 {
+            let t = dn.min(1.0) * day;
+            (FOG_BASE_START - FOG_PULL_START * t, FOG_BASE_END - FOG_PULL_END * t)
+        } else {
+            let t = ((-dn) * FOG_CLEAR_GAIN).min(1.0) * day;
+            (FOG_BASE_START + FOG_CLEAR_PUSH_START * t, FOG_BASE_END + FOG_CLEAR_PUSH_END * t)
+        }
     });
     for mut fog in &mut fog_q {
         fog.color = fog_col;

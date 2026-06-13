@@ -42,6 +42,10 @@ pub struct Defenses {
     pub shrine: bool,
     /// 0 = unarmed townsfolk; each tier hits harder / watches wider (P5).
     pub villager_arms_tier: u32,
+    /// Flat +HP granted to every militia member by the guard-vigor upgrade line
+    /// (`GuardHealth`). `#[serde(default)]` so pre-existing saves load (field absent → 0).
+    #[serde(default)]
+    pub guard_hp_bonus: f32,
 }
 
 /// Town/economy flags. `tax_office` is read by the siege wave-clear payout;
@@ -131,6 +135,7 @@ fn apply_effect(
             keep.hp = keep.max;
         }
         VillagerArmor => def.villager_arms_tier += 1,
+        GuardHealth(n) => def.guard_hp_bonus += n as f32,
         Ballista => def.ballista = true,
         HealingShrine => def.shrine = true,
         MaxHp(n) => player.bump_max_hp(n),
