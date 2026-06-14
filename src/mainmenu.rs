@@ -69,19 +69,16 @@ fn exit_menu_sky(mut clock: ResMut<SkyClock>) {
 /// not the whole island — a tight, tree-filled dusk shot reads far better than a map-like overview.
 const SCENE_CENTER: Vec3 = Vec3::new(-60.0, 0.0, 39.0);
 
-const ORBIT_RADIUS: f32 = 30.0; // tight: stay among the trees, not above the island
-const ORBIT_HEIGHT: f32 = 12.0; // just over the canopy edge, looking in
-const ORBIT_LOOK_Y: f32 = 5.0; // aim into the trees
-const ORBIT_SPEED_DEG: f32 = 2.0; // a slow, calm drift (~180 s per revolution)
-const ORBIT_START_DEG: f32 = 40.0;
+// A fixed, player-eye-level shot looking into the forest — no drift, no orbit.
+const CAM_OFFSET: Vec3 = Vec3::new(24.0, 2.2, 18.0); // from SCENE_CENTER; y ≈ a standing player's eye
+const CAM_LOOK_Y: f32 = 3.5; // look level-to-slightly-up into the trees
 
-/// Slowly drift the main camera around a point in the forest, looking inward. Overwrites the camera
-/// transform every frame; only runs on `StartScreen`, where no other system drives the camera.
-fn menu_orbit(time: Res<Time>, mut cam: Query<&mut Transform, With<Camera3d>>) {
+/// Hold the camera at a static, player-height pose over the forest. Overwrites the transform every
+/// frame so nothing nudges it; only runs on `StartScreen`, where no other system drives the camera.
+fn menu_orbit(mut cam: Query<&mut Transform, With<Camera3d>>) {
     let Some(mut tf) = cam.iter_mut().next() else { return };
-    let ang = (ORBIT_START_DEG + time.elapsed_secs() * ORBIT_SPEED_DEG).to_radians();
-    let pos = SCENE_CENTER + Vec3::new(ORBIT_RADIUS * ang.cos(), ORBIT_HEIGHT, ORBIT_RADIUS * ang.sin());
-    let look = SCENE_CENTER + Vec3::new(0.0, ORBIT_LOOK_Y, 0.0);
+    let pos = SCENE_CENTER + CAM_OFFSET;
+    let look = SCENE_CENTER + Vec3::new(0.0, CAM_LOOK_Y, 0.0);
     *tf = Transform::from_translation(pos).looking_at(look, Vec3::Y);
 }
 
