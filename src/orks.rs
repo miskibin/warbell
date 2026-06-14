@@ -297,7 +297,7 @@ fn ork_brain(
     mut music: ResMut<crate::audio::MusicState>,
     mut was_clearing: Local<bool>,
     mut q: Query<
-        (Entity, &mut Ork, &mut Transform, Option<&crate::player::Health>),
+        (Entity, &mut Ork, &mut Transform, Option<&crate::player::Health>, Option<&crate::boss::Slowed>),
         (
             Without<WaveInvader>,
             Without<crate::dying::Dying>,
@@ -316,9 +316,11 @@ fn ork_brain(
     let mut fighting = false;
 
     // Snapshot (entity, faction, pos) so an ork with no hero in sight can seek a rival to brawl.
-    let snap: Vec<(Entity, Faction, Vec2)> = q.iter().map(|(e, o, _, _)| (e, o.faction, o.pos)).collect();
+    let snap: Vec<(Entity, Faction, Vec2)> = q.iter().map(|(e, o, _, _, _)| (e, o.faction, o.pos)).collect();
 
-    for (self_e, mut o, mut tf, health) in &mut q {
+    for (self_e, mut o, mut tf, health, slowed) in &mut q {
+        // Frostbite boon: a chilled ork crawls (factor < 1; 0 = frozen).
+        let slow_mul = slowed.map(|s| s.factor).unwrap_or(1.0);
         o.timer -= dt;
         o.atk_cd -= dt;
         let prev_mode = o.mode;
@@ -411,7 +413,7 @@ fn ork_brain(
                 // HERO, follow an A* route (around walls); a rival brawl stays direct (close
                 // range, same clearing) so it doesn't thrash the pathfinder.
                 let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
-                let speed = o.speed * 1.4 * if frenzied { 1.4 } else { 1.0 };
+                let speed = o.speed * 1.4 * if frenzied { 1.4 } else { 1.0 } * slow_mul;
                 let step_target = if o.brawl_target.is_none() {
                     let now = time.elapsed_secs();
                     if o.hunt_cursor >= o.hunt_path.len()

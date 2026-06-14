@@ -53,7 +53,7 @@ pub const LARDER_REGROW_RATE: f64 = 0.25;
 pub const REPAIR_PER_SEC: f64 = 8.0;
 /// Cost to raise one House (inside the walls). Houses don't burn, so this is the only gate
 /// besides `MAX_HOUSES`.
-pub const HOUSE_COST: Cost = Cost { wood: 6.0, stone: 4.0 };
+pub const HOUSE_COST: Cost = Cost { wood: 12.0, stone: 8.0 };
 /// Gold each villager pays at dawn after a survived night (the **tithe**) — the town IS the
 /// gold engine: grow the population to grow the income. The Tax Office upgrade doubles it.
 pub const TITHE_GOLD_PER_POP: i64 = 2;
@@ -93,9 +93,9 @@ pub struct Cost {
 impl BuildKind {
     pub fn cost(self) -> Cost {
         match self {
-            BuildKind::Farm => Cost { wood: 8.0, stone: 0.0 },
-            BuildKind::Lumber => Cost { wood: 0.0, stone: 6.0 },
-            BuildKind::Mine => Cost { wood: 6.0, stone: 0.0 },
+            BuildKind::Farm => Cost { wood: 16.0, stone: 0.0 },
+            BuildKind::Lumber => Cost { wood: 0.0, stone: 12.0 },
+            BuildKind::Mine => Cost { wood: 12.0, stone: 0.0 },
         }
     }
 
@@ -417,7 +417,7 @@ mod tests {
         let mut bank = bank_with(20.0, 10.0, 0.0);
         assert!(t.build(0, BuildKind::Farm, &mut bank));
         assert!(t.plots[0].is_built());
-        assert_eq!(bank.wood(), 12.0); // 20 - 8
+        assert_eq!(bank.wood(), 4.0); // 20 - 16
         assert_eq!(bank.stone(), 10.0); // farm costs no stone
     }
 
@@ -445,8 +445,8 @@ mod tests {
         assert!(t.build_house(&mut bank));
         assert_eq!(t.houses, 1);
         assert_eq!(t.pop_cap(), POP_PER_HOUSE);
-        assert_eq!(bank.wood(), 44.0); // 50 - 6
-        assert_eq!(bank.stone(), 46.0); // 50 - 4
+        assert_eq!(bank.wood(), 38.0); // 50 - 12
+        assert_eq!(bank.stone(), 42.0); // 50 - 8
     }
 
     #[test]
@@ -488,9 +488,9 @@ mod tests {
     #[test]
     fn woodcutter_costs_stone_only_and_has_no_passive_wood() {
         let mut t = Town::new(1, 0);
-        let mut bank = bank_with(0.0, 10.0, 0.0); // no wood, some stone
+        let mut bank = bank_with(0.0, 20.0, 0.0); // no wood, some stone
         assert!(t.build(0, BuildKind::Lumber, &mut bank));
-        assert_eq!(bank.stone(), 4.0); // 10 - 6
+        assert_eq!(bank.stone(), 8.0); // 20 - 12
         t.plots[0].staffed = true;
         let before = bank.wood();
         // No trickle: wood is banked per tree the woodcutter actually fells (world layer).
@@ -501,9 +501,9 @@ mod tests {
     #[test]
     fn mine_costs_wood_only_and_has_no_passive_stone() {
         let mut t = Town::new(1, 0);
-        let mut bank = bank_with(10.0, 0.0, 0.0); // some wood, no stone
+        let mut bank = bank_with(20.0, 0.0, 0.0); // some wood, no stone
         assert!(t.build(0, BuildKind::Mine, &mut bank));
-        assert_eq!(bank.wood(), 4.0); // 10 - 6
+        assert_eq!(bank.wood(), 8.0); // 20 - 12
         t.plots[0].staffed = true;
         let before = bank.stone();
         // No trickle: stone is banked per boulder the miner actually depletes (world layer).

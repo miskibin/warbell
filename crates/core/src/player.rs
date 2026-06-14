@@ -41,6 +41,24 @@ pub struct Player {
     pub move_speed_mult: f64,
     pub cleave: f64,
     pub bounty_mult: f64,
+    // Biome-Warden boons — permanent combat boons granted by slaying each biome boss (the
+    // forest-side `boss` module sets these directly on the kill, NOT via the upgrade store).
+    // `serde(default)` so older saves (written before wardens existed) still load.
+    /// Active move: Ground Slam (Stone Golem) — leap + radial AoE shockwave.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub has_ground_slam: bool,
+    /// Active move: Sand Dash (Sand Revenant) — dash through enemies, slashing.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub has_sand_dash: bool,
+    /// Active move: Bramble Sweep (Treant) — 360° spin-cleave.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub has_bramble_sweep: bool,
+    /// Passive: Frostbite (Bałwan) — hits slow the struck foe; a crit briefly freezes it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub frostbite: bool,
+    /// Passive: Venom (Bog Hag) — hits poison the struck foe (DoT) + small lifesteal.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub venom: bool,
 }
 
 impl Default for Player {
@@ -65,6 +83,11 @@ impl Default for Player {
             move_speed_mult: 1.0,
             cleave: 0.0,
             bounty_mult: 1.0,
+            has_ground_slam: false,
+            has_sand_dash: false,
+            has_bramble_sweep: false,
+            frostbite: false,
+            venom: false,
         }
     }
 }

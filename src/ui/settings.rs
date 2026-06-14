@@ -36,6 +36,9 @@ struct QualityToggle;
 /// Debug cheat: grants 1000 of every resource (gold + stone + food + wood) on click.
 #[derive(Component)]
 struct DebugGrant;
+/// Debug cheat: unlocks all five warden boons (the active moves + passives) on click.
+#[derive(Component)]
+struct DebugBoons;
 #[derive(Component)]
 struct QualityLabel;
 
@@ -81,6 +84,26 @@ fn setup_settings(mut commands: Commands, fonts: Res<UiFonts>) {
             ))
             .with_children(|b| {
                 b.spawn(label(&fonts.bold, "+1k", 13.0, TEXT));
+            });
+            // Debug cheat: "Arts" unlocks all five warden boons (active moves + passives) at once.
+            row.spawn((
+                Node {
+                    height: Val::Px(34.0),
+                    padding: UiRect::horizontal(Val::Px(10.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: border(1.0),
+                    border_radius: radius(R_BTN),
+                    ..default()
+                },
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(BORDER_SOFT),
+                Button,
+                Interaction::default(),
+                DebugBoons,
+            ))
+            .with_children(|b| {
+                b.spawn(label(&fonts.bold, "Arts", 13.0, TEXT));
             });
             // Graphics-quality toggle: a text button ("High"/"Ultra"/"Low") so the choice is
             // explicit and legible without depending on an icon asset. Click or press F10 to
@@ -163,6 +186,7 @@ fn settings_click(
             Option<&FullscreenToggle>,
             Option<&QualityToggle>,
             Option<&DebugGrant>,
+            Option<&DebugBoons>,
         ),
         Changed<Interaction>,
     >,
@@ -175,7 +199,7 @@ fn settings_click(
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
-    for (interaction, audio, fs, qual, grant) in &q {
+    for (interaction, audio, fs, qual, grant, boons) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -191,7 +215,22 @@ fn settings_click(
         if grant.is_some() {
             grant_debug_resources(&mut bank, &mut player, &mut notice, now);
         }
+        if boons.is_some() {
+            grant_all_boons(&mut player, &mut notice, now);
+        }
     }
+}
+
+/// Debug cheat behind the "Arts" button: unlock every warden boon (Ground Slam, Sand Dash,
+/// Bramble Sweep, Frostbite, Venom) so the active moves + passives can be tested instantly.
+fn grant_all_boons(player: &mut PlayerRes, notice: &mut Notice, now: f64) {
+    let p = &mut player.0;
+    p.has_ground_slam = true;
+    p.has_sand_dash = true;
+    p.has_bramble_sweep = true;
+    p.frostbite = true;
+    p.venom = true;
+    notice.push("Debug: all warden abilities unlocked", now);
 }
 
 /// Debug cheat behind the "+1k" button: 1000 gold + 1000 of each bank resource.

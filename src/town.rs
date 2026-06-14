@@ -445,10 +445,19 @@ fn apply_building_damage(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut fa: Local<Option<FlameAssets>>,
     spots: Res<PlotSpots>,
     buildings: Query<(Entity, &BuildingMesh)>,
     flames: Query<(Entity, &Flame)>,
 ) {
+    if pending.0.is_empty() {
+        return;
+    }
+    // Plots that already show a flame. Tracked across the drain loop so multiple damage events to
+    // the SAME plot in one frame (every arsonist pushes damage every frame) don't each spawn a
+    // flame — `commands` aren't flushed mid-system, so the `flames` query alone can't see a flame
+    // queued earlier this frame, and the building used to sprout a stack of overlapping flames.
+    let mut burning: std::collections::HashSet<usize> = flames.iter().map(|(_, f)| f.idx).collect();
     for (idx, dmg) in pending.0.drain(..) {
         let was_built = town.0.plots.get(idx).map_or(false, |p| p.is_built());
         town.0.damage(idx, dmg as f64);
@@ -470,35 +479,47 @@ fn apply_building_damage(
                     commands.entity(e).try_despawn();
                 }
             }
-        } else {
-            // Still standing + burning: ensure a flame is showing.
-            let has_flame = flames.iter().any(|(_, f)| f.idx == idx);
-            if !has_flame {
-                spawn_flame(&mut commands, &mut meshes, &mut materials, idx, &spots);
-            }
+            burning.remove(&idx);
+        } else if burning.insert(idx) {
+            // Newly burning this frame (insert returns true) → show exactly one flame.
+            let assets = fa.get_or_insert_with(|| flame_assets(&mut meshes, &mut materials));
+            spawn_flame(&mut commands, assets, idx, &spots);
         }
     }
 }
 
-fn spawn_flame(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    idx: usize,
-    spots: &PlotSpots,
-) {
+/// Shared flame mesh + material — built once and cloned per flame. Per-flame `meshes.add` /
+/// `materials.add` used to mint a UNIQUE mesh+material for every burning plot, which broke the
+/// renderer's instanced batching (each flame = its own draw call) and churned the asset stores.
+/// One handle pair keeps every flame in a single batch.
+#[derive(Clone)]
+struct FlameAssets {
+    mesh: Handle<Mesh>,
+    mat: Handle<StandardMaterial>,
+}
+
+fn flame_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> FlameAssets {
+    FlameAssets {
+        mesh: meshes.add(Sphere::new(0.6).mesh().ico(1).unwrap()),
+        mat: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.45, 0.1),
+            emissive: LinearRgba::rgb(6.0, 2.0, 0.3),
+            ..default()
+        }),
+    }
+}
+
+fn spawn_flame(commands: &mut Commands, fa: &FlameAssets, idx: usize, spots: &PlotSpots) {
     let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.45, 0.1),
-        emissive: LinearRgba::rgb(6.0, 2.0, 0.3),
-        ..default()
-    });
     commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.6).mesh().ico(1).unwrap())),
-        MeshMaterial3d(mat),
+        Mesh3d(fa.mesh.clone()),
+        MeshMaterial3d(fa.mat.clone()),
         Transform::from_xyz(pos.x, y + 1.6, pos.y),
         crate::biome::BiomeEntity,
+        // A glowing emissive blob — it should never cast a shadow (a flame casting a hard sphere
+        // shadow looks wrong anyway), so keep it out of every cascade's shadow pass.
+        bevy::light::NotShadowCaster,
         Flame { idx },
         PointLight {
             color: Color::srgb(1.0, 0.5, 0.2),
@@ -605,7 +626,8 @@ fn stage_town_for_shot(
     }
     if mode == "burn" {
         town.0.damage(0, 20.0);
-        spawn_flame(&mut commands, &mut meshes, &mut materials, 0, &spots);
+        let fa = flame_assets(&mut meshes, &mut materials);
+        spawn_flame(&mut commands, &fa, 0, &spots);
     }
 }
 

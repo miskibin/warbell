@@ -29,13 +29,14 @@ use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
 
 /// A quick-slot fired this frame — HUD reads it to pop the matching cell. Index is the
-/// quick-bar order: 0 = Q (food), 1 = Z, 2 = X, 3 = C.
+/// quick-bar order: 0 = Q (food), 1 = Y, 2 = T.
 #[derive(Message, Clone, Copy)]
 pub struct QuickFlash(pub u8);
 
-/// Letter shown for bindable slot `i` (0 = Z, 1 = X, 2 = C) — the key that uses/assigns it.
+/// Letter shown for bindable slot `i` (0 = Y, 1 = T) — the key that uses/assigns it. (The
+/// combat arts took Z/X/C, so the two quick-pots moved to Y/T.)
 pub fn bind_slot_key(i: usize) -> char {
-    ['Z', 'X', 'C'][i.min(2)]
+    ['Y', 'T'][i.min(1)]
 }
 
 /// The hero's 24-slot bag + two equip slots (the combat-read weapon bonus / armor mult live
@@ -125,7 +126,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(OnExit(Modal::Inventory), despawn_inventory_panel)
             .add_systems(
                 Update,
-                (inv_panel_interact, inv_assign_input, inv_tooltip, close_inventory)
+                (inv_panel_interact, inv_assign_input, inv_drop_input, inv_tooltip, close_inventory)
                     .run_if(in_state(Modal::Inventory)),
             );
     }
@@ -183,12 +184,10 @@ fn quickbar_input(
     }
     let (used, slot) = if keys.just_pressed(KeyCode::KeyQ) {
         (inv.0.eat_food(), 0u8)
-    } else if keys.just_pressed(KeyCode::KeyZ) {
+    } else if keys.just_pressed(KeyCode::KeyY) {
         (inv.0.use_quick_slot(0), 1)
-    } else if keys.just_pressed(KeyCode::KeyX) {
+    } else if keys.just_pressed(KeyCode::KeyT) {
         (inv.0.use_quick_slot(1), 2)
-    } else if keys.just_pressed(KeyCode::KeyC) {
-        (inv.0.use_quick_slot(2), 3)
     } else {
         (None, 0)
     };
@@ -255,11 +254,13 @@ fn close_inventory(
 
 fn spawn_inventory_panel(
     mut commands: Commands,
-    inv: Res<Inventory>,
+    mut inv: ResMut<Inventory>,
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
     tex: Res<crate::ui::texture::UiTextures>,
 ) {
+    // Fold any duplicate stackable cells together on open (cleans up gear from before it stacked).
+    inv.0.coalesce();
     build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex, true);
     spawn_tooltip(&mut commands, &fonts);
 }
@@ -554,7 +555,7 @@ fn build_inv_panel(
 
             card.spawn(label(
                 &fonts.regular,
-                "Tab/I or Esc to close  ·  click to use or equip  ·  hover + Z/X/C to set a quick-slot",
+                "Tab/I or Esc to close  ·  click to use or equip  ·  hover: Y/T quick-slot, right-click or Del to drop",
                 11.0,
                 GREY,
             ));
@@ -643,7 +644,7 @@ fn hovered_slot(buttons: &Query<(&Interaction, &InvSlotButton)>) -> Option<usize
         .map(|(_, b)| b.0)
 }
 
-/// Hover a bag item and press **Z / X / C** to pin it to that quick-slot (consumables only).
+/// Hover a bag item and press **Y / T** to pin it to that quick-slot (consumables only).
 /// Rebuilds the panel so the new key badge shows. The same physical keys *use* a slot in
 /// `Modal::None`; here, inside the satchel, they *assign* — no conflict (different modal).
 #[allow(clippy::too_many_arguments)]
@@ -658,12 +659,10 @@ fn inv_assign_input(
     buttons: Query<(&Interaction, &InvSlotButton)>,
     panel: Query<Entity, With<InvUi>>,
 ) {
-    let slot = if keys.just_pressed(KeyCode::KeyZ) {
+    let slot = if keys.just_pressed(KeyCode::KeyY) {
         0
-    } else if keys.just_pressed(KeyCode::KeyX) {
+    } else if keys.just_pressed(KeyCode::KeyT) {
         1
-    } else if keys.just_pressed(KeyCode::KeyC) {
-        2
     } else {
         return;
     };
@@ -671,6 +670,39 @@ fn inv_assign_input(
     let Some(id) = inv.0.bag.get(idx).and_then(|s| s.item_id.clone()) else { return };
     if !inv.0.set_quick_bind(slot, &id) {
         return; // not a consumable — nothing to assign
+    }
+    cues.write(AudioCue::UiSelect);
+    for e in &panel {
+        commands.entity(e).despawn();
+    }
+    build_inv_panel(&mut commands, &inv.0, &fonts, &atlas, &tex, false);
+}
+
+/// Hover a bag item and **right-click** (or press **Delete**) to throw one away — the quick way to
+/// clear gear you don't want when no merchant is near. Rebuilds the panel so the cell updates.
+/// Selling for gold lives at the merchant shop; this just discards. (RMB is free here: the only
+/// other RMB users — fly-cam look, hero block — don't run while a panel freezes the world / in Play
+/// mode.)
+#[allow(clippy::too_many_arguments)]
+fn inv_drop_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut inv: ResMut<Inventory>,
+    mut cues: MessageWriter<AudioCue>,
+    mut commands: Commands,
+    fonts: Res<UiFonts>,
+    atlas: Res<IconAtlas>,
+    tex: Res<crate::ui::texture::UiTextures>,
+    buttons: Query<(&Interaction, &InvSlotButton)>,
+    panel: Query<Entity, With<InvUi>>,
+) {
+    if !(mouse.just_pressed(MouseButton::Right) || keys.just_pressed(KeyCode::Delete)) {
+        return;
+    }
+    let Some(idx) = hovered_slot(&buttons) else { return };
+    let Some(id) = inv.0.bag.get(idx).and_then(|s| s.item_id.clone()) else { return };
+    if !inv.0.consume_item(&id, 1) {
+        return;
     }
     cues.write(AudioCue::UiSelect);
     for e in &panel {

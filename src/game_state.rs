@@ -49,6 +49,8 @@ pub enum Modal {
     Inventory,
     Tutorial,
     Build,
+    /// "Warden slain" reward dialog (freezes the world; opened by `boss::reward_on_death`).
+    BossReward,
 }
 
 /// Env var the relaunched child reads at startup to know what to boot into (see
@@ -433,6 +435,8 @@ struct SegButton(crate::siege::Difficulty);
 #[derive(Component)]
 struct PauseResumeBtn;
 #[derive(Component)]
+struct PauseSaveBtn;
+#[derive(Component)]
 struct PauseLoadBtn;
 #[derive(Component)]
 struct PauseRestartBtn;
@@ -774,11 +778,14 @@ fn spawn_pause_screen(
     mut commands: Commands,
     fonts: Res<UiFonts>,
     save: Res<crate::savegame::SaveExists>,
+    siege: Res<crate::siege::Siege>,
     audio: Res<AudioSettings>,
     quality: Res<GraphicsQuality>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let has_save = save.0;
+    // Manual save is a day-only action (a mid-siege snapshot would resume in the wrong place).
+    let can_save = matches!(siege.phase, crate::siege::GamePhase::Prep);
     let audio_txt = audio_label(audio.muted);
     let gfx_txt = format!("Graphics: {}", quality.label());
     let fs_on = windows.single().map(|w| !matches!(w.mode, WindowMode::Windowed)).unwrap_or(false);
@@ -825,6 +832,28 @@ fn spawn_pause_screen(
                 },
                 BackgroundColor(BORDER_SOFT),
             ));
+            // Save the current run on demand. Disabled (dim) during a night assault.
+            if can_save {
+                pause_btn(c, &fonts.extrabold, "SAVE GAME", PauseSaveBtn, (), 0.11);
+            } else {
+                c.spawn((
+                    Node {
+                        width: Val::Px(264.0),
+                        padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border: widgets::border(1.0),
+                        border_radius: radius(R_BTN),
+                        ..default()
+                    },
+                    BackgroundColor(rgba(196, 144, 62, 0.16)),
+                    BorderColor::all(rgba(244, 204, 132, 0.22)),
+                    anim(AnimKind::PopIn, 0.11, 0.28),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.bold, "SAVE GAME  (by day only)", 14.0, GREY));
+                });
+            }
             if has_save {
                 pause_btn(c, &fonts.extrabold, "LOAD LAST SAVE", PauseLoadBtn, (), 0.12);
             }
@@ -853,6 +882,7 @@ fn pause_click(
             Option<&PauseAudioBtn>,
             Option<&PauseGfxBtn>,
             Option<&PauseFsBtn>,
+            Option<&PauseSaveBtn>,
         ),
         Changed<Interaction>,
     >,
@@ -868,18 +898,23 @@ fn pause_click(
     mut confirm: ResMut<ConfirmWipe>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
     mut cont_req: ResMut<ContinueInPlace>,
+    mut save_req: MessageWriter<crate::savegame::RequestSave>,
 ) {
     if confirm.0.is_some() {
         return; // dialog owns input
     }
     let now = time.elapsed_secs_f64();
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, resume, load, restart_b, audio_b, gfx_b, fs_b) in &q {
+    for (interaction, resume, load, restart_b, audio_b, gfx_b, fs_b, save_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
         if resume.is_some() {
             next_app.set(AppState::Playing);
+        }
+        if save_b.is_some() {
+            // `manual_save` (savegame.rs) does the write + the "Game saved" notice.
+            save_req.write(crate::savegame::RequestSave);
         }
         if load.is_some() {
             // Resume the save in-process: the battlefield sweep clears the live wave and

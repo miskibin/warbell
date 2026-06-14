@@ -8,12 +8,14 @@
 //! its position as a world `Vec2` like the orks and grounds on `worldmap::ground_at_world`.
 
 mod anim;
+mod arts;
 mod block;
 mod camera;
 mod combat;
 
 pub(crate) use combat::{
-    spawn_burst, spawn_chips, spawn_heal_burst, spawn_motes, spawn_shockwave, CombatFx, Health,
+    spawn_burst, spawn_chips, spawn_dash_trail, spawn_heal_burst, spawn_motes, spawn_shockwave,
+    spawn_sweep_burst, CombatFx, Health,
 };
 mod health;
 mod model;
@@ -79,6 +81,9 @@ pub struct HeroHealth {
     pub block_locked: bool,
     pub regen_pause: f32,
     pub blocking: bool,
+    /// `elapsed_secs` until which the hero is invulnerable (Sand-Dash i-frames). `apply_hero_damage`
+    /// negates incoming blows while `now < iframe_until`.
+    pub iframe_until: f32,
 }
 
 impl Default for HeroHealth {
@@ -89,6 +94,7 @@ impl Default for HeroHealth {
             block_locked: false,
             regen_pause: 0.0,
             blocking: false,
+            iframe_until: 0.0,
         }
     }
 }
@@ -153,7 +159,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<combat::HitStop>()
             .insert_resource(camera::OrbitCam::default())
             .add_systems(Startup, combat::setup_combat_fx)
-            .add_systems(PostStartup, spawn_hero)
+            .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, debug_grant_boons))
             // Fresh run: wipe progression + revive the hero on a new run (NOT on un-pause).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
@@ -173,6 +179,8 @@ impl Plugin for PlayerPlugin {
                     combat::update_fx_fades,
                     combat::hero_blade_trail,
                     combat::drive_hit_stop, // ungated: must resume the clock after the freeze
+                    arts::apply_knock, // ungated: fold queued slam knockbacks into ork kb
+                    arts::sync_arts_hud, // ability-chip HUD (show/dim per readiness)
                 ),
             )
             // World-sim — gated on the freeze condition (`Modal::None` ⇒ Playing, no panel).
@@ -183,6 +191,7 @@ impl Plugin for PlayerPlugin {
                     movement::player_move,
                     block::player_block,
                     combat::player_attack,
+                    arts::player_arts, // warden weapon arts (after move/attack so a dash sticks)
                     combat::ensure_combat_health,
                     health::apply_hero_damage,
                     health::hero_death_anim, // keel-over pose; last so it owns the dead transform
@@ -191,6 +200,20 @@ impl Plugin for PlayerPlugin {
                     .run_if(in_state(crate::game_state::Modal::None)),
             );
     }
+}
+
+/// Debug/screenshot hook: `FOREST_BOONS=1` grants all five warden boons at startup so the
+/// ability HUD + the active moves can be exercised without first slaying every boss.
+fn debug_grant_boons(mut player: ResMut<PlayerRes>) {
+    if std::env::var("FOREST_BOONS").is_err() {
+        return;
+    }
+    let p = &mut player.0;
+    p.has_ground_slam = true;
+    p.has_sand_dash = true;
+    p.has_bramble_sweep = true;
+    p.frostbite = true;
+    p.venom = true;
 }
 
 fn spawn_hero(

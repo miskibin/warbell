@@ -324,6 +324,14 @@ fn advance_sky(
         // night lux only feeds the Atmosphere's dusk glow. Keep that floor LOW (≈800): the
         // actual night key light is the Moon below. Daytime peak unchanged (≈14 100).
         light.illuminance = 800.0 + 13_300.0 * day;
+        // Shadows: the sun only casts while it's actually UP. At night it sits below the horizon
+        // (illuminance floored at 800, lighting no top face) yet a shadow-enabled directional light
+        // still renders its FULL cascade set. Leaving it on meant night ran TWO shadow-casting
+        // directionals (sun + moon = 8 cascades vs the day's 4) — wasted, since the moon is the
+        // night key light. On Ultra (4096 atlas, cascades out to 190) that doubling is the
+        // fill-rate spike that tanks weaker GPUs the instant night falls (the war-bell snap to
+        // nightfall). Hand the night shadows to the moon alone. Mirrors the moon's `night > 0.05`.
+        light.shadows_enabled = day > 0.05;
         // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
         // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
         // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).

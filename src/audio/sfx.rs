@@ -75,6 +75,12 @@ pub(crate) struct SfxBank {
     /// has no heavy trunk to crash, so it gets the crack alone).
     wood_crack: Handle<AudioSource>,
     block: Handle<AudioSource>,
+    /// Sand-Dash whoosh — a compressed-air burst as the hero blinks forward (warden art).
+    dash: Handle<AudioSource>,
+    /// Bramble-Sweep burst — an expanding circular energy wave (warden art).
+    sweep: Handle<AudioSource>,
+    /// Ground-Slam impacts — two heavy stone-fist takes, picked at random per slam.
+    slams: Vec<Handle<AudioSource>>,
     ui: Handle<AudioSource>,
     /// Sampled herb-pick rustle (replaces the old `Sting::Forage` synth blip).
     forage: Handle<AudioSource>,
@@ -115,6 +121,9 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
         tree_fall: asset.load("audio/tree-fall.ogg"),
         wood_crack: asset.load("audio/wood-crack.ogg"),
         block: asset.load("audio/block.ogg"),
+        dash: asset.load("audio/sand-dash.ogg"),
+        sweep: asset.load("audio/bramble-sweep.ogg"),
+        slams: ["audio/ground-slam-1.ogg", "audio/ground-slam-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         ui: asset.load("audio/menu-select.ogg"),
         forage: asset.load("audio/forage.ogg"),
         war_bell: asset.load("audio/war-bell.ogg"),
@@ -213,6 +222,12 @@ pub(crate) fn play_cues(
                 one_shot(&mut commands, clip, vol, jitter(&mut seed, 0.08));
             }
             AudioCue::Block => one_shot(&mut commands, bank.block.clone(), 0.45 * sfx, jitter(&mut seed, 0.1)),
+            // Sand-Dash whoosh — punchy, tiny pitch jitter so repeat dashes don't sound stamped.
+            AudioCue::Dash => one_shot(&mut commands, bank.dash.clone(), 0.6 * sfx, jitter(&mut seed, 0.06)),
+            // Bramble-Sweep — the expanding energy-wave burst.
+            AudioCue::Sweep => one_shot(&mut commands, bank.sweep.clone(), 0.6 * sfx, jitter(&mut seed, 0.05)),
+            // Ground-Slam — random of the two heavy impacts, wide pitch jitter so repeats vary.
+            AudioCue::Slam => one_shot(&mut commands, pick(&bank.slams, &mut seed), 0.7 * sfx, jitter(&mut seed, 0.08)),
             AudioCue::Footstep { surface, landing } => {
                 let clip = match surface {
                     Surface::Dirt => pick(&bank.foot_dirt, &mut seed),

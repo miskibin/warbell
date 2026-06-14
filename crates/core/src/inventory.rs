@@ -251,9 +251,11 @@ pub static ITEM_DEFS: &[ItemDef] = &[
     ItemDef::new("bread", "Bread", "🍞", ItemKind::Consumable).heal(15.0).stack(),
     ItemDef::new("potion", "Health Potion", "🧪", ItemKind::Consumable).heal(40.0).stack(),
     ItemDef::new("feast", "Tavern Feast", "🍖", ItemKind::Consumable).heal(100.0).stack(),
-    ItemDef::new("sword_iron", "Iron Sword", "⚔️", ItemKind::Weapon).dmg(11.0),
-    ItemDef::new("sword_gold", "Golden Blade", "🗡️", ItemKind::Weapon).dmg(21.0),
-    ItemDef::new("axe", "Battle Axe", "🪓", ItemKind::Weapon).dmg(15.0),
+    // Gear stacks too: duplicate weapons/armor collapse into one bag cell with a count instead of
+    // each taking its own slot (equipping pulls one off the stack; the spares can be sold/dropped).
+    ItemDef::new("sword_iron", "Iron Sword", "⚔️", ItemKind::Weapon).dmg(11.0).stack(),
+    ItemDef::new("sword_gold", "Golden Blade", "🗡️", ItemKind::Weapon).dmg(21.0).stack(),
+    ItemDef::new("axe", "Battle Axe", "🪓", ItemKind::Weapon).dmg(15.0).stack(),
     // ─── Biome creature drops ─────────────────────────────────────
     ItemDef::new("fur", "Thick Fur", "🧥", ItemKind::Consumable)
         .stack()
@@ -275,14 +277,14 @@ pub static ITEM_DEFS: &[ItemDef] = &[
         .quick(QuickKind::Food),
     // Foraged in the western forest — a quick snack heal.
     ItemDef::new("apple", "Forest Apple", "🍎", ItemKind::Consumable).heal(18.0).stack(),
-    ItemDef::new("stone_maul", "Stone Maul", "🔨", ItemKind::Weapon).dmg(18.0),
+    ItemDef::new("stone_maul", "Stone Maul", "🔨", ItemKind::Weapon).dmg(18.0).stack(),
     // ─── Wearable armor ───────────────────────────────────────────
-    ItemDef::new("leather_armor", "Leather Armor", "🦺", ItemKind::Armor).def(0.11),
-    ItemDef::new("iron_armor", "Iron Cuirass", "🛡️", ItemKind::Armor).def(0.2),
-    ItemDef::new("gold_armor", "Gilded Plate", "👑", ItemKind::Armor).def(0.28),
+    ItemDef::new("leather_armor", "Leather Armor", "🦺", ItemKind::Armor).def(0.11).stack(),
+    ItemDef::new("iron_armor", "Iron Cuirass", "🛡️", ItemKind::Armor).def(0.2).stack(),
+    ItemDef::new("gold_armor", "Gilded Plate", "👑", ItemKind::Armor).def(0.28).stack(),
     // ─── Rim-only top tier (frontier gradient) ────────────────────
-    ItemDef::new("blade_frost", "Frostfang Greatsword", "🗡️", ItemKind::Weapon).dmg(34.0),
-    ItemDef::new("dragon_plate", "Dragonscale Plate", "🐉", ItemKind::Armor).def(0.42),
+    ItemDef::new("blade_frost", "Frostfang Greatsword", "🗡️", ItemKind::Weapon).dmg(34.0).stack(),
+    ItemDef::new("dragon_plate", "Dragonscale Plate", "🐉", ItemKind::Armor).def(0.42).stack(),
     // ─── Key items (tokens) ───────────────────────────────────────
     ItemDef::new("mercenary_contract", "Mercenary Contract", "📜", ItemKind::Token).stack(),
 ];
@@ -290,6 +292,19 @@ pub static ITEM_DEFS: &[ItemDef] = &[
 /// Resolve an item id to its definition (the TS `ITEM_DEFS[id]`).
 pub fn item_def(id: &str) -> Option<&'static ItemDef> {
     ITEM_DEFS.iter().find(|d| d.id == id)
+}
+
+/// Gold the merchant pays to BUY this item back from the hero (its sell value). Scales with the
+/// piece's stats but stays well under the shop's selling price, so buy-low/sell-high is never an
+/// exploit. Tokens (key/quest items) are not sellable → 0. Drives the shop's SELL list.
+pub fn sell_value(id: &str) -> i64 {
+    let Some(d) = item_def(id) else { return 0 };
+    match d.kind {
+        ItemKind::Weapon => 4 + (d.damage_bonus * 1.5).round() as i64,
+        ItemKind::Armor => 4 + (d.defense * 60.0).round() as i64,
+        ItemKind::Consumable => 1 + (d.heal / 8.0).round() as i64 + if d.buff.is_some() { 3 } else { 0 },
+        ItemKind::Token => 0,
+    }
 }
 
 /// General-purpose bag capacity (the TS `BAG_SIZE`). Generous so pickups rarely
@@ -417,6 +432,26 @@ impl Bag {
             self.auto_bind(item_id);
         }
         ok
+    }
+
+    /// Merge separate slots holding the same stackable item into one (folding later copies into the
+    /// first, clearing the emptied slots). New pickups already stack via `place`; this fixes a bag
+    /// that accumulated duplicate gear in distinct cells *before* gear became stackable. Idempotent.
+    pub fn coalesce(&mut self) {
+        let mut first: Vec<(String, usize)> = Vec::new(); // (id, slot of its first stack)
+        for i in 0..self.bag.len() {
+            let Some(id) = self.bag[i].item_id.clone() else { continue };
+            if !item_def(&id).map(|d| d.stackable).unwrap_or(false) {
+                continue;
+            }
+            if let Some(&(_, f)) = first.iter().find(|(sid, _)| *sid == id) {
+                let n = self.bag[i].count;
+                self.bag[f].count += n;
+                self.bag[i].clear();
+            } else {
+                first.push((id, i));
+            }
+        }
     }
 
     /// Total count of an item across the bag.
@@ -953,22 +988,38 @@ mod tests {
 
     // ── has_room_for ──
     #[test]
-    fn has_room_for_accounts_for_empty_slots_and_stacks() {
+    fn has_room_for_merges_stackables_and_counts_free_slots() {
+        // A stackable already present needs no new slot — even both copies merge into the stack.
         let mut b = Bag::new();
-        // Fill all but one slot with non-stackable gear (24 slots).
-        for _ in 0..(BAG_SIZE - 1) {
-            assert!(b.place("sword_iron", 1));
+        b.place("bread", 1);
+        assert!(b.has_room_for(&["bread", "bread"]));
+
+        // Every slot occupied by a non-mergeable item → a brand-new id has nowhere to go, but an id
+        // whose stack is already present still fits (merge, no slot needed).
+        let mut full = Bag::new();
+        for s in full.bag.iter_mut() {
+            s.item_id = Some("leather_armor".to_string());
+            s.count = 1;
         }
-        // One free slot: a single new item fits, two distinct ones don't.
-        assert!(b.has_room_for(&["potion"]));
-        assert!(!b.has_room_for(&["potion", "axe"]));
-        // But a stackable already present needs no slot — bread stacks even when full.
-        let mut b2 = Bag::new();
-        b2.place("bread", 1);
-        for _ in 0..(BAG_SIZE - 1) {
-            b2.place("axe", 1);
-        }
-        assert!(b2.has_room_for(&["bread", "bread"])); // both merge into the stack
+        assert!(!full.has_room_for(&["sword_iron"]));
+        assert!(full.has_room_for(&["leather_armor"]));
+    }
+
+    #[test]
+    fn coalesce_merges_duplicate_stackable_slots() {
+        let mut b = Bag::new();
+        // Two separate dragon_plate cells (as a legacy bag would have before gear stacked).
+        b.bag[0].item_id = Some("dragon_plate".to_string());
+        b.bag[0].count = 1;
+        b.bag[3].item_id = Some("dragon_plate".to_string());
+        b.bag[3].count = 1;
+        b.bag[5].item_id = Some("bread".to_string());
+        b.bag[5].count = 2;
+        b.coalesce();
+        assert_eq!(b.count_item("dragon_plate"), 2);
+        // Collapsed into a single cell.
+        assert_eq!(b.bag.iter().filter(|s| s.item_id.as_deref() == Some("dragon_plate")).count(), 1);
+        assert_eq!(b.count_item("bread"), 2); // untouched single stack
     }
 
     // ── stat lines ──
@@ -1011,6 +1062,19 @@ mod tests {
         for d in ITEM_DEFS {
             let _ = d.icon_spec();
         }
+    }
+
+    #[test]
+    fn sell_value_is_under_buy_price_and_zero_for_tokens() {
+        assert_eq!(sell_value("mercenary_contract"), 0); // key item — not sellable
+        assert!(sell_value("bread") < 4); // shop sells bread for 4
+        assert!(sell_value("potion") < 12);
+        assert!(sell_value("feast") < 28);
+        assert!(sell_value("axe") < 45);
+        assert!(sell_value("sword_gold") < 80);
+        assert!(sell_value("sword_iron") > 0); // unbuyable gear still has a sell-back value
+        assert!(sell_value("fur") > 0); // a buff consumable is worth a little
+        assert_eq!(sell_value("nope"), 0); // unknown id
     }
 
     #[test]

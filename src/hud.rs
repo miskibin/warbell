@@ -1,5 +1,5 @@
 //! **Combat HUD.** Bottom-left: a level badge + gradient HP/XP/stamina bars. Bottom-centre: four
-//! quick-use slots (Q food + Z/X/C bindable buffs) — each shows its item icon + count, greys when
+//! quick-use slots (Q food + Y/T bindable pots) — each shows its item icon + count, greys when
 //! exhausted, and falls back to a faint category ghost when empty. Above the vitals: buff pips.
 //! Top-left: the stat bar + pickup toasts. All chrome comes from [`crate::ui`]; everything binds
 //! to the live hero stores.
@@ -44,30 +44,28 @@ struct PopGrowthText;
 #[derive(Component)]
 struct PopIcon;
 
-/// Which derived quick-slot a node belongs to.
+/// Which derived quick-slot a node belongs to. (Two bindable pots on Y/T after the combat arts
+/// took Z/X/C; food stays on Q.)
 #[derive(Clone, Copy, PartialEq)]
 enum SlotKind {
     Food,
     Resist,
     Power,
-    Haste,
 }
 impl SlotKind {
     fn key(self) -> char {
         match self {
             SlotKind::Food => 'Q',
-            SlotKind::Resist => 'Z',
-            SlotKind::Power => 'X',
-            SlotKind::Haste => 'C',
+            SlotKind::Resist => 'Y',
+            SlotKind::Power => 'T',
         }
     }
-    /// Bindable core slot index (Z/X/C → 0/1/2); `None` for the fixed food slot (Q).
+    /// Bindable core slot index (Y/T → 0/1); `None` for the fixed food slot (Q).
     fn bind_slot(self) -> Option<usize> {
         match self {
             SlotKind::Food => None,
             SlotKind::Resist => Some(0),
             SlotKind::Power => Some(1),
-            SlotKind::Haste => Some(2),
         }
     }
     /// Atlas key for the faint category ghost shown when the slot holds nothing.
@@ -76,16 +74,14 @@ impl SlotKind {
             SlotKind::Food => "buff:food",
             SlotKind::Resist => "buff:resist",
             SlotKind::Power => "buff:power",
-            SlotKind::Haste => "buff:haste",
         }
     }
-    /// Index matching [`QuickFlash`] (0 = Q, 1 = Z, 2 = X, 3 = C).
+    /// Index matching [`QuickFlash`] (0 = Q, 1 = Y, 2 = T).
     fn flash_idx(self) -> u8 {
         match self {
             SlotKind::Food => 0,
             SlotKind::Resist => 1,
             SlotKind::Power => 2,
-            SlotKind::Haste => 3,
         }
     }
 }
@@ -335,7 +331,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                 BorderColor::all(IRON_EDGE),
             ))
             .with_children(|row| {
-                for kind in [SlotKind::Food, SlotKind::Resist, SlotKind::Power, SlotKind::Haste] {
+                for kind in [SlotKind::Food, SlotKind::Resist, SlotKind::Power] {
                     row.spawn((
                         Node {
                             width: Val::Px(52.0),

@@ -21,6 +21,7 @@
 
 use std::path::PathBuf;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,7 @@ use crate::siege::{Difficulty, GamePhase, KeepHp, Siege};
 use crate::succession::Lives;
 use crate::town::TownRes;
 use crate::chest::{Chest, ChestId, ChestLid, CHEST_LID_OPEN};
+use crate::ui::notice::Notice;
 use crate::villagers::RescuedCamps;
 
 /// Bump on any breaking change to [`SaveData`] — an older/garbage file is then treated as "no
@@ -90,6 +92,12 @@ pub struct SaveExists(pub bool);
 #[derive(Message, Clone)]
 pub struct GameLoaded(pub SaveData);
 
+/// Request a snapshot **now** — fired by the pause-menu **Save Game** button (see
+/// `game_state::pause_click`). Handled by [`manual_save`], which writes only while in `Prep`
+/// (a mid-siege save would resume in the wrong place). The dawn autosave doesn't use this.
+#[derive(Message)]
+pub struct RequestSave;
+
 pub struct SaveGamePlugin;
 
 impl Plugin for SaveGamePlugin {
@@ -97,9 +105,13 @@ impl Plugin for SaveGamePlugin {
         app.init_resource::<PendingLoad>()
             .init_resource::<SaveExists>()
             .add_message::<GameLoaded>()
+            .add_message::<RequestSave>()
             .add_systems(Startup, detect_existing_save)
             // Snapshot at dawn (a cleared night). Gated like the rest of the sim.
             .add_systems(Update, autosave_on_dawn.run_if(in_state(Modal::None)))
+            // Manual save (pause-menu button). Runs in `Paused` — where the world is frozen but
+            // every run-state resource still lives — so it can snapshot the current day on demand.
+            .add_systems(Update, manual_save.run_if(in_state(AppState::Paused)))
             // Apply a pending load the moment a run is playing (cheap no-op when nothing pending).
             .add_systems(Update, apply_pending_load.run_if(in_state(AppState::Playing)))
             // Reconcile world entities from the GameLoaded snapshot (ungated; fires once per load).
@@ -171,77 +183,132 @@ fn detect_existing_save(mut exists: ResMut<SaveExists>) {
     exists.0 = load_save().is_some();
 }
 
+// ── Snapshot source (shared by the dawn autosave + the manual save) ─────────────────────
+
+/// All the live run-state a snapshot reads, bundled into one `SystemParam` so both save paths
+/// (dawn edge + manual button) build an identical [`SaveData`] from one place — and neither
+/// blows past Bevy's 16-param ceiling. Read-only.
+#[derive(SystemParam)]
+struct SaveCtx<'w, 's> {
+    siege: Res<'w, Siege>,
+    keep: Res<'w, KeepHp>,
+    player: Res<'w, PlayerRes>,
+    bank: Res<'w, Bank>,
+    inv: Res<'w, Inventory>,
+    town: Res<'w, TownRes>,
+    up: Res<'w, Upgrades>,
+    def: Res<'w, Defenses>,
+    eco: Res<'w, EconomyState>,
+    lives: Res<'w, Lives>,
+    camps: Res<'w, RescuedCamps>,
+    disc: Res<'w, Discoveries>,
+    chests: Query<'w, 's, (&'static Chest, &'static ChestId)>,
+    landmarks: Query<'w, 's, &'static Landmark>,
+}
+
+impl SaveCtx<'_, '_> {
+    /// Build the full run snapshot from the live resources/entities. The single place the
+    /// `SaveData` field list is populated — keep it in sync with [`apply_pending_load`].
+    fn snapshot(&self) -> SaveData {
+        // Looted-treasure flags, indexed by ChestId (caches refill on their own → never persisted).
+        let n_chests = self.chests.iter().map(|(_, id)| id.0 + 1).max().unwrap_or(0);
+        let mut opened_chests = vec![false; n_chests];
+        for (chest, id) in &self.chests {
+            if !chest.cache && chest.opened {
+                opened_chests[id.0] = true;
+            }
+        }
+        SaveData {
+            version: SAVE_VERSION,
+            difficulty: self.siege.difficulty,
+            wave_index: self.siege.wave_index,
+            keep_hp: self.keep.hp,
+            keep_max: self.keep.max,
+            heirs: self.lives.heirs,
+            player: self.player.0,
+            bank: self.bank.0,
+            bag: self.inv.0.clone(),
+            town: self.town.0.clone(),
+            upgrades: self.up.0.purchased().iter().map(|s| s.to_string()).collect(),
+            defenses: self.def.clone(),
+            tax_office: self.eco.tax_office,
+            shop_discount: self.eco.shop_discount,
+            rescued_camps: self.camps.done.clone(),
+            discoveries_found: self.disc.found,
+            discoveries_completed: self.disc.completed,
+            discovered_landmarks: self
+                .landmarks
+                .iter()
+                .filter(|l| l.is_discovered())
+                .map(|l| l.name.to_string())
+                .collect(),
+            opened_chests,
+        }
+    }
+}
+
+/// Write `data` and flip [`SaveExists`] on success. Returns whether the write landed (callers add
+/// their own user feedback / log line).
+fn flush_save(data: &SaveData, exists: &mut SaveExists) -> bool {
+    match write_save(data) {
+        Ok(()) => {
+            exists.0 = true;
+            true
+        }
+        Err(e) => {
+            warn!("save failed: {e}");
+            false
+        }
+    }
+}
+
 // ── Autosave at dawn ────────────────────────────────────────────────────────────────
 
-/// Write a snapshot on every `Wave → Prep` edge (a cleared night). `prev` tracks last frame's
-/// phase to fire exactly once on the transition.
-#[allow(clippy::too_many_arguments)]
+/// Write a snapshot on every `Wave → Prep` edge (a cleared night) — the "just survived a night"
+/// checkpoint. `prev` tracks last frame's phase to fire exactly once on the transition.
 fn autosave_on_dawn(
     mut prev: Local<Option<GamePhase>>,
     mut exists: ResMut<SaveExists>,
-    siege: Res<Siege>,
-    keep: Res<KeepHp>,
-    player: Res<PlayerRes>,
-    bank: Res<Bank>,
-    inv: Res<Inventory>,
-    town: Res<TownRes>,
-    up: Res<Upgrades>,
-    def: Res<Defenses>,
-    eco: Res<EconomyState>,
-    lives: Res<Lives>,
-    camps: Res<RescuedCamps>,
-    disc: Res<Discoveries>,
-    chests: Query<(&Chest, &ChestId)>,
-    landmarks: Query<&Landmark>,
+    ctx: SaveCtx,
 ) {
-    let phase = siege.phase;
+    let phase = ctx.siege.phase;
     let was = prev.replace(phase);
     let dawn = was == Some(GamePhase::Wave) && phase == GamePhase::Prep;
-    if !dawn || siege.wave_index < 0 {
+    if !dawn || ctx.siege.wave_index < 0 {
         return;
     }
-
-    // Looted-treasure flags, indexed by ChestId (caches refill on their own → never persisted).
-    let n_chests = chests.iter().map(|(_, id)| id.0 + 1).max().unwrap_or(0);
-    let mut opened_chests = vec![false; n_chests];
-    for (chest, id) in &chests {
-        if !chest.cache && chest.opened {
-            opened_chests[id.0] = true;
-        }
+    if flush_save(&ctx.snapshot(), &mut exists) {
+        info!("autosaved after night {}", ctx.siege.wave_index + 1);
     }
+}
 
-    let data = SaveData {
-        version: SAVE_VERSION,
-        difficulty: siege.difficulty,
-        wave_index: siege.wave_index,
-        keep_hp: keep.hp,
-        keep_max: keep.max,
-        heirs: lives.heirs,
-        player: player.0,
-        bank: bank.0,
-        bag: inv.0.clone(),
-        town: town.0.clone(),
-        upgrades: up.0.purchased().iter().map(|s| s.to_string()).collect(),
-        defenses: def.clone(),
-        tax_office: eco.tax_office,
-        shop_discount: eco.shop_discount,
-        rescued_camps: camps.done.clone(),
-        discoveries_found: disc.found,
-        discoveries_completed: disc.completed,
-        discovered_landmarks: landmarks
-            .iter()
-            .filter(|l| l.is_discovered())
-            .map(|l| l.name.to_string())
-            .collect(),
-        opened_chests,
-    };
+// ── Manual save (pause-menu Save Game button) ────────────────────────────────────────
 
-    match write_save(&data) {
-        Ok(()) => {
-            exists.0 = true;
-            info!("autosaved after night {}", siege.wave_index + 1);
-        }
-        Err(e) => warn!("autosave failed: {e}"),
+/// Honor a [`RequestSave`] (the pause-menu **Save Game** button): snapshot the current run.
+/// Only while in `Prep` — a snapshot taken mid-siege would resume in the wrong place (the saved
+/// `wave_index` rolls back to a clean Prep, skipping the night you were fighting), so saving is a
+/// day-only action. Unlike the dawn autosave there is **no `wave_index < 0` guard**, so day-one
+/// progress (before the first night) can be saved and resumed too.
+fn manual_save(
+    mut reqs: MessageReader<RequestSave>,
+    mut exists: ResMut<SaveExists>,
+    mut notice: ResMut<Notice>,
+    time: Res<Time>,
+    ctx: SaveCtx,
+) {
+    if reqs.read().count() == 0 {
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    if ctx.siege.phase != GamePhase::Prep {
+        notice.push("Can't save during a siege — hold the keep, then save by day.", now);
+        return;
+    }
+    if flush_save(&ctx.snapshot(), &mut exists) {
+        notice.push("Game saved.", now);
+        info!("manual save (resume at night {})", ctx.siege.wave_index + 2);
+    } else {
+        notice.push("Save failed — see the log.", now);
     }
 }
 

@@ -165,6 +165,42 @@ Wraps core's tested A* (`tileworld_core::pathfinding`) onto forest's world-space
 register impassable collision boxes; **gate gaps register none**, so A* threads the gates with no
 explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints to the keep.
 
+### Save / load (`src/savegame.rs`) — the one-slot snapshot
+
+A save is a **logic snapshot, not an ECS dump**: the world is built once at `Startup` and is
+persistent within a process, so we serialize the run-state *resources* (hero / economy / town /
+upgrades / keep / heirs / night) plus a few world flags (looted chests, rescued camps, discovered
+landmarks) to one JSON slot, and on load overwrite those resources + mark the already-spawned
+entities. Two write triggers, **both Prep-only**:
+
+- **Dawn autosave** — `autosave_on_dawn` fires on the `Wave → Prep` edge (a cleared night).
+- **Manual save** — the pause-menu **Save Game** button sends `RequestSave`; `manual_save` writes
+  while in `Prep` (greyed/refused during a siege). Allowed on day 1 (`wave_index == -1`).
+
+Both build the snapshot from one shared `SaveCtx` SystemParam (`snapshot()`), so there's a single
+field list to keep in sync. Loading: `begin_continue` drops the file into `PendingLoad`,
+`apply_pending_load` writes it back over the live resources the next `Playing` frame and emits
+`GameLoaded`, then the entity-owning modules reconcile from that message (`town.rs` rebuilds
+meshes, chests re-open, landmarks re-mark, **bosses despawn already-slain wardens**). Restore always
+forces `phase = Prep` at the saved night — which is *why* saving mid-`Wave` is forbidden (a mid-night
+`wave_index` would resume one night too late, skipping the fight).
+
+**Invariant — when you add anything a player earns/changes across a run, it MUST round-trip the
+save, or it's silently lost on Continue.** Concretely: put it in core stores where you can (those
+already serialize via the core `serde` feature and ride `Player`/`Bag`/`Town`/`ResourceState`), and:
+
+1. add the field to `SaveData` (bump `SAVE_VERSION` only on a *breaking* shape change — additive
+   fields use `#[serde(default)]` so old saves still load);
+2. read it in `SaveCtx::snapshot()` and write it back in `apply_pending_load`;
+3. if it lives on **entities** (not a resource), reconcile it from the `GameLoaded` message in the
+   owning module — and read the value off the carried `SaveData`, never live `PlayerRes`/etc., which
+   `apply_pending_load` may write the same frame in undefined order.
+
+Things deliberately **not** saved (fine — derived/transient): timed `Buffs`, pickup `Toasts`, the
+battlefield (invaders/bolts/corpses — swept on Continue), warden *levels* (re-level from 1), and
+warden *kills* as such (the permanent boon flag on `Player` is the record — `boss::despawn_slain_wardens`
+reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so it's saved via `Town`.
+
 ## Conventions that bite if you miss them
 
 - **Coordinate frame is world-space with the castle at the ORIGIN** (deliberate — do NOT "fix"
@@ -187,6 +223,11 @@ explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints
 - **Death is a fade, not a pop** (`src/dying.rs`): kills insert `Dying{since}` and crumple over
   ~1.4s. Every AI/targeting/count query must filter `Without<Dying>` so corpses aren't targeted or
   counted — but reward/clear logic fires once pre-fade.
+- **New cross-run progression MUST round-trip the save** (`src/savegame.rs`) or it's silently lost
+  on Continue — this is exactly how a run's level/items went missing before. Any resource/flag/entity
+  a player *earns or changes over a run* has to be added to `SaveData` + `SaveCtx::snapshot()` +
+  `apply_pending_load` (and reconciled from the `GameLoaded` message if it lives on entities). See
+  the **Save / load** section above for the full checklist and the deliberately-unsaved list.
 - **Every voice/quote line carries its spoken text in a code comment.** When you wire up *any*
   spoken line (hero `voice.rs`, villager `audio/npc.rs`, ork `audio/ork.rs`, or future speakers),
   put the exact transcript next to where the clip is loaded / keyed, plus its trigger. The audio

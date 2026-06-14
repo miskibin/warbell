@@ -5,7 +5,7 @@
 //! panel (open with **U**); buying a node deducts gold+stone and enacts its typed effect.
 
 use bevy::prelude::*;
-use tileworld_core::inventory::item_def;
+use tileworld_core::inventory::{item_def, sell_value};
 use tileworld_core::player::Player;
 use tileworld_core::shop_catalog::{build_shop_items, discounted_price};
 use tileworld_core::upgrade_store::{node_by_id, UpgradeEffect, UpgradeState, UPGRADE_NODES};
@@ -229,6 +229,9 @@ fn demo_tree_fill(
 struct ShopUi;
 #[derive(Component)]
 struct ShopItemButton(&'static str);
+/// A SELL row — click to sell one of this bag item back to the merchant for gold.
+#[derive(Component)]
+struct ShopSellButton(String);
 #[derive(Component)]
 struct ShopHeader;
 /// The header ✕ — leaves the shop like T/Esc.
@@ -250,12 +253,41 @@ fn open_shop(mut next: ResMut<NextState<Modal>>, mut auto_done: Local<bool>) {
 fn spawn_shop(
     mut commands: Commands,
     eco: Res<EconomyState>,
+    inv: Res<Inventory>,
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
     tex: Res<crate::ui::texture::UiTextures>,
 ) {
+    build_shop_panel(&mut commands, &eco, &inv, &fonts, &atlas, &tex);
+}
+
+/// (Re)build the merchant panel: a BUY list (catalog) above a SELL list (the bag's sellable items).
+/// Called on open and after every buy/sell so the SELL list tracks the bag. Mirrors the satchel's
+/// rebuild-on-action.
+fn build_shop_panel(
+    commands: &mut Commands,
+    eco: &EconomyState,
+    inv: &Inventory,
+    fonts: &UiFonts,
+    atlas: &IconAtlas,
+    tex: &crate::ui::texture::UiTextures,
+) {
     let discount = eco.shop_discount as f64;
     let items = build_shop_items(&eco.unlocked_weapons);
+    // Distinct sellable bag items (skip key items — `sell_value` 0) with their stack counts.
+    let mut sellable: Vec<(String, i64, i64)> = Vec::new(); // (id, count, unit_price)
+    for slot in inv.0.bag.iter() {
+        let Some(id) = slot.item_id.as_deref() else { continue };
+        let value = sell_value(id);
+        if value <= 0 {
+            continue;
+        }
+        if let Some(row) = sellable.iter_mut().find(|(rid, _, _)| rid == id) {
+            row.1 += slot.count;
+        } else {
+            sellable.push((id.to_string(), slot.count, value));
+        }
+    }
     commands.spawn((widgets::scrim(60), ShopUi)).with_children(|root| {
         root.spawn((
             Node {
@@ -295,7 +327,8 @@ fn spawn_shop(
                     widgets::close_button(right, &fonts.bold, ShopCloseBtn, false);
                 });
             });
-            // Item rows.
+            // ── BUY: the catalog. ──
+            card.spawn(label(&fonts.semibold, "BUY", 10.0, GREY));
             for item in items {
                 let price = discounted_price(item.price, discount);
                 let stat = item_def(item.id).map(|d| d.stat_line()).unwrap_or_default();
@@ -331,8 +364,49 @@ fn spawn_shop(
                     b.spawn(label(&fonts.bold, format!("{price}g"), 14.0, GOLD));
                 });
             }
+            // ── SELL: the bag's sellable items (gear you don't want → gold). ──
+            if !sellable.is_empty() {
+                card.spawn((
+                    Node { padding: UiRect::top(Val::Px(4.0)), ..default() },
+                    children![label(&fonts.semibold, "SELL FROM BAG", 10.0, GREY)],
+                ));
+                for (id, count, value) in sellable {
+                    let name = item_def(&id).map(|d| d.name).unwrap_or("?");
+                    card.spawn((
+                        Button,
+                        Interaction::default(),
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(12.0),
+                            width: Val::Px(360.0),
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                            border: border(1.0),
+                            border_radius: radius(R_BTN),
+                            ..default()
+                        },
+                        BackgroundColor(BTN_BG),
+                        BorderColor::all(BORDER_SOFT),
+                        crate::ui::focus::Focusable,
+                        ShopSellButton(id.clone()),
+                    ))
+                    .with_children(|b| {
+                        if let Some(handle) = atlas.get(&id) {
+                            b.spawn(widgets::icon(handle, 22.0));
+                        }
+                        b.spawn((
+                            Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, ..default() },
+                            children![
+                                label(&fonts.semibold, format!("{name}  x{count}"), 13.0, TEXT),
+                                label(&fonts.regular, "click to sell one", 10.0, GREY),
+                            ],
+                        ));
+                        b.spawn(label(&fonts.bold, format!("+{value}g"), 13.0, GREEN));
+                    });
+                }
+            }
             // Close hint.
-            card.spawn(label(&fonts.regular, "T or Esc to leave  ·  click to buy", 11.0, GREY));
+            card.spawn(label(&fonts.regular, "T or Esc to leave  ·  click to buy or sell", 11.0, GREY));
         });
     });
 }
@@ -353,8 +427,9 @@ fn shop_close(
     }
 }
 
-/// Per-frame: recolour each line by affordability + update the gold header; on a click buy the
-/// item (deduct discounted gold + drop into the bag, blocked when the bag is full).
+/// Per-frame: recolour each BUY line by affordability + update the gold header. On a click, BUY the
+/// catalog item (deduct discounted gold + drop into the bag, blocked when full) or SELL one of a bag
+/// item back for its `sell_value`; either rebuilds the panel so the SELL list tracks the bag.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn shop_interact(
     time: Res<Time>,
@@ -364,15 +439,22 @@ fn shop_interact(
     mut toasts: ResMut<Toasts>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut acts: MessageReader<crate::ui::focus::FocusActivate>,
-    mut buttons: Query<(Entity, &Interaction, &ShopItemButton, &mut BackgroundColor)>,
+    mut commands: Commands,
+    fonts: Res<UiFonts>,
+    atlas: Res<IconAtlas>,
+    tex: Res<crate::ui::texture::UiTextures>,
+    mut buy_buttons: Query<(Entity, &Interaction, &ShopItemButton, &mut BackgroundColor)>,
+    sell_buttons: Query<(Entity, &Interaction, &ShopSellButton)>,
+    panel: Query<Entity, With<ShopUi>>,
     mut header: Query<&mut Text, With<ShopHeader>>,
 ) {
     let discount = eco.shop_discount as f64;
     let now = time.elapsed_secs() as f64;
-
-    // Handle a click or an Enter/E focus activation first (one buy per press).
     let keyed: Vec<Entity> = acts.read().map(|a| a.0).collect();
-    for (e, interaction, btn, _) in &buttons {
+    let mut acted = false;
+
+    // BUY: a click or Enter/E focus activation (one per press).
+    for (e, interaction, btn, _) in &buy_buttons {
         if *interaction == Interaction::Pressed || keyed.contains(&e) {
             if let Some(item) = build_shop_items(&eco.unlocked_weapons).iter().find(|i| i.id == btn.0) {
                 let price = discounted_price(item.price, discount);
@@ -381,15 +463,42 @@ fn shop_interact(
                     player.0.spend_gold(price, false);
                     try_grant(&mut inv.0, &mut toasts.0, item.id, 1, now);
                     cues.write(crate::audio::AudioCue::ShopBuy);
+                    acted = true;
                 }
             }
             break;
         }
     }
 
-    // Recolour lines: affordable = gold, too dear = grey.
+    // SELL: one of the clicked bag item back for gold (only if no buy this frame).
+    if !acted {
+        let sell_id = sell_buttons
+            .iter()
+            .find(|(e, i, _)| **i == Interaction::Pressed || keyed.contains(e))
+            .map(|(_, _, b)| b.0.clone());
+        if let Some(id) = sell_id {
+            let value = sell_value(&id);
+            if value > 0 && inv.0.consume_item(&id, 1) {
+                player.0.add_gold(value);
+                cues.write(crate::audio::AudioCue::Gold); // coin chime for the payout
+                acted = true;
+            }
+        }
+    }
+
+    // A transaction changed the bag → rebuild so the SELL list reflects it. (BUY lines re-colour
+    // next frame.)
+    if acted {
+        for e in &panel {
+            commands.entity(e).despawn();
+        }
+        build_shop_panel(&mut commands, &eco, &inv, &fonts, &atlas, &tex);
+        return;
+    }
+
+    // Recolour BUY lines: affordable = gold, too dear = grey.
     let gold = player.0.gold;
-    for (_, _, btn, mut bg) in &mut buttons {
+    for (_, _, btn, mut bg) in &mut buy_buttons {
         let price = build_shop_items(&eco.unlocked_weapons)
             .iter()
             .find(|i| i.id == btn.0)

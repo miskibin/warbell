@@ -49,6 +49,12 @@ pub enum AudioCue {
     /// Empty-swing whoosh — fired ONLY on a whiff (a connecting hit plays `Impact` instead,
     /// never both — matches `Character.tsx`'s deferred-whoosh logic).
     Swing,
+    /// The hero's Sand-Dash warden art — a compressed-air whoosh as he blinks forward.
+    Dash,
+    /// The hero's Bramble-Sweep warden art — an expanding circular energy/shockwave burst.
+    Sweep,
+    /// The hero's Ground-Slam warden art — a heavy stone-fist impact (random of two takes).
+    Slam,
     /// Hero's blow lands → impact (heavier on a kill).
     Impact { kill: bool },
     /// A hit was actually absorbed by the raised shield (wood/steel knock).

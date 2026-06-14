@@ -40,7 +40,20 @@ pub fn apply_hero_damage(
     let p = &mut player.0;
     let now = time.elapsed_secs() as f64;
 
-    // ── Take queued ork damage (unless already down) ──
+    // ── Sand-Dash i-frames: negate any blow that lands mid-blink (a true dodge). ──
+    let invuln = time.elapsed_secs() < hh.iframe_until;
+    if invuln && pending.0 > 0.0 && p.dead_since.is_none() {
+        let head = Vec3::new(hero.pos.x, hero.y + 2.2, hero.pos.y);
+        floats.0.push(crate::combat_fx::FloatReq {
+            world: head,
+            text: "dodge".into(),
+            color: crate::combat_fx::col_block(),
+            scale: 0.9,
+        });
+        pending.0 = 0.0;
+    }
+
+    // ── Take queued ork damage (unless already down / dodging) ──
     if pending.0 > 0.0 && p.dead_since.is_none() {
         let mut dmg = pending.0;
         let blocking = hh.blocking;

@@ -129,6 +129,10 @@ pub(crate) struct CombatFx {
     blood: Handle<StandardMaterial>,
     /// Grey stone — rock chips off a mined ore boulder.
     chip: Handle<StandardMaterial>,
+    /// Warm tan — Sand-Dash afterimage dust puffs.
+    dust: Handle<StandardMaterial>,
+    /// Green — Bramble-Sweep leaf/thorn motes flung outward.
+    leaf: Handle<StandardMaterial>,
     /// A unit quad (slash streak) + flat ring (kill shockwave) + disc (blood splat).
     quad: Handle<Mesh>,
     ring: Handle<Mesh>,
@@ -176,6 +180,19 @@ pub fn setup_combat_fx(
         unlit: true,
         ..default()
     });
+    // Sand-dash dust: warm tan, no glow (it's dust, not energy).
+    let dust = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.80, 0.67, 0.42),
+        unlit: true,
+        ..default()
+    });
+    // Bramble leaves: green with a faint glow so they pop against foliage.
+    let leaf = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.34, 0.60, 0.24),
+        emissive: LinearRgba::rgb(0.22, 0.55, 0.12),
+        unlit: true,
+        ..default()
+    });
     let quad = meshes.add(Rectangle::new(1.0, 1.0).mesh().build());
     let ring = meshes.add(Annulus::new(0.72, 1.0).mesh().build());
     let disc = meshes.add(Circle::new(0.5).mesh().build());
@@ -198,9 +215,36 @@ pub fn setup_combat_fx(
     let ring_mat = materials.add(flash(Color::srgba(1.0, 0.86, 0.6, 0.45), LinearRgba::rgb(1.4, 0.95, 0.4)));
     let splat_mat = materials.add(flash(Color::srgba(0.42, 0.06, 0.06, 0.72), LinearRgba::BLACK));
     commands.insert_resource(CombatFx {
-        mesh, hit, kill, heal, blood, chip, quad, ring, disc, slash_mat, ring_mat, splat_mat,
-        trail_mat,
+        mesh, hit, kill, heal, blood, chip, dust, leaf, quad, ring, disc, slash_mat, ring_mat,
+        splat_mat, trail_mat,
     });
+}
+
+/// Sand-Dash afterimage: a line of low tan dust puffs strung along the blink path — subtle,
+/// short-lived motes that read as a sand-trail behind the teleport.
+pub(crate) fn spawn_dash_trail(commands: &mut Commands, fx: &CombatFx, from: Vec3, to: Vec3) {
+    let steps = 7;
+    for i in 0..=steps {
+        let p = from.lerp(to, i as f32 / steps as f32) + Vec3::Y * 0.55;
+        spawn_motes(commands, &fx.mesh, &fx.dust, p, 3, 1.1, 0.42, 0.40);
+    }
+}
+
+/// Bramble-Sweep: a 360° fling of green leaf/thorn motes radiating out from the hero, riding the
+/// expanding ring.
+pub(crate) fn spawn_sweep_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3) {
+    for i in 0..18u32 {
+        let a = i as f32 * 2.399_963_2; // golden angle → even ring
+        let dir = Vec3::new(a.cos(), 0.0, a.sin());
+        let vel = dir * (3.4 + (i % 5) as f32 * 0.35) + Vec3::Y * (1.1 + (i % 3) as f32 * 0.4);
+        commands.spawn((
+            Mesh3d(fx.mesh.clone()),
+            MeshMaterial3d(fx.leaf.clone()),
+            Transform::from_translation(at + Vec3::Y * 0.7).with_scale(Vec3::splat(0.55)),
+            Spark { vel, life: 0.55, life0: 0.55, scale0: 0.55 },
+            bevy::light::NotShadowCaster,
+        ));
+    }
 }
 
 /// A short-lived planar flash (slash streak / kill shockwave / blood splat / blade-trail ribbon).
@@ -320,7 +364,10 @@ pub fn player_attack(
             Option<&mut Animal>,
             Option<&mut crate::combat_fx::HitSquash>,
         ),
-        (Or<(With<Ork>, With<Animal>)>, Without<crate::dying::Dying>),
+        (
+            Or<(With<Ork>, With<Animal>, With<crate::boss::Boss>)>,
+            Without<crate::dying::Dying>,
+        ),
     >,
 ) {
     let Ok((mut hero, hh)) = hero_q.single_mut() else { return };
@@ -467,6 +514,16 @@ pub fn player_attack(
                 an.kb = dir * if crit { KNOCKBACK_CRIT } else { KNOCKBACK };
                 an.hit_recoil = now_s;
                 commands.entity(e).try_insert(crate::wildlife::Struck { by: None });
+            }
+            // Warden boons: Frostbite chills (a crit freezes) and Venom poisons the struck foe.
+            if player.0.frostbite {
+                let (factor, dur) = if crit { (0.0, 1.0) } else { (0.45, 2.0) };
+                commands.entity(e).try_insert(crate::boss::Slowed::new(now_s, factor, dur));
+            }
+            if player.0.venom {
+                commands
+                    .entity(e)
+                    .try_insert(crate::boss::Poisoned { until: now_s + 4.0, dps: (base as f32 * 0.4).max(4.0) });
             }
         }
     }

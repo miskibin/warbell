@@ -73,6 +73,10 @@ const SYMBOLS: &[(&str, &str)] = &[
     ("branch:defense", "🛡️"),
     ("branch:hero", "⚔️"),
     ("branch:arsenal", "🏪"),
+    // Warden weapon-art chips (tintable game-icons: maul / swift / cleave; emoji is the fallback).
+    ("art:slam", "💥"),
+    ("art:dash", "💨"),
+    ("art:sweep", "🌀"),
 ];
 
 pub struct IconsPlugin;

@@ -127,9 +127,10 @@ fn ease_out_back(k: f32) -> f32 {
 
 /// Chance a rolled chest slot pays a consumable (food/potion) instead of wearable gear. The
 /// frontier gear pools (`frontier::roll_gear`) are nearly all weapons/armor — the Relic pool is
-/// 100% wearable — which buried the hero in gear he couldn't use. Biasing ~45% toward consumables
-/// keeps chests worth opening without flooding the bag with duplicate kit.
-const CONSUMABLE_RATE: f64 = 0.45;
+/// 100% wearable — which buried the hero in near-identical kit. Biasing hard toward consumables
+/// (~85%) makes a dropped weapon/armor the rare exception, not the rule; combined with
+/// `dedup_wearables` (owned gear is skipped entirely), the bag stops filling with swords.
+const CONSUMABLE_RATE: f64 = 0.85;
 
 /// Roll one scattered-chest item: mostly a consumable (scaled by distance), else frontier gear.
 /// `roll` in [0,1) — deterministic per chest slot, so loot stays stable across reloads.

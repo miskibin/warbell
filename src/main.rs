@@ -21,6 +21,7 @@ mod biome_snow;
 mod biome_swamp;
 mod blockers;
 mod boats;
+mod boss;
 mod build_fx;
 mod camps;
 mod capture;
@@ -222,6 +223,7 @@ fn main() {
             scenes::ScenesPlugin, // hand-staged looped trailer tableaus (F1 Director → Scenes)
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
+            boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog
         ))
         .run();
 }
