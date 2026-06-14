@@ -43,11 +43,13 @@ const DASH_MULT: f32 = 1.0;
 /// Seconds of invulnerability granted from the blink's start.
 const DASH_IFRAME: f32 = 0.45;
 
-// Bramble Sweep — the SUSTAIN: 360° cleave that heals the hero for each foe struck.
+// Bramble Sweep — the SUSTAIN: 360° cleave that heals the hero on cast AND for each foe struck.
 const SWEEP_RADIUS: f32 = 2.8;
 const SWEEP_MULT: f32 = 1.4;
-/// HP healed per foe struck by the sweep.
-const SWEEP_LIFESTEAL: f32 = 8.0;
+/// Flat HP the hero heals every time the sweep is cast (even hitting nothing).
+const SWEEP_BASE_HEAL: f32 = 28.0;
+/// Extra HP healed per foe the sweep strikes.
+const SWEEP_LIFESTEAL: f32 = 18.0;
 
 /// Which art fired this frame (at most one).
 enum Art {
@@ -167,7 +169,12 @@ pub fn player_arts(
     };
 
     let mut killed_any = false;
-    let mut sweep_heal = 0.0f32; // Bramble Sweep sustain: HP drained back per foe struck
+    // Bramble Sweep sustain: a flat self-heal on cast, plus more per foe struck (added in-loop).
+    let mut sweep_heal = 0.0f32;
+    if matches!(art, Art::Sweep) {
+        player.0.heal(SWEEP_BASE_HEAL as f64);
+        sweep_heal += SWEEP_BASE_HEAL;
+    }
     for (e, gt, mut hp, ork, animal) in &mut targets {
         let p = gt.translation();
         let pt = Vec2::new(p.x, p.z);
