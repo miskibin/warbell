@@ -63,21 +63,26 @@ fn exit_menu_sky(mut clock: ResMut<SkyClock>) {
     clock.paused = false;
 }
 
-// ── Orbit camera ──────────────────────────────────────────────────────────────────────────
+// ── Menu camera (a slow drift over the forest) ──────────────────────────────────────────────
 
-const ORBIT_RADIUS: f32 = 72.0; // pulled in for a more immersive, less map-like framing
-const ORBIT_HEIGHT: f32 = 22.0; // low, near-eye-level on the keep — not a top-down map view
-const ORBIT_LOOK_Y: f32 = 9.0; // aim up at the keep, not down at the ground
-const ORBIT_SPEED_DEG: f32 = 3.0; // ~120 s per full revolution — a gentle drift
-const ORBIT_START_DEG: f32 = 90.0; // begin roughly at the default (+Z) framing
+/// World XZ of the forest biome region (see `CLAUDE.md` biome centres). The menu frames *this*,
+/// not the whole island — a tight, tree-filled dusk shot reads far better than a map-like overview.
+const SCENE_CENTER: Vec3 = Vec3::new(-60.0, 0.0, 39.0);
 
-/// Slowly circle the main camera around the keep (origin). Overwrites the camera transform every
-/// frame; this only runs on `StartScreen`, where no other system drives the camera.
+const ORBIT_RADIUS: f32 = 30.0; // tight: stay among the trees, not above the island
+const ORBIT_HEIGHT: f32 = 12.0; // just over the canopy edge, looking in
+const ORBIT_LOOK_Y: f32 = 5.0; // aim into the trees
+const ORBIT_SPEED_DEG: f32 = 2.0; // a slow, calm drift (~180 s per revolution)
+const ORBIT_START_DEG: f32 = 40.0;
+
+/// Slowly drift the main camera around a point in the forest, looking inward. Overwrites the camera
+/// transform every frame; only runs on `StartScreen`, where no other system drives the camera.
 fn menu_orbit(time: Res<Time>, mut cam: Query<&mut Transform, With<Camera3d>>) {
     let Some(mut tf) = cam.iter_mut().next() else { return };
     let ang = (ORBIT_START_DEG + time.elapsed_secs() * ORBIT_SPEED_DEG).to_radians();
-    let pos = Vec3::new(ORBIT_RADIUS * ang.cos(), ORBIT_HEIGHT, ORBIT_RADIUS * ang.sin());
-    *tf = Transform::from_translation(pos).looking_at(Vec3::new(0.0, ORBIT_LOOK_Y, 0.0), Vec3::Y);
+    let pos = SCENE_CENTER + Vec3::new(ORBIT_RADIUS * ang.cos(), ORBIT_HEIGHT, ORBIT_RADIUS * ang.sin());
+    let look = SCENE_CENTER + Vec3::new(0.0, ORBIT_LOOK_Y, 0.0);
+    *tf = Transform::from_translation(pos).looking_at(look, Vec3::Y);
 }
 
 // ── Embers + fireflies ──────────────────────────────────────────────────────────────────────
@@ -98,9 +103,9 @@ struct MenuMote {
     twinkle: bool,
 }
 
-/// Half-extent of the mote box around the keep (origin) — wide enough that the orbit cam always
-/// frames a populated field.
-const BOX_R: f32 = 46.0;
+/// Half-extent of the mote box around [`SCENE_CENTER`] — sized to keep the field in the forest
+/// camera's frame.
+const BOX_R: f32 = 26.0;
 
 /// Tiny deterministic hash → [0,1) for per-instance variation (no RNG dependency).
 fn h(n: u32) -> f32 {
@@ -140,8 +145,8 @@ fn spawn_menu_particles(
 
     const EMBER_N: u32 = 150;
     for i in 0..EMBER_N {
-        let x = (h(i) * 2.0 - 1.0) * BOX_R;
-        let z = (h(i + 7777) * 2.0 - 1.0) * BOX_R;
+        let x = SCENE_CENTER.x + (h(i) * 2.0 - 1.0) * BOX_R;
+        let z = SCENE_CENTER.z + (h(i + 7777) * 2.0 - 1.0) * BOX_R;
         let y = h(i + 1234) * 22.0;
         let scale = 0.6 + h(i + 5) * 0.7;
         let vel = Vec3::new(
@@ -169,8 +174,8 @@ fn spawn_menu_particles(
 
     const FLY_N: u32 = 32;
     for i in 0..FLY_N {
-        let x = (h(i + 311) * 2.0 - 1.0) * BOX_R;
-        let z = (h(i + 911) * 2.0 - 1.0) * BOX_R;
+        let x = SCENE_CENTER.x + (h(i + 311) * 2.0 - 1.0) * BOX_R;
+        let z = SCENE_CENTER.z + (h(i + 911) * 2.0 - 1.0) * BOX_R;
         let y = 1.5 + h(i + 555) * 5.5;
         let scale = 0.7 + h(i + 71) * 0.6;
         let vel = Vec3::new((h(i + 17) - 0.5) * 0.6, 0.0, (h(i + 29) - 0.5) * 0.6);
@@ -207,15 +212,15 @@ fn menu_drift(time: Res<Time>, mut q: Query<(&MenuMote, &mut Transform), With<Me
         } else if tf.translation.y < m.y_min {
             tf.translation.y = m.y_max;
         }
-        // Horizontal wrap within the box (keeps the field centred on the keep forever).
-        if tf.translation.x > BOX_R {
+        // Horizontal wrap within the box (keeps the field centred on the forest forever).
+        if tf.translation.x > SCENE_CENTER.x + BOX_R {
             tf.translation.x -= 2.0 * BOX_R;
-        } else if tf.translation.x < -BOX_R {
+        } else if tf.translation.x < SCENE_CENTER.x - BOX_R {
             tf.translation.x += 2.0 * BOX_R;
         }
-        if tf.translation.z > BOX_R {
+        if tf.translation.z > SCENE_CENTER.z + BOX_R {
             tf.translation.z -= 2.0 * BOX_R;
-        } else if tf.translation.z < -BOX_R {
+        } else if tf.translation.z < SCENE_CENTER.z - BOX_R {
             tf.translation.z += 2.0 * BOX_R;
         }
         if m.twinkle {
