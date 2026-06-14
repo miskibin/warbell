@@ -102,6 +102,17 @@ fn shove_out_of(hero: &mut Hero, c: Vec2, body_r: f32, cur_y: f32) {
     }
 }
 
+/// The solid bodies the hero is shoved out of so he can't clip through them. Bundled into one
+/// [`SystemParam`] to keep [`player_move`] under Bevy's 16-argument ceiling now that the (huge)
+/// wardens are solid too.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct Bodies<'w, 's> {
+    orks: Query<'w, 's, &'static Ork>,
+    animals: Query<'w, 's, &'static Animal>,
+    villagers: Query<'w, 's, &'static Villager>,
+    bosses: Query<'w, 's, &'static crate::boss::Boss, Without<crate::dying::Dying>>,
+}
+
 pub fn player_move(
     time: Res<Time>,
     mode: Res<PlayMode>,
@@ -110,9 +121,7 @@ pub fn player_move(
     keys: Res<ButtonInput<KeyCode>>,
     mut hero_q: Query<(&mut Hero, &mut Transform), Without<Camera3d>>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<Hero>)>,
-    orks: Query<&Ork>,
-    animals: Query<&Animal>,
-    villagers: Query<&Villager>,
+    bodies: Bodies,
     mut state: ResMut<HeroState>,
     mut pending: ResMut<PendingHeroDamage>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
@@ -211,16 +220,22 @@ pub fn player_move(
 
     // ── Body-collision vs creatures: shove the hero out of any overlap so he can't clip through
     // an ork or animal (one-way push — the creature holds its ground). ──
-    for o in &orks {
+    for o in &bodies.orks {
         shove_out_of(&mut hero, o.pos, o.body_r, cur_y);
     }
-    for a in &animals {
+    for a in &bodies.animals {
         shove_out_of(&mut hero, a.pos, a.body_r, cur_y);
     }
     // Townsfolk are solid too — you bump them, you don't walk through them.
-    for v in &villagers {
+    for v in &bodies.villagers {
         let (p, r) = v.body();
         shove_out_of(&mut hero, p, r, cur_y);
+    }
+    // Wardens are huge — shove the hero out of their bulk (skip a dying one so a fading corpse
+    // doesn't wall you off).
+    for b in &bodies.bosses {
+        let (c, r) = b.footprint();
+        shove_out_of(&mut hero, c, r, cur_y);
     }
 
     // ── Vertical: jump + gravity + ground snap ──

@@ -119,6 +119,21 @@ pub struct Boss {
     atk_anim: f32,
 }
 
+impl Boss {
+    /// Collision footprint — world XZ centre + radius — so the hero is shoved out of the warden's
+    /// bulk instead of clipping straight through it. Kept a touch under the hero's 1.8u melee
+    /// reach (radius + the hero's 0.22 body ≈ 1.5–1.6) so the player can still stand close enough
+    /// to land a swing on the boss's centre.
+    pub fn footprint(&self) -> (Vec2, f32) {
+        let r = match self.biome {
+            Biome::Rocky => 1.35, // the golem is the widest
+            Biome::Snow => 1.3,
+            _ => 1.15,
+        };
+        (self.pos, r)
+    }
+}
+
 /// An articulated warden limb (legs/arms/head), swung by [`boss_limbs`].
 #[derive(Component)]
 struct BossPart {
