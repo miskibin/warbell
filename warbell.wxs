@@ -21,13 +21,20 @@
 
     <Feature Id="MainFeature" Title="Warbell" Level="1">
       <ComponentGroupRef Id="GameFiles"/>
+      <ComponentGroupRef Id="AssetFiles"/>
       <ComponentGroupRef Id="Shortcuts"/>
     </Feature>
   </Package>
 
   <Fragment>
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Warbell"/>
+      <Directory Id="INSTALLFOLDER" Name="Warbell">
+        <!-- Bevy resolves its asset root to <exe-dir>\assets, so the harvested asset tree MUST
+             install into an `assets` subfolder beside warbell.exe — NOT loose in the install
+             root. Without this, audio/fonts/shaders/icons land directly under Warbell\ and the
+             game finds no assets (the "broken on install" bug). -->
+        <Directory Id="AssetsFolder" Name="assets"/>
+      </Directory>
     </StandardDirectory>
     <StandardDirectory Id="DesktopFolder"/>
     <StandardDirectory Id="ProgramMenuFolder">
@@ -43,6 +50,11 @@
               Name="warbell.exe"
               KeyPath="yes"/>
       </Component>
+    </ComponentGroup>
+    <!-- Harvest the whole assets/ tree into the `assets` subfolder (Directory=AssetsFolder).
+         The harvester strips the literal `assets\` prefix, so files land at
+         INSTALLFOLDER\assets\<audio|fonts|shaders|icons>\… — exactly where Bevy looks. -->
+    <ComponentGroup Id="AssetFiles" Directory="AssetsFolder">
       <Files Include="assets\**\*.*"/>
     </ComponentGroup>
   </Fragment>
