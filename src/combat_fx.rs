@@ -97,7 +97,9 @@ fn spawn_floats(
         let len = r.text.chars().count();
         commands.spawn((
             Text::new(r.text),
-            TextFont { font: fonts.extrabold.clone(), font_size: FLOAT_FONT * r.scale, ..default() },
+            // Rounded to a whole-pixel bucket (drive_floats animates within the same integer set):
+            // a per-size glyph atlas is permanent in Bevy, so only integer sizes are ever minted.
+            TextFont { font: fonts.extrabold.clone(), font_size: (FLOAT_FONT * r.scale).round(), ..default() },
             TextColor(r.color),
             // A crisp dark drop shadow so numbers pop against the bright scene (fades in drive_floats).
             TextShadow { offset: Vec2::new(0.0, 2.5), color: Color::srgba(0.0, 0.0, 0.0, FLOAT_SHADOW_A) },
@@ -131,7 +133,13 @@ fn drive_floats(
         // Pop in fast with a slight overshoot, then settle at 1 (old FloatingText).
         let pop =
             if t < 0.16 { 0.6 + (t / 0.16) * 0.55 } else { (1.15 - (t - 0.16) * 1.6).max(1.0) };
-        let font = FLOAT_FONT * f.scale * pop;
+        // QUANTISE to whole pixels. Bevy mints a fresh 512² glyph atlas for EVERY distinct
+        // font_size and NEVER frees them — so animating the size continuously (a new value each
+        // frame, per number) leaked atlases without bound: multi-GB RAM/VRAM after a few nights of
+        // combat, VRAM overcommit, GPU pinned at 100%, ~12 fps. Rounding caps the distinct sizes to
+        // one atlas per integer px (≈30 total, reused for the app's life); the 1px pop steps are
+        // imperceptible. (Position below uses the same rounded `font` so centring stays exact.)
+        let font = (FLOAT_FONT * f.scale * pop).round();
         tf.font_size = font;
         let fade = 1.0 - k * k;
         tc.0 = f.color.with_alpha(fade);
