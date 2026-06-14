@@ -633,9 +633,15 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
             let pool = smoothstep(0.15, 1.20, noise_a(x * 3.4 + 5.0, z * 3.4 - 11.0));
             let moss = smoothstep(0.45, 1.30, noise_b(x * 7.0 - 17.0, z * 7.0 + 9.0));
             let algae = smoothstep(0.50, 1.25, noise_a(x * 1.9 - 41.0, z * 1.9 + 23.0));
+            // Fine high-freq grain: scummy dark fleck + bright damp-moss speckle, breaking
+            // the mid-tones into a finer wet tooth so the muck reads textured up close.
+            let fleck = smoothstep(0.55, 1.35, noise_b(x * 15.0 + 33.0, z * 15.0 - 19.0));
+            let damp = smoothstep(0.62, 1.40, noise_a(x * 11.0 - 61.0, z * 11.0 + 47.0));
             let col = mix3(base, lin3(COL_SWAMP_DARK), pool * 0.58);
             let col = mix3(col, lin3(COL_SWAMP_MOSS), moss * 0.42);
-            mix3(col, lin3(COL_SWAMP_ALGAE), algae * 0.32)
+            let col = mix3(col, lin3(COL_SWAMP_ALGAE), algae * 0.32);
+            let col = mix3(col, lin3(COL_SWAMP_DARK), fleck * 0.20);
+            mix3(col, lin3(COL_SWAMP_MOSS), damp * 0.22)
         }
         TB::Blight => {
             // Churned-black trample troughs, dead-ash patches, a sickly warp-green seep and
@@ -647,10 +653,16 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
             let ash = smoothstep(0.48, 1.22, noise_b(x * 2.6 - 9.0, z * 2.6 + 17.0));
             let seep = smoothstep(0.40, 1.20, noise_a(x * 1.8 + 31.0, z * 1.8 + 3.0));
             let rust = smoothstep(0.55, 1.30, noise_b(x * 5.3 + 19.0, z * 5.3 - 7.0));
+            // Fine grain: hairline trample cracks (dark) + dried crust flecks (ash) at high
+            // frequency, so the beaten mud has tooth at gameplay height, not flat tan.
+            let crack = smoothstep(0.50, 1.30, noise_b(x * 16.0 - 27.0, z * 16.0 + 13.0));
+            let crust = smoothstep(0.60, 1.40, noise_a(x * 12.0 + 53.0, z * 12.0 - 37.0));
             let col = mix3(base, lin3(COL_BLIGHT_DARK), churn * 0.78);
             let col = mix3(col, lin3(COL_BLIGHT_ASH), ash * 0.48);
             let col = mix3(col, lin3(COL_BLIGHT_GREEN), seep * 0.42);
-            mix3(col, lin3(COL_BLIGHT_RUST), rust * 0.30)
+            let col = mix3(col, lin3(COL_BLIGHT_RUST), rust * 0.30);
+            let col = mix3(col, lin3(COL_BLIGHT_DARK), crack * 0.22);
+            mix3(col, lin3(COL_BLIGHT_ASH), crust * 0.18)
         }
         _ => base,
     }
@@ -846,13 +858,13 @@ pub fn build(
         // near the keep where props are sparse. Finer scale + harder grain gives the mud a
         // beaten-earth tooth without the old over-grained busyness.
         scale: 0.26,
-        strength: 0.52,
+        strength: 0.60, // a touch stronger so the finer grain reads (was 0.52)
         variation: 0.78,
         seed: 7.0,
         dark: 0x2c2114,
         base: 0x4d3e2a,
         light: 0x6b5c42,
-        grain: 0.74,
+        grain: 0.88, // finer beaten-earth tooth (was 0.74)
         streak: 0.55,
     };
     let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, images, terrain_mats);

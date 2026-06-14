@@ -898,13 +898,13 @@ pub fn config() -> BiomeConfig {
         ground_roughness: 0.25,
         detail: GroundDetail {
             scale: 0.16,
-            strength: 0.55,
+            strength: 0.62, // a touch stronger so the finer grain reads (was 0.55)
             variation: 0.95, // high → blotchy wet/dry mottle
             seed: 11.0,
             dark: 0x2c3522, // muddy shadow pools
             base: 0x49543a, // olive base
             light: 0x687a4a, // mossy highlights
-            grain: 0.7,
+            grain: 0.85, // finer wet tooth (was 0.7)
             streak: 0.6,
         },
 
@@ -932,7 +932,8 @@ pub fn config() -> BiomeConfig {
                     (build_cypress_stump_mesh(0), 0.18),
                     (build_cypress_stump_mesh(1), 0.12),
                 ],
-                chance: 0.085,
+                // Thinned ~35% (player: swamp too dense) — was 0.085.
+                chance: 0.055,
                 scale: (0.85 * TREE_SCALE, 1.25 * TREE_SCALE),
                 tree: true,
                 block_radius: 0.0,
@@ -943,7 +944,7 @@ pub fn config() -> BiomeConfig {
                     (build_reed_clump_mesh(0), 1.0),
                     (build_reed_clump_mesh(1), 1.0),
                 ],
-                chance: 0.06,
+                chance: 0.04, // thinned ~35% — was 0.06
                 scale: (0.85, 1.4),
                 tree: false,
                 block_radius: 0.0,
@@ -951,7 +952,7 @@ pub fn config() -> BiomeConfig {
             // Toadstools / mossy rock / toadstool trio / half-sunken log accents.
             PropClass {
                 variants: (0..4).map(|v| (build_accent_mesh(v), 1.0)).collect(),
-                chance: 0.04,
+                chance: 0.026, // thinned ~35% — was 0.04
                 scale: (0.7, 1.5),
                 tree: false,
                 block_radius: 0.0,
@@ -960,21 +961,21 @@ pub fn config() -> BiomeConfig {
         cover: vec![
             PropClass {
                 variants: vec![(build_moss_patch_mesh(), 1.0)],
-                chance: 0.34,
+                chance: 0.22, // thinned ~35% — was 0.34
                 scale: (0.7, 1.4),
                 tree: false,
                 block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_reed_sprig_mesh(), 1.0)],
-                chance: 0.18,
+                chance: 0.12, // thinned ~35% — was 0.18
                 scale: (0.7, 1.2),
                 tree: false,
                 block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_swamp_mushroom_mesh(), 1.0)],
-                chance: 0.12,
+                chance: 0.08, // thinned ~35% — was 0.12
                 scale: (0.7, 1.3),
                 tree: false,
                 block_radius: 0.0,
@@ -985,7 +986,7 @@ pub fn config() -> BiomeConfig {
                     (build_lily_disc_mesh(0), 1.0),
                     (build_lily_disc_mesh(1), 1.0),
                 ],
-                chance: 0.10,
+                chance: 0.065, // thinned ~35% — was 0.10
                 scale: (0.7, 1.3),
                 tree: false,
                 block_radius: 0.0,
@@ -993,7 +994,7 @@ pub fn config() -> BiomeConfig {
             // Soft pale floor accents — bog cotton + lilac marsh flowers.
             PropClass {
                 variants: (0..2).map(|v| (build_swamp_cover_extra_mesh(v), 1.0)).collect(),
-                chance: 0.10,
+                chance: 0.065, // thinned ~35% — was 0.10
                 scale: (0.7, 1.3),
                 tree: false,
                 block_radius: 0.0,

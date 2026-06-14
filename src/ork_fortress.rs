@@ -902,6 +902,11 @@ pub fn build(
             }
             // Density ramps with depth into the Blight so the swamp edge frays naturally.
             let f = (depth / 8.0).clamp(0.0, 1.0);
+            // Thin the whole mire ~35% (player: ork biome too dense) — one uniform gate
+            // that keeps every prop's relative mix and the depth ramp intact.
+            if rng01(&mut s) > 0.65 {
+                continue;
+            }
             let roll = rng01(&mut s);
             // Cumulative roll table — trees scale with depth, clutter mostly flat. Tree
             // density kept SPARSE (was ~16% of heart tiles → a wall of trunks); the orks
