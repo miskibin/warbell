@@ -54,6 +54,7 @@ mod interaction;
 mod inventory;
 mod landmarks;
 mod lumberjack;
+mod mainmenu;
 mod miner;
 mod navgrid;
 mod nightsky;
@@ -224,6 +225,7 @@ fn main() {
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog
+            mainmenu::MainMenuPlugin, // title-screen ambiance: orbit cam + dusk + embers/fireflies + credits
         ))
         .run();
 }

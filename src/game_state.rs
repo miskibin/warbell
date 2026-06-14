@@ -97,6 +97,14 @@ pub struct ContinueInPlace(pub bool);
 #[derive(Resource, Default)]
 pub struct ConfirmWipe(pub Option<bool>);
 
+/// True once a run is live (entered `Playing`) and not yet ended, so the start screen — reachable
+/// mid-run via the pause/game-over **Main Menu** button — knows to offer **RESUME** (drop back into
+/// the frozen run) and, crucially, to route **New Game** through a full process relaunch rather than
+/// the cold-boot in-process start (which would resume a *dirty* world). Set true `OnEnter(Playing)`,
+/// false `OnEnter(GameOver)`.
+#[derive(Resource, Default)]
+pub struct RunInProgress(pub bool);
+
 pub struct GameStatePlugin;
 
 impl Plugin for GameStatePlugin {
@@ -108,6 +116,7 @@ impl Plugin for GameStatePlugin {
             .init_resource::<RestartProcess>()
             .init_resource::<ConfirmWipe>()
             .init_resource::<ContinueInPlace>()
+            .init_resource::<RunInProgress>()
             // Honor a relaunch intent from the parent process (fresh run), then drive any pending
             // relaunch to completion. Both ungated (work over every screen).
             .add_systems(Startup, apply_boot_intent)
@@ -130,6 +139,10 @@ impl Plugin for GameStatePlugin {
             .add_systems(OnExit(AppState::Paused), despawn_screen::<PausedUi>)
             .add_systems(OnEnter(AppState::GameOver), spawn_gameover_screen)
             .add_systems(OnExit(AppState::GameOver), despawn_screen::<GameOverUi>)
+            // Track whether a run is live, so the (now mid-run-reachable) start screen offers
+            // RESUME and routes New Game correctly. See [`RunInProgress`].
+            .add_systems(OnEnter(AppState::Playing), mark_run_active)
+            .add_systems(OnEnter(AppState::GameOver), clear_run_active)
             .add_systems(
                 Update,
                 (start_screen_input, cycle_difficulty, start_click, update_diff_seg)
@@ -324,12 +337,46 @@ fn watch_end(
     }
 }
 
+/// A run just went live — remember it so the start screen (reachable mid-run) offers RESUME and
+/// routes New Game through a relaunch instead of a dirty in-process start.
+fn mark_run_active(mut run: ResMut<RunInProgress>) {
+    run.0 = true;
+}
+
+/// The run ended (Victory/Defeat) — the start screen reached from game-over has nothing live to
+/// RESUME, and New Game from there is a fresh relaunch as before.
+fn clear_run_active(mut run: ResMut<RunInProgress>) {
+    run.0 = false;
+}
+
+/// Start a fresh run from the start screen, picking the *correct* reset path: at cold boot the
+/// world is already fresh, so go in-process; if a run is already live (the menu was reached
+/// mid-session), only a full process relaunch truly rebuilds the world (the in-process path would
+/// resume the dirty world). Mirrors the routing in `confirm_input`.
+fn begin_new_game(
+    run_active: bool,
+    cur_diff: crate::siege::Difficulty,
+    pending: &mut crate::savegame::PendingLoad,
+    next_app: &mut NextState<AppState>,
+    restart_proc: &mut RestartProcess,
+) {
+    if run_active {
+        restart_proc.0 = Some(BootIntent::Fresh(cur_diff)); // full reset via relaunch
+    } else {
+        pending.0 = None; // cold boot: world already fresh, start in-process
+        next_app.set(AppState::Playing);
+    }
+}
+
 fn start_screen_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut next_app: ResMut<NextState<AppState>>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
+    run: Res<RunInProgress>,
+    siege: Option<Res<crate::siege::Siege>>,
+    mut restart_proc: ResMut<RestartProcess>,
 ) {
     // While the overwrite dialog is up, it owns the keyboard (see `confirm_input`).
     if confirm.0.is_some() {
@@ -343,8 +390,8 @@ fn start_screen_input(
         if save.0 {
             confirm.0 = Some(false); // ask before wiping the existing run
         } else {
-            pending.0 = None;
-            next_app.set(AppState::Playing);
+            let cur_diff = current_difficulty(siege.as_deref());
+            begin_new_game(run.0, cur_diff, &mut pending, &mut next_app, &mut restart_proc);
         }
     }
 }
@@ -428,6 +475,19 @@ struct StartPlayButton;
 /// The "Continue" button on the start screen (loads the save). Only spawned when a save exists.
 #[derive(Component)]
 struct StartContinueButton;
+/// The "Resume" button on the start screen — drops back into the live frozen run. Only spawned
+/// when [`RunInProgress`] (i.e. the menu was reached mid-run via a Main Menu button).
+#[derive(Component)]
+struct StartResumeButton;
+/// The "Credits" button on the start screen — opens the credits overlay ([`mainmenu::CreditsOpen`]).
+#[derive(Component)]
+struct CreditsButton;
+/// The "Main Menu" button on the pause screen — returns to the start screen, run kept live.
+#[derive(Component)]
+struct PauseMenuBtn;
+/// The "Main Menu" button on the game-over screen — returns to the start screen.
+#[derive(Component)]
+struct GameOverMenuBtn;
 /// A difficulty segment (click to select).
 #[derive(Component)]
 struct SegButton(crate::siege::Difficulty);
@@ -491,6 +551,7 @@ fn spawn_start_screen(
     fonts: Res<UiFonts>,
     siege: Option<Res<crate::siege::Siege>>,
     mut save: ResMut<crate::savegame::SaveExists>,
+    run: Res<RunInProgress>,
 ) {
     let cur = current_difficulty(siege.as_deref());
     // Re-check the file here: Bevy runs the initial `OnEnter(StartScreen)` *before* `Startup`
@@ -564,6 +625,24 @@ fn spawn_start_screen(
                     BackgroundColor(rgba(199, 155, 106, 0.6)),
                     anim(AnimKind::Rise, 0.3, 0.7),
                 ));
+                // Resume — only when a run is live (menu reached mid-game via Main Menu). The
+                // primary action then: drops straight back into the frozen run, world intact.
+                if run.0 {
+                    m.spawn((
+                        Node {
+                            padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
+                            border: widgets::border(1.0),
+                            border_radius: radius(11.0),
+                            ..default()
+                        },
+                        widgets::btn_primary_paint(),
+                        StartResumeButton,
+                        anim_btn(AnimKind::Rise, 0.32, 0.7),
+                    ))
+                    .with_children(|b| {
+                        b.spawn(label(&fonts.extrabold, "RESUME", 19.0, INK));
+                    });
+                }
                 // Continue button — always shown; the primary action when resuming. Dim + inert
                 // when there's no save yet (so the menu reads as "New Game / Continue Game").
                 if has_save {
@@ -682,6 +761,35 @@ fn spawn_start_screen(
                 .with_children(|b| {
                     b.spawn(label(&fonts.bold, "HOW TO PLAY", 14.0, GOLD));
                     b.spawn(label(&fonts.semibold, "H", 11.0, KICKER));
+                });
+                // Credits — secondary, opens the credits overlay (mainmenu::CreditsOpen).
+                m.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(24.0), Val::Px(9.0)),
+                        border: widgets::border(1.0),
+                        border_radius: radius(R_BTN),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                    Button,
+                    Interaction::default(),
+                    BackgroundColor(BTN_BG),
+                    BorderColor::all(GOLD_HAIRLINE),
+                    crate::ui::anim::Hoverable {
+                        rest_bg: BTN_BG,
+                        hover_bg: BTN_BG_HOVER,
+                        rest_border: GOLD_HAIRLINE,
+                        hover_border: GOLD_NOTCH,
+                        lift: 2.0,
+                    },
+                    UiTransform::IDENTITY,
+                    CreditsButton,
+                    anim_btn(AnimKind::Rise, 0.4, 0.7),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.bold, "CREDITS", 14.0, GOLD));
                 });
             });
 
@@ -858,6 +966,9 @@ fn spawn_pause_screen(
                 pause_btn(c, &fonts.extrabold, "LOAD LAST SAVE", PauseLoadBtn, (), 0.12);
             }
             pause_btn(c, &fonts.extrabold, "RESTART", PauseRestartBtn, (), 0.14);
+            // Back to the title screen — the run stays frozen in memory, so RESUME there returns
+            // to exactly this point.
+            pause_btn(c, &fonts.extrabold, "MAIN MENU", PauseMenuBtn, (), 0.16);
 
             c.spawn((
                 label(&fonts.regular, "Esc to resume", 13.0, GREY),
@@ -883,6 +994,7 @@ fn pause_click(
             Option<&PauseGfxBtn>,
             Option<&PauseFsBtn>,
             Option<&PauseSaveBtn>,
+            Option<&PauseMenuBtn>,
         ),
         Changed<Interaction>,
     >,
@@ -905,12 +1017,15 @@ fn pause_click(
     }
     let now = time.elapsed_secs_f64();
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, resume, load, restart_b, audio_b, gfx_b, fs_b, save_b) in &q {
+    for (interaction, resume, load, restart_b, audio_b, gfx_b, fs_b, save_b, menu_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
         if resume.is_some() {
             next_app.set(AppState::Playing);
+        }
+        if menu_b.is_some() {
+            next_app.set(AppState::StartScreen); // run kept live; RESUME on the title returns here
         }
         if save_b.is_some() {
             // `manual_save` (savegame.rs) does the write + the "Game saved" notice.
@@ -1025,17 +1140,46 @@ fn spawn_gameover_screen(
             let txt = if can_continue { "NEW GAME" } else { "PLAY AGAIN" };
             b.spawn(label(&fonts.extrabold, txt, 15.0, INK));
         });
+        // Back to the title screen (secondary).
+        root.spawn((
+            Node {
+                padding: UiRect::axes(Val::Px(22.0), Val::Px(9.0)),
+                border: widgets::border(1.0),
+                border_radius: radius(R_BTN),
+                margin: UiRect::top(Val::Px(8.0)),
+                ..default()
+            },
+            Button,
+            Interaction::default(),
+            BackgroundColor(BTN_BG),
+            BorderColor::all(GOLD_HAIRLINE),
+            crate::ui::anim::Hoverable {
+                rest_bg: BTN_BG,
+                hover_bg: BTN_BG_HOVER,
+                rest_border: GOLD_HAIRLINE,
+                hover_border: GOLD_NOTCH,
+                lift: 2.0,
+            },
+            UiTransform::IDENTITY,
+            GameOverMenuBtn,
+            anim_btn(AnimKind::FloatUp, 0.5, 0.5),
+        ))
+        .with_children(|b| {
+            b.spawn(label(&fonts.bold, "MAIN MENU", 13.0, GOLD));
+        });
     });
 }
 
-/// Click "Continue" / "New Game" / a difficulty segment on the start screen.
-#[allow(clippy::type_complexity)]
+/// Click "Resume" / "Continue" / "New Game" / "Credits" / a difficulty segment on the start screen.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn start_click(
     q: Query<
         (
             &Interaction,
             Option<&StartPlayButton>,
             Option<&StartContinueButton>,
+            Option<&StartResumeButton>,
+            Option<&CreditsButton>,
             Option<&SegButton>,
         ),
         Changed<Interaction>,
@@ -1045,12 +1189,16 @@ fn start_click(
     siege: Option<ResMut<crate::siege::Siege>>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
+    run: Res<RunInProgress>,
+    mut restart_proc: ResMut<RestartProcess>,
+    mut credits: ResMut<crate::mainmenu::CreditsOpen>,
 ) {
     if confirm.0.is_some() {
         return; // dialog up — the scrim already blocks these, but be explicit
     }
     let mut siege = siege;
-    for (interaction, play, cont, seg) in &q {
+    let cur_diff = current_difficulty(siege.as_deref());
+    for (interaction, play, cont, resume, cred, seg) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -1058,13 +1206,18 @@ fn start_click(
             if save.0 {
                 confirm.0 = Some(false); // New Game would overwrite — confirm first
             } else {
-                pending.0 = None; // New Game: a fresh run, never a load.
-                next_app.set(AppState::Playing);
+                begin_new_game(run.0, cur_diff, &mut pending, &mut next_app, &mut restart_proc);
             }
+        }
+        if resume.is_some() {
+            next_app.set(AppState::Playing); // back into the live frozen run, world intact
         }
         if cont.is_some() && save.0 {
             pending.0 = crate::savegame::load_save();
             next_app.set(AppState::Playing);
+        }
+        if cred.is_some() {
+            credits.0 = true;
         }
         if let Some(seg) = seg
             && let Some(s) = siege.as_deref_mut()
@@ -1096,7 +1249,12 @@ fn update_diff_seg(
 #[allow(clippy::type_complexity)]
 fn gameover_click(
     q: Query<
-        (&Interaction, Option<&AgainButton>, Option<&GameOverContinueButton>),
+        (
+            &Interaction,
+            Option<&AgainButton>,
+            Option<&GameOverContinueButton>,
+            Option<&GameOverMenuBtn>,
+        ),
         Changed<Interaction>,
     >,
     mut restart_proc: ResMut<RestartProcess>,
@@ -1111,9 +1269,12 @@ fn gameover_click(
         return;
     }
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, again, cont) in &q {
+    for (interaction, again, cont, menu_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
+        }
+        if menu_b.is_some() {
+            next_app.set(AppState::StartScreen); // run already ended; title offers New/Continue
         }
         if again.is_some() {
             if save.0 {
@@ -1237,6 +1398,7 @@ fn confirm_input(
     mut restart_proc: ResMut<RestartProcess>,
     app: Res<State<AppState>>,
     siege: Option<Res<crate::siege::Siege>>,
+    run: Res<RunInProgress>,
     mut was_open: Local<bool>,
 ) {
     // Swallow input on the frame the dialog opens, so the very Enter/Space that opened it (from
@@ -1268,13 +1430,14 @@ fn confirm_input(
         crate::savegame::delete_save();
         save.0 = false;
         confirm.0 = None;
-        if *app.get() == AppState::StartScreen {
-            // App just launched — the world is already fresh, so start in-process (relaunching
+        if *app.get() == AppState::StartScreen && !run.0 {
+            // Cold-boot start screen — the world is already fresh, so start in-process (relaunching
             // here would only reload identical assets). OnExit(StartScreen) runs the fresh-run resets.
             pending.0 = None;
             next_app.set(AppState::Playing);
         } else {
-            // Mid-session New Game / Restart → full reset via a clean process relaunch.
+            // Mid-session New Game / Restart (incl. a start screen reached mid-run) → full reset via
+            // a clean process relaunch, since the in-process world is dirty.
             let cur_diff = current_difficulty(siege.as_deref());
             restart_proc.0 = Some(BootIntent::Fresh(cur_diff));
         }
@@ -1327,6 +1490,34 @@ mod tests {
 
         w.position = WindowPosition::Automatic;
         assert_eq!(window_geometry(&w), "-99999,-99999,1280,720,1", "unresolved position sentinel");
+    }
+
+    /// New Game routing: from a cold-boot start screen (`run_active = false`) the world is already
+    /// fresh, so we start **in-process** (queue `Playing`, no relaunch). Once a run is live
+    /// (`run_active = true`, e.g. the menu was reached mid-session), only a full process relaunch
+    /// truly rebuilds the world — so `begin_new_game` must request one instead.
+    #[test]
+    fn new_game_routes_in_process_cold_and_relaunch_midrun() {
+        use crate::siege::Difficulty;
+
+        // Cold boot → in-process: a Playing transition is queued, no relaunch requested.
+        let mut pending = crate::savegame::PendingLoad::default();
+        let mut next = NextState::<AppState>::default();
+        let mut restart = RestartProcess::default();
+        begin_new_game(false, Difficulty::Normal, &mut pending, &mut next, &mut restart);
+        assert!(restart.0.is_none(), "cold boot must not relaunch");
+        assert!(matches!(next, NextState::Pending(AppState::Playing)), "cold boot queues Playing");
+
+        // Mid-run → relaunch: a fresh-run intent is requested, no in-process Playing transition.
+        let mut pending = crate::savegame::PendingLoad::default();
+        let mut next = NextState::<AppState>::default();
+        let mut restart = RestartProcess::default();
+        begin_new_game(true, Difficulty::Normal, &mut pending, &mut next, &mut restart);
+        assert!(
+            matches!(restart.0, Some(BootIntent::Fresh(Difficulty::Normal))),
+            "mid-run New Game must relaunch for a clean world"
+        );
+        assert!(matches!(next, NextState::Unchanged), "mid-run does not start in-process");
     }
 
     /// `clear_battlefield` sweeps the dead run's transient entities (invaders / marchers / corpses)
