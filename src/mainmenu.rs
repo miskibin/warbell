@@ -65,9 +65,9 @@ fn exit_menu_sky(mut clock: ResMut<SkyClock>) {
 
 // ── Orbit camera ──────────────────────────────────────────────────────────────────────────
 
-const ORBIT_RADIUS: f32 = 95.0; // matches the default start pose's distance, so terrain clears
-const ORBIT_HEIGHT: f32 = 52.0;
-const ORBIT_LOOK_Y: f32 = 6.0; // aim a touch above the keep base
+const ORBIT_RADIUS: f32 = 72.0; // pulled in for a more immersive, less map-like framing
+const ORBIT_HEIGHT: f32 = 22.0; // low, near-eye-level on the keep — not a top-down map view
+const ORBIT_LOOK_Y: f32 = 9.0; // aim up at the keep, not down at the ground
 const ORBIT_SPEED_DEG: f32 = 3.0; // ~120 s per full revolution — a gentle drift
 const ORBIT_START_DEG: f32 = 90.0; // begin roughly at the default (+Z) framing
 
