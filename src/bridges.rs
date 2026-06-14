@@ -27,15 +27,26 @@ const MAX_BRIDGES: usize = 12;
 const MIN_HALF: f32 = 0.6;
 const MAX_HALF: f32 = 5.0;
 
-/// A bridge deck: world-XZ centre, the long half-length across the water (incl. overhang), and
+/// World-Y step a mover can walk on/off the deck in one move (mirrors `steer::MAX_STEP`, kept a
+/// hair under it). A deck whose banks sit more than this from the plank top strands the hero ON
+/// the deck — he can't step off and has to jump — so such a crossing is rejected.
+const BANK_STEP: f32 = 0.55;
+/// A real crossing has river running on BOTH sides of the deck along the flow axis. At a river
+/// HEAD the channel dead-ends, so a "bridge" there spans nothing you couldn't walk around — skip.
+const RIVER_CONTINUE: f32 = 3.0;
+
+/// A bridge deck: world-XZ centre, the long half-length across the water (incl. overhang),
 /// whether the deck's LONG axis runs along X (`across_x` → crosses a river flowing along Z) or
-/// along Z. The short axis is always `DECK_HALF_Z`.
+/// along Z (short axis is always `DECK_HALF_Z`), and `base_y` — the bank terrain height the flat
+/// deck sits on (deck top = `base_y + 0.25`). Storing `base_y` once (not re-sampling per call)
+/// keeps the spawn transform, footing, and walkability checks in agreement.
 #[derive(Clone, Copy)]
 struct Span {
     cx: f32,
     cz: f32,
     half: f32,
     across_x: bool,
+    base_y: f32,
 }
 
 /// Find a few clean river crossings by scanning the whole island for NARROW water channels.
@@ -89,9 +100,13 @@ fn spans() -> &'static [Span] {
     })
 }
 
-/// If `(x, z)` is river water on a clean narrow crossing, return the centred deck span. Measures
-/// the channel width along X and along Z; the deck spans the NARROWER axis (bank to bank), and
-/// both ends must sit on solid land (not the open sea at a river mouth).
+/// If `(x, z)` is river water on a clean, *useful*, *walkable* narrow crossing, return the centred
+/// deck span. Measures the channel width along X and along Z; the deck spans the NARROWER axis
+/// (bank to bank). Two placement bugs are gated here:
+///  - **useless bridges at a river's end** — a genuine crossing has river continuing along the
+///    flow axis on BOTH sides; at a head/mouth the channel dead-ends and you'd walk around it;
+///  - **bridges you get stuck on** — the flat deck top must sit within one walkable step of the
+///    terrain at BOTH immediate banks, or the hero can't step off and has to jump.
 fn crossing_at(x: f32, z: f32) -> Option<Span> {
     if !is_river_world(x, z) {
         return None;
@@ -107,14 +122,42 @@ fn crossing_at(x: f32, z: f32) -> Option<Span> {
     if !(MIN_HALF..=MAX_HALF).contains(&half) {
         return None;
     }
-    let end = half + OVERHANG;
-    let (ex, ez) = if across_x { (end, 0.0) } else { (0.0, end) };
-    let ya = crate::worldmap::ground_at_world(cx + ex, cz + ez)?; // a coast / river-mouth
-    let yb = crate::worldmap::ground_at_world(cx - ex, cz - ez)?; // is not a crossing
-    if (ya - yb).abs() > 0.01 {
-        return None; // skewed banks — the deck is flat, so the high end would be a cliff step
+
+    // Useless-bridge gate: a real crossing has river running along the FLOW axis (perpendicular to
+    // the deck) on BOTH sides. At a river head it just stops. Probe a short perpendicular window
+    // so a gently meandering channel still registers a little way upstream/downstream.
+    let river_along_flow = |s: f32| {
+        [-1.5f32, -0.75, 0.0, 0.75, 1.5].iter().any(|&w| {
+            let (px, pz) = if across_x { (cx + w, cz + s) } else { (cx + s, cz + w) };
+            is_river_world(px, pz)
+        })
+    };
+    if !(river_along_flow(RIVER_CONTINUE) && river_along_flow(-RIVER_CONTINUE)) {
+        return None;
     }
-    Some(Span { cx, cz, half: end, across_x })
+
+    // Stuck-on-the-deck gate: find the first solid land stepping outward from the water on each
+    // side of the span axis (a sea mouth has none → `None` → rejected, as a river mouth should
+    // be). A flat deck can only meet both banks if they're near-level.
+    let bank = |sign: f32| -> Option<f32> {
+        let mut d = half;
+        while d <= half + OVERHANG + 1.0 {
+            let (px, pz) = if across_x { (cx + sign * d, cz) } else { (cx, cz + sign * d) };
+            if let Some(y) = crate::worldmap::ground_at_world(px, pz) {
+                return Some(y);
+            }
+            d += 0.5;
+        }
+        None
+    };
+    let ya = bank(1.0)?;
+    let yb = bank(-1.0)?;
+    if (ya - yb).abs() > BANK_STEP {
+        return None; // skewed banks — a flat deck would leave one end an un-steppable cliff
+    }
+    // Deck top sits a hair above the LOWER bank (`base_y + 0.25`): the hero steps up ≤0.25 from
+    // it and down onto the higher bank — both within `BANK_STEP`, so neither end traps him.
+    Some(Span { cx, cz, half: half + OVERHANG, across_x, base_y: ya.min(yb) })
 }
 
 /// Walk both ways from `(x, z)` along one axis (`x_axis` ? X : Z) to the channel banks; return
@@ -168,19 +211,11 @@ pub fn near_bridge(wx: f32, wz: f32, pad: f32) -> bool {
 
 /// Walkable deck-top Y at `(wx, wz)` if it's on a bridge, else `None`. The hero ORs this onto
 /// `worldmap::ground_at_world` (which is terrain-only and reads `None` over the river) so he can
-/// stand + ground on the planks. Deck transform sits at `bank_y + 0.2`; planks are 0.1 thick →
-/// their top is `bank_y + 0.25`, where the feet rest. Bank ground is sampled at the span's land
-/// overhang, so this never recurses into a bridge lookup.
+/// stand + ground on the planks. Deck transform sits at `base_y + 0.2`; planks are 0.1 thick →
+/// their top is `base_y + 0.25`, where the feet rest. `base_y` is the validated bank height
+/// stored on the span, so this never recurses into a bridge lookup.
 pub fn deck_y_at(wx: f32, wz: f32) -> Option<f32> {
-    span_at(wx, wz).map(|s| bank_y(s) + 0.25)
-}
-
-/// Ground height at the span's banks (sampled at its long-axis ends, which overhang land).
-fn bank_y(s: &Span) -> f32 {
-    let (ex, ez) = if s.across_x { (s.half, 0.0) } else { (0.0, s.half) };
-    crate::worldmap::ground_at_world(s.cx + ex, s.cz + ez)
-        .or_else(|| crate::worldmap::ground_at_world(s.cx - ex, s.cz - ez))
-        .unwrap_or(0.0)
+    span_at(wx, wz).map(|s| s.base_y + 0.25)
 }
 
 // ── mesh ───────────────────────────────────────────────────────────────────────────
@@ -308,6 +343,54 @@ mod tests {
         );
     }
 
+    /// Every placed deck must be a USEFUL, STEPPABLE crossing — the two placement bugs:
+    ///  - **useless at a river's end**: river must run along the flow axis on both sides of the
+    ///    deck (a head/mouth dead-ends → you'd walk around it);
+    ///  - **stuck on the deck**: the flat plank top must be within one walkable step of the land
+    ///    at BOTH immediate banks, or the hero can't step off and has to jump.
+    #[test]
+    fn every_deck_is_a_useful_steppable_crossing() {
+        for s in spans() {
+            let top = s.base_y + 0.25;
+            // Both banks reachable from the deck top within one terrace step.
+            for sign in [1.0f32, -1.0] {
+                let mut d = s.half - OVERHANG; // back at the water edge
+                let mut bank = None;
+                while d <= s.half + 1.0 {
+                    let (px, pz) =
+                        if s.across_x { (s.cx + sign * d, s.cz) } else { (s.cx, s.cz + sign * d) };
+                    if let Some(y) = crate::worldmap::ground_at_world(px, pz) {
+                        bank = Some(y);
+                        break;
+                    }
+                    d += 0.5;
+                }
+                let bank = bank.unwrap_or_else(|| panic!("deck end at ({}, {}) has no bank", s.cx, s.cz));
+                assert!(
+                    (bank - top).abs() <= crate::steer::MAX_STEP,
+                    "un-steppable bank {bank} vs deck top {top} at ({}, {}) — hero would be stuck",
+                    s.cx,
+                    s.cz
+                );
+            }
+            // River continues on both sides → not a dead-end bridge (same perpendicular probe
+            // window `crossing_at` uses, so a meandering channel registers).
+            let cont = |off: f32| {
+                [-1.5f32, -0.75, 0.0, 0.75, 1.5].iter().any(|&w| {
+                    let (px, pz) =
+                        if s.across_x { (s.cx + w, s.cz + off) } else { (s.cx + off, s.cz + w) };
+                    is_river_world(px, pz)
+                })
+            };
+            assert!(
+                cont(RIVER_CONTINUE) && cont(-RIVER_CONTINUE),
+                "dead-end bridge at ({}, {}) — river doesn't continue on both sides",
+                s.cx,
+                s.cz
+            );
+        }
+    }
+
     /// A mover standing on a deck must FOOT on the deck, not on the (missing) terrain under it.
     /// `worldmap::ground_at_world` reads `None` over the carved river, so any mover that grounds
     /// off raw terrain freezes its Y at the bank and floats/wedges on the planks (the wildlife +
@@ -344,7 +427,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             Mesh3d(meshes.add(deck_mesh(s.half, seed))),
             MeshMaterial3d(mat.clone()),
             Transform {
-                translation: Vec3::new(s.cx, bank_y(s) + 0.2, s.cz),
+                translation: Vec3::new(s.cx, s.base_y + 0.2, s.cz),
                 rotation: rot,
                 ..default()
             },
