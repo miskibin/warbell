@@ -14,6 +14,7 @@ use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
 use super::{frand, AudioConfig, MusicState};
+use crate::game_state::AppState;
 use crate::siege::{GamePhase, Siege, WAVES};
 
 /// The day tracks — one is picked at random each dawn (Wave→Prep edge). All loop silently from
@@ -47,6 +48,8 @@ pub(crate) enum MusicLayer {
     Arid,
     Night,
     Boss,
+    /// The title-screen theme — swells on `AppState::StartScreen` and ducks every other layer.
+    Menu,
 }
 
 pub(crate) fn setup_music(asset: Res<AssetServer>, cfg: Res<AudioConfig>, mut commands: Commands) {
@@ -72,18 +75,21 @@ pub(crate) fn setup_music(asset: Res<AssetServer>, cfg: Res<AudioConfig>, mut co
     layer("audio/heat-hail.ogg", 0.0, MusicLayer::Arid); // silent until the hero enters desert/rock
     layer(NIGHT_TRACK, 0.0, MusicLayer::Night); // silent until the siege wave — always this track
     layer("audio/orc-march-tallow.ogg", 0.0, MusicLayer::Boss); // silent until the boss wave
+    layer("audio/menu-theme.ogg", 0.0, MusicLayer::Menu); // fades in on the title screen
 }
 
 pub(crate) fn update_music(
     time: Res<Time>,
     cfg: Res<AudioConfig>,
     state: Res<MusicState>,
+    app: Res<State<AppState>>,
     siege: Option<Res<Siege>>,
     hero: Option<Res<crate::player::HeroState>>,
     mut heat: Local<f32>,
     mut night: Local<f32>,
     mut blight: Local<f32>,
     mut arid: Local<f32>,
+    mut menu: Local<f32>,
     mut prev_wave: Local<bool>,
     mut day_pick: Local<usize>,
     mut seed: Local<u32>,
@@ -124,7 +130,10 @@ pub(crate) fn update_music(
             )
     });
     *arid += ((if in_arid { 1.0 } else { 0.0 }) - *arid) * (dt * NIGHT_FADE).min(1.0);
-    let (h, n, b, a) = (*heat, *night, *blight, *arid);
+    // The title screen has its own theme; swell it (and duck everything else) while on it.
+    let on_menu = *app.get() == AppState::StartScreen;
+    *menu += ((if on_menu { 1.0 } else { 0.0 }) - *menu) * (dt * NIGHT_FADE).min(1.0);
+    let (h, n, b, a, m) = (*heat, *night, *blight, *arid, *menu);
     let day = cfg.music_vol * (1.0 - n); // day tracks fade out as night rises
 
     for (layer, mut sink) in &mut q {
@@ -143,7 +152,10 @@ pub(crate) fn update_music(
             MusicLayer::Arid => day * (1.0 - BED_DUCK * h) * a,
             MusicLayer::Night => cfg.music_vol * n * if !boss { 1.0 } else { 0.0 },
             MusicLayer::Boss => cfg.music_vol * n * if boss { 1.0 } else { 0.0 },
+            MusicLayer::Menu => cfg.music_vol * m,
         };
+        // The menu theme owns the mix while it's up; every in-game layer ducks under it.
+        let v = if matches!(layer, MusicLayer::Menu) { v } else { v * (1.0 - m) };
         sink.set_volume(Volume::Linear(v));
     }
 }
