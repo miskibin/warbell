@@ -38,8 +38,16 @@ use crate::worldmap::{self, GX, GZ, MAP_SCALE};
 
 // ── Layout (world space; the OLD grid's south edge was z = +81 — the Blight extends it) ──
 
+/// Southward shift applied to the ENTIRE Blight/fortress (every world-z constant below adds
+/// it). The island grew +20% when `MAP_SCALE` went 1.5→1.8, pushing its south coast ~16 units
+/// further south; the fortress is the only landmark authored in fixed world coords, so it is
+/// re-anchored by this much to keep its gate meeting the (now larger) coast. Bump this in step
+/// with `MAP_SCALE` if the island is rescaled again. All fortress z-coords are written as
+/// `<authored> + BLIGHT_DZ` so the original layout stays readable and the shift has one source.
+const BLIGHT_DZ: f32 = 16.2;
+
 /// Fortress centre — the hold blob and the "inside the walls" tests key off this.
-const CENTRE: Vec2 = Vec2::new(12.0, 103.0);
+const CENTRE: Vec2 = Vec2::new(12.0, 103.0 + BLIGHT_DZ);
 /// Hold blob radii (wobbled ellipse around [`CENTRE`]) — the fortress's own landmass lobe.
 const BLOB_RX: f32 = 34.0;
 const BLOB_RZ: f32 = 30.0;
@@ -47,11 +55,11 @@ const BLOB_RZ: f32 = 30.0;
 /// swamp coast (union with the hold blob = the whole walkable Blight). Centred east enough
 /// that the south-stream's mouth (world x ≈ −24) stays open water — the stream delta dies
 /// into the mire at the Blight's west rim.
-const APRON: Vec2 = Vec2::new(24.0, 108.0);
+const APRON: Vec2 = Vec2::new(24.0, 108.0 + BLIGHT_DZ);
 const APRON_RX: f32 = 58.0;
 const APRON_RZ: f32 = 50.0;
 /// The gate wall line.
-const FRONT_Z: f32 = 80.9;
+const FRONT_Z: f32 = 80.9 + BLIGHT_DZ;
 /// Gate centre (the war-horn sounds from here; the threshold test measures to it).
 const GATE: Vec2 = Vec2::new(12.0, FRONT_Z);
 
@@ -129,11 +137,11 @@ pub fn blight_class_base(bx: f32, bz: f32) -> Option<i32> {
     if blight_edge_world(wx, wz) <= 0.0 {
         return None;
     }
-    let d_pad = (wx - 13.0).hypot(wz - 115.0);
+    let d_pad = (wx - 13.0).hypot(wz - (115.0 + BLIGHT_DZ));
     if d_pad < 2.8 {
         return Some(3);
     }
-    let d_terrace = (wx - 12.5).hypot(wz - 108.0);
+    let d_terrace = (wx - 12.5).hypot(wz - (108.0 + BLIGHT_DZ));
     if d_terrace < 10.5 {
         return Some(2);
     }
@@ -149,7 +157,7 @@ pub fn blight_class_base(bx: f32, bz: f32) -> Option<i32> {
 /// stays clear of props so the walk up to the wall — and the towers' line of fire — reads
 /// clean.
 pub fn on_gate_approach(wx: f32, wz: f32) -> bool {
-    (3.0..=21.0).contains(&wx) && (65.0..=81.5).contains(&wz)
+    (3.0..=21.0).contains(&wx) && (65.0 + BLIGHT_DZ..=81.5 + BLIGHT_DZ).contains(&wz)
 }
 
 /// Water keep-out for the background sailboats: the whole Blight landmass + a wake margin.
@@ -165,7 +173,7 @@ fn ground_y(wx: f32, wz: f32) -> Option<f32> {
 
 /// Wander bound: keeps the population milling INSIDE the walls (and off the gate line).
 fn inside_walls(wx: f32, wz: f32) -> bool {
-    Vec2::new(wx, wz).distance(CENTRE) < 17.5 && wz > 84.0
+    Vec2::new(wx, wz).distance(CENTRE) < 17.5 && wz > 84.0 + BLIGHT_DZ
 }
 
 // ── Plugin + components ─────────────────────────────────────────────────────────────
@@ -293,58 +301,66 @@ const RING: [Vec2; 14] = [
     Vec2::new(9.0, FRONT_Z), // gate gap 9..15
     Vec2::new(15.0, FRONT_Z),
     Vec2::new(22.0, FRONT_Z),
-    Vec2::new(30.0, 88.0),
-    Vec2::new(34.0, 100.0),
-    Vec2::new(32.0, 112.0),
-    Vec2::new(24.0, 121.0),
-    Vec2::new(12.0, 124.5),
-    Vec2::new(0.0, 123.0),
-    Vec2::new(-8.5, 115.0),
-    Vec2::new(-11.0, 103.0),
-    Vec2::new(-8.0, 91.0),
-    Vec2::new(-2.0, 84.0),
+    Vec2::new(30.0, 88.0 + BLIGHT_DZ),
+    Vec2::new(34.0, 100.0 + BLIGHT_DZ),
+    Vec2::new(32.0, 112.0 + BLIGHT_DZ),
+    Vec2::new(24.0, 121.0 + BLIGHT_DZ),
+    Vec2::new(12.0, 124.5 + BLIGHT_DZ),
+    Vec2::new(0.0, 123.0 + BLIGHT_DZ),
+    Vec2::new(-8.5, 115.0 + BLIGHT_DZ),
+    Vec2::new(-11.0, 103.0 + BLIGHT_DZ),
+    Vec2::new(-8.0, 91.0 + BLIGHT_DZ),
+    Vec2::new(-2.0, 84.0 + BLIGHT_DZ),
 ];
 
 /// Tower bases: two flanking the gate, five on the ring (NE / E / SE / S / W / NW).
 const TOWERS: [Vec2; 7] = [
-    Vec2::new(5.3, 82.8),
-    Vec2::new(18.7, 82.8),
-    Vec2::new(31.5, 99.5),
-    Vec2::new(23.0, 118.5),
-    Vec2::new(11.5, 121.5),
-    Vec2::new(-8.0, 103.0),
-    Vec2::new(-5.5, 89.5),
+    Vec2::new(5.3, 82.8 + BLIGHT_DZ),
+    Vec2::new(18.7, 82.8 + BLIGHT_DZ),
+    Vec2::new(31.5, 99.5 + BLIGHT_DZ),
+    Vec2::new(23.0, 118.5 + BLIGHT_DZ),
+    Vec2::new(11.5, 121.5 + BLIGHT_DZ),
+    Vec2::new(-8.0, 103.0 + BLIGHT_DZ),
+    Vec2::new(-5.5, 89.5 + BLIGHT_DZ),
 ];
 
 /// Hide tents: (centre, scale). Clustered into a west camp-row and an east one.
 const TENTS: [(Vec2, f32); 6] = [
-    (Vec2::new(0.0, 90.5), 1.0),
-    (Vec2::new(24.0, 92.0), 0.9),
-    (Vec2::new(-4.5, 96.0), 1.15),
-    (Vec2::new(21.5, 99.0), 1.0),
-    (Vec2::new(3.0, 104.5), 0.9),
-    (Vec2::new(26.5, 104.0), 1.1),
+    (Vec2::new(0.0, 90.5 + BLIGHT_DZ), 1.0),
+    (Vec2::new(24.0, 92.0 + BLIGHT_DZ), 0.9),
+    (Vec2::new(-4.5, 96.0 + BLIGHT_DZ), 1.15),
+    (Vec2::new(21.5, 99.0 + BLIGHT_DZ), 1.0),
+    (Vec2::new(3.0, 104.5 + BLIGHT_DZ), 0.9),
+    (Vec2::new(26.5, 104.0 + BLIGHT_DZ), 1.1),
 ];
 /// Timber longhouses (the warband's barracks): (centre, yaw).
 const LONGHOUSES: [(Vec2, f32); 2] = [
-    (Vec2::new(27.0, 109.5), -0.55),
-    (Vec2::new(1.0, 115.5), 0.85),
+    (Vec2::new(27.0, 109.5 + BLIGHT_DZ), -0.55),
+    (Vec2::new(1.0, 115.5 + BLIGHT_DZ), 0.85),
 ];
 /// The forge (on the hall terrace) and the boar pen (west yard).
-const FORGE_AT: Vec2 = Vec2::new(18.5, 112.0);
-const PEN_AT: Vec2 = Vec2::new(-2.5, 102.5);
+const FORGE_AT: Vec2 = Vec2::new(18.5, 112.0 + BLIGHT_DZ);
+const PEN_AT: Vec2 = Vec2::new(-2.5, 102.5 + BLIGHT_DZ);
 /// War drums flanking the bonfire plaza.
-const DRUMS: [Vec2; 2] = [Vec2::new(6.0, 92.0), Vec2::new(12.5, 92.5)];
+const DRUMS: [Vec2; 2] = [Vec2::new(6.0, 92.0 + BLIGHT_DZ), Vec2::new(12.5, 92.5 + BLIGHT_DZ)];
 /// Weapon racks + spoils piles (ground clutter with a story).
-const RACKS: [Vec2; 3] = [Vec2::new(15.0, 88.5), Vec2::new(24.5, 96.0), Vec2::new(-1.0, 108.0)];
-const PILES: [Vec2; 3] = [Vec2::new(8.0, 86.5), Vec2::new(16.5, 86.5), Vec2::new(22.0, 112.5)];
+const RACKS: [Vec2; 3] = [
+    Vec2::new(15.0, 88.5 + BLIGHT_DZ),
+    Vec2::new(24.5, 96.0 + BLIGHT_DZ),
+    Vec2::new(-1.0, 108.0 + BLIGHT_DZ),
+];
+const PILES: [Vec2; 3] = [
+    Vec2::new(8.0, 86.5 + BLIGHT_DZ),
+    Vec2::new(16.5, 86.5 + BLIGHT_DZ),
+    Vec2::new(22.0, 112.5 + BLIGHT_DZ),
+];
 /// Free-standing war-banner poles on the plaza.
-const PLAZA_BANNERS: [Vec2; 2] = [Vec2::new(5.0, 99.5), Vec2::new(19.5, 104.5)];
+const PLAZA_BANNERS: [Vec2; 2] = [Vec2::new(5.0, 99.5 + BLIGHT_DZ), Vec2::new(19.5, 104.5 + BLIGHT_DZ)];
 
-const HALL_AT: Vec2 = Vec2::new(12.0, 107.0);
-const SPIRE_AT: Vec2 = Vec2::new(13.0, 115.0);
-const BONFIRE_AT: Vec2 = Vec2::new(9.0, 95.0);
-const CAGE_AT: Vec2 = Vec2::new(3.0, 97.0);
+const HALL_AT: Vec2 = Vec2::new(12.0, 107.0 + BLIGHT_DZ);
+const SPIRE_AT: Vec2 = Vec2::new(13.0, 115.0 + BLIGHT_DZ);
+const BONFIRE_AT: Vec2 = Vec2::new(9.0, 95.0 + BLIGHT_DZ);
+const CAGE_AT: Vec2 = Vec2::new(3.0, 97.0 + BLIGHT_DZ);
 /// How much bigger the hall + spire read in the enlarged hold (spawn-transform scale).
 const HALL_SCALE: f32 = 1.25;
 const SPIRE_SCALE: f32 = 1.15;
@@ -721,7 +737,7 @@ pub fn build(
         spawn_solid(commands, meshes, &hide_mat, drum_mesh(&mut rng), at(*p), ry(i as f32 * 1.7));
         crate::blockers::add(p.x, p.y, 0.7);
     }
-    spawn_solid(commands, meshes, &mat, spit_mesh(&mut rng), at(Vec2::new(11.5, 97.0)), ry(0.5));
+    spawn_solid(commands, meshes, &mat, spit_mesh(&mut rng), at(Vec2::new(11.5, 97.0 + BLIGHT_DZ)), ry(0.5));
 
     // ── Weapon racks + spoils piles (plunder stacked where it was dropped) ──
     for p in RACKS {
@@ -767,7 +783,11 @@ pub fn build(
 
     // ── War totems: one OUTSIDE on the causeway and two inside, all glaring at the
     //    castle (the camps' "gaze points home" rule, scaled up). ──
-    for tp in [Vec2::new(8.5, 77.0), Vec2::new(24.0, 90.0), Vec2::new(0.0, 118.0)] {
+    for tp in [
+        Vec2::new(8.5, 77.0 + BLIGHT_DZ),
+        Vec2::new(24.0, 90.0 + BLIGHT_DZ),
+        Vec2::new(0.0, 118.0 + BLIGHT_DZ),
+    ] {
         let yaw = (-tp.x).atan2(-tp.y);
         spawn_solid(commands, meshes, &timber_mat, totem_mesh(&mut rng), at(tp), ry(yaw));
         crate::blockers::add(tp.x, tp.y, 0.45);
@@ -775,10 +795,10 @@ pub fn build(
 
     // ── Skull-spike warnings flanking the causeway (on-grid, decorative) ──
     for sp in [
-        Vec2::new(6.5, 78.8),
-        Vec2::new(17.5, 78.6),
-        Vec2::new(9.5, 75.5),
-        Vec2::new(15.0, 75.8),
+        Vec2::new(6.5, 78.8 + BLIGHT_DZ),
+        Vec2::new(17.5, 78.6 + BLIGHT_DZ),
+        Vec2::new(9.5, 75.5 + BLIGHT_DZ),
+        Vec2::new(15.0, 75.8 + BLIGHT_DZ),
     ] {
         spawn_solid(commands, meshes, &mat, spikes_mesh(&mut rng), at(sp), ry(rng_range(&mut rng, 0.0, TAU)));
     }
@@ -809,7 +829,7 @@ pub fn build(
         let r = rng_range(&mut rng, 4.0, 20.0);
         let p = CENTRE + Vec2::new(ang.cos() * r, ang.sin() * r * 0.9);
         if ground_y(p.x, p.y).is_none()
-            || p.y < 84.0
+            || p.y < 84.0 + BLIGHT_DZ
             || keep_out.iter().any(|(c, kr)| c.distance(p) < *kr)
         {
             continue;
@@ -883,7 +903,9 @@ pub fn build(
         ..default()
     });
     let mut fumes = 0;
-    for tz in 56..166 {
+    // World-tile bounds covering the Blight landmass; the z range tracks the +BLIGHT_DZ shift
+    // (was 56..166, +16). Tiles outside the actual landmass are skipped via `blight_edge_world`.
+    for tz in 72..182 {
         for tx in -36..84 {
             // Per-tile hash-seeded RNG, independent of visit order (the snow-drift idiom).
             let mut s = (tx as i64 * 73_856_093 ^ tz as i64 * 19_349_663) as u32 ^ 0x0b1a_5eed;
@@ -981,10 +1003,10 @@ pub fn build(
 
     // ── Wayposts flanking the gate road — the orks signpost their own front door ──
     for (i, wp) in [
-        Vec2::new(4.5, 66.5),
-        Vec2::new(19.5, 68.0),
-        Vec2::new(4.0, 72.5),
-        Vec2::new(20.0, 74.5),
+        Vec2::new(4.5, 66.5 + BLIGHT_DZ),
+        Vec2::new(19.5, 68.0 + BLIGHT_DZ),
+        Vec2::new(4.0, 72.5 + BLIGHT_DZ),
+        Vec2::new(20.0, 74.5 + BLIGHT_DZ),
     ]
     .into_iter()
     .enumerate()
@@ -1029,20 +1051,20 @@ pub fn build(
     };
     use OrkVariant::*;
     let roster: [(OrkVariant, Vec2); 14] = [
-        (Grunt, Vec2::new(5.0, 92.0)),
-        (Grunt, Vec2::new(16.0, 91.0)),
-        (Grunt, Vec2::new(21.0, 97.5)),
-        (Grunt, Vec2::new(3.5, 100.0)),
-        (Grunt, Vec2::new(14.0, 118.0)),
-        (Scout, Vec2::new(24.0, 104.0)),
-        (Scout, Vec2::new(-1.0, 107.5)),
-        (Scout, Vec2::new(7.0, 120.0)),
-        (Berserker, Vec2::new(19.0, 88.0)),
-        (Berserker, Vec2::new(25.0, 111.0)),
-        (Berserker, Vec2::new(2.0, 94.0)),
-        (Shaman, Vec2::new(4.0, 112.0)),
-        (Shaman, Vec2::new(10.0, 113.5)),
-        (Shaman, Vec2::new(20.0, 108.0)),
+        (Grunt, Vec2::new(5.0, 92.0 + BLIGHT_DZ)),
+        (Grunt, Vec2::new(16.0, 91.0 + BLIGHT_DZ)),
+        (Grunt, Vec2::new(21.0, 97.5 + BLIGHT_DZ)),
+        (Grunt, Vec2::new(3.5, 100.0 + BLIGHT_DZ)),
+        (Grunt, Vec2::new(14.0, 118.0 + BLIGHT_DZ)),
+        (Scout, Vec2::new(24.0, 104.0 + BLIGHT_DZ)),
+        (Scout, Vec2::new(-1.0, 107.5 + BLIGHT_DZ)),
+        (Scout, Vec2::new(7.0, 120.0 + BLIGHT_DZ)),
+        (Berserker, Vec2::new(19.0, 88.0 + BLIGHT_DZ)),
+        (Berserker, Vec2::new(25.0, 111.0 + BLIGHT_DZ)),
+        (Berserker, Vec2::new(2.0, 94.0 + BLIGHT_DZ)),
+        (Shaman, Vec2::new(4.0, 112.0 + BLIGHT_DZ)),
+        (Shaman, Vec2::new(10.0, 113.5 + BLIGHT_DZ)),
+        (Shaman, Vec2::new(20.0, 108.0 + BLIGHT_DZ)),
     ];
     for (i, (variant, p)) in roster.into_iter().enumerate() {
         spawn_denizen(commands, &armory, variant, p, 1.0, None, i % 2 == 1, &mut rng);
@@ -1052,9 +1074,9 @@ pub fn build(
         commands,
         &armory,
         Berserker,
-        Vec2::new(11.0, 99.5),
+        Vec2::new(11.0, 99.5 + BLIGHT_DZ),
         1.55,
-        Some([Vec2::new(12.0, 100.7), Vec2::new(9.5, 96.6)]),
+        Some([Vec2::new(12.0, 100.7 + BLIGHT_DZ), Vec2::new(9.5, 96.6 + BLIGHT_DZ)]),
         false,
         &mut rng,
     );
@@ -1107,11 +1129,11 @@ pub fn build(
 /// Patrol homes + squad make-up (all `Faction::Red`, like the hold). West + east flanks,
 /// an ambush squad beside the gate road, and two deep-mire squads in the southern sprawl.
 const PATROL_SITES: [(Vec2, [OrkVariant; 2]); 5] = [
-    (Vec2::new(-12.0, 88.0), [OrkVariant::Grunt, OrkVariant::Scout]),
-    (Vec2::new(38.0, 100.0), [OrkVariant::Grunt, OrkVariant::Berserker]),
-    (Vec2::new(26.0, 76.0), [OrkVariant::Scout, OrkVariant::Grunt]),
-    (Vec2::new(-14.0, 122.0), [OrkVariant::Berserker, OrkVariant::Grunt]),
-    (Vec2::new(54.0, 118.0), [OrkVariant::Grunt, OrkVariant::Grunt]),
+    (Vec2::new(-12.0, 88.0 + BLIGHT_DZ), [OrkVariant::Grunt, OrkVariant::Scout]),
+    (Vec2::new(38.0, 100.0 + BLIGHT_DZ), [OrkVariant::Grunt, OrkVariant::Berserker]),
+    (Vec2::new(26.0, 76.0 + BLIGHT_DZ), [OrkVariant::Scout, OrkVariant::Grunt]),
+    (Vec2::new(-14.0, 122.0 + BLIGHT_DZ), [OrkVariant::Berserker, OrkVariant::Grunt]),
+    (Vec2::new(54.0, 118.0 + BLIGHT_DZ), [OrkVariant::Grunt, OrkVariant::Grunt]),
 ];
 
 /// Seconds after a patrol is wiped before it can return, and how far the hero must be for
@@ -1136,14 +1158,14 @@ struct BlightCage {
 /// `(cage world XZ, guarding PATROL_SITES index)`. Both cages sit a few units OUTSIDE the
 /// walls in walkable mire, hard by their patrol's home so the squad reads as their jailers.
 const BLIGHT_CAGES: [(Vec2, usize); 2] = [
-    (Vec2::new(42.0, 99.0), 1),    // east flank — guarded by patrol 1 (38,100)
-    (Vec2::new(-17.0, 125.0), 3),  // deep south-west mire — guarded by patrol 3 (-14,122)
+    (Vec2::new(42.0, 99.0 + BLIGHT_DZ), 1),    // east flank — guarded by patrol 1 (38,100)
+    (Vec2::new(-17.0, 125.0 + BLIGHT_DZ), 3),  // deep south-west mire — guarded by patrol 3 (-14,122)
 ];
 
 /// The war-hoard: a single one-shot plunder chest deep in the south-east mire, guarded by
 /// patrol 4. `(chest world XZ, gold, loot)` — fixed haul (consumables + a purse), no gear, so
 /// it rewards the trek without power-creeping the already-strong hero.
-const BLIGHT_HOARD: (Vec2, i64, &[&str]) = (Vec2::new(57.0, 119.0), 80, &["feast", "potion", "venom"]);
+const BLIGHT_HOARD: (Vec2, i64, &[&str]) = (Vec2::new(57.0, 119.0 + BLIGHT_DZ), 80, &["feast", "potion", "venom"]);
 
 /// One-time freed/seen flags per [`BLIGHT_CAGES`] slot (re-inserted fresh each world build, so
 /// a new game re-stocks the cages). `seen` guards against freeing before the patrol spawns.

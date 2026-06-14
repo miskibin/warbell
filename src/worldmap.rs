@@ -34,23 +34,27 @@ use crate::water::{WaterExt, WaterMaterial, WaterParams};
 
 // ── Map dimensions ───────────────────────────────────────────────────────────────
 /// Map enlargement vs the original base island (more tiles → more land + props).
-pub const MAP_SCALE: f32 = 1.5;
+/// Bumped 1.5 → 1.8 (a clean +20% on every axis) to make the playable world ~20% bigger.
+pub const MAP_SCALE: f32 = 1.8;
 // The GRID is the enlarged resolution; GENERATION still runs in *base* space — the grid
 // loop samples `classify(ix / MAP_SCALE, …)`, so the island shape is identical, just
 // drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
-// `GX/GZ` are the GRID centre used for world placement + tile-cache indexing.
-pub const COLS: i32 = 216; // 144 * 1.5
-/// Rows: the original island (108 base rows → 162) PLUS the southern **Blight** extension —
-/// the walkable ork-fortress landmass (`ork_fortress::blight_class_base`). World z runs
-/// −81 … +165; everything north of +81 is the original map, untouched.
-pub const ROWS: i32 = 246;
-const CX: f32 = 72.0; // base COLS/2 — generation centre
-const CZ: f32 = 54.0;
+// `GX/GZ` are the GRID centre used for world placement + tile-cache indexing. All four
+// derive from MAP_SCALE so bumping the scale stays self-consistent.
+const BASE_COLS: f32 = 144.0; // original (pre-enlargement) grid width
+const BASE_ROWS: f32 = 164.0; // 108 original island rows + 56 southern Blight extension
+pub const COLS: i32 = (BASE_COLS * MAP_SCALE) as i32; // 259 at 1.8
+/// Rows: the original island (108 base rows) PLUS the southern **Blight** extension —
+/// the walkable ork-fortress landmass (`ork_fortress::blight_class_base`). Everything
+/// north of the old south edge is the original map, just denser; the Blight grows south.
+pub const ROWS: i32 = (BASE_ROWS * MAP_SCALE) as i32; // 295 at 1.8
+const CX: f32 = BASE_COLS / 2.0; // 72 — base generation centre
+const CZ: f32 = 54.0; // original island half-height (108/2)
 /// Grid centre (enlarged) — world placement recentres the map onto the origin here.
 pub const GX: f32 = COLS as f32 / 2.0;
-/// NOT `ROWS/2`: the castle stays at the origin, so GZ is pinned to the ORIGINAL map's
-/// half-height (162/2) and the Blight extension grows `ROWS` southward only.
-pub const GZ: f32 = 81.0;
+/// NOT `ROWS/2`: the castle stays at the origin (= island centre), so GZ is pinned to the
+/// ORIGINAL island's half-height scaled, and the Blight extension grows `ROWS` southward only.
+pub const GZ: f32 = CZ * MAP_SCALE; // 97.2 at 1.8
 const ISLAND_RX: f32 = 71.0;
 const ISLAND_RZ: f32 = 53.0;
 const ISLAND_EXP: f32 = 2.6;
@@ -129,7 +133,13 @@ struct Region {
 
 const REGIONS: [Region; 6] = [
     Region { x: 26.0, z: 24.0, r: 31.0, biome: TB::Snow, peak: 10 }, // NW snow massif
-    Region { x: 112.0, z: 28.0, r: 34.0, biome: TB::Desert, peak: 0 }, // NE dunes
+    // NE dunes — shifted NW (112,28 → 101,10), same radius, so the dune field grows toward the snow
+    // massif and fills the wide grass corridor that ran along the top coast (north reach now hits
+    // the beach). It keeps a natural grass seam between snow and desert (~13 base at z24) instead of
+    // swallowing it. Biased NORTH on purpose: the castle sits at base z54, so a blob centred lower
+    // would bulge its southern arc onto the keep — at z10 the dunes bottom out near z28 (x72),
+    // leaving the castle safe-ring (south edge ~z36) on clean grass.
+    Region { x: 101.0, z: 10.0, r: 34.0, biome: TB::Desert, peak: 0 },
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
     // the safe-zone fray instead of a 33-unit trek) and LOWERED (peak 15→9) so most faces are
     // 1-class terraces the nav-grid can climb; less coast-clipping on the far side too.
@@ -736,8 +746,8 @@ const SHORE_MAX: f32 = 8.0;
 /// scene depth can't measure shallowness; this baked field is the only source.
 /// Returns the image plus the world→UV mapping (`xy` = min corner, `zw` = 1/extent).
 fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
-    const W: usize = 256; // covers world x ∈ [-128, 128] (island is ±108)
-    const H: usize = 352; // covers world z ∈ [-176, 176] (island ±81 + the Blight to ~+160)
+    const W: usize = 288; // covers world x ∈ [-144, 144] (island reaches ±~128 at 1.8 scale)
+    const H: usize = 384; // covers world z ∈ [-192, 192] (island ±~95 + the Blight to ~+174)
     let min_x = -(W as f32) / 2.0;
     let min_z = -(H as f32) / 2.0;
     let idx = |x: usize, z: usize| z * W + x;
