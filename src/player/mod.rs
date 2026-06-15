@@ -84,6 +84,9 @@ pub struct HeroHealth {
     /// `elapsed_secs` until which the hero is invulnerable (Sand-Dash i-frames). `apply_hero_damage`
     /// negates incoming blows while `now < iframe_until`.
     pub iframe_until: f32,
+    /// `elapsed_secs` until which no weapon art may fire (the shared post-cast cooldown). Stamina
+    /// gates *how many* casts you can afford; this just spaces them out so they can't fire same-frame.
+    pub art_cd_until: f32,
 }
 
 impl Default for HeroHealth {
@@ -95,6 +98,7 @@ impl Default for HeroHealth {
             regen_pause: 0.0,
             blocking: false,
             iframe_until: 0.0,
+            art_cd_until: 0.0,
         }
     }
 }

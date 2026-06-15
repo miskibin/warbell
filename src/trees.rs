@@ -24,8 +24,8 @@
 use bevy::prelude::*;
 
 use crate::palette::{
-    lin, BIRCH_DARK, BIRCH_LIGHT, BIRCH_MARK, BIRCH_TRUNK, DEAD_WOOD, DEAD_WOOD_DARK, FOLIAGE_DARK,
-    FOLIAGE_LIGHT, FOLIAGE_MID, TREE_TRUNK,
+    lin, AUTUMN_DARK, AUTUMN_LIGHT, AUTUMN_MID, BIRCH_DARK, BIRCH_LIGHT, BIRCH_MARK, BIRCH_TRUNK,
+    CUT_WOOD, DEAD_WOOD, DEAD_WOOD_DARK, FOLIAGE_DARK, FOLIAGE_LIGHT, FOLIAGE_MID, TREE_TRUNK,
 };
 
 #[derive(Clone, Copy)]
@@ -34,6 +34,12 @@ pub enum TreeKind {
     Birch,
     Dead,
     Pine,
+    /// Tall columnar poplar/cypress — a slim flame silhouette that breaks the round-crown line.
+    Poplar,
+    /// Broadleaf-shaped crown in russet/orange/gold autumn foliage.
+    Autumn,
+    /// A waist-high sawn stump with a pale ringed cut face — ground-level forest detail.
+    Stump,
 }
 
 /// Tag every vertex of `m` with a flat linear colour so it can be merged with other
@@ -93,6 +99,9 @@ pub fn build_tree_mesh(kind: TreeKind) -> Mesh {
         TreeKind::Birch => build_birch(),
         TreeKind::Dead => build_dead(),
         TreeKind::Pine => build_pine(),
+        TreeKind::Poplar => build_poplar(),
+        TreeKind::Autumn => build_autumn(),
+        TreeKind::Stump => build_stump(),
     };
     // Flat-shade so the foliage shows crisp icosphere facets (TS `flatShading: true`)
     // rather than soft smooth "blobs"), then bake the painterly per-facet shading.
@@ -204,6 +213,19 @@ fn branch_part(r: f32, len: f32, tilt: f32, yaw: f32, base: Vec3, color: [f32; 4
 // crown is nine icospheres (dark base mass → mid body → light cap) pushed asymmetric so
 // the silhouette reads grown, not stacked. Same palette + ~1.5u height as the original.
 fn build_broadleaf() -> Mesh {
+    build_broadleaf_toned(FOLIAGE_DARK, FOLIAGE_MID, FOLIAGE_LIGHT)
+}
+
+// Autumn broadleaf: identical bole + nine-blob crown, but the foliage is real
+// russet/orange/gold (see palette `AUTUMN_*`) — the warm tree the green TREE_TINTS can't
+// produce by multiply. One every dozen trees reads as a turning canopy, not a recolour.
+fn build_autumn() -> Mesh {
+    build_broadleaf_toned(AUTUMN_DARK, AUTUMN_MID, AUTUMN_LIGHT)
+}
+
+/// The broadleaf body shared by the green `Broadleaf` and the `Autumn` variant — only the
+/// three crown tones differ. (dark base mass → mid body → light sunlit cap)
+fn build_broadleaf_toned(dark: u32, mid: u32, light: u32) -> Mesh {
     let bark = lin(TREE_TRUNK);
     let mut parts = vec![
         // Two-segment tapering bole (thicker foot, slimmer upper) + root flare.
@@ -218,15 +240,15 @@ fn build_broadleaf() -> Mesh {
     // Crown: dark grounded mass → mid body → sunlit cap, with off-axis side lobes so no
     // two silhouettes line up. (radius, centre, tone)
     let blobs: [(f32, Vec3, u32); 9] = [
-        (0.46, Vec3::new(0.0, 0.66, 0.0), FOLIAGE_DARK),
-        (0.27, Vec3::new(0.27, 0.60, 0.10), FOLIAGE_DARK),
-        (0.25, Vec3::new(-0.20, 0.58, -0.18), FOLIAGE_DARK),
-        (0.40, Vec3::new(0.02, 0.88, 0.0), FOLIAGE_MID),
-        (0.25, Vec3::new(-0.26, 0.84, 0.10), FOLIAGE_MID),
-        (0.23, Vec3::new(0.22, 0.92, -0.16), FOLIAGE_MID),
-        (0.32, Vec3::new(0.0, 1.08, 0.02), FOLIAGE_LIGHT),
-        (0.20, Vec3::new(0.16, 1.18, 0.10), FOLIAGE_LIGHT),
-        (0.21, Vec3::new(-0.06, 1.26, -0.06), FOLIAGE_LIGHT),
+        (0.46, Vec3::new(0.0, 0.66, 0.0), dark),
+        (0.27, Vec3::new(0.27, 0.60, 0.10), dark),
+        (0.25, Vec3::new(-0.20, 0.58, -0.18), dark),
+        (0.40, Vec3::new(0.02, 0.88, 0.0), mid),
+        (0.25, Vec3::new(-0.26, 0.84, 0.10), mid),
+        (0.23, Vec3::new(0.22, 0.92, -0.16), mid),
+        (0.32, Vec3::new(0.0, 1.08, 0.02), light),
+        (0.20, Vec3::new(0.16, 1.18, 0.10), light),
+        (0.21, Vec3::new(-0.06, 1.26, -0.06), light),
     ];
     for (r, c, tone) in blobs {
         parts.push(tinted(foliage(r, 1, c), lin(tone)));
@@ -393,4 +415,111 @@ fn build_pine() -> Mesh {
     parts.push(tinted(cone_at(0.12, 0.30, 1.48, 7, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
 
     merged(parts)
+}
+
+// ── Poplar / cypress — slim columnar flame: tall narrow stack of foliage blobs ──────────
+//
+// A strong vertical silhouette the round-crown trees lack (the tall trees in the reference
+// image). A barely-visible slim trunk carries ~7 overlapping icospheres stacked on the
+// spire axis: narrow at the foot, bellying out low-middle, tapering back to a point — a
+// Lombardy-poplar/cypress flame. Reads green by default; a gold TREE_TINT turns it into the
+// yellow poplar from the reference. ~1.95u tall, only ~0.5u wide.
+fn build_poplar() -> Mesh {
+    let bark = lin(TREE_TRUNK);
+    // Slim trunk, mostly buried in the column; shallow flare so it grips the ground.
+    let mut parts = vec![tinted(trunk_part(0.05, 0.07, 0.5, 6, Vec3::new(0.0, 0.25, 0.0)), bark)];
+    parts.extend(root_flare(0.07, 3, 0.09, bark, 0.6));
+
+    // Stacked foliage blobs forming the flame. (centre-y, radius, tone) — slight x/z drift
+    // per blob (via the index) keeps the column from being a dead-straight pole of spheres.
+    let column: [(f32, f32, u32); 7] = [
+        (0.34, 0.22, FOLIAGE_DARK),
+        (0.58, 0.27, FOLIAGE_DARK),
+        (0.82, 0.28, FOLIAGE_MID),
+        (1.06, 0.26, FOLIAGE_MID),
+        (1.30, 0.22, FOLIAGE_LIGHT),
+        (1.54, 0.17, FOLIAGE_LIGHT),
+        (1.76, 0.11, FOLIAGE_LIGHT),
+    ];
+    for (i, (y, r, tone)) in column.iter().enumerate() {
+        let drift = (i as f32) * 1.7; // cheap per-blob angle for a tiny off-axis nudge
+        let c = Vec3::new(drift.cos() * 0.03, *y, drift.sin() * 0.03);
+        parts.push(tinted(foliage(*r, 1, c), lin(*tone)));
+    }
+    merged(parts)
+}
+
+// ── Stump — a waist-high sawn snag with a pale ringed cut face + flared roots ────────────
+//
+// Ground-level forest detail (the cut stumps in the reference image): a stout tapering bole
+// capped by a slightly-proud pale heartwood disc, with root flares gripping the turf. No
+// foliage — scatters as walkable decor, not a tree. ~0.3u tall.
+fn build_stump() -> Mesh {
+    let bark = lin(TREE_TRUNK);
+    let cut = lin(CUT_WOOD);
+    let h = 0.26;
+    let mut parts = vec![
+        // Stout tapering bole.
+        tinted(trunk_part(0.16, 0.20, h, 8, Vec3::new(0.0, h * 0.5, 0.0)), bark),
+        // Pale sawn face: a thin disc sitting just proud of the bole top.
+        tinted(
+            Cylinder::new(0.165, 0.03)
+                .mesh()
+                .resolution(8)
+                .build()
+                .translated_by(Vec3::new(0.0, h + 0.005, 0.0)),
+            cut,
+        ),
+    ];
+    parts.extend(root_flare(0.20, 4, 0.16, bark, 0.3));
+    merged(parts)
+}
+
+/// Debug screenshot hook: `FOREST_TREELINE="x,z"` parks one of every `TreeKind` in a row at
+/// the given world XZ for model close-ups (mirrors `FOREST_ORKLINE`). Spawned at 2× against
+/// the same white vertex-colour material the scatter uses.
+pub struct TreeDebugPlugin;
+impl Plugin for TreeDebugPlugin {
+    fn build(&self, app: &mut App) {
+        if std::env::var("FOREST_TREELINE").is_ok() {
+            app.add_systems(Startup, spawn_treeline);
+        }
+    }
+}
+
+fn spawn_treeline(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+) {
+    let Ok(s) = std::env::var("FOREST_TREELINE") else { return };
+    let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+    if p.len() != 2 {
+        return;
+    }
+    let mat = mats.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.62,
+        reflectance: 0.5,
+        ..default()
+    });
+    let kinds = [
+        TreeKind::Broadleaf,
+        TreeKind::Birch,
+        TreeKind::Pine,
+        TreeKind::Poplar,
+        TreeKind::Autumn,
+        TreeKind::Dead,
+        TreeKind::Stump,
+    ];
+    for (i, k) in kinds.iter().enumerate() {
+        let x = p[0] + i as f32 * 3.0 - (kinds.len() as f32 - 1.0) * 1.5;
+        let z = p[1];
+        let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+        commands.spawn((
+            Mesh3d(meshes.add(build_tree_mesh(*k))),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(Vec3::new(x, y, z)).with_scale(Vec3::splat(2.0)),
+        ));
+    }
 }

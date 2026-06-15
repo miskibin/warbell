@@ -54,23 +54,27 @@ pub fn config() -> BiomeConfig {
         seed: 2027,
         tree_min_dist: 2.7,
         classes: vec![
-            // Trees: 55% broadleaf / 16% birch / 22% pine / 7% dead — each living kind
-            // expanded into the TREE_TINTS hue spread (neutral / warm-dry / deep-cool) so
-            // neighbouring trees stop being the one identical green repeated forever.
+            // Trees: broadleaf / birch / pine / columnar poplar / autumn-canopy / dead —
+            // each living kind expanded into the TREE_TINTS hue spread (neutral / warm-dry
+            // / deep-cool / gold / spring) so neighbouring trees stop being the one
+            // identical green repeated forever, and the silhouettes (round crown, airy
+            // birch, pointed spruce, slim poplar flame) stay mixed.
             PropClass {
                 variants: {
                     let mut v: Vec<(Mesh, f32)> = Vec::new();
                     let n = crate::trees::TREE_TINTS.len() as f32;
                     for (kind, w) in [
-                        (TreeKind::Broadleaf, 0.55),
-                        (TreeKind::Birch, 0.16),
-                        (TreeKind::Pine, 0.22),
+                        (TreeKind::Broadleaf, 0.45),
+                        (TreeKind::Birch, 0.14),
+                        (TreeKind::Pine, 0.20),
+                        (TreeKind::Poplar, 0.11),
+                        (TreeKind::Autumn, 0.10),
                     ] {
                         for t in crate::trees::TREE_TINTS {
                             v.push((crate::trees::tint_mesh(build_tree_mesh(kind), t), w / n));
                         }
                     }
-                    v.push((build_tree_mesh(TreeKind::Dead), 0.07));
+                    v.push((build_tree_mesh(TreeKind::Dead), 0.06));
                     v
                 },
                 chance: 0.075,
@@ -128,6 +132,18 @@ pub fn config() -> BiomeConfig {
                 scale: (0.6, 1.6),
                 tree: false,
                 block_radius: 0.24, // big rocks block; small (scale ≲1.0) stay walk-through
+            },
+            // Sawn stumps — sparse walkable ground detail (a felled-tree remnant), warm
+            // bark + pale cut face. Tinted with the same hue spread so they don't all match.
+            PropClass {
+                variants: crate::trees::TREE_TINTS
+                    .iter()
+                    .map(|t| (crate::trees::tint_mesh(build_tree_mesh(TreeKind::Stump), *t), 1.0))
+                    .collect(),
+                chance: 0.015,
+                scale: (0.7, 1.15),
+                tree: false,
+                block_radius: 0.0,
             },
         ],
         cover: vec![

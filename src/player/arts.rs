@@ -23,12 +23,17 @@ const KEY_SLAM: KeyCode = KeyCode::KeyZ;
 const KEY_DASH: KeyCode = KeyCode::KeyX;
 const KEY_SWEEP: KeyCode = KeyCode::KeyC;
 
-/// Every art spends a fraction of the hero's max stamina to fire — there are no cooldowns; the
-/// arts draw from the same stamina pool the block shield uses, so spamming them leaves you unable
-/// to block.
-const SLAM_STAMINA_FRAC: f32 = 0.6; // heavy bruiser — you commit
-const DASH_STAMINA_FRAC: f32 = 0.4; // cheap dodge
-const SWEEP_STAMINA_FRAC: f32 = 0.5;
+/// Every art spends a **fixed** amount of stamina (NOT a fraction of max) — so a higher-level hero
+/// with a bigger stamina pool simply gets *more* casts before running dry, rather than the cost
+/// scaling up with the pool. The arts draw from the same pool the block shield uses, so spamming
+/// them leaves you unable to block. A short shared cooldown ([`ART_COOLDOWN`]) spaces casts out.
+/// (Costs chosen to match the old fractions at the level-1 pool of 150: 0.6/0.4/0.5 × 150.)
+const SLAM_STAMINA_COST: f32 = 90.0; // heavy bruiser — you commit
+const DASH_STAMINA_COST: f32 = 60.0; // cheap dodge
+const SWEEP_STAMINA_COST: f32 = 75.0;
+/// Seconds of shared cooldown after any art fires, so a fat stamina pool can't dump several in one
+/// instant — you still get a cast every half-second.
+const ART_COOLDOWN: f32 = 0.5;
 
 // Ground Slam — the HEAVY HITTER: biggest radius, biggest damage, hard knockback. Stay-put burst.
 const SLAM_RADIUS: f32 = 4.2;
@@ -87,16 +92,17 @@ pub fn player_arts(
         return;
     }
 
-    let smax = hh.stamina_max;
+    let now = time.elapsed_secs();
     // Pick the art that fired (one per frame; slam > dash > sweep priority on the rare same-frame).
-    // Each spends stamina up-front; none has a cooldown.
+    // Each spends a fixed stamina cost up-front; a shared cooldown gates the cadence.
+    let off_cd = now >= hh.art_cd_until;
     let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
-    let art = if player.0.has_ground_slam && hh.stamina >= SLAM_STAMINA_FRAC * smax && keys.just_pressed(KEY_SLAM) {
-        hh.stamina -= SLAM_STAMINA_FRAC * smax;
+    let art = if off_cd && player.0.has_ground_slam && hh.stamina >= SLAM_STAMINA_COST && keys.just_pressed(KEY_SLAM) {
+        hh.stamina -= SLAM_STAMINA_COST;
         Some(Art::Slam)
-    } else if player.0.has_sand_dash && hh.stamina >= DASH_STAMINA_FRAC * smax && keys.just_pressed(KEY_DASH) {
-        hh.stamina -= DASH_STAMINA_FRAC * smax;
-        hh.iframe_until = time.elapsed_secs() + DASH_IFRAME; // invulnerable through the blink
+    } else if off_cd && player.0.has_sand_dash && hh.stamina >= DASH_STAMINA_COST && keys.just_pressed(KEY_DASH) {
+        hh.stamina -= DASH_STAMINA_COST;
+        hh.iframe_until = now + DASH_IFRAME; // invulnerable through the blink
         // Dash forward to the furthest standable point along the heading.
         let from = hero.pos;
         let mut to = from;
@@ -113,16 +119,16 @@ pub fn player_arts(
             tf.translation = Vec3::new(to.x, y, to.y);
         }
         Some(Art::Dash { from, to })
-    } else if player.0.has_bramble_sweep && hh.stamina >= SWEEP_STAMINA_FRAC * smax && keys.just_pressed(KEY_SWEEP) {
-        hh.stamina -= SWEEP_STAMINA_FRAC * smax;
+    } else if off_cd && player.0.has_bramble_sweep && hh.stamina >= SWEEP_STAMINA_COST && keys.just_pressed(KEY_SWEEP) {
+        hh.stamina -= SWEEP_STAMINA_COST;
         Some(Art::Sweep)
     } else {
         None
     };
     let Some(art) = art else { return };
+    hh.art_cd_until = now + ART_COOLDOWN; // start the shared cooldown on any successful cast
 
     let Some(fx) = fx else { return };
-    let now = time.elapsed_secs();
     cues.write(match art {
         Art::Dash { .. } => AudioCue::Dash,
         Art::Sweep => AudioCue::Sweep,
@@ -301,12 +307,12 @@ pub(crate) struct AbilityIcon {
     kind: ArtKind,
 }
 
-/// The stamina fraction each art costs (drives both the spend and the "can I afford it" HUD test).
-fn art_cost_frac(kind: ArtKind) -> f32 {
+/// The fixed stamina each art costs (drives both the spend and the "can I afford it" HUD test).
+fn art_cost(kind: ArtKind) -> f32 {
     match kind {
-        ArtKind::Slam => SLAM_STAMINA_FRAC,
-        ArtKind::Dash => DASH_STAMINA_FRAC,
-        ArtKind::Sweep => SWEEP_STAMINA_FRAC,
+        ArtKind::Slam => SLAM_STAMINA_COST,
+        ArtKind::Dash => DASH_STAMINA_COST,
+        ArtKind::Sweep => SWEEP_STAMINA_COST,
     }
 }
 
@@ -317,7 +323,7 @@ fn art_state(kind: ArtKind, player: &PlayerRes, hh: &HeroHealth) -> (bool, bool)
         ArtKind::Dash => player.0.has_sand_dash,
         ArtKind::Sweep => player.0.has_bramble_sweep,
     };
-    (unlocked, hh.stamina >= art_cost_frac(kind) * hh.stamina_max)
+    (unlocked, hh.stamina >= art_cost(kind))
 }
 
 /// Spawn the three ability cells (hidden until their boon is earned).

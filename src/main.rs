@@ -54,6 +54,7 @@ mod footstep_fx;
 mod game_state;
 mod grade;
 mod groundcover;
+mod hints;
 mod hud;
 mod interaction;
 mod inventory;
@@ -233,6 +234,8 @@ fn main() {
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog
             mainmenu::MainMenuPlugin, // title-screen ambiance: orbit cam + dusk + embers/fireflies + credits
             loading::LoadingPlugin, // branded boot veil over the first ~1s blank frame
+            trees::TreeDebugPlugin, // FOREST_TREELINE="x,z" parks one of each tree kind for model shots
+            hints::HintsPlugin, // bottom-right affordance toasts: spend/equip nudges (Prep-only)
         ))
         .run();
 }

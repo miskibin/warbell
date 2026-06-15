@@ -10,6 +10,8 @@ const BLOCK_DRAIN: f32 = 38.0; // stamina/s while held (~2.6s of guard)
 const BLOCK_REGEN: f32 = 26.0; // stamina/s recovered once regen starts
 const BLOCK_REGEN_DELAY: f32 = 0.6; // s after a guard before stamina regenerates
 const BLOCK_RECOVER: f32 = 30.0; // stamina needed to clear a lockout
+const BASE_STAMINA_MAX: f32 = 150.0; // level-1 pool (matches HeroHealth::default)
+const STAMINA_PER_LEVEL: f32 = 15.0; // extra max stamina granted per hero level → longer guards
 
 pub fn player_block(
     time: Res<Time>,
@@ -20,6 +22,15 @@ pub fn player_block(
 ) {
     let Ok(mut hh) = hero_q.single_mut() else { return };
     let dt = time.delta_secs();
+
+    // Stamina pool grows with hero level — a veteran guards longer. Level is persisted on
+    // PlayerRes (and rides the save), so deriving the cap each frame needs no extra save state.
+    let want_max = BASE_STAMINA_MAX + (player.0.level.max(1) - 1) as f32 * STAMINA_PER_LEVEL;
+    if want_max > hh.stamina_max {
+        hh.stamina += want_max - hh.stamina_max; // a level-up tops up into the new headroom
+    }
+    hh.stamina_max = want_max;
+    hh.stamina = hh.stamina.min(hh.stamina_max);
 
     if *mode != PlayMode::Play || !player.0.is_alive() {
         hh.blocking = false;

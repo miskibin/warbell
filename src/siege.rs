@@ -70,6 +70,16 @@ pub const WAVES: [WaveDef; 8] = [
     WaveDef { count: 1, hp_scale: 14.0, dmg_scale: 2.6, variants: &[Berserker], spawn_interval: 0.5 }, // boss
 ];
 
+/// Extra invader HP per hero level past 1 (+4% each). As the knight levels (more damage, stamina,
+/// upgrades) the warband toughens in step so a high-level hero doesn't trivialize the same night.
+/// Applied at the ECS spawn site, NOT in the pure `step_wave_director`, so its tests stay exact.
+pub const ORK_HP_PER_LEVEL: f32 = 0.04;
+
+/// HP multiplier the warband gets for a hero at `level` (1.0 at level 1).
+pub fn ork_level_hp_mul(level: i64) -> f32 {
+    1.0 + (level.max(1) - 1) as f32 * ORK_HP_PER_LEVEL
+}
+
 /// The current night's attack multiplier — every invader melee blow, shaman bolt, keep hammer and
 /// building burn is scaled by this (see `invader_brain`). Clamps the wave index so the prep-day
 /// (`wave_index == -1`) and any over-run read the opener's base 1.0×.
@@ -353,13 +363,19 @@ pub fn stuck_step(closest: f32, progress_at: f32, dist_keep: f32, engaged: bool,
 pub const KEEP_POS: Vec2 = Vec2::ZERO;
 /// Invaders enter from a ring this far out (golden-angle spread, on standable tiles).
 const SPAWN_RING: f32 = 30.0;
-/// An invader within this of the keep batters it — but ONLY from inside the courtyard
-/// (`castle::in_courtyard`): the walls fully shield the keep, so a horde bunched at the wall
-/// ring does nothing until it threads a gate. (The old 14.0 "generous" range predates the A*
+/// An invader within this of the keep CENTRE (`KEEP_POS`) batters it — but ONLY from inside the
+/// courtyard (`castle::in_courtyard`): the walls fully shield the keep, so a horde bunched at the
+/// wall ring does nothing until it threads a gate. (The old 14.0 "generous" range predates the A*
 /// gate-threading march and let wall-bunched orks drain keep HP from OUTSIDE the walls.)
-/// 9.0 leaves several ranks of batter room around the keep box (blockers stop bodies ~4u out)
-/// without reaching back out through the gate mouths.
-const KEEP_ATTACK_RANGE: f32 = 9.0;
+///
+/// Sized just past the keep's footprint, NOT generous: the box blocks bodies ~3.1–3.9u from
+/// centre (faces ~3.1–3.5, diagonal corner ~3.9), so 4.5 lets every ork reach batter range at the
+/// wall while leaving only a ~1u club-reach gap. The OLD 9.0 was the real "orks swing at air 5m
+/// short of the keep" bug: the N/S gate-interior march goal sits at dist 8 (`HALF_Z=12`, goal 4u
+/// in), so a 9.0 range flipped `at_keep` true the instant an ork crossed the gate — it froze and
+/// hammered the keep from the gate mouth instead of closing on the wall. 4.5 is below every
+/// gate-interior goal (N/S 8u, E/W 13u), so the in-yard press always drives them to the wall first.
+const KEEP_ATTACK_RANGE: f32 = 4.5;
 /// Keep damage per invader hit (on the ork's normal strike cooldown).
 const KEEP_DAMAGE: f32 = 9.0;
 /// An invader spots + diverts onto a town-guard within this range (instead of marching the keep),
@@ -792,6 +808,8 @@ fn run_director(
                 if let Some(arm) = armory.as_deref() {
                     // Offset the ring index per wave so successive nights don't reuse the same arc.
                     let ring_index = spawn_index + wave_index as u32 * 7;
+                    // Toughen with the hero's level so leveling up doesn't soften the night.
+                    let hp = (hp * ork_level_hp_mul(player.0.level)).round();
                     spawn_invader(&mut commands, &arm.0, variant, hp, ring_index, now);
                     siege.spawned += 1;
                 }
@@ -971,8 +989,10 @@ fn invader_brain(
                 target
             } else if in_yard {
                 // Through the gate: the courtyard is open ground, so drop the A* and press the
-                // keep directly until inside batter range (the E/W gate-interior goals sit at
-                // ~13u, beyond KEEP_ATTACK_RANGE — without this press they'd stall at the goal).
+                // keep directly until inside batter range. EVERY gate-interior goal (N/S ~8u,
+                // E/W ~13u) sits beyond KEEP_ATTACK_RANGE, so without this press an ork would
+                // stall at the gate mouth and hammer the keep from afar (the "swing at air 5m
+                // short" bug) — the press closes it onto the wall before `at_keep` flips.
                 KEEP_POS
             } else {
                 // A* the keep march to a STANDABLE point just inside the nearest gate — the keep
@@ -1408,6 +1428,14 @@ mod tests {
         } else {
             panic!("expected a Spawn action");
         }
+    }
+
+    #[test]
+    fn ork_hp_grows_with_hero_level() {
+        assert_eq!(ork_level_hp_mul(1), 1.0); // level 1 = unscaled
+        assert!(ork_level_hp_mul(1) < ork_level_hp_mul(2)); // each level toughens orks
+        assert_eq!(ork_level_hp_mul(11), 1.0 + 10.0 * ORK_HP_PER_LEVEL); // +4%/level
+        assert_eq!(ork_level_hp_mul(0), 1.0); // clamps below 1
     }
 
     #[test]

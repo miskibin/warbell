@@ -87,9 +87,9 @@ pub fn build(biome: Biome) -> BossSpec {
 /// The spawn-time root scale for each warden (multiplies the in-mesh ~1.7u height → a towering boss).
 pub fn root_scale(biome: Biome) -> f32 {
     match biome {
-        Biome::Rocky => 2.1, // the golem is the bulkiest
-        Biome::Snow => 2.0,
-        _ => 1.9,
+        Biome::Rocky => 1.47, // the golem is the bulkiest (30% smaller)
+        Biome::Snow => 1.4,
+        _ => 1.33,
     }
 }
 
