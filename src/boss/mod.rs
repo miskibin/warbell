@@ -28,8 +28,9 @@ use crate::ui::widgets;
 use crate::{steer, worldmap};
 
 // ── Tuning (all forest-side; not parity-gated) ────────────────────────────────────────
-/// Warden HP at level 1, ×`HP_GROWTH` per level. Out-stats a bare hero on purpose (mid-game).
-const BASE_HP: f32 = 1400.0;
+/// Warden HP at level 1, ×`HP_GROWTH` per level. Out-stats a bare hero on purpose (mid-game) —
+/// a deliberately long, attrition fight; bumped so wardens aren't melted by a geared hero.
+const BASE_HP: f32 = 2000.0;
 const HP_GROWTH: f32 = 1.16;
 /// Warden melee damage to the hero at level 1, ×`DMG_GROWTH` per level.
 const BASE_MELEE: f32 = 40.0;
@@ -46,6 +47,13 @@ const NOTICE_RANGE: f32 = 28.0;
 const MELEE_RANGE: f32 = 3.4;
 const MELEE_CD: f32 = 1.5;
 const SIG_CD: f32 = 6.5;
+/// **Telegraphed critical** — a warden plants, rears its weapon overhead, and after
+/// [`CRIT_TELEGRAPH`] seconds brings down a KILLING blow. It's lethal if it connects, but the long
+/// windup is the player's cue: raise the shield (or dodge out of [`CRIT_RANGE`]) before it lands.
+const CRIT_CD: f32 = 13.0; // min seconds between a warden's critical attempts
+const CRIT_TELEGRAPH: f32 = 1.2; // windup time — the reaction window to block/dodge
+const CRIT_RANGE: f32 = 5.5; // must be within this at impact to be struck (slightly past melee)
+const CRIT_LETHAL: f32 = 100_000.0; // overkill so it one-shots through any resist/armor when unblocked
 /// Radius of a Shock signature (stomp / root-snare / poison burst).
 const SIG_SHOCK_RADIUS: f32 = 6.5;
 const ROAM_RADIUS: f32 = 13.0;
@@ -114,6 +122,11 @@ pub struct Boss {
     roam_timer: f32,
     atk_cd: f32,
     sig_cd: f32,
+    /// Cooldown until the next telegraphed critical may begin.
+    crit_cd: f32,
+    /// `elapsed_secs` at which a winding-up critical LANDS (`0.0` = not winding up). The window
+    /// `[crit_at - CRIT_TELEGRAPH, crit_at]` is the reared-back pose + the player's reaction time.
+    crit_at: f32,
     /// `elapsed_secs` of the last signature cast (drives the windup limb pose).
     sig_anim: f32,
     atk_anim: f32,
@@ -265,6 +278,8 @@ fn spawn_wardens(
                     roam_timer: 0.0,
                     atk_cd: 0.0,
                     sig_cd: SIG_CD,
+                    crit_cd: CRIT_CD * 0.5, // first critical comes a little sooner than the full cadence
+                    crit_at: 0.0,
                     sig_anim: 0.0,
                     atk_anim: 0.0,
                 },
@@ -319,9 +334,13 @@ fn boss_brain(
     time: Res<Time>,
     hero: Res<HeroState>,
     mut pending: ResMut<PendingHeroDamage>,
+    mut crit: ResMut<crate::player::PendingCrit>,
     mut bolts: ResMut<BoltSpawns>,
     fx: Option<Res<CombatFx>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut notice: ResMut<Notice>,
+    mut taught_crit: Local<bool>,
     mut commands: Commands,
     mut q: Query<(&mut Boss, &mut Transform, &Health, Option<&Slowed>), Without<Dying>>,
 ) {
@@ -331,6 +350,7 @@ fn boss_brain(
     for (mut b, mut tf, health, slowed) in &mut q {
         b.atk_cd -= dt;
         b.sig_cd -= dt;
+        b.crit_cd -= dt;
 
         // Aggro on any HP loss (hero swing / cleave / poison).
         if health.hp < b.last_hp - 0.01 {
@@ -344,11 +364,41 @@ fn boss_brain(
         // Leash: break off if the hero leaves the warden's home region (or falls), and head home.
         if b.hostile && (!hero.alive || b.home.distance(hero.pos) > BIOME_LEASH) {
             b.hostile = false;
+            b.crit_at = 0.0; // abandon any windup if the hero flees the region / falls
             b.roam_target = b.home;
             b.roam_timer = 8.0;
         }
 
-        if b.hostile && hero.alive {
+        if b.hostile && hero.alive && b.crit_at > 0.0 {
+            // ── Winding up a critical: the warden plants and rears its weapon overhead (the limb
+            //    pose lives in `boss_limbs`), tracking the hero slowly. On impact the blow falls —
+            //    LETHAL if it connects, but blocking/dodging negates it (see `apply_hero_damage`). ──
+            b.moving = false;
+            let to = hero.pos - b.pos;
+            if to.length_squared() > 1e-4 {
+                let want = to.x.atan2(to.y);
+                let turn = TURN * dt; // slow tracking — the player can still circle out of range
+                b.facing += steer::wrap_pi(want - b.facing).clamp(-turn, turn);
+            }
+            if now >= b.crit_at {
+                b.crit_at = 0.0;
+                let gy = steer::footing(b.pos.x, b.pos.y).unwrap_or(tf.translation.y);
+                if hero_d < CRIT_RANGE {
+                    crit.0 = true;
+                    pending.0 += CRIT_LETHAL; // negated entirely if the hero is blocking / dodging
+                    cues.write(crate::audio::AudioCue::Slam);
+                }
+                if let Some(fx) = &fx {
+                    crate::player::spawn_shockwave(
+                        &mut commands,
+                        fx,
+                        &mut materials,
+                        Vec3::new(b.pos.x, gy + 0.05, b.pos.y),
+                        now,
+                    );
+                }
+            }
+        } else if b.hostile && hero.alive {
             // Face + chase the hero; stand and strike in range.
             if hero_d > MELEE_RANGE {
                 let cur_y = steer::footing(b.pos.x, b.pos.y).unwrap_or(tf.translation.y);
@@ -371,6 +421,20 @@ fn boss_brain(
                     b.atk_cd = MELEE_CD;
                     b.atk_anim = now;
                     pending.0 += melee_dmg(b.level);
+                }
+            }
+            // Begin a telegraphed critical when off cooldown and the hero is in striking range.
+            if b.crit_cd <= 0.0 && hero_d < CRIT_RANGE {
+                b.crit_cd = CRIT_CD;
+                b.crit_at = now + CRIT_TELEGRAPH;
+                let gy = steer::footing(b.pos.x, b.pos.y).unwrap_or(tf.translation.y);
+                cues.write(crate::audio::AudioCue::OrkRoar(Vec3::new(b.pos.x, gy + 1.8, b.pos.y)));
+                if !*taught_crit {
+                    *taught_crit = true;
+                    notice.push(
+                        "The warden rears back for a killing blow — raise your shield (hold RMB) or dodge clear!".to_string(),
+                        now as f64,
+                    );
                 }
             }
             // Signature on its own cooldown once the hero is within a reasonable band.
@@ -571,6 +635,10 @@ fn boss_limbs(
         // Signature windup: arms raise high for ~0.5s after a cast.
         let sig = b.sig_anim > 0.0 && (now - b.sig_anim) < 0.5;
         let strike = b.atk_anim > 0.0 && (now - b.atk_anim) < 0.45;
+        // Critical windup: both arms haul progressively overhead across the telegraph — a long,
+        // unmistakable "killing blow incoming" tell (the player's cue to raise the shield).
+        let crit_wind = b.crit_at > 0.0 && now < b.crit_at;
+        let crit_p = if crit_wind { (1.0 - (b.crit_at - now) / CRIT_TELEGRAPH).clamp(0.0, 1.0) } else { 0.0 };
         for &child in children {
             let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
             tf.rotation = match part.kind {
@@ -579,7 +647,9 @@ fn boss_limbs(
                     Quat::from_rotation_x(sign * s)
                 }
                 PartKind::Arm(sign) => {
-                    if sig {
+                    if crit_wind {
+                        Quat::from_rotation_x(-1.0 - 2.0 * crit_p) // rear overhead, rising to the strike
+                    } else if sig {
                         Quat::from_rotation_x(-2.0) // both arms reared back for the blast
                     } else if sign > 0.0 && strike {
                         let p = (now - b.atk_anim) / 0.45;
