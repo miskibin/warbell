@@ -97,9 +97,21 @@ pub fn try_grant(bag: &mut Bag, toasts: &mut ToastStack, id: &str, count: i64, n
 }
 
 /// Enact a consumable's returned effect against the live hero: heal + grant its timed buff.
-pub fn apply_consume(eff: &ConsumeEffect, player: &mut Player, buffs: &mut BuffStore, now: f64) {
+/// Healing now has a cost: each consumable restores a little LESS than its listed value and drains
+/// stamina, so you can't freely heal-spam mid-fight — the same bar you block/art with pays for it.
+const HEAL_EFFECTIVENESS: f64 = 0.8; // restore 80% of the item's listed heal
+const HEAL_STAMINA_COST: f32 = 35.0; // stamina spent per heal (~1/4 of the 150 base bar)
+
+pub fn apply_consume(
+    eff: &ConsumeEffect,
+    player: &mut Player,
+    buffs: &mut BuffStore,
+    hero: &mut crate::player::HeroHealth,
+    now: f64,
+) {
     if eff.heal > 0.0 {
-        player.heal(eff.heal);
+        player.heal(eff.heal * HEAL_EFFECTIVENESS);
+        hero.stamina = (hero.stamina - HEAL_STAMINA_COST).max(0.0);
     }
     if let Some((kind, duration_ms, mag)) = eff.buff {
         buffs.apply_buff(kind, duration_ms, mag, now);
@@ -208,6 +220,7 @@ fn quickbar_input(
     mut inv: ResMut<Inventory>,
     mut buffs: ResMut<Buffs>,
     mut player: ResMut<PlayerRes>,
+    mut hero: Query<&mut crate::player::HeroHealth>,
     mut cues: MessageWriter<AudioCue>,
     mut flash: MessageWriter<QuickFlash>,
 ) {
@@ -224,7 +237,8 @@ fn quickbar_input(
         (None, 0)
     };
     if let Some(eff) = used {
-        apply_consume(&eff, &mut player.0, &mut buffs.0, time.elapsed_secs() as f64);
+        let Ok(mut hh) = hero.single_mut() else { return };
+        apply_consume(&eff, &mut player.0, &mut buffs.0, &mut hh, time.elapsed_secs() as f64);
         cues.write(AudioCue::UiSelect);
         flash.write(QuickFlash(slot));
     }
@@ -621,6 +635,7 @@ fn inv_panel_interact(
     mut inv: ResMut<Inventory>,
     mut buffs: ResMut<Buffs>,
     mut player: ResMut<PlayerRes>,
+    mut hero: Query<&mut crate::player::HeroHealth>,
     mut cues: MessageWriter<AudioCue>,
     mut dirty: ResMut<InvPanelDirty>,
     mut acts: MessageReader<crate::ui::focus::FocusActivate>,
@@ -644,7 +659,9 @@ fn inv_panel_interact(
     let mut acted = false;
     if let Some(slot) = clicked.or(keyed) {
         if let Some(eff) = inv.0.activate_bag_item(slot) {
-            apply_consume(&eff, &mut player.0, &mut buffs.0, time.elapsed_secs() as f64);
+            if let Ok(mut hh) = hero.single_mut() {
+                apply_consume(&eff, &mut player.0, &mut buffs.0, &mut hh, time.elapsed_secs() as f64);
+            }
         }
         cues.write(AudioCue::UiSelect);
         acted = true;
