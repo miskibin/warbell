@@ -10,6 +10,7 @@ use crate::audio::AudioCue;
 use super::{Hero, HeroHealth, PendingHeroDamage, PlayerRes, HERO_SCALE};
 
 const BLOCK_HIT_STAMINA: f32 = 18.0; // stamina spent absorbing one blocked hit
+const CRIT_BLOCK_STAMINA: f32 = 55.0; // a parried warden CRITICAL nearly drains the guard bar
 const RESPAWN_DELAY: f64 = 1.6; // s down before the hero rises again (succession lands in P5)
 /// Seconds the hero takes to keel over once slain (the death "crumple", like the orks').
 const DEATH_FALL_SECS: f32 = 0.55;
@@ -17,6 +18,7 @@ const DEATH_FALL_SECS: f32 = 0.55;
 pub fn apply_hero_damage(
     time: Res<Time>,
     mut pending: ResMut<PendingHeroDamage>,
+    mut crit: ResMut<crate::player::PendingCrit>,
     mut player: ResMut<PlayerRes>,
     buffs: Res<crate::inventory::Buffs>,
     inv: Res<crate::inventory::Inventory>,
@@ -33,6 +35,11 @@ pub fn apply_hero_damage(
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
     mut fell: MessageWriter<crate::succession_fx::HeirFell>,
 ) {
+    // A warden critical landed this frame (lethal unless blocked/dodged). Read + clear it here so
+    // it's consumed exactly once, alongside the same pending-damage drain it rode in on.
+    let is_crit = crit.0;
+    crit.0 = false;
+
     let Ok((mut hero, mut tf, mut hh)) = hero_q.single_mut() else {
         pending.0 = 0.0;
         return;
@@ -46,9 +53,9 @@ pub fn apply_hero_damage(
         let head = Vec3::new(hero.pos.x, hero.y + 2.2, hero.pos.y);
         floats.0.push(crate::combat_fx::FloatReq {
             world: head,
-            text: "dodge".into(),
+            text: if is_crit { "DODGE!".into() } else { "dodge".into() },
             color: crate::combat_fx::col_block(),
-            scale: 0.9,
+            scale: if is_crit { 1.2 } else { 0.9 },
         });
         pending.0 = 0.0;
     }
@@ -59,10 +66,12 @@ pub fn apply_hero_damage(
         let blocking = hh.blocking;
         if blocking {
             // A raised shield absorbs the hit COMPLETELY — the cost is stamina, not HP
-            // (`p.damage` no-ops on 0, so no hurt flash / death path fires).
+            // (`p.damage` no-ops on 0, so no hurt flash / death path fires). A parried CRITICAL
+            // costs far more stamina (it nearly drains the guard), but it's what saves your life.
             dmg = 0.0;
             cues.write(AudioCue::Block); // shield knock — only when a hit is actually absorbed
-            hh.stamina = (hh.stamina - BLOCK_HIT_STAMINA).max(0.0);
+            let cost = if is_crit { CRIT_BLOCK_STAMINA } else { BLOCK_HIT_STAMINA };
+            hh.stamina = (hh.stamina - cost).max(0.0);
             if hh.stamina <= 0.0 {
                 hh.block_locked = true;
                 hh.blocking = false;
@@ -76,7 +85,10 @@ pub fn apply_hero_damage(
         // Combat juice: a floating number ("BLOCK" / "-N") + red flash + screen shake.
         let head = Vec3::new(hero.pos.x, hero.y + 2.2, hero.pos.y);
         let (text, color) = if blocking {
-            ("BLOCK".to_string(), crate::combat_fx::col_block())
+            (if is_crit { "PARRY!".to_string() } else { "BLOCK".to_string() }, crate::combat_fx::col_block())
+        } else if is_crit {
+            // An unblocked critical one-shots — name it rather than dumping the overkill number.
+            ("EXECUTED!".to_string(), crate::combat_fx::col_hero_hit())
         } else {
             (format!("-{}", dmg.round() as i32), crate::combat_fx::col_hero_hit())
         };

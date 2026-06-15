@@ -142,6 +142,12 @@ pub struct HeroState {
 #[derive(Resource, Default)]
 pub struct PendingHeroDamage(pub f32);
 
+/// Set true the frame a warden's telegraphed **critical** lands on the hero. Read by
+/// [`health::apply_hero_damage`]: a critical that connects is LETHAL (one-shot) unless the hero is
+/// blocking or mid-dodge, which negates it — so the windup is the player's cue to raise the shield.
+#[derive(Resource, Default)]
+pub struct PendingCrit(pub bool);
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
@@ -158,6 +164,7 @@ impl Plugin for PlayerPlugin {
         app.insert_resource(start_mode)
             .init_resource::<HeroState>()
             .init_resource::<PendingHeroDamage>()
+            .init_resource::<PendingCrit>()
             .init_resource::<PlayerRes>()
             .init_resource::<combat::CombatRng>()
             .init_resource::<combat::HitStop>()

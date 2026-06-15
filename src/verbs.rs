@@ -29,9 +29,10 @@ const ORE_HP: f64 = 600.0;
 /// Front-cone reach the swing checks ore against (the hero melee cone + the boulder radius).
 const SWING_RANGE: f32 = 1.9;
 const SWING_CONE_DOT: f32 = 0.5;
-/// How many boulders to seed across the rock biome. Higher than the old 18 so the town's stone
-/// miner (`miner.rs`) has boulders to work without starving the hero's own mining.
-const ORE_COUNT: u32 = 28;
+/// How many boulders to seed across the rock biome. Plentiful so the town's stone miner
+/// (`miner.rs`) has boulders to work without starving the hero's own mining. Reject-sampling
+/// places as many as the rock region fits (a shortfall just logs — see `populate_ore`).
+const ORE_COUNT: u32 = 44;
 /// Seconds before a depleted boulder regrows in place. Deliberately slow (~18 min) — stone is a
 /// frontier resource, and a working miner shouldn't strip the map (cf. trees' 450s `TREE_REGROW`).
 /// 3× the old 360s so ore stays a destination worth ranging out for, not a topped-up vending machine.
