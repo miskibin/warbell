@@ -4,7 +4,7 @@
 
   <Package Name="Warbell"
            Manufacturer="miskibin"
-           Version="0.5.1"
+           Version="0.5.2"
            UpgradeCode="153DC597-1BAA-4427-946B-2C3F407A01B3"
            Language="1033"
            Scope="perMachine">

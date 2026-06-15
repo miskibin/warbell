@@ -1169,9 +1169,11 @@ const BLIGHT_HOARD: (Vec2, i64, &[&str]) = (Vec2::new(57.0, 119.0 + BLIGHT_DZ), 
 
 /// One-time freed/seen flags per [`BLIGHT_CAGES`] slot (re-inserted fresh each world build, so
 /// a new game re-stocks the cages). `seen` guards against freeing before the patrol spawns.
+/// `freed` round-trips the save (`savegame.rs`): without it, a Continue re-spawns the patrols,
+/// they get re-wiped, and `blight_rescue` frees the same captive twice (dup `population += 1`).
 #[derive(Resource, Default)]
-struct BlightCaptives {
-    freed: [bool; BLIGHT_CAGES.len()],
+pub(crate) struct BlightCaptives {
+    pub(crate) freed: [bool; BLIGHT_CAGES.len()],
     seen: [bool; BLIGHT_CAGES.len()],
 }
 

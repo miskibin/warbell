@@ -5013,7 +5013,7 @@ dependencies = [
 
 [[package]]
 name = "tileworld_bevy_forest"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "bevy",
  "bevy_egui",

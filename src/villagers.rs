@@ -501,12 +501,25 @@ fn recruit(
     hero: Res<crate::player::HeroState>,
     mut inv: ResMut<crate::inventory::Inventory>,
     mut town: ResMut<crate::town::TownRes>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
 ) {
-    if keys.just_pressed(KeyCode::KeyR)
-        && hero.alive
-        && crate::castle::in_footprint(hero.pos.x, hero.pos.y)
-        && inv.0.consume_item("mercenary_contract", 1)
-    {
+    if !(keys.just_pressed(KeyCode::KeyR) && hero.alive && crate::castle::in_footprint(hero.pos.x, hero.pos.y)) {
+        return;
+    }
+    // Refuse when housing is full — population over `pop_cap` just starves back off (see
+    // `population_tick`), so spending a contract there silently wastes it. Tell the player to build.
+    if town.0.population >= town.0.pop_cap() {
+        if inv.0.has_item("mercenary_contract") {
+            floats.0.push(crate::combat_fx::FloatReq {
+                world: Vec3::new(hero.pos.x, hero.y + 2.0, hero.pos.y),
+                text: "No room — build a house first".into(),
+                color: Color::srgb(1.0, 0.7, 0.4),
+                scale: 1.0,
+            });
+        }
+        return;
+    }
+    if inv.0.consume_item("mercenary_contract", 1) {
         town.0.population += 1;
     }
 }

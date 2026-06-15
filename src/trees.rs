@@ -24,8 +24,9 @@
 use bevy::prelude::*;
 
 use crate::palette::{
-    lin, AUTUMN_DARK, AUTUMN_LIGHT, AUTUMN_MID, BIRCH_DARK, BIRCH_LIGHT, BIRCH_MARK, BIRCH_TRUNK,
-    CUT_WOOD, DEAD_WOOD, DEAD_WOOD_DARK, FOLIAGE_DARK, FOLIAGE_LIGHT, FOLIAGE_MID, TREE_TRUNK,
+    lin, AUTUMN_DARK, AUTUMN_GOLD, AUTUMN_LIGHT, AUTUMN_MID, AUTUMN_OLIVE, AUTUMN_RED, BIRCH_DARK,
+    BIRCH_LIGHT, BIRCH_MARK, BIRCH_TRUNK, CUT_WOOD, DEAD_WOOD, DEAD_WOOD_DARK, FOLIAGE_DARK,
+    FOLIAGE_LIGHT, FOLIAGE_MID, TREE_TRUNK,
 };
 
 #[derive(Clone, Copy)]
@@ -216,11 +217,37 @@ fn build_broadleaf() -> Mesh {
     build_broadleaf_toned(FOLIAGE_DARK, FOLIAGE_MID, FOLIAGE_LIGHT)
 }
 
-// Autumn broadleaf: identical bole + nine-blob crown, but the foliage is real
-// russet/orange/gold (see palette `AUTUMN_*`) — the warm tree the green TREE_TINTS can't
-// produce by multiply. One every dozen trees reads as a turning canopy, not a recolour.
+// Autumn broadleaf: the broadleaf bole + nine-blob crown, but the crown is dappled across
+// the full turn (deep russet & a lingering olive in the shaded base, burnt orange & amber
+// through the body, sunlit gold on the cap) instead of one flat orange. The mixed hues read
+// as leaf clusters turning at different rates — and these are real warm tones the green
+// TREE_TINTS can't reach by multiply. Same 9 icospheres as the broadleaf, so no mesh cost.
 fn build_autumn() -> Mesh {
-    build_broadleaf_toned(AUTUMN_DARK, AUTUMN_MID, AUTUMN_LIGHT)
+    let bark = lin(TREE_TRUNK);
+    let mut parts = vec![
+        tinted(trunk_part(0.10, 0.13, 0.36, 7, Vec3::new(0.0, 0.18, 0.0)), bark),
+        tinted(trunk_part(0.085, 0.105, 0.38, 7, Vec3::new(0.015, 0.45, 0.01)), bark),
+    ];
+    parts.extend(root_flare(0.13, 4, 0.16, bark, 0.45));
+    parts.push(branch_part(0.045, 0.34, 0.65, 0.4, Vec3::new(0.03, 0.52, 0.0), bark));
+    parts.push(branch_part(0.04, 0.30, -0.75, 2.6, Vec3::new(-0.02, 0.46, 0.02), bark));
+
+    // (radius, centre, tone) — dark/red/olive grounded base → orange/amber body → gold cap.
+    let blobs: [(f32, Vec3, u32); 9] = [
+        (0.46, Vec3::new(0.0, 0.66, 0.0), AUTUMN_DARK),
+        (0.27, Vec3::new(0.27, 0.60, 0.10), AUTUMN_RED),
+        (0.25, Vec3::new(-0.20, 0.58, -0.18), AUTUMN_OLIVE),
+        (0.40, Vec3::new(0.02, 0.88, 0.0), AUTUMN_MID),
+        (0.25, Vec3::new(-0.26, 0.84, 0.10), AUTUMN_RED),
+        (0.23, Vec3::new(0.22, 0.92, -0.16), AUTUMN_LIGHT),
+        (0.32, Vec3::new(0.0, 1.08, 0.02), AUTUMN_MID),
+        (0.20, Vec3::new(0.16, 1.18, 0.10), AUTUMN_GOLD),
+        (0.21, Vec3::new(-0.06, 1.26, -0.06), AUTUMN_LIGHT),
+    ];
+    for (r, c, tone) in blobs {
+        parts.push(tinted(foliage(r, 1, c), lin(tone)));
+    }
+    merged(parts)
 }
 
 /// The broadleaf body shared by the green `Broadleaf` and the `Autumn` variant — only the
@@ -228,9 +255,11 @@ fn build_autumn() -> Mesh {
 fn build_broadleaf_toned(dark: u32, mid: u32, light: u32) -> Mesh {
     let bark = lin(TREE_TRUNK);
     let mut parts = vec![
-        // Two-segment tapering bole (thicker foot, slimmer upper) + root flare.
-        tinted(trunk_part(0.10, 0.13, 0.34, 7, Vec3::new(0.0, 0.17, 0.0)), bark),
-        tinted(trunk_part(0.075, 0.10, 0.34, 7, Vec3::new(0.015, 0.48, 0.01)), bark),
+        // Two-segment tapering bole (thicker foot, slimmer upper) + root flare. The upper
+        // segment drops to overlap the lower by ~0.10u (was 0.03) so the two never read as a
+        // pinched/broken join.
+        tinted(trunk_part(0.10, 0.13, 0.36, 7, Vec3::new(0.0, 0.18, 0.0)), bark),
+        tinted(trunk_part(0.085, 0.105, 0.38, 7, Vec3::new(0.015, 0.45, 0.01)), bark),
     ];
     parts.extend(root_flare(0.13, 4, 0.16, bark, 0.45));
     // Two limbs forking off the upper bole into the canopy mass.
@@ -323,25 +352,28 @@ fn build_dead() -> Mesh {
     let dark = lin(DEAD_WOOD_DARK);
 
     let mut parts = vec![
-        // Lower bole (stout) + kinked upper bole leaning off plumb.
-        tinted(trunk_part(0.065, 0.10, 0.5, 6, Vec3::new(0.0, 0.25, 0.0)), wood),
+        // Lower bole (stout) + kinked upper bole leaning off plumb. The upper segment is
+        // only a touch slimmer than the lower top and overlaps it by ~0.14u, so the bole
+        // reads as ONE continuous trunk — the old r0.05 upper stub pinched off the fat base
+        // and looked snapped clean through (the reported "tree does not connect").
+        tinted(trunk_part(0.075, 0.105, 0.6, 6, Vec3::new(0.0, 0.30, 0.0)), wood),
         tinted(
-            Cylinder::new(0.05, 0.48)
+            Cylinder::new(0.072, 0.58)
                 .mesh()
                 .resolution(6)
                 .build()
-                .rotated_by(Quat::from_rotation_z(-0.16))
-                .translated_by(Vec3::new(0.055, 0.71, 0.0)),
+                .rotated_by(Quat::from_rotation_z(-0.14))
+                .translated_by(Vec3::new(0.045, 0.78, 0.0)),
             wood,
         ),
         // Shattered spike topping the snag (a narrow cone, off the lean axis).
         tinted(
-            Cone { radius: 0.04, height: 0.22 }
+            Cone { radius: 0.05, height: 0.22 }
                 .mesh()
                 .resolution(5)
                 .build()
                 .rotated_by(Quat::from_rotation_z(-0.2))
-                .translated_by(Vec3::new(0.12, 1.02, 0.0)),
+                .translated_by(Vec3::new(0.1, 1.06, 0.0)),
             dark,
         ),
     ];

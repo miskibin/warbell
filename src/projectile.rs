@@ -122,6 +122,7 @@ fn spawn_queued_bolts(
 fn step_bolts(
     time: Res<Time>,
     hero: Res<HeroState>,
+    siege: Res<crate::siege::Siege>,
     fx: Option<Res<CombatFx>>,
     mut pending: ResMut<PendingHeroDamage>,
     mut marks: MessageWriter<crate::aftermath::BattleMark>,
@@ -130,10 +131,13 @@ fn step_bolts(
 ) {
     let dt = time.delta_secs().min(0.05);
     let target = Vec3::new(hero.pos.x, hero.y + 1.0, hero.pos.y);
+    // A bolt still in flight when the night clears must not deal damage into the won daytime —
+    // fizzle any live bolt once the wave is over (the keep/invaders are cleared on the same edge).
+    let wave_active = siege.phase == crate::siege::GamePhase::Wave;
     for (e, mut b, mut tf) in &mut q {
         b.ttl -= dt;
-        if !hero.alive || b.ttl <= 0.0 {
-            commands.entity(e).despawn();
+        if !hero.alive || b.ttl <= 0.0 || !wave_active {
+            commands.entity(e).try_despawn();
             continue;
         }
         let (out, traveled) =
@@ -148,9 +152,9 @@ fn step_bolts(
                 }
                 // Leave a scorch on the turf where the bolt burst (aftermath.rs).
                 marks.write(crate::aftermath::BattleMark { at: tf.translation });
-                commands.entity(e).despawn();
+                commands.entity(e).try_despawn();
             }
-            BoltStep::Fizzle => commands.entity(e).despawn(),
+            BoltStep::Fizzle => commands.entity(e).try_despawn(),
         }
     }
 }

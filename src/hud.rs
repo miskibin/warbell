@@ -385,7 +385,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
 }
 
 /// What a quick-slot should render: its icon handle, the tint alpha (full / greyed-depleted /
-/// faint-ghost), and the count to show. Q derives the next food; Z/X/C use the bound item
+/// faint-ghost), and the count to show. Q derives the next food; Y/T use the bound item
 /// (or, unbound, the derived next item of their kind) via the core `quick_view`.
 fn quick_display(inv: &Inventory, atlas: &IconAtlas, kind: SlotKind) -> (Option<Handle<Image>>, f32, i64) {
     let view = match kind.bind_slot() {
@@ -631,19 +631,20 @@ fn update_hud(
     if let Ok(mut n) = xp_q.single_mut() {
         n.width = Val::Percent(xp);
     }
-    if let Ok(mut t) = hp_txt.single_mut() {
-        **t = format!("{}", p.hp.max(0.0) as i64);
-    }
-    if let Ok(mut t) = lvl_txt.single_mut() {
-        **t = format!("{}", p.level);
-    }
-    if let Ok(mut t) = gold_txt.single_mut() {
-        **t = format!("{}", p.gold);
-    }
-    if let Ok(mut t) = stone_txt.single_mut() {
-        **t = format!("{}", bank.0.stone() as i64);
-    }
-    if let Ok(mut t) = wood_txt.single_mut() {
-        **t = format!("{}", bank.0.wood() as i64);
+    // Only write a numeral when it actually changed — re-assigning `Text` marks it dirty and
+    // re-runs glyph layout, so writing the same string every frame is pure waste on the HUD.
+    set_if_changed(hp_txt.single_mut().ok(), format!("{}", p.hp.max(0.0) as i64));
+    set_if_changed(lvl_txt.single_mut().ok(), format!("{}", p.level));
+    set_if_changed(gold_txt.single_mut().ok(), format!("{}", p.gold));
+    set_if_changed(stone_txt.single_mut().ok(), format!("{}", bank.0.stone() as i64));
+    set_if_changed(wood_txt.single_mut().ok(), format!("{}", bank.0.wood() as i64));
+}
+
+/// Assign `s` to a `Text` only if it differs — avoids a per-frame re-layout for an unchanged value.
+fn set_if_changed(text: Option<Mut<Text>>, s: String) {
+    if let Some(mut t) = text {
+        if **t != s {
+            **t = s;
+        }
     }
 }

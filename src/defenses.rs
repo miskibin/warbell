@@ -4,10 +4,13 @@
 //! in the night early. Each structure is gated behind its Bulwark upgrade ([`Defenses`] flags),
 //! so the castle only fights as hard as you've built it.
 //!
-//! Numbers come from the test-gated `tileworld_core::defense` fire profiles, with damage
-//! **rescaled** into forest's 60-HP ork units (`DMG_SCALE`) so defenses *support* rather than
-//! auto-clear. Bolt geometry reuses `projectile::advance_bolt`; targets are the night
-//! [`WaveInvader`]s. Emitters are invisible logic points co-located with `castle.rs`'s meshes.
+//! Numbers come from the test-gated `tileworld_core::defense` fire profiles, scaled down by
+//! `DMG_SCALE` so defenses *support* rather than auto-clear. NOTE: `DMG_SCALE` was tuned in the
+//! old era when ork HP was rescaled down (~0.35×); orks now read full core HP (grunt 254, etc.),
+//! so defenders chip ~4× softer than that tuning intended — a deliberate balance re-derive of
+//! `DMG_SCALE` against the current ork HP is worth doing (left as-is here to avoid a blind buff).
+//! Bolt geometry reuses `projectile::advance_bolt`; targets are the night [`WaveInvader`]s.
+//! Emitters are invisible logic points co-located with `castle.rs`'s meshes.
 //!
 //! Deferred (balance long-tail): tower destructibility + ork-targets-tower + prep revive — the
 //! firing/shrine/bell core lands here; towers currently fire for the whole wave.
@@ -26,7 +29,9 @@ use crate::player::{spawn_burst, CombatFx, Health, HeroState, PlayerRes};
 use crate::projectile::{advance_bolt, BoltStep};
 use crate::siege::{GamePhase, Siege};
 
-/// Rescale defender damage from core's TS-anchored values into forest's 60-HP ork units.
+/// Scale defender damage down from core's TS-anchored values so towers/archers *support* the
+/// defense rather than auto-clearing the wave. (Predates the full-HP ork change — see module doc;
+/// likely under-tuned now, but re-deriving it is a balance decision, not a bug fix.)
 const DMG_SCALE: f32 = 0.236;
 const HALF_X: f32 = 17.0;
 const HALF_Z: f32 = 12.0;
@@ -231,11 +236,11 @@ fn step_defender_bolts(
     for (e, mut b, mut tf) in &mut q {
         b.ttl -= dt;
         let Ok(ttf) = invaders.get(b.target) else {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
             continue;
         };
         if b.ttl <= 0.0 {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
             continue;
         }
         let target = ttf.translation + Vec3::new(0.0, 0.9, 0.0);
@@ -257,9 +262,9 @@ fn step_defender_bolts(
                 if let Some(fx) = &fx {
                     spawn_burst(&mut commands, fx, tf.translation, false);
                 }
-                commands.entity(e).despawn();
+                commands.entity(e).try_despawn();
             }
-            BoltStep::Fizzle => commands.entity(e).despawn(),
+            BoltStep::Fizzle => commands.entity(e).try_despawn(),
         }
     }
 }

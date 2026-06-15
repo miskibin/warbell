@@ -86,21 +86,31 @@ fn drive_grade(
     mut cams: Query<&mut ColorGrading, With<Camera3d>>,
     mut overlays: Query<&mut BackgroundGradient, With<Vignette>>,
     mut base_sat: Local<Option<f32>>,
+    mut last_drain: Local<f32>,
+    mut last_darkness: Local<f32>,
 ) {
     let (darkness, drain) = match player.as_deref() {
         Some(p) => reactive(&p.0, time.elapsed_secs_f64()),
         None => (0.0, 0.0),
     };
     // Drain the camera's saturation toward grey on damage, restoring forest's base at rest
-    // (captured once, so we never clobber the bespoke colour grade).
-    for mut cg in &mut cams {
-        let base = *base_sat.get_or_insert(cg.global.post_saturation);
-        cg.global.post_saturation = base * (1.0 - drain).max(0.0);
+    // (captured once, so we never clobber the bespoke colour grade). Skip the write when the drain
+    // is unchanged so we don't re-mark `ColorGrading` (and the gradient asset) dirty every frame at
+    // rest — the overlay is invisible and static the vast majority of the time.
+    if (drain - *last_drain).abs() > 1e-4 || base_sat.is_none() {
+        *last_drain = drain;
+        for mut cg in &mut cams {
+            let base = *base_sat.get_or_insert(cg.global.post_saturation);
+            cg.global.post_saturation = base * (1.0 - drain).max(0.0);
+        }
     }
     // Debug: `FOREST_GRADETEST=1` forces a strong vignette so the harness can verify the radial
     // shape (dark edges, clear centre — NOT a full-screen fill).
     let darkness = if std::env::var("FOREST_GRADETEST").is_ok() { 0.6 } else { darkness };
-    for mut bg in &mut overlays {
-        bg.0 = vec![vignette_gradient(darkness)];
+    if (darkness - *last_darkness).abs() > 1e-4 {
+        *last_darkness = darkness;
+        for mut bg in &mut overlays {
+            bg.0 = vec![vignette_gradient(darkness)];
+        }
     }
 }

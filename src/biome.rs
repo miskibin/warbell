@@ -324,9 +324,10 @@ fn apply_build(
     }
     pending.0 = false;
 
-    // Wipe any prior build (incl. the obstacle set wildlife navigates by).
+    // Wipe any prior build (incl. the obstacle set wildlife navigates by). `try_despawn`: a
+    // BiomeEntity may already be queued for reap by combat/AI the same frame a rebuild fires.
     for e in &existing {
-        commands.entity(e).despawn();
+        commands.entity(e).try_despawn();
     }
     crate::blockers::reset();
     // The reset wiped the castle's lazily-registered wall/tower/house collision boxes; clear their

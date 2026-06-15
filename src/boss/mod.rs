@@ -522,16 +522,26 @@ fn tick_status(
     }
 }
 
-/// A warden just fell: grant its boon, queue the reward dialog, announce it.
+/// Marks a warden whose death boon has already been granted, so `reward_on_death` pays out exactly
+/// once without relying on catching the single `Added<Dying>` frame.
+#[derive(Component)]
+struct Rewarded;
+
+/// A warden just fell: grant its boon, queue the reward dialog, announce it. Keys off `With<Dying>`
+/// (not `Added<Dying>`) + a `Rewarded` marker rather than the one-frame `Added` filter: a corpse
+/// stays `Dying` for the whole ~1.4s fade, so even if a panel opens on the death frame (this system
+/// is `Modal::None`-gated) the boon still pays out once the panel closes — instead of being lost.
 fn reward_on_death(
     time: Res<Time>,
+    mut commands: Commands,
     mut player: ResMut<PlayerRes>,
     mut pending: ResMut<PendingReward>,
     mut next_modal: ResMut<NextState<Modal>>,
     mut notice: ResMut<Notice>,
-    q: Query<&Boss, Added<Dying>>,
+    q: Query<(Entity, &Boss), (With<Dying>, Without<Rewarded>)>,
 ) {
-    for b in &q {
+    for (e, b) in &q {
+        commands.entity(e).try_insert(Rewarded);
         // Grant the permanent boon.
         match b.biome {
             Biome::Forest => player.0.has_bramble_sweep = true,
@@ -627,7 +637,7 @@ fn sync_boss_bar(
             }
         }
         (Some((b, ratio)), Err(_)) => spawn_boss_bar(&mut commands, &fonts, models::name(b.biome), b.level, ratio),
-        (None, Ok(e)) => commands.entity(e).despawn(),
+        (None, Ok(e)) => commands.entity(e).try_despawn(),
         (None, Err(_)) => {}
     }
 }
@@ -636,7 +646,7 @@ fn sync_boss_bar(
 /// the game-over card — `sync_boss_bar` is gated to `Playing`, so it can't reap it itself there.
 fn despawn_boss_bar(mut commands: Commands, q: Query<Entity, With<BossBarRoot>>) {
     for e in &q {
-        commands.entity(e).despawn();
+        commands.entity(e).try_despawn();
     }
 }
 

@@ -102,6 +102,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_BIOME` | boot straight into a given biome |
 | `FOREST_WAVE` / `FOREST_DEFEND=1` | stage a night siege / arm all defenses + walls |
 | `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
+| `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
 | `FOREST_LOADTEST=1` | hold the boot loading veil up (even under a capture) so it can be shot (`loading.rs`); pair with `FOREST_SHOT`+`FOREST_MENU=1` |
 | `FOREST_PANEL=tree\|inv` | seed + open the upgrade-tree / satchel panel for a shot |
@@ -153,7 +154,7 @@ Two related map systems share the ground pipeline in `biome.rs`:
   (declarative ground/atmosphere/scatter/particles) + optional `landmarks()`. Keys **1–5** swap a
   single 32×32 biome patch at runtime (despawns everything tagged `BiomeEntity`, rebuilds).
 - **`worldmap.rs`** — the actual playable island: generated at base
-  resolution scaled up by `MAP_SCALE = 1.5` (→ `COLS 216 × ROWS 162`). Elliptical island, five
+  resolution scaled up by `MAP_SCALE = 1.8` (→ `COLS 259 × ROWS 295`). Elliptical island, five
   biome blobs, grass safe-zone (castle), four rivers + lake, coastal mountain ridges, rolling
   terraced knolls, plateaus. `classify` force-flattens grass under every town build plot (and
   chest/cover placement rejects `town::near_build_plot`) so nothing occupies a future building's

@@ -31,14 +31,22 @@ pub struct WildlifePlugin;
 impl Plugin for WildlifePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RespawnQueue>();
+        app.add_message::<PreyEaten>();
         app.add_systems(Update, animal_limbs); // limb anim keeps running while frozen
         app.add_systems(
             Update,
-            (animal_brain, enqueue_respawn, drain_respawns)
+            (animal_brain, resolve_prey_kills, enqueue_respawn, drain_respawns)
+                .chain()
                 .run_if(in_state(crate::game_state::Modal::None)),
         );
     }
 }
+
+/// A prey animal taken down by a predator this frame (emitted by `animal_brain`). Resolved by
+/// [`resolve_prey_kills`] into a death-fade + a respawn enqueue, so predation doesn't pop prey
+/// instantly and doesn't grind a species to extinction (only player kills used to respawn).
+#[derive(Message)]
+struct PreyEaten(Entity);
 
 // ── Components ───────────────────────────────────────────────────────────────────
 
@@ -144,6 +152,7 @@ fn animal_brain(
     mut pending: ResMut<crate::player::PendingHeroDamage>,
     mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut eaten_w: MessageWriter<PreyEaten>,
     mut commands: Commands,
     townsfolk: Query<
         (Entity, &crate::villagers::Villager, &Visibility),
@@ -182,7 +191,7 @@ fn animal_brain(
         // Struck-enrage: a wounded predator (incl. the boar) latches onto its attacker — the
         // hero, or the townsperson whose blade/axe just landed — for a beat.
         if let Some(s) = struck {
-            commands.entity(self_e).remove::<Struck>();
+            commands.entity(self_e).try_remove::<Struck>();
             if pred.is_some() {
                 a.aggro_until = now + STRUCK_LATCH;
                 a.aggro_target = s.by;
@@ -414,9 +423,37 @@ fn animal_brain(
         tf.rotation = Quat::from_rotation_y(a.facing) * Quat::from_rotation_x(crate::orks::recoil_tilt(a.hit_recoil, now));
     }
 
-    // Reap prey caught by predators this frame (try_despawn — two predators may share a kill).
+    // Signal each prey caught this frame; `resolve_prey_kills` fades it (not an instant pop) and
+    // queues its species to respawn so predators don't grind the herd to extinction. (Two predators
+    // may share a kill → duplicate entities; the resolver dedups.)
     for e in eaten {
-        commands.entity(e).try_despawn();
+        eaten_w.write(PreyEaten(e));
+    }
+}
+
+/// Turn each predator-eaten prey into a death-fade + a respawn enqueue (mirrors how player kills
+/// respawn, minus the loot drop). Dedups same-frame double kills and skips prey already fading.
+fn resolve_prey_kills(
+    time: Res<Time>,
+    mut eaten: MessageReader<PreyEaten>,
+    mut commands: Commands,
+    mut queue: ResMut<RespawnQueue>,
+    prey_q: Query<(&Animal, &Transform), Without<crate::dying::Dying>>,
+) {
+    let now = time.elapsed_secs();
+    let mut seen: std::collections::HashSet<Entity> = std::collections::HashSet::new();
+    for ev in eaten.read() {
+        if !seen.insert(ev.0) {
+            continue; // two predators reported the same kill
+        }
+        let Ok((a, tf)) = prey_q.get(ev.0) else { continue }; // already fading / gone
+        let delay = if predator_stats(a.species).is_some() { PREDATOR_RESPAWN } else { ANIMAL_RESPAWN };
+        queue.0.push(RespawnSlot {
+            species: a.species,
+            home: Vec2::new(tf.translation.x, tf.translation.z),
+            at: now + delay,
+        });
+        crate::dying::begin_dying(&mut commands, ev.0, now);
     }
 }
 
@@ -512,7 +549,7 @@ fn animal_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     hero: Res<crate::player::HeroState>,
-    animals: Query<(&Animal, &Children, &GlobalTransform)>,
+    animals: Query<(&Animal, &Children, &GlobalTransform), Without<crate::dying::Dying>>,
     mut parts: Query<(&AnimPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();

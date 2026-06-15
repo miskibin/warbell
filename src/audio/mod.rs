@@ -269,6 +269,8 @@ impl Plugin for GameAudioPlugin {
                     director::preload_voice_lines,
                 ),
             )
+            // PLAYBACK / render-tier audio — ungated so an in-flight line, ambience and music keep
+            // playing through a panel-freeze or pause (the frozen world still sounds alive).
             .add_systems(
                 Update,
                 (
@@ -281,15 +283,25 @@ impl Plugin for GameAudioPlugin {
                     music::update_music,
                     sfx::play_cues,
                     voice::play_voice_cues,
+                    synth::debug_play_stings,
+                    stop_displaced_hero_lines,
+                    fade_out_hero_lines,
+                ),
+            )
+            // SIM-tier hero-voice TRIGGERS — gated on `Modal::None` so no new line is *decided*
+            // while the world is frozen (e.g. buying gear in the shop must not fire the satchel
+            // line; a level-up sting must not play over a paused panel). Matches the contract the
+            // director comment below describes.
+            .add_systems(
+                Update,
+                (
                     detect_player_events,
                     detect_home_return,
                     detect_biome_entry,
                     detect_siege_voice,
                     detect_gear_found,
-                    synth::debug_play_stings,
-                    stop_displaced_hero_lines,
-                    fade_out_hero_lines,
-                ),
+                )
+                    .run_if(in_state(crate::game_state::Modal::None)),
             )
             // Villager + ork + hero-remark voices only while actually playing (no chatter in
             // menus / panels). Ordered AFTER the hero's own voice so it sets this frame's

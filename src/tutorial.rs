@@ -541,7 +541,7 @@ fn tab_basics(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas
             section(r, fonts, "SATCHEL & QUICK-BAR", |c| {
                 point(c, fonts, atlas, Some("I"), None, "Satchel", "Your bag \u{2014} eat, equip weapons and armor, pin items.");
                 point(c, fonts, atlas, Some("Q"), None, "Eat", "Chews the best food in the bag to heal.");
-                point(c, fonts, atlas, Some("Z"), None, "Quick-slots  Z / X / C", "Resist, power and haste potions. In the satchel, hover an item and press a key to pin it.");
+                point(c, fonts, atlas, Some("Y"), None, "Quick-slots  Y / T", "Resist and power potions. In the satchel, hover an item and press a key to pin it.");
                 point(c, fonts, atlas, Some("R"), None, "Recruit", "Rallies nearby villagers to fight at your side.");
             });
         },
@@ -779,7 +779,7 @@ fn tab_economy(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atla
         |r| {
             section(r, fonts, "THE MERCHANT \u{2014} E AT THE STALL", |c| {
                 point(c, fonts, atlas, None, Some("sword_gold"), "Weapons & armor", "Straight power for gold. New stock unlocks via Armoury upgrades.");
-                point(c, fonts, atlas, None, Some("potion"), "Potions & food", "Heals and buffs \u{2014} pin them to Z/X/C from the satchel.");
+                point(c, fonts, atlas, None, Some("potion"), "Potions & food", "Heals and buffs \u{2014} pin them to Y/T from the satchel.");
             });
         },
     );

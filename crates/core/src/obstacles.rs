@@ -354,7 +354,9 @@ fn generate() -> Vec<Obstacle> {
             let variant = (rand.next() * 4.0).floor() as i32;
 
             if let Some(cmin) = picked.cluster_min {
-                let cmax = picked.cluster_max.unwrap();
+                // A spec with `cluster_min` but no `cluster_max` is malformed data; fall back to a
+                // single-value span (cmin) instead of panicking in a release build.
+                let cmax = picked.cluster_max.unwrap_or(cmin);
                 debug_assert!(cmax >= cmin, "cluster_max < cluster_min for {:?}", picked.kind);
                 // For valid specs (cmin <= cmax) this span is `cmax - cmin + 1` and the
                 // RNG draw + result are unchanged. The `.max(1)` only guards a malformed

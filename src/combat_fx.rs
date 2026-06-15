@@ -305,7 +305,7 @@ fn drive_hp_bars(
     let cam_pos = cam_tf.translation();
     for (bar_e, bar, mut tf, mut vis, children) in &mut bars {
         let Ok((ork_gt, health, npc_hp, hurt, dying)) = targets.get(bar.ork) else {
-            commands.entity(bar_e).despawn();
+            commands.entity(bar_e).try_despawn();
             continue;
         };
         // (hp, max) from whichever vitals component the target carries.
@@ -313,7 +313,7 @@ fn drive_hp_bars(
             (Some(h), _) => (h.hp, h.max),
             (_, Some(n)) => (n.hp, n.max),
             _ => {
-                commands.entity(bar_e).despawn();
+                commands.entity(bar_e).try_despawn();
                 continue;
             }
         };

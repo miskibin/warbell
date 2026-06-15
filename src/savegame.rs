@@ -70,6 +70,10 @@ pub struct SaveData {
     pub shop_discount: f32,
     // ── world flags ──
     pub rescued_camps: Vec<bool>,
+    /// Freed flags per Blight-fortress cage (analogous to `rescued_camps`). Additive — old saves
+    /// default to all-unfreed via `serde(default)`, which just re-arms the cages (harmless).
+    #[serde(default)]
+    pub blight_captives_freed: Vec<bool>,
     pub discoveries_found: u32,
     pub discoveries_completed: bool,
     pub discovered_landmarks: Vec<String>,
@@ -201,6 +205,7 @@ struct SaveCtx<'w, 's> {
     eco: Res<'w, EconomyState>,
     lives: Res<'w, Lives>,
     camps: Res<'w, RescuedCamps>,
+    captives: Option<Res<'w, crate::ork_fortress::BlightCaptives>>,
     disc: Res<'w, Discoveries>,
     chests: Query<'w, 's, (&'static Chest, &'static ChestId)>,
     landmarks: Query<'w, 's, &'static Landmark>,
@@ -234,6 +239,7 @@ impl SaveCtx<'_, '_> {
             tax_office: self.eco.tax_office,
             shop_discount: self.eco.shop_discount,
             rescued_camps: self.camps.done.clone(),
+            blight_captives_freed: self.captives.as_ref().map(|c| c.freed.to_vec()).unwrap_or_default(),
             discoveries_found: self.disc.found,
             discoveries_completed: self.disc.completed,
             discovered_landmarks: self
@@ -332,6 +338,7 @@ fn apply_pending_load(
     mut eco: ResMut<EconomyState>,
     mut lives: ResMut<Lives>,
     mut camps: ResMut<RescuedCamps>,
+    captives: Option<ResMut<crate::ork_fortress::BlightCaptives>>,
     mut disc: ResMut<Discoveries>,
     mut loaded: MessageWriter<GameLoaded>,
 ) {
@@ -371,6 +378,16 @@ fn apply_pending_load(
     // wipe them; `seen` mirrors `done` (a rescued camp was certainly seen populated).
     camps.done = data.rescued_camps.clone();
     camps.seen = data.rescued_camps.clone();
+    // Blight cages: restore the freed flags so respawned patrols can't re-free an already-freed
+    // captive (which would dup `population`). In-process Continue keeps the live cage visuals, so
+    // only the flag matters here. Element-wise copy guards a length mismatch from an older save.
+    if let Some(mut captives) = captives {
+        for (i, &f) in data.blight_captives_freed.iter().enumerate() {
+            if i < captives.freed.len() {
+                captives.freed[i] = f;
+            }
+        }
+    }
     disc.found = data.discoveries_found;
     disc.completed = data.discoveries_completed;
 
@@ -446,6 +463,7 @@ mod tests {
             tax_office: false,
             shop_discount: 0.8,
             rescued_camps: vec![true, false, true],
+            blight_captives_freed: vec![false, true],
             discoveries_found: 3,
             discoveries_completed: false,
             discovered_landmarks: vec!["The Hollow Oak".into()],

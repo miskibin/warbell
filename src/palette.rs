@@ -47,5 +47,10 @@ pub const DEAD_WOOD_DARK: u32 = 0x4a4238;
 pub const AUTUMN_DARK: u32 = 0x8a3b18;
 pub const AUTUMN_MID: u32 = 0xc8651f;
 pub const AUTUMN_LIGHT: u32 = 0xe7a72f;
+// Extra autumn tones so a turning crown is dappled (leaves changing at different rates),
+// not one flat orange ball: a deep brick red, a sunlit gold cap, and a lingering olive.
+pub const AUTUMN_RED: u32 = 0x9c3514;
+pub const AUTUMN_GOLD: u32 = 0xf2c63c;
+pub const AUTUMN_OLIVE: u32 = 0x7a8a2e;
 // Fresh sawn cut-face on a stump/log: pale ringed heartwood, brighter than the bark.
 pub const CUT_WOOD: u32 = 0xc79a63;

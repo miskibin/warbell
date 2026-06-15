@@ -401,6 +401,9 @@ impl Bag {
     /// (real pickups AND gear swaps/unequips returning a piece). Returns false if
     /// there's no room (unknown id also returns false). Mirrors `placeInBag`.
     pub fn place(&mut self, item_id: &str, count: i64) -> bool {
+        if count <= 0 {
+            return false; // adding nothing (or a negative) must not occupy a slot or shrink a stack
+        }
         let Some(def) = item_def(item_id) else {
             return false;
         };

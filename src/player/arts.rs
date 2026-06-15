@@ -268,7 +268,7 @@ pub struct KnockImpulse {
 pub fn apply_knock(mut commands: Commands, mut q: Query<(Entity, &mut Ork, &KnockImpulse)>) {
     for (e, mut o, k) in &mut q {
         o.kb = k.dir * k.mag;
-        commands.entity(e).remove::<KnockImpulse>();
+        commands.entity(e).try_remove::<KnockImpulse>();
     }
 }
 

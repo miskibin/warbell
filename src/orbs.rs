@@ -136,7 +136,7 @@ fn step_reward_orbs(
                     OrbKind::Gold => player.0.add_gold(ro.0.value),
                     OrbKind::Xp => player.0.add_xp(ro.0.value),
                 }
-                commands.entity(e).despawn();
+                commands.entity(e).try_despawn();
             }
             OrbStep::Flying => {
                 tf.translation = Vec3::new(ro.0.x as f32, ro.0.y as f32, ro.0.z as f32);

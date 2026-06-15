@@ -499,7 +499,7 @@ pub fn player_attack(
                 color,
                 scale: if crit { 1.2 } else { 1.0 },
             });
-            commands.entity(e).insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
+            commands.entity(e).try_insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
             // Springy body squash-and-stretch — re-kicked in place on rapid hits so the rest
             // scale captured by the first squash is never forgotten.
             match squash.as_deref_mut() {

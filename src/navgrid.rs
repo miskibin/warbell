@@ -13,8 +13,13 @@ use tileworld_core::pathfinding::{find_path, Grid, PathPoint};
 use crate::blockers;
 use crate::worldmap::{ground_at_world, COLS, GROUND_STEP, GX, GZ, ROWS};
 
-/// A* node budget — forest's enlarged map: a ~40-tile run from the spawn ring to the keep.
-pub const NAV_MAX_NODES: u32 = 1400;
+/// A* node budget for the invader keep-march. The spawn ring is 30 tiles out, but on the enlarged
+/// (259×295) map an invader spawned across one of the four rivers must detour to a bridge, so the
+/// explored set can far exceed the straight-line tile count. 1400 truncated those detours to an
+/// *empty* path (idle invader); 6000 covers the worst river detour. Since the keep is always
+/// reachable, A* terminates as soon as it's found — the larger budget only costs on a (never-
+/// occurring for invaders) unreachable goal, where the open set drains to the cap.
+pub const NAV_MAX_NODES: u32 = 6000;
 
 /// World centre of tile `(ix, iz)` in forest world-space (castle at origin).
 #[inline]
