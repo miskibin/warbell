@@ -58,6 +58,7 @@ mod hud;
 mod interaction;
 mod inventory;
 mod landmarks;
+mod loading;
 mod lumberjack;
 mod mainmenu;
 mod miner;
@@ -231,6 +232,7 @@ fn main() {
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog
             mainmenu::MainMenuPlugin, // title-screen ambiance: orbit cam + dusk + embers/fireflies + credits
+            loading::LoadingPlugin, // branded boot veil over the first ~1s blank frame
         ))
         .run();
 }

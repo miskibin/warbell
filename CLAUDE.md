@@ -103,6 +103,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_WAVE` / `FOREST_DEFEND=1` | stage a night siege / arm all defenses + walls |
 | `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
 | `FOREST_MENU=1` | shoot the start screen |
+| `FOREST_LOADTEST=1` | hold the boot loading veil up (even under a capture) so it can be shot (`loading.rs`); pair with `FOREST_SHOT`+`FOREST_MENU=1` |
 | `FOREST_PANEL=tree\|inv` | seed + open the upgrade-tree / satchel panel for a shot |
 | `FOREST_EQUIP="sword_gold,gold_armor"` | equip the listed item ids at startup so the hero model shows its weapon/armor |
 | `FOREST_FOG="clear,full"` | override fog distances live (no rebuild) |
