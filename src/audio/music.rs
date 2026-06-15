@@ -52,7 +52,7 @@ pub(crate) enum MusicLayer {
     Menu,
 }
 
-pub(crate) fn setup_music(asset: Res<AssetServer>, cfg: Res<AudioConfig>, mut commands: Commands) {
+pub(crate) fn setup_music(asset: Res<AssetServer>, mut commands: Commands) {
     let mut layer = |file: &'static str, vol: f32, which: MusicLayer| {
         commands.spawn((
             AudioPlayer(asset.load::<AudioSource>(file)),
@@ -65,10 +65,12 @@ pub(crate) fn setup_music(asset: Res<AssetServer>, cfg: Res<AudioConfig>, mut co
             which,
         ));
     };
-    // All day tracks loop silently; the driver raises only the one picked for the current day
-    // (index 0, the bed, plays first — re-rolled each subsequent dawn).
+    // All day tracks loop silently; `update_music` raises only the one picked for the current day
+    // (the pick is rolled on the first frame, so even day 1 varies). They start at 0.0 — NOT the
+    // bed at `music_vol` — so the day bed doesn't blare for a frame at launch before the title
+    // theme's first `update_music` tick ducks it (that was the "main music plays first" bug).
     for (i, f) in DAY_TRACKS.iter().enumerate() {
-        layer(*f, if i == 0 { cfg.music_vol } else { 0.0 }, MusicLayer::Day(i));
+        layer(*f, 0.0, MusicLayer::Day(i));
     }
     layer("audio/music-combat.ogg", 0.0, MusicLayer::Combat); // silent until a fight
     layer("audio/blight-music.ogg", 0.0, MusicLayer::Blight); // silent until the hero enters the Blight
@@ -76,6 +78,18 @@ pub(crate) fn setup_music(asset: Res<AssetServer>, cfg: Res<AudioConfig>, mut co
     layer(NIGHT_TRACK, 0.0, MusicLayer::Night); // silent until the siege wave — always this track
     layer("audio/orc-march-tallow.ogg", 0.0, MusicLayer::Boss); // silent until the boss wave
     layer("audio/menu-theme.ogg", 0.0, MusicLayer::Menu); // fades in on the title screen
+}
+
+/// Cross-frame edge-detect flags for [`update_music`], folded into one `Local` (Bevy caps a
+/// system at 16 params, and the volume scalars + RNG already fill the rest).
+#[derive(Default)]
+pub(crate) struct DriverFlags {
+    /// Was the siege in its `Wave` phase last frame? (dawn = Wave→Prep edge).
+    prev_wave: bool,
+    /// Was the title screen up last frame? (run start = StartScreen→Playing edge).
+    prev_on_menu: bool,
+    /// Has the first frame run? (first-frame day-track roll + instant menu swell).
+    booted: bool,
 }
 
 pub(crate) fn update_music(
@@ -90,7 +104,7 @@ pub(crate) fn update_music(
     mut blight: Local<f32>,
     mut arid: Local<f32>,
     mut menu: Local<f32>,
-    mut prev_wave: Local<bool>,
+    mut flags: Local<DriverFlags>,
     mut day_pick: Local<usize>,
     mut seed: Local<u32>,
     mut q: Query<(&MusicLayer, &mut AudioSink)>,
@@ -103,13 +117,23 @@ pub(crate) fn update_music(
         }
         None => (false, false),
     };
+    let on_menu = *app.get() == AppState::StartScreen;
 
-    // On the dawn edge (Wave→Prep), roll a fresh DAY track so each day sounds different. Picked
-    // once per day so it doesn't flicker mid-day. Night always uses the same single dread track.
-    if !is_wave && *prev_wave {
+    // Roll a fresh DAY track at every "new day" so the day music varies: at each dawn (Wave→Prep
+    // edge), the moment a run BEGINS (title screen → Playing), AND on the very first frame. The
+    // run-start / first-frame rolls are what make **day 1** vary — before, `day_pick` defaulted to
+    // 0 (the bed) and only the dawn edge re-rolled it, so the opening day was always the same bed
+    // while every later day differed.
+    let dawn = !is_wave && flags.prev_wave;
+    let run_started = flags.prev_on_menu && !on_menu;
+    if !flags.booted || dawn || run_started {
+        // Mix the clock into the seed so the pick isn't identical every launch (`frand` self-seeds
+        // a zero state); on the run-start roll the menu dwell time gives real entropy.
+        *seed ^= time.elapsed_secs().to_bits().rotate_left(13).wrapping_add(0x9e37_79b9);
         *day_pick = (frand(&mut seed) * DAY_TRACKS.len() as f32) as usize % DAY_TRACKS.len();
     }
-    *prev_wave = is_wave;
+    flags.prev_wave = is_wave;
+    flags.prev_on_menu = on_menu;
 
     // Ease the mix scalars: combat (daytime ork fight), night (the siege wave), and blight
     // (the hero standing in Gnashfang Hold's mire — the one biome with its own theme).
@@ -130,9 +154,17 @@ pub(crate) fn update_music(
             )
     });
     *arid += ((if in_arid { 1.0 } else { 0.0 }) - *arid) * (dt * NIGHT_FADE).min(1.0);
-    // The title screen has its own theme; swell it (and duck everything else) while on it.
-    let on_menu = *app.get() == AppState::StartScreen;
-    *menu += ((if on_menu { 1.0 } else { 0.0 }) - *menu) * (dt * NIGHT_FADE).min(1.0);
+    // The title screen has its own theme; swell it (and duck everything else) while on it. On the
+    // FIRST frame snap it straight to full so it plays the instant the window opens — it used to
+    // ease up from silence over ~1 s, so the day bed was heard first and the menu theme only crept
+    // in "after a while". After boot it cross-fades normally when leaving / returning to the menu.
+    let menu_target = if on_menu { 1.0 } else { 0.0 };
+    if !flags.booted {
+        *menu = menu_target;
+    } else {
+        *menu += (menu_target - *menu) * (dt * NIGHT_FADE).min(1.0);
+    }
+    flags.booted = true;
     let (h, n, b, a, m) = (*heat, *night, *blight, *arid, *menu);
     let day = cfg.music_vol * (1.0 - n); // day tracks fade out as night rises
 
