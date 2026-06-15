@@ -5,8 +5,10 @@
 //! in-range interactable wins (the keep and bell zones overlap), and a screen-space "E" prompt names
 //! it. Proximity only — no facing check, matching the original.
 //!
-//! Other verbs keep their dedicated keys: **F** chest/forage (`verbs`), **R** recruit (`villagers`),
-//! **I** satchel (`inventory`), **Q/Z/X/C** quick-use (`inventory`).
+//! Other verbs keep their dedicated keys: **F** chest/forage (`verbs`/`chest`), **R** recruit
+//! (`villagers`), **I** satchel (`inventory`), **Q/Y/T** quick-use (`inventory`). The same prompt
+//! chip also surfaces an **F** "Open chest" indicator near an unopened chest — the open itself is
+//! still handled in `chest.rs`; here we only light up the cue (the chip's keycap names E or F).
 
 use bevy::prelude::*;
 
@@ -42,6 +44,9 @@ enum InteractKind {
     RaiseHouse,
     /// A villager jabbed at the hero and a comeback is on offer (`director::OfferedReply`).
     TalkBack,
+    /// Standing next to an unopened treasure chest — the prompt names the **F** key; the open
+    /// itself is handled in `chest.rs` (this kind only drives the indicator, like every other verb).
+    Chest,
 }
 impl InteractKind {
     fn prompt(self) -> &'static str {
@@ -52,6 +57,15 @@ impl InteractKind {
             InteractKind::Build => "Build",
             InteractKind::RaiseHouse => "Raise house",
             InteractKind::TalkBack => "Talk back",
+            InteractKind::Chest => "Open chest",
+        }
+    }
+    /// The keycap shown on the prompt chip. Most contextual actions are on **E**; the world verbs
+    /// keep their own keys (chest/forage/rescue → **F**), so the prompt names the right one.
+    fn key_label(self) -> &'static str {
+        match self {
+            InteractKind::Chest => "F",
+            _ => "E",
         }
     }
 }
@@ -87,6 +101,9 @@ struct PromptRoot;
 struct PromptChip;
 #[derive(Component)]
 struct PromptLabel;
+/// The keycap glyph inside the chip — "E" for contextual actions, "F" for chest/world verbs.
+#[derive(Component)]
+struct PromptKey;
 
 pub struct InteractionPlugin;
 
@@ -122,6 +139,7 @@ fn drive_interaction(
     time: Res<Time>,
     mut offered: ResMut<crate::audio::director::OfferedReply>,
     mut voices: ResMut<crate::audio::director::VoiceManager>,
+    chests: Query<(&crate::chest::Chest, &Transform)>,
 ) {
     let p = hero.pos;
 
@@ -157,6 +175,14 @@ fn drive_interaction(
     if let Some(offer) = offered.0 {
         let at = offer.pos.map_or(p, |v| Vec2::new(v.x, v.z));
         candidates.push((InteractKind::TalkBack, at, TALK_DIST, true));
+    }
+    // Unopened treasure chests within reach — the indicator only (the F-press open lives in
+    // `chest.rs`). Anchored to each chest so the nearest-wins pick names the one you'd open.
+    for (chest, tf) in &chests {
+        if !chest.opened {
+            let at = Vec2::new(tf.translation.x, tf.translation.z);
+            candidates.push((InteractKind::Chest, at, crate::chest::CHEST_INTERACT_DIST, true));
+        }
     }
 
     // Pick the nearest in-range, available interactable.
@@ -218,6 +244,9 @@ fn drive_interaction(
                     voices.accept_reply(offer, time.elapsed_secs());
                 }
             }
+            // Chest is opened by `chest.rs` on its own F key — this branch only ever shows the
+            // prompt, so an E press here is a deliberate no-op.
+            InteractKind::Chest => {}
         }
     }
 }
@@ -271,7 +300,7 @@ fn setup_prompt(mut commands: Commands, fonts: Res<UiFonts>) {
                     widgets::keycap_paint(),
                 ))
                 .with_children(|k| {
-                    k.spawn(label(&fonts.extrabold, "E", 12.0, rgba(255, 224, 170, 0.92)));
+                    k.spawn((label(&fonts.extrabold, "E", 12.0, rgba(255, 224, 170, 0.92)), PromptKey));
                 });
                 p.spawn((label(&fonts.bold, "Upgrades", 14.0, GOLD), PromptLabel));
             });
@@ -286,7 +315,8 @@ fn update_prompt(
     modal: Option<Res<State<Modal>>>,
     mut root_q: Query<&mut Node, With<PromptRoot>>,
     mut chip_q: Query<(&mut BorderColor, &mut BackgroundColor), With<PromptChip>>,
-    mut label_q: Query<(&mut Text, &mut TextColor), With<PromptLabel>>,
+    mut label_q: Query<(&mut Text, &mut TextColor), (With<PromptLabel>, Without<PromptKey>)>,
+    mut key_q: Query<&mut Text, (With<PromptKey>, Without<PromptLabel>)>,
 ) {
     let playing = modal.map_or(false, |m| *m.get() == Modal::None);
     let kind = if playing { active.kind } else { None };
@@ -295,6 +325,13 @@ fn update_prompt(
     }
     let Some(k) = kind else { return };
     let blocked = active.blocked.as_deref();
+
+    // Name the key on the chip (E for contextual, F for chest) — only rewrite on a change.
+    if let Ok(mut kt) = key_q.single_mut() {
+        if kt.as_str() != k.key_label() {
+            **kt = k.key_label().to_string();
+        }
+    }
 
     if let Ok((mut t, mut col)) = label_q.single_mut() {
         let want = match blocked {

@@ -95,7 +95,9 @@ pub(crate) struct ChestLid;
 /// save-restore pass so a loaded looted chest shows its lid open.
 pub(crate) const CHEST_LID_OPEN: f32 = -1.7;
 
-const CHEST_INTERACT_DIST: f32 = 2.2;
+/// How close the hero must stand to open a chest (F). Also drives the on-screen "F Open chest"
+/// prompt in `interaction.rs`, so the two stay in lock-step.
+pub(crate) const CHEST_INTERACT_DIST: f32 = 2.2;
 
 /// A chest lid swinging on its hinge: opening flings it past the catch with an overshoot
 /// (treasure!), re-closing (cache respawn) is a plain ease. The save-restore pass still sets a
