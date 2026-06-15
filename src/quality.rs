@@ -33,7 +33,7 @@
 //! hardware-aware default.
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
-use bevy::core_pipeline::prepass::NormalPrepass;
+use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::light::{
     CascadeShadowConfig, DirectionalLightShadowMap, FogVolume, VolumetricFog, VolumetricLight,
 };
@@ -213,6 +213,18 @@ struct PresetVals {
     /// drops it: it's a subtle 0.15-strength cosmetic, and dropping it is what frees the normal
     /// prepass above (outline is the only non-SSAO normal consumer).
     outline: bool,
+    /// Whether the bloom pass runs. Low removes the `Bloom` component entirely — the down/upsample
+    /// mip chain is a fixed ~1.5 ms cost on an iGPU regardless of intensity, so intensity 0 would
+    /// NOT save it; only dropping the component skips the passes.
+    bloom_on: bool,
+    /// Whether the bokeh DoF runs. Low removes the `Dof` component (its ViewQuery stops matching,
+    /// so the pass is skipped) AND — since nothing else then needs prepass depth (SSAO + outline
+    /// are already off on Low) — lets [`apply_quality`] strip `DepthPrepass` too (~3 ms).
+    dof_on: bool,
+    /// Override the shadow cascade COUNT. Fewer cascades = fewer per-cascade shadow re-draw passes
+    /// (each is its own GPU pass in the F2 profiler). `None` keeps the authored count. Only honoured
+    /// on the rebuild path (alongside `cascade_far`).
+    cascades_count: Option<usize>,
 }
 
 fn preset(quality: GraphicsQuality) -> PresetVals {
@@ -229,6 +241,9 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             cascade_far: None,
             normal_prepass: true, // SSAO consumes normals
             outline: true,
+            bloom_on: true,
+            dof_on: true,
+            cascades_count: None,
         },
         GraphicsQuality::Ultra => PresetVals {
             god_rays: true,
@@ -248,6 +263,9 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             cascade_far: Some(190.0),
             normal_prepass: true, // SSAO + outline both consume normals
             outline: true,
+            bloom_on: true,
+            dof_on: true,
+            cascades_count: None,
         },
         // Low: tuned for integrated GPUs. Key savings vs High:
         //   • SSAO removed (None): ~4.3 ms saved — the depth-buffer walk happens regardless of
@@ -258,9 +276,16 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
         //   • Toon outline OFF + `NormalPrepass` stripped: the only two normal-prepass consumers
         //     are SSAO (already off) and the outline; with both gone the normal prepass is pure
         //     waste, so we drop the component. The outline is a subtle 0.15-strength cosmetic and
-        //     isn't worth the normal write + fullscreen edge pass on an iGPU. (DoF still reads
-        //     prepass DEPTH, so `DepthPrepass` stays — see `normal_prepass`/`outline` docs.)
-        // Manual cycling Low → High/Ultra re-inserts SSAO + the outline + the normal prepass.
+        //     isn't worth the normal write + fullscreen edge pass on an iGPU.
+        //   • Bloom OFF: the mip down/upsample chain is a fixed ~1.5 ms on an iGPU.
+        //   • DoF OFF + `DepthPrepass` stripped: with SSAO, outline AND DoF all off, NOTHING
+        //     consumes prepass depth anymore, so the whole early depth prepass (~3 ms) goes too.
+        //   • 2 shadow cascades (vs authored 4): halves the per-cascade shadow re-draw passes —
+        //     each cascade is its own GPU pass. 2 still covers near + mid where shadows read.
+        // Net vs the old Low: ~no-bloom (1.5) + no-prepass/DoF (~3) + 2 fewer cascade passes (~3),
+        // plus the freed VRAM (prepass depth texture + bloom mips + 2 shadow maps) eases the
+        // integrated-GPU memory pressure that was forcing it to thrash.
+        // Manual cycling Low → High/Ultra re-inserts SSAO + outline + normal prepass + bloom + DoF.
         GraphicsQuality::Low => PresetVals {
             god_rays: false,
             steps: 32,
@@ -272,6 +297,9 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             cascade_far: Some(100.0),
             normal_prepass: false,
             outline: false,
+            bloom_on: false,
+            dof_on: false,
+            cascades_count: Some(2),
         },
     }
 }
@@ -285,7 +313,7 @@ fn apply_quality(
     cam: Query<Entity, With<Camera3d>>,
     mut cam_fog: Query<&mut VolumetricFog>,
     mut fog_vol: Query<&mut FogVolume>,
-    mut bloom: Query<&mut Bloom>,
+    bloom: Query<&Bloom>,
     mut cascades: Query<&mut CascadeShadowConfig>,
     mut smaa: Query<&mut Smaa>,
     mut shadowmap: ResMut<DirectionalLightShadowMap>,
@@ -321,9 +349,6 @@ fn apply_quality(
     for mut fv in fog_vol.iter_mut() {
         *fv = p.fog.clone().unwrap_or_else(|| defaults.fog_volume.clone().unwrap_or_default());
     }
-    for mut b in bloom.iter_mut() {
-        b.intensity = p.bloom.unwrap_or(defaults.bloom_intensity);
-    }
     for mut c in cascades.iter_mut() {
         let Some(auth) = defaults.cascades.as_ref() else { continue };
         *c = match p.cascade_far {
@@ -331,7 +356,7 @@ fn apply_quality(
             // the first cascade keeps its authored reach (near-shadow texel density unchanged),
             // the in-between splits re-space exponentially toward the new horizon.
             Some(far) => bevy::light::CascadeShadowConfigBuilder {
-                num_cascades: auth.bounds.len(),
+                num_cascades: p.cascades_count.unwrap_or(auth.bounds.len()),
                 minimum_distance: auth.minimum_distance,
                 maximum_distance: far,
                 first_cascade_far_bound: auth.bounds.first().copied().unwrap_or(12.0),
@@ -378,6 +403,35 @@ fn apply_quality(
             e.insert(NormalPrepass);
         } else {
             e.remove::<NormalPrepass>();
+        }
+
+        // Bloom: Low removes the component so the mip down/upsample chain is skipped entirely
+        // (a fixed iGPU cost regardless of intensity); High/Ultra (re)insert it at their intensity.
+        if p.bloom_on {
+            e.insert(Bloom {
+                intensity: p.bloom.unwrap_or(defaults.bloom_intensity),
+                ..Bloom::NATURAL
+            });
+        } else {
+            e.remove::<Bloom>();
+        }
+
+        // Bokeh DoF: Low removes the `Dof` component (DofNode's ViewQuery stops matching → pass
+        // skipped); High/Ultra restore it.
+        if p.dof_on {
+            e.insert(crate::dof::default_dof());
+        } else {
+            e.remove::<crate::dof::Dof>();
+        }
+
+        // Depth prepass: needed ONLY by DoF, SSAO, or the outline. When all three are off (Low),
+        // strip it — that's the ~3 ms `early prepass` in the F2 profiler. (SSAO `#[require]`s it,
+        // so when SSAO is on it'd be re-added regardless; we manage it explicitly for the Low case.)
+        let needs_depth = p.dof_on || p.ao.is_some() || p.outline;
+        if needs_depth {
+            e.insert(DepthPrepass);
+        } else {
+            e.remove::<DepthPrepass>();
         }
     }
 
