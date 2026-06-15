@@ -1,3 +1,8 @@
+// Release builds use the Windows GUI subsystem so NO console/terminal window opens alongside the
+// game window for players who install it. Debug builds keep the console so `cargo run` still shows
+// tracing logs. (The attribute is a no-op on non-Windows targets.)
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! Warbell (formerly "D: Tileworld") — a Bevy 0.18 game. A knight defends a central
 //! castle against night-wave ork sieges across a five-biome island: real-time combat,
 //! economy, an upgrade tree, inventory, villagers, bloodline succession, and wildlife, on
