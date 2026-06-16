@@ -1,3 +1,10 @@
+# Secrets — NEVER commit signing certs / private keys (a code-signing .pfx was once
+# committed and had to be purged from history; this keeps it from coming back).
+*.pfx
+*.p12
+*.pem
+*.key
+
 # Rust build output
 /target
 /target-hero
