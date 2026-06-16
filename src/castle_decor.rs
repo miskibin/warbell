@@ -12,9 +12,12 @@
 //! textured materials at local origin (base y = 0, front +Z), baked to a world spot by
 //! [`build`], and revealed by [`sync_decor`] off the live [`Defenses`] / [`EconomyState`] /
 //! [`Upgrades`] / town state (flag-driven, so staged `FOREST_DEFEND` shots and loaded saves
-//! both show the right dressing). Decorative only — NO collision (blockers are append-only),
-//! and every spot is hand-picked clear of the keep, bell, gate lanes, torches, training
-//! dummies, house slots and the path network.
+//! both show the right dressing). Each piece is **solid**: [`sync_decor`] registers a tight
+//! oriented collision box ([`DecorSolid`]) in [`crate::blockers`] the first frame the piece is
+//! shown, so the hero (and AI) route around the props instead of walking through them — lazy +
+//! once-only because the blocker set is append-only (same model as `castle::sync_castle`). Every
+//! spot is hand-picked clear of the keep, bell, gate lanes, torches, training dummies, house
+//! slots and the path network.
 
 use bevy::prelude::*;
 
@@ -54,6 +57,20 @@ pub struct Decor {
     gate: DecorGate,
 }
 
+/// Ground collision footprint for a set piece — local half-extents `(hw, hd)`, rotated by the
+/// piece's `yaw`. Attached to ONE part per piece (set dressing was decorative-only before; now
+/// the chunky props are solid so the hero can't walk through the market stock, armory, shrine,
+/// benches, …). [`sync_decor`] registers a matching oriented box in [`crate::blockers`] the first
+/// time the piece is *shown*, then drops this component so it registers exactly once. A biome
+/// rebuild despawns + respawns the piece with the component fresh and `blockers::reset` wipes the
+/// boxes, so collision comes back in lock-step (same lazy-on-reveal model as `castle::sync_castle`).
+#[derive(Component, Clone, Copy)]
+struct DecorSolid {
+    hw: f32,
+    hd: f32,
+    yaw: f32,
+}
+
 pub struct CastleDecorPlugin;
 
 impl Plugin for CastleDecorPlugin {
@@ -72,7 +89,14 @@ fn sync_decor(
     eco: Res<EconomyState>,
     town: Res<crate::town::TownRes>,
     mut commands: Commands,
-    mut q: Query<(Entity, &Decor, &mut Visibility, &mut Transform, Option<&crate::build_fx::RevealAt>)>,
+    mut q: Query<(
+        Entity,
+        &Decor,
+        &mut Visibility,
+        &mut Transform,
+        Option<&crate::build_fx::RevealAt>,
+        Option<&DecorSolid>,
+    )>,
     mut seeded: Local<bool>,
 ) {
     // Construction feedback (rise + dust) only on a live flag flip — never on the first pass
@@ -81,7 +105,7 @@ fn sync_decor(
         && (up.is_changed() || def.is_changed() || eco.is_changed() || town.is_changed());
     *seeded = true;
     let mut dust: Vec<Vec3> = Vec::new();
-    for (e, d, mut vis, mut tf, at) in &mut q {
+    for (e, d, mut vis, mut tf, at, solid) in &mut q {
         let show = match d.gate {
             DecorGate::Always => true,
             DecorGate::House(n) => town.0.houses > n,
@@ -106,6 +130,16 @@ fn sync_decor(
                 }
             }
         }
+        // Lazy, once-only collision: register the piece's oriented box the first frame it shows,
+        // then drop the marker so it never double-registers (the box is append-only). Independent
+        // of `live` so it also covers the day-one `Always` pieces and a loaded save that boots with
+        // gated pieces already revealed.
+        if show {
+            if let (Some(solid), Some(crate::build_fx::RevealAt(pos))) = (solid, at) {
+                crate::blockers::add_obb(pos.x, pos.z, solid.hw, solid.hd, solid.yaw);
+                commands.entity(e).remove::<DecorSolid>();
+            }
+        }
         *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
     }
 }
@@ -114,28 +148,39 @@ fn sync_decor(
 
 /// Bake + spawn every dressing set. Called from `castle::build` (same shared materials).
 pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
-    let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate| {
+    // `foot` = local collision half-extents `(hw, hd)` for the set piece, rotated by `yaw`; a
+    // non-positive extent registers no collision (decorative-only). `sync_decor` puts the box in
+    // once the piece is shown. Attached to the FIRST part only so the merged piece gets one box.
+    let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
         let vis = if matches!(gate, DecorGate::Always) { Visibility::Inherited } else { Visibility::Hidden };
-        for (m, slot) in parts {
-            commands.spawn((
+        let solid = (foot.x > 0.0 && foot.y > 0.0).then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
+        for (i, (m, slot)) in parts.into_iter().enumerate() {
+            let mut e = commands.spawn((
                 Mesh3d(meshes.add(bake(m, pos, yaw, Vec3::ONE))),
                 MeshMaterial3d(mats.get(slot)),
                 Transform::default(),
                 vis,
                 Decor { gate },
-                // Authored position — `sync_decor` aims the construction dust burst with it.
+                // Authored position — `sync_decor` aims the construction dust burst + collision box with it.
                 crate::build_fx::RevealAt(pos),
                 BiomeEntity,
             ));
+            if i == 0 {
+                if let Some(s) = solid {
+                    e.insert(s);
+                }
+            }
         }
     };
 
     // ── Day-one life (Always) ────────────────────────────────────────────────────
-    set(notice_board_parts(), Vec3::new(-3.3, 0.0, 4.4), 0.35, DecorGate::Always);
-    set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always);
-    set(market_parts(), Vec3::new(5.3, 0.0, -2.9), 0.7, DecorGate::Always);
-    set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always);
-    set(bench_parts(), Vec3::new(2.6, 0.0, 9.6), 2.8, DecorGate::Always);
+    // Each piece carries a tight collision footprint (local half-extents) — the hero now slides
+    // around the props instead of walking through them. Sized to the prop's solid ground mass.
+    set(notice_board_parts(), Vec3::new(-3.3, 0.0, 4.4), 0.35, DecorGate::Always, Vec2::new(0.7, 0.18));
+    set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::new(0.6, 0.3));
+    set(market_parts(), Vec3::new(5.3, 0.0, -2.9), 0.7, DecorGate::Always, Vec2::new(0.9, 0.7));
+    set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::new(0.62, 0.2));
+    set(bench_parts(), Vec3::new(2.6, 0.0, 9.6), 2.8, DecorGate::Always, Vec2::new(0.62, 0.2));
     for (lx, lz, lyaw) in [
         (2.0, -6.6, 0.0),
         (-2.0, -9.6, std::f32::consts::PI),
@@ -143,46 +188,46 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
         (-9.2, 2.0, -HALF_PI),
         (9.2, -2.0, HALF_PI),
     ] {
-        set(lantern_parts(), Vec3::new(lx, 0.0, lz), lyaw, DecorGate::Always);
+        set(lantern_parts(), Vec3::new(lx, 0.0, lz), lyaw, DecorGate::Always, Vec2::new(0.14, 0.14));
     }
 
     // ── Filled in as the town grows (House(n): shown once houses > n) ───────────
-    set(garden_parts(), Vec3::new(-4.2, 0.0, -9.4), 0.15, DecorGate::House(1));
-    set(woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2));
-    set(laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1));
-    set(garden_parts(), Vec3::new(4.2, 0.0, 9.4), -0.2, DecorGate::House(6));
-    set(laundry_parts(), Vec3::new(10.0, 0.0, 10.2), -0.08, DecorGate::House(7));
+    set(garden_parts(), Vec3::new(-4.2, 0.0, -9.4), 0.15, DecorGate::House(1), Vec2::new(0.6, 0.48));
+    set(woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2), Vec2::new(0.62, 0.32));
+    set(laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1), Vec2::new(1.35, 0.14));
+    set(garden_parts(), Vec3::new(4.2, 0.0, 9.4), -0.2, DecorGate::House(6), Vec2::new(0.6, 0.48));
+    set(laundry_parts(), Vec3::new(10.0, 0.0, 10.2), -0.08, DecorGate::House(7), Vec2::new(1.35, 0.14));
 
     // ── Upgrade set pieces ───────────────────────────────────────────────────────
     // The armory corner west of the plaza: racked spears + shields + a leather stand (tier 1),
     // extended with steel — sword rail + iron stand (tier 2). Arsenal unlocks join on display.
-    set(armory_parts(), Vec3::new(-8.6, 0.0, 3.0), 0.5, DecorGate::ArmsTier(1));
-    set(armory_veteran_parts(), Vec3::new(-8.2, 0.0, 4.9), 0.8, DecorGate::ArmsTier(2));
-    set(axe_display_parts(), Vec3::new(-6.9, 0.0, 6.3), 0.9, DecorGate::Weapon("axe"));
-    set(sword_display_parts(), Vec3::new(-7.9, 0.0, 7.6), 1.1, DecorGate::Weapon("sword_gold"));
-    set(grindstone_parts(), Vec3::new(-5.6, 0.0, 8.4), 0.8, DecorGate::Purchased("hero_dmg_1"));
+    set(armory_parts(), Vec3::new(-8.6, 0.0, 3.0), 0.5, DecorGate::ArmsTier(1), Vec2::new(1.0, 0.4));
+    set(armory_veteran_parts(), Vec3::new(-8.2, 0.0, 4.9), 0.8, DecorGate::ArmsTier(2), Vec2::new(0.9, 0.35));
+    set(axe_display_parts(), Vec3::new(-6.9, 0.0, 6.3), 0.9, DecorGate::Weapon("axe"), Vec2::new(0.32, 0.25));
+    set(sword_display_parts(), Vec3::new(-7.9, 0.0, 7.6), 1.1, DecorGate::Weapon("sword_gold"), Vec2::new(0.3, 0.25));
+    set(grindstone_parts(), Vec3::new(-5.6, 0.0, 8.4), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::new(0.45, 0.32));
 
     // Civic east side: the tax-collector's counting booth; the shrine the heal aura lives in.
-    set(tax_booth_parts(), Vec3::new(8.5, 0.0, 2.9), -0.6, DecorGate::TaxOffice);
-    set(shrine_parts(), Vec3::new(8.0, 0.0, -3.4), -0.8, DecorGate::Shrine);
+    set(tax_booth_parts(), Vec3::new(8.5, 0.0, 2.9), -0.6, DecorGate::TaxOffice, Vec2::new(0.85, 0.6));
+    set(shrine_parts(), Vec3::new(8.0, 0.0, -3.4), -0.8, DecorGate::Shrine, Vec2::new(0.52, 0.42));
 
     // Bounty board inside the north gate — wanted papers for the ork warlords.
-    set(bounty_board_parts(), Vec3::new(3.4, 0.0, -10.4), 0.1, DecorGate::Purchased("eco_bounty"));
+    set(bounty_board_parts(), Vec3::new(3.4, 0.0, -10.4), 0.1, DecorGate::Purchased("eco_bounty"), Vec2::new(0.78, 0.18));
 
     // Reinforced Keep: a mason's scaffold against the keep's west wall + dressed stone waiting.
-    set(scaffold_parts(), Vec3::new(-3.55, 0.0, 0.0), 0.0, DecorGate::Reinforced);
-    set(stone_pile_parts(), Vec3::new(-4.8, 0.0, 1.3), 0.3, DecorGate::Reinforced);
+    set(scaffold_parts(), Vec3::new(-3.55, 0.0, 0.0), 0.0, DecorGate::Reinforced, Vec2::new(0.45, 1.7));
+    set(stone_pile_parts(), Vec3::new(-4.8, 0.0, 1.3), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.5));
 
     // Tower Mastery: a standing fire basket inside each wall corner (the crews work all night).
     for (sx, sz) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-        set(brazier_parts(), Vec3::new(sx * 15.6, 0.0, sz * 10.6), sx * 0.4, DecorGate::TowerMastery);
+        set(brazier_parts(), Vec3::new(sx * 15.6, 0.0, sz * 10.6), sx * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2));
     }
 
     // Merchant Guild: banner + stacked goods dressing the wandering merchant's stall (outside
     // the north wall — snap to the terrain there, the bailey's flat y=0 doesn't reach it).
     let stall_y = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-    set(guild_banner_parts(), Vec3::new(1.3, stall_y(1.3, -16.2), -16.2), 0.2, DecorGate::Guild);
-    set(guild_goods_parts(), Vec3::new(3.8, stall_y(3.8, -16.6), -16.6), -0.5, DecorGate::Guild);
+    set(guild_banner_parts(), Vec3::new(1.3, stall_y(1.3, -16.2), -16.2), 0.2, DecorGate::Guild, Vec2::new(0.16, 0.16));
+    set(guild_goods_parts(), Vec3::new(3.8, stall_y(3.8, -16.6), -16.6), -0.5, DecorGate::Guild, Vec2::new(0.6, 0.5));
 
     // Firelight: flickering pools for the night-burning pieces (the meshes' emissive alone
     // reads flat in the dark). Same pooled flicker as the wall torches.
