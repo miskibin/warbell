@@ -138,10 +138,13 @@ impl Boss {
     /// reach (radius + the hero's 0.22 body ≈ 1.5–1.6) so the player can still stand close enough
     /// to land a swing on the boss's centre.
     pub fn footprint(&self) -> (Vec2, f32) {
+        // Kept just under the hittable ceiling (`r + PLAYER_R 0.22` < the hero's 1.8 melee reach,
+        // so ≤ ~1.36): bumped the slimmer wardens up to a firmer footprint so you stop ON their
+        // bulk instead of clipping a step into it. The golem was already at the ceiling.
         let r = match self.biome {
-            Biome::Rocky => 1.35, // the golem is the widest
-            Biome::Snow => 1.3,
-            _ => 1.15,
+            Biome::Rocky => 1.36, // the golem is the widest — at the hittable limit
+            Biome::Snow => 1.34,
+            _ => 1.3,
         };
         (self.pos, r)
     }

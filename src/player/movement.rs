@@ -94,10 +94,10 @@ fn shove_out_of(hero: &mut Hero, c: Vec2, body_r: f32, cur_y: f32) {
     let push = to / d * (min_d - d);
     let nx = hero.pos.x + push.x;
     let nz = hero.pos.y + push.y;
-    if hero_can_stand(nx, hero.pos.y, PLAYER_R, cur_y) && !blockers::is_blocked(nx, hero.pos.y) {
+    if hero_can_stand(nx, hero.pos.y, PLAYER_R, cur_y) && !blockers::any_within(nx, hero.pos.y, PLAYER_R) {
         hero.pos.x = nx;
     }
-    if hero_can_stand(hero.pos.x, nz, PLAYER_R, cur_y) && !blockers::is_blocked(hero.pos.x, nz) {
+    if hero_can_stand(hero.pos.x, nz, PLAYER_R, cur_y) && !blockers::any_within(hero.pos.x, nz, PLAYER_R) {
         hero.pos.y = nz;
     }
 }
@@ -200,17 +200,19 @@ pub fn player_move(
             * dt;
         let nx = hero.pos.x + move_dir.x * step;
         let nz = hero.pos.y + move_dir.z * step;
-        // Already inside a blocker? (A producer cottage raises its collision box over the very
-        // plot the hero must stand on to build it, sealing him in.) Waive the prop test so he
-        // can walk out — normal collision resumes the moment he's clear.
+        // Collide the hero's whole BODY (radius `PLAYER_R`), not just his centre point: test the
+        // blocker margin so he stops with his shoulder at the surface instead of sinking ~0.22u
+        // into every wall/stone/prop (the "clip a bit / collision is unreliable" feel).
+        // `escaping` stays the STRICT centre test (truly sealed inside a solid — e.g. a cottage box
+        // raised over his build spot), so the body-margin can't be abused to push through a wall.
         let escaping = blockers::is_blocked(hero.pos.x, hero.pos.y);
         if hero_can_step(nx, hero.pos.y, PLAYER_R, hero.y)
-            && (escaping || !blockers::is_blocked(nx, hero.pos.y))
+            && (escaping || !blockers::any_within(nx, hero.pos.y, PLAYER_R))
         {
             hero.pos.x = nx;
         }
         if hero_can_step(hero.pos.x, nz, PLAYER_R, hero.y)
-            && (escaping || !blockers::is_blocked(hero.pos.x, nz))
+            && (escaping || !blockers::any_within(hero.pos.x, nz, PLAYER_R))
         {
             hero.pos.y = nz;
         }

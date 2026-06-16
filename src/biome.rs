@@ -701,8 +701,15 @@ pub fn scatter_region(
                     // A floor drops the small end of a mixed class (a knee-high cobble stays
                     // walk-through even though its big siblings block).
                     if c.block_radius > 0.0 {
-                        let rad = (c.block_radius * s).min(1.0);
-                        if rad >= 0.22 {
+                        let rad = c.block_radius * s;
+                        if rad > 1.0 {
+                            // Too big for a ≤1.0 circle (the neighbour-scan bound), so a big boulder
+                            // used to block only a 1.0 core you could clip straight past. Register a
+                            // box hugging its footprint instead (0.85× so the square corners don't
+                            // over-block a round-ish boulder) — solid near the edges, not a thin core.
+                            let hb = rad * 0.85;
+                            crate::blockers::add_box(cx, cz, hb, hb);
+                        } else if rad >= 0.22 {
                             crate::blockers::add(cx, cz, rad);
                         }
                     }
