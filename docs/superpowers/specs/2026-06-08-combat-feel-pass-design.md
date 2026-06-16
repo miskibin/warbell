@@ -15,6 +15,12 @@ Clip mapping (confirmed by file size; `sword-hit.ogg` is byte-identical to `swor
 - Flesh (creatures): `sword-hit-2.ogg` (old `var-2`).
 - Metallic (stone): `sword-hit-1.ogg` + `sword-hit-3.ogg` (old `var-1`/`var-3`).
 
+> **Update (2026-06-16):** the one-clip flesh rule above is superseded. `sword-hit-{1,2,3}.ogg`
+> are now three fresh steel-on-target takes and the flesh impact picks one at random (still
+> pitch-jittered). The metallic ore clinks moved to `ore-chip-{1,2}.ogg` (the old `var-1`/`var-3`),
+> and the shield block now picks between `block-{1,2}.ogg`. The stale `sword-hit.ogg`/`block.ogg`
+> duplicates were removed. See `SfxBank` in `src/audio/sfx.rs`.
+
 Changes:
 - `SfxBank.hits: Vec<…>` → `flesh: Handle` + `chips: Vec<Handle>`.
 - `AudioCue::Impact{kill}` plays ONLY `flesh`, pitch-jitter ±0.08 (kill = ×0.85 lower, ±0.06).

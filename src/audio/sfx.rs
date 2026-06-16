@@ -60,10 +60,14 @@ impl SfxThrottle {
 #[derive(Resource)]
 pub(crate) struct SfxBank {
     swing: Handle<AudioSource>,
-    /// The meaty blade-on-flesh impact (old `sword-hit-var-2`) — every creature/ork hit uses
-    /// THIS one clip, pitch-jittered so repeats don't sound canned (old game's rule).
-    flesh: Handle<AudioSource>,
-    /// Metallic chips (old `sword-hit-var-{1,3}`) — picked at random for chipping stone (ore).
+    /// The meaty blade-on-flesh impacts (`sword-hit-{1,2,3}`) — every creature/ork hit picks one
+    /// at random and pitch-jitters it, so a flurry of blows never sounds canned. Three steel-on-
+    /// target takes; replaced the old single flesh clip (which the comment used to call out as the
+    /// old game's one-clip rule — we now have proper variation).
+    flesh: Vec<Handle<AudioSource>>,
+    /// Metallic chips (`ore-chip-{1,2}`) — picked at random for chipping stone (ore). These are the
+    /// old `sword-hit-var-{1,3}` clinks, relocated when the `sword-hit-*` namespace became the
+    /// flesh pool — the ore pick must stay a dry metallic clink, not a fleshy thud.
     chips: Vec<Handle<AudioSource>>,
     /// Wood-axe chops landing on a tree (three takes, picked at random + pitch-jittered per
     /// swing so a long chop session never loops one clip).
@@ -74,7 +78,9 @@ pub(crate) struct SfxBank {
     /// Just the dry wood crack/snap (`wood-crack.ogg`) — the cactus felling sound (a saguaro
     /// has no heavy trunk to crash, so it gets the crack alone).
     wood_crack: Handle<AudioSource>,
-    block: Handle<AudioSource>,
+    /// Shield-block impacts (`block-{1,2}`) — sharp steel-on-steel parries; picked at random +
+    /// pitch-jittered so repeated blocks don't sound stamped.
+    blocks: Vec<Handle<AudioSource>>,
     /// Sand-Dash whoosh — a compressed-air burst as the hero blinks forward (warden art).
     dash: Handle<AudioSource>,
     /// Bramble-Sweep burst — an expanding circular energy wave (warden art).
@@ -109,8 +115,11 @@ pub(crate) struct SfxBank {
 pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
     commands.insert_resource(SfxBank {
         swing: asset.load("audio/sword-swing.ogg"),
-        flesh: asset.load("audio/sword-hit-2.ogg"),
-        chips: ["audio/sword-hit-1.ogg", "audio/sword-hit-3.ogg"]
+        flesh: ["audio/sword-hit-1.ogg", "audio/sword-hit-2.ogg", "audio/sword-hit-3.ogg"]
+            .iter()
+            .map(|f| asset.load(*f))
+            .collect(),
+        chips: ["audio/ore-chip-1.ogg", "audio/ore-chip-2.ogg"]
             .iter()
             .map(|f| asset.load(*f))
             .collect(),
@@ -120,7 +129,7 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .collect(),
         tree_fall: asset.load("audio/tree-fall.ogg"),
         wood_crack: asset.load("audio/wood-crack.ogg"),
-        block: asset.load("audio/block.ogg"),
+        blocks: ["audio/block-1.ogg", "audio/block-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         dash: asset.load("audio/sand-dash.ogg"),
         sweep: asset.load("audio/bramble-sweep.ogg"),
         slams: ["audio/ground-slam-1.ogg", "audio/ground-slam-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
@@ -198,10 +207,10 @@ pub(crate) fn play_cues(
         match *cue {
             AudioCue::Swing => one_shot(&mut commands, bank.swing.clone(), 0.30 * sfx, jitter(&mut seed, 0.12)),
             AudioCue::Impact { kill } => {
-                // Always the one flesh clip; a kill plays it louder + a touch lower (heavier).
+                // Random flesh take + pitch jitter; a kill plays it louder + a touch lower (heavier).
                 let v = if kill { 0.62 } else { 0.50 } * sfx;
                 let p = if kill { jitter(&mut seed, 0.06) * 0.85 } else { jitter(&mut seed, 0.08) };
-                one_shot(&mut commands, bank.flesh.clone(), v, p);
+                one_shot(&mut commands, pick(&bank.flesh, &mut seed), v, p);
             }
             // Metallic chip per ore pick-swing — random clang + wide pitch jitter so a long mine
             // never repeats the same note (old game's `playPick`).
@@ -221,7 +230,7 @@ pub(crate) fn play_cues(
                 let vol = if cactus { 0.6 } else { 0.85 } * sfx;
                 one_shot(&mut commands, clip, vol, jitter(&mut seed, 0.08));
             }
-            AudioCue::Block => one_shot(&mut commands, bank.block.clone(), 0.45 * sfx, jitter(&mut seed, 0.1)),
+            AudioCue::Block => one_shot(&mut commands, pick(&bank.blocks, &mut seed), 0.45 * sfx, jitter(&mut seed, 0.1)),
             // Sand-Dash whoosh — punchy, tiny pitch jitter so repeat dashes don't sound stamped.
             AudioCue::Dash => one_shot(&mut commands, bank.dash.clone(), 0.6 * sfx, jitter(&mut seed, 0.06)),
             // Bramble-Sweep — the expanding energy-wave burst.
@@ -277,7 +286,7 @@ pub(crate) fn play_cues(
                     continue;
                 }
                 spatial_shot(&mut commands, bank.swing.clone(), 0.16 * sfx, jitter(&mut seed, 0.14), at);
-                spatial_shot(&mut commands, bank.flesh.clone(), 0.26 * sfx, jitter(&mut seed, 0.10), at);
+                spatial_shot(&mut commands, pick(&bank.flesh, &mut seed), 0.26 * sfx, jitter(&mut seed, 0.10), at);
             }
             // Sampled herb-pick rustle — same 0.35 gain the synth blip used.
             AudioCue::Forage => {
