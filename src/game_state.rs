@@ -16,7 +16,7 @@
 
 use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::prelude::*;
-use bevy::window::{PrimaryWindow, WindowMode, WindowPosition};
+use bevy::window::{PrimaryWindow, WindowMode};
 
 use crate::quality::GraphicsQuality;
 use crate::ui::anim::{anim, anim_btn, AnimKind};
@@ -55,35 +55,15 @@ pub enum Modal {
     BossReward,
 }
 
-/// Env var the relaunched child reads at startup to know what to boot into (see
-/// [`apply_boot_intent`]): `"fresh:<difficulty>"` for a clean run. (A *Continue* no longer
-/// relaunches — it resets in-process — so there is no load payload here anymore.)
-const ENV_RESTART: &str = "WARBELL_RESTART";
-
-/// What a mid-session "(re)enter a run" action wants the relaunched process to boot into.
-/// Only **fresh runs** relaunch — a *Continue* now resets in-process (see [`begin_continue`]),
-/// so there is no `Continue` variant here anymore.
-#[derive(Clone, Copy)]
-pub enum BootIntent {
-    /// A clean run at this difficulty (the **full reset** — the persistent world is rebuilt fresh
-    /// by the child's normal startup, so chopped trees / opened chests / built houses all return).
-    Fresh(crate::siege::Difficulty),
-}
-
-/// Set by the fresh-run buttons (New Game / Play Again / pause Restart) to request a **true process
-/// relaunch** — the only way to get an exactly-as-cold-launch reset, since the island is built once
-/// at `Startup` and is otherwise persistent. [`do_process_restart`] consumes it: spawn
-/// `current_exe` carrying the intent in [`ENV_RESTART`] (plus the live window geometry so the child
-/// reopens *in place*), then exit. Start-screen entries skip this (the world is already fresh
-/// moments after launch) and start in-process; *Continue* skips it too (resets in-process).
+/// Set by the fresh-run buttons (New Game / Play Again / pause Restart) to request a **full
+/// in-process reset** at the carried difficulty — no relaunch, the window stays. [`drive_fresh_run`]
+/// consumes it: route through `StartScreen → Playing` (whose `OnExit(StartScreen)` runs every
+/// `reset_*` system — hero / economy / town / upgrades / siege / lives / quests), re-arm the world
+/// rebuild (`biome::PendingBuild`, which despawns all `BiomeEntity` and re-runs `worldmap::build`),
+/// sweep the battlefield, and hold the loading veil over the hitch. A cold-boot New Game skips this
+/// (the world is already fresh); *Continue* skips it too (resumes the saved world in place).
 #[derive(Resource, Default)]
-pub struct RestartProcess(pub Option<BootIntent>);
-
-/// Env var carrying the parent window's geometry across a relaunch (`"x,y,w,h,fullscreen"`), so the
-/// child reopens at the same place/size/mode instead of an OS-default spot — the relaunch then
-/// reads as an in-place reload, not a stray new window. `x`/`y` are `-99999` when the position
-/// isn't yet resolved. Parsed in `main.rs` before the window is created.
-const ENV_WINGEO: &str = "WARBELL_WINGEO";
+pub struct FreshRunPending(pub Option<crate::siege::Difficulty>);
 
 /// Flags an **in-process Continue** (resume last night / load last save) so [`clear_battlefield`]
 /// sweeps the dead run's transient entities (invaders, marchers, bolts, corpses) on the next
@@ -93,17 +73,16 @@ const ENV_WINGEO: &str = "WARBELL_WINGEO";
 pub struct ContinueInPlace(pub bool);
 
 /// The "Overwrite saved game?" confirm dialog. `Some(_)` = open (the bool, once "from pause", is now
-/// vestigial — [`confirm_input`] decides in-process vs. relaunch from the live `AppState`). `None` =
-/// closed. Every fresh-run button routes through this whenever a save exists, so a misclick can't
-/// wipe a long run.
+/// vestigial). `None` = closed. Every fresh-run button routes through this whenever a save exists,
+/// so a misclick can't wipe a long run; on confirm it starts the fresh run (in-process).
 #[derive(Resource, Default)]
 pub struct ConfirmWipe(pub Option<bool>);
 
 /// True once a run is live (entered `Playing`) and not yet ended, so the start screen — reachable
 /// mid-run via the pause/game-over **Main Menu** button — knows to offer **RESUME** (drop back into
-/// the frozen run) and, crucially, to route **New Game** through a full process relaunch rather than
-/// the cold-boot in-process start (which would resume a *dirty* world). Set true `OnEnter(Playing)`,
-/// false `OnEnter(GameOver)`.
+/// the frozen run) and, crucially, to route **New Game** through a full in-process reset
+/// ([`FreshRunPending`]) rather than the cold-boot direct start (which would resume a *dirty*
+/// world). Set true `OnEnter(Playing)`, false `OnEnter(GameOver)`.
 #[derive(Resource, Default)]
 pub struct RunInProgress(pub bool);
 
@@ -115,14 +94,12 @@ impl Plugin for GameStatePlugin {
         let boot = if skip_menu() { AppState::Playing } else { AppState::StartScreen };
         app.insert_state(boot)
             .add_sub_state::<Modal>()
-            .init_resource::<RestartProcess>()
+            .init_resource::<FreshRunPending>()
             .init_resource::<ConfirmWipe>()
             .init_resource::<ContinueInPlace>()
             .init_resource::<RunInProgress>()
-            // Honor a relaunch intent from the parent process (fresh run), then drive any pending
-            // relaunch to completion. Both ungated (work over every screen).
-            .add_systems(Startup, apply_boot_intent)
-            .add_systems(Update, do_process_restart)
+            // Drive a pending in-process fresh run to completion (ungated — works over every screen).
+            .add_systems(Update, drive_fresh_run)
             // Sweep the dead run's battlefield the frame an in-process Continue lands in Playing.
             .add_systems(Update, clear_battlefield.run_if(in_state(AppState::Playing)))
             // Overwrite-confirm dialog: reconcile its overlay + resolve its input. Ungated so it
@@ -169,82 +146,51 @@ fn skip_menu() -> bool {
         || std::env::var("FOREST_BIOME").is_ok()
 }
 
-// ── Process relaunch (the "full reset", carried across a fresh process) ──────────────────
+// ── In-process fresh run (the "full reset", no relaunch) ─────────────────────────────────
 
-/// Decode a difficulty token written by [`diff_name`] (the inverse used on the relaunch handoff).
-fn parse_diff(s: &str) -> crate::siege::Difficulty {
-    use crate::siege::Difficulty::*;
-    match s {
-        "Easy" => Easy,
-        "Hard" => Hard,
-        _ => Normal,
-    }
-}
-
-/// Child-side: if the parent relaunched us with an intent in [`ENV_RESTART`], skip the menu and
-/// boot straight into the requested run. We DON'T short-circuit the StartScreen→Playing transition
-/// — letting it fire normally runs every `OnExit(StartScreen)` fresh-run reset (so the difficulty
-/// handicaps apply), and `apply_pending_load` (Update) overwrites them afterwards for a Continue.
-fn apply_boot_intent(
-    mut siege: ResMut<crate::siege::Siege>,
-    mut pending: ResMut<crate::savegame::PendingLoad>,
-    mut next_app: ResMut<NextState<AppState>>,
-) {
-    let Ok(intent) = std::env::var(ENV_RESTART) else { return };
-    // Only fresh runs relaunch now (Continue resets in-process), so the sole payload is `fresh:…`.
-    let Some(diff) = intent.strip_prefix("fresh:") else { return };
-    siege.difficulty = parse_diff(diff);
-    pending.0 = None; // a clean run, never a load
-    next_app.set(AppState::Playing);
-}
-
-/// Parent-side: when a fresh-run relaunch is requested, spawn a fresh copy of ourselves carrying
-/// the boot intent (+ this window's geometry so the child reopens in place), then exit. The new
-/// process rebuilds the entire world from scratch — the one reliable "exactly as if the app were
-/// started again" reset.
+/// Drive a [`FreshRunPending`] request to a clean, in-process new run — the window never closes.
 ///
-/// Takes the intent (`req.0.take()`) so this fires **exactly once**: `AppExit` may not tear the
-/// process down for a frame or two (GPU/window teardown latency on Windows), and re-running with
-/// the intent still set would spawn a *second* child → a stray extra window. Draining it first
-/// makes every later frame a no-op.
-fn do_process_restart(
-    mut req: ResMut<RestartProcess>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut exit: MessageWriter<AppExit>,
+/// The trick: every fresh-run path is funnelled through the `StartScreen → Playing` transition,
+/// whose `OnExit(StartScreen)` already runs the full suite of `reset_*` systems (hero, economy,
+/// inventory, town, upgrades, siege, lives, quests, graves). So we only have to (1) get to the
+/// start screen, (2) re-arm the world-geometry rebuild + sweep the battlefield, then (3) drop into
+/// `Playing` — and hold the loading veil over the whole thing so the brief menu flash + rebuild
+/// hitch are invisible.
+///
+/// Runs over **every** screen (game-over Play Again, pause Restart, mid-run New Game). Idempotent:
+/// it re-raises the veil each frame it's pending, and clears the request the frame it lands.
+fn drive_fresh_run(
+    mut req: ResMut<FreshRunPending>,
+    app: Res<State<AppState>>,
+    mut next_app: ResMut<NextState<AppState>>,
+    mut veil: ResMut<crate::loading::Veil>,
+    mut world_ready: ResMut<crate::biome::WorldReady>,
+    mut pending_build: ResMut<crate::biome::PendingBuild>,
+    mut pending_load: ResMut<crate::savegame::PendingLoad>,
+    mut cont: ResMut<ContinueInPlace>,
+    siege: Option<ResMut<crate::siege::Siege>>,
+    time: Res<Time>,
 ) {
-    let Some(intent) = req.0.take() else { return };
-    let payload = match intent {
-        BootIntent::Fresh(d) => format!("fresh:{}", diff_name(d)),
-    };
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            error!("full reset: current_exe() failed, cannot relaunch: {e}");
-            return;
-        }
-    };
-    let mut cmd = std::process::Command::new(exe);
-    cmd.env(ENV_RESTART, payload);
-    if let Ok(w) = windows.single() {
-        cmd.env(ENV_WINGEO, window_geometry(w));
-    }
-    match cmd.spawn() {
-        Ok(_) => {
-            exit.write(AppExit::Success); // child is up; tear this process down
-        }
-        Err(e) => error!("full reset: relaunch failed: {e}"),
-    }
-}
+    let Some(diff) = req.0 else { return };
+    // Keep the cover up across the hop + rebuild (hides the 1-frame start-screen flash).
+    veil.raise(time.elapsed_secs());
 
-/// Encode a window's geometry as `"x,y,w,h,fullscreen"` for the relaunch handoff ([`ENV_WINGEO`]).
-/// Position is `-99999,-99999` when winit hasn't resolved an explicit one yet (child then centres).
-fn window_geometry(w: &Window) -> String {
-    let (x, y) = match w.position {
-        WindowPosition::At(p) => (p.x, p.y),
-        _ => (-99999, -99999),
-    };
-    let fs = u8::from(!matches!(w.mode, WindowMode::Windowed));
-    format!("{x},{y},{},{},{fs}", w.resolution.physical_width(), w.resolution.physical_height())
+    if *app.get() != AppState::StartScreen {
+        // Hop to the title first; its OnExit is what runs the fresh-run resets. Stay pending.
+        next_app.set(AppState::StartScreen);
+        return;
+    }
+
+    // On the start screen now: arm the rebuild, then drop into Playing (firing OnExit resets).
+    if let Some(mut siege) = siege {
+        siege.difficulty = diff; // reset_siege preserves difficulty across its wipe
+    }
+    pending_load.0 = None; // a fresh run, never a load — don't let a stale save overwrite the reset
+    world_ready.0 = false; // hold the veil until the rebuilt world lands
+    pending_build.0 = true; // re-run worldmap::build (despawn all BiomeEntity + rebuild fresh)
+    cont.0 = true; // clear_battlefield sweeps invaders / marchers / bolts / corpses on the Playing frame
+    next_app.set(AppState::Playing);
+    req.0 = None;
 }
 
 /// Shared by every **Continue / Load last save** entry point (game-over, the C key, pause→Load):
@@ -346,30 +292,30 @@ fn watch_end(
 }
 
 /// A run just went live — remember it so the start screen (reachable mid-run) offers RESUME and
-/// routes New Game through a relaunch instead of a dirty in-process start.
+/// routes New Game through an in-process reset instead of a dirty direct start.
 fn mark_run_active(mut run: ResMut<RunInProgress>) {
     run.0 = true;
 }
 
 /// The run ended (Victory/Defeat) — the start screen reached from game-over has nothing live to
-/// RESUME, and New Game from there is a fresh relaunch as before.
+/// RESUME; New Game from there is a fresh in-process reset.
 fn clear_run_active(mut run: ResMut<RunInProgress>) {
     run.0 = false;
 }
 
 /// Start a fresh run from the start screen, picking the *correct* reset path: at cold boot the
-/// world is already fresh, so go in-process; if a run is already live (the menu was reached
-/// mid-session), only a full process relaunch truly rebuilds the world (the in-process path would
-/// resume the dirty world). Mirrors the routing in `confirm_input`.
+/// world is already fresh, so drop straight into `Playing`; if a run is already live (the menu was
+/// reached mid-session), request a full **in-process** reset via [`FreshRunPending`] (the in-process
+/// world is dirty, so it must be rebuilt). Mirrors the routing in `confirm_input`.
 fn begin_new_game(
     run_active: bool,
     cur_diff: crate::siege::Difficulty,
     pending: &mut crate::savegame::PendingLoad,
     next_app: &mut NextState<AppState>,
-    restart_proc: &mut RestartProcess,
+    fresh: &mut FreshRunPending,
 ) {
     if run_active {
-        restart_proc.0 = Some(BootIntent::Fresh(cur_diff)); // full reset via relaunch
+        fresh.0 = Some(cur_diff); // mid-run: full in-process reset (drive_fresh_run rebuilds the world)
     } else {
         pending.0 = None; // cold boot: world already fresh, start in-process
         next_app.set(AppState::Playing);
@@ -384,7 +330,7 @@ fn start_screen_input(
     mut confirm: ResMut<ConfirmWipe>,
     run: Res<RunInProgress>,
     siege: Option<Res<crate::siege::Siege>>,
-    mut restart_proc: ResMut<RestartProcess>,
+    mut fresh: ResMut<FreshRunPending>,
 ) {
     // While the overwrite dialog is up, it owns the keyboard (see `confirm_input`).
     if confirm.0.is_some() {
@@ -399,7 +345,7 @@ fn start_screen_input(
             confirm.0 = Some(false); // ask before wiping the existing run
         } else {
             let cur_diff = current_difficulty(siege.as_deref());
-            begin_new_game(run.0, cur_diff, &mut pending, &mut next_app, &mut restart_proc);
+            begin_new_game(run.0, cur_diff, &mut pending, &mut next_app, &mut fresh);
         }
     }
 }
@@ -435,7 +381,7 @@ const DIFFS: [crate::siege::Difficulty; 3] = [
 ];
 
 /// The live siege difficulty, or `Normal` when no siege resource exists yet (start screen /
-/// between runs). Centralises the missing-resource fallback used to seed `BootIntent::Fresh`.
+/// between runs). Centralises the missing-resource fallback used to seed a fresh-run request.
 /// Call with `siege.as_deref()` so the `Option<Res<Siege>>` isn't consumed.
 fn current_difficulty(siege: Option<&crate::siege::Siege>) -> crate::siege::Difficulty {
     siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal)
@@ -443,7 +389,7 @@ fn current_difficulty(siege: Option<&crate::siege::Siege>) -> crate::siege::Diff
 
 fn gameover_input(
     keys: Res<ButtonInput<KeyCode>>,
-    mut restart_proc: ResMut<RestartProcess>,
+    mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
@@ -457,14 +403,14 @@ fn gameover_input(
     let cur_diff = current_difficulty(siege.as_deref());
     let defeat = !matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
     // C resumes last night in-process (defeat + save only); Enter starts a fresh run (confirming
-    // first if it'd overwrite), which relaunches the process for a clean world.
+    // first if it'd overwrite) — a full in-process reset, no relaunch.
     if defeat && save.0 && keys.just_pressed(KeyCode::KeyC) {
         begin_continue(&mut pending, &mut next_app, &mut cont);
     } else if keys.just_pressed(KeyCode::Enter) {
         if save.0 {
             confirm.0 = Some(false);
         } else {
-            restart_proc.0 = Some(BootIntent::Fresh(cur_diff));
+            fresh.0 = Some(cur_diff); // full in-process reset (drive_fresh_run rebuilds the world)
         }
     }
 }
@@ -987,9 +933,8 @@ fn spawn_pause_screen(
 }
 
 /// Handle the pause-menu buttons: resume, the three in-place settings toggles, and the two run
-/// actions. **Load last save** resumes in-process (no new window); **Restart** requests a full
-/// process relaunch via [`RestartProcess`] (confirming first if it'd overwrite a save) for a clean
-/// world.
+/// actions. **Load last save** resumes in-process; **Restart** requests a full in-process reset via
+/// [`FreshRunPending`] (confirming first if it'd overwrite a save) — the window stays put.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn pause_click(
     q: Query<
@@ -1007,7 +952,7 @@ fn pause_click(
         Changed<Interaction>,
     >,
     mut next_app: ResMut<NextState<AppState>>,
-    mut restart_proc: ResMut<RestartProcess>,
+    mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
     mut audio: ResMut<AudioSettings>,
     mut quality: ResMut<GraphicsQuality>,
@@ -1048,7 +993,7 @@ fn pause_click(
             if save.0 {
                 confirm.0 = Some(true); // Restart wipes the save too — confirm (from_pause = true)
             } else {
-                restart_proc.0 = Some(BootIntent::Fresh(cur_diff)); // full reset via relaunch
+                fresh.0 = Some(cur_diff); // full in-process reset (drive_fresh_run rebuilds the world)
             }
         }
         if audio_b.is_some() {
@@ -1198,7 +1143,7 @@ fn start_click(
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
     run: Res<RunInProgress>,
-    mut restart_proc: ResMut<RestartProcess>,
+    mut fresh: ResMut<FreshRunPending>,
     mut credits: ResMut<crate::mainmenu::CreditsOpen>,
 ) {
     if confirm.0.is_some() {
@@ -1214,7 +1159,7 @@ fn start_click(
             if save.0 {
                 confirm.0 = Some(false); // New Game would overwrite — confirm first
             } else {
-                begin_new_game(run.0, cur_diff, &mut pending, &mut next_app, &mut restart_proc);
+                begin_new_game(run.0, cur_diff, &mut pending, &mut next_app, &mut fresh);
             }
         }
         if resume.is_some() {
@@ -1265,7 +1210,7 @@ fn gameover_click(
         ),
         Changed<Interaction>,
     >,
-    mut restart_proc: ResMut<RestartProcess>,
+    mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
@@ -1288,7 +1233,7 @@ fn gameover_click(
             if save.0 {
                 confirm.0 = Some(false); // would overwrite — confirm first
             } else {
-                restart_proc.0 = Some(BootIntent::Fresh(cur_diff)); // full reset via relaunch
+                fresh.0 = Some(cur_diff); // full in-process reset (drive_fresh_run rebuilds the world)
             }
         }
         if cont.is_some() {
@@ -1389,9 +1334,9 @@ fn spawn_confirm(commands: &mut Commands, fonts: &UiFonts) {
 }
 
 /// Resolve the confirm dialog from its buttons or the keyboard (Enter/Space = overwrite,
-/// Esc = cancel). On overwrite: delete the save, mark it gone, and start a fresh run. From the
-/// start screen that's in-process (world is already fresh); mid-session it's a full process
-/// relaunch (see [`RestartProcess`]). Ungated; no-ops while the dialog is closed.
+/// Esc = cancel). On overwrite: delete the save, mark it gone, and start a fresh run. From a
+/// cold-boot start screen that's a direct in-process start (world is already fresh); mid-session it
+/// requests a full in-process reset via [`FreshRunPending`]. Ungated; no-ops while closed.
 #[allow(clippy::type_complexity)]
 fn confirm_input(
     keys: Res<ButtonInput<KeyCode>>,
@@ -1403,7 +1348,7 @@ fn confirm_input(
     mut next_app: ResMut<NextState<AppState>>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
     mut save: ResMut<crate::savegame::SaveExists>,
-    mut restart_proc: ResMut<RestartProcess>,
+    mut fresh: ResMut<FreshRunPending>,
     app: Res<State<AppState>>,
     siege: Option<Res<crate::siege::Siege>>,
     run: Res<RunInProgress>,
@@ -1439,15 +1384,15 @@ fn confirm_input(
         save.0 = false;
         confirm.0 = None;
         if *app.get() == AppState::StartScreen && !run.0 {
-            // Cold-boot start screen — the world is already fresh, so start in-process (relaunching
-            // here would only reload identical assets). OnExit(StartScreen) runs the fresh-run resets.
+            // Cold-boot start screen — the world is already fresh, so start in-process directly.
+            // OnExit(StartScreen) runs the fresh-run resets.
             pending.0 = None;
             next_app.set(AppState::Playing);
         } else {
-            // Mid-session New Game / Restart (incl. a start screen reached mid-run) → full reset via
-            // a clean process relaunch, since the in-process world is dirty.
+            // Mid-session New Game / Restart (incl. a start screen reached mid-run) → full in-process
+            // reset, since the in-process world is dirty (drive_fresh_run rebuilds it).
             let cur_diff = current_difficulty(siege.as_deref());
-            restart_proc.0 = Some(BootIntent::Fresh(cur_diff));
+            fresh.0 = Some(cur_diff);
         }
     }
 }
@@ -1461,7 +1406,6 @@ fn despawn_screen<T: Component>(mut commands: Commands, q: Query<Entity, With<T>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::window::WindowResolution;
 
     fn booted(state: AppState) -> App {
         let mut app = App::new();
@@ -1471,6 +1415,60 @@ mod tests {
             .add_sub_state::<Modal>();
         app.update(); // run the initial StateTransition
         app
+    }
+
+    /// A headless app wired with just enough to exercise [`drive_fresh_run`]: the state machine,
+    /// the resources it reads/writes, and the system itself. No rendering.
+    fn fresh_run_app(state: AppState) -> App {
+        let mut app = booted(state);
+        app.init_resource::<FreshRunPending>()
+            .init_resource::<ContinueInPlace>()
+            .init_resource::<crate::loading::Veil>()
+            .insert_resource(crate::biome::WorldReady(true))
+            .insert_resource(crate::biome::PendingBuild(false))
+            .init_resource::<crate::savegame::PendingLoad>()
+            .add_systems(Update, drive_fresh_run);
+        app
+    }
+
+    /// From the start screen, a `FreshRunPending` request arms the whole in-process reset in one
+    /// update: world rebuild + veil hold + battlefield sweep, request drained, and `Playing` queued
+    /// (so `OnExit(StartScreen)` runs every `reset_*`).
+    #[test]
+    fn drive_fresh_run_arms_rebuild_from_start_screen() {
+        use crate::siege::Difficulty;
+        let mut app = fresh_run_app(AppState::StartScreen);
+        app.world_mut().resource_mut::<FreshRunPending>().0 = Some(Difficulty::Hard);
+        app.update();
+
+        let w = app.world();
+        assert!(w.resource::<crate::biome::PendingBuild>().0, "world rebuild armed");
+        assert!(!w.resource::<crate::biome::WorldReady>().0, "WorldReady cleared so the veil holds");
+        assert!(w.resource::<ContinueInPlace>().0, "battlefield sweep flagged");
+        assert!(w.resource::<FreshRunPending>().0.is_none(), "request drained — fires once");
+        assert!(
+            matches!(w.resource::<NextState<AppState>>(), NextState::Pending(AppState::Playing)),
+            "Playing queued so OnExit(StartScreen) runs the resets"
+        );
+    }
+
+    /// From elsewhere (pause Restart / game-over Play Again) the request first hops to the start
+    /// screen — its `OnExit` is what runs the resets — and stays pending until it lands there, only
+    /// arming the rebuild on the start-screen frame.
+    #[test]
+    fn drive_fresh_run_hops_through_start_screen_when_paused() {
+        use crate::siege::Difficulty;
+        let mut app = fresh_run_app(AppState::Paused);
+        app.world_mut().resource_mut::<FreshRunPending>().0 = Some(Difficulty::Normal);
+
+        app.update(); // Paused frame: queue the StartScreen hop, stay pending, don't arm yet
+        assert!(app.world().resource::<FreshRunPending>().0.is_some(), "still pending mid-hop");
+        assert!(!app.world().resource::<crate::biome::PendingBuild>().0, "not armed off the title");
+
+        app.update(); // StateTransition lands StartScreen, then drive arms + drains the request
+        assert_eq!(app.world().resource::<State<AppState>>().get(), &AppState::StartScreen);
+        assert!(app.world().resource::<crate::biome::PendingBuild>().0, "rebuild armed on the title");
+        assert!(app.world().resource::<FreshRunPending>().0.is_none(), "request drained");
     }
 
     #[test]
@@ -1483,49 +1481,34 @@ mod tests {
         assert!(menu.world().get_resource::<State<Modal>>().is_none());
     }
 
-    /// The relaunch geometry handoff encodes position / physical size / fullscreen, and degrades to
-    /// the `-99999` sentinel when winit hasn't resolved a position yet.
-    #[test]
-    fn window_geometry_encodes_pos_size_and_mode() {
-        let mut w = Window::default();
-        w.position = WindowPosition::At(IVec2::new(100, 50));
-        w.resolution = WindowResolution::new(1280, 720);
-        w.mode = WindowMode::Windowed;
-        assert_eq!(window_geometry(&w), "100,50,1280,720,0");
-
-        w.mode = WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current);
-        assert_eq!(window_geometry(&w), "100,50,1280,720,1", "fullscreen flag set");
-
-        w.position = WindowPosition::Automatic;
-        assert_eq!(window_geometry(&w), "-99999,-99999,1280,720,1", "unresolved position sentinel");
-    }
-
     /// New Game routing: from a cold-boot start screen (`run_active = false`) the world is already
-    /// fresh, so we start **in-process** (queue `Playing`, no relaunch). Once a run is live
-    /// (`run_active = true`, e.g. the menu was reached mid-session), only a full process relaunch
-    /// truly rebuilds the world — so `begin_new_game` must request one instead.
+    /// fresh, so we start **in-process** (queue `Playing`, no rebuild request). Once a run is live
+    /// (`run_active = true`, e.g. the menu was reached mid-session) the in-process world is dirty, so
+    /// `begin_new_game` requests a full in-process reset via [`FreshRunPending`] (rebuilt by
+    /// `drive_fresh_run`) instead of queueing `Playing` directly.
     #[test]
-    fn new_game_routes_in_process_cold_and_relaunch_midrun() {
+    fn new_game_routes_in_process_cold_and_rebuild_midrun() {
         use crate::siege::Difficulty;
 
-        // Cold boot → in-process: a Playing transition is queued, no relaunch requested.
+        // Cold boot → straight to Playing: a transition is queued, no fresh-run rebuild requested.
         let mut pending = crate::savegame::PendingLoad::default();
         let mut next = NextState::<AppState>::default();
-        let mut restart = RestartProcess::default();
-        begin_new_game(false, Difficulty::Normal, &mut pending, &mut next, &mut restart);
-        assert!(restart.0.is_none(), "cold boot must not relaunch");
+        let mut fresh = FreshRunPending::default();
+        begin_new_game(false, Difficulty::Normal, &mut pending, &mut next, &mut fresh);
+        assert!(fresh.0.is_none(), "cold boot needs no rebuild");
         assert!(matches!(next, NextState::Pending(AppState::Playing)), "cold boot queues Playing");
 
-        // Mid-run → relaunch: a fresh-run intent is requested, no in-process Playing transition.
+        // Mid-run → in-process rebuild: a fresh-run request is set, no direct Playing transition
+        // (drive_fresh_run routes it through StartScreen → Playing to fire the resets + rebuild).
         let mut pending = crate::savegame::PendingLoad::default();
         let mut next = NextState::<AppState>::default();
-        let mut restart = RestartProcess::default();
-        begin_new_game(true, Difficulty::Normal, &mut pending, &mut next, &mut restart);
+        let mut fresh = FreshRunPending::default();
+        begin_new_game(true, Difficulty::Normal, &mut pending, &mut next, &mut fresh);
         assert!(
-            matches!(restart.0, Some(BootIntent::Fresh(Difficulty::Normal))),
-            "mid-run New Game must relaunch for a clean world"
+            matches!(fresh.0, Some(Difficulty::Normal)),
+            "mid-run New Game must request an in-process reset at the chosen difficulty"
         );
-        assert!(matches!(next, NextState::Unchanged), "mid-run does not start in-process");
+        assert!(matches!(next, NextState::Unchanged), "mid-run does not transition Playing directly");
     }
 
     /// `clear_battlefield` sweeps the dead run's transient entities (invaders / marchers / corpses)

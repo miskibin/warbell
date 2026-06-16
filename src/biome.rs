@@ -285,14 +285,25 @@ pub struct BiomeConfig {
 /// biome filling the whole patch.
 /// Seeded `true` so the world map builds on the first `apply_build` tick (after the
 /// scene's camera/sun/fog exist), then flips `false` — the map is the only view.
+/// `pub(crate)` + public field so the **in-process reset** (`game_state`) can re-arm a full
+/// world rebuild (the same despawn-`BiomeEntity`-and-rebuild path a biome swap uses).
 #[derive(Resource)]
-struct PendingBuild(bool);
+pub(crate) struct PendingBuild(pub bool);
+
+/// Set `true` by [`apply_build`] once the world map has been built (boot **and** every rebuild).
+/// The loading veil (`loading.rs`) reveals only once this is up — a robust signal that replaces
+/// the old "any `BiomeEntity` exists" probe. The reset path clears it before re-arming a rebuild,
+/// so the veil holds over the rebuild and lifts when the fresh world lands.
+#[derive(Resource, Default)]
+pub(crate) struct WorldReady(pub bool);
 
 pub struct BiomePlugin;
 
 impl Plugin for BiomePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(PendingBuild(true)).add_systems(Update, apply_build);
+        app.insert_resource(PendingBuild(true))
+            .init_resource::<WorldReady>()
+            .add_systems(Update, apply_build);
     }
 }
 
@@ -318,6 +329,7 @@ fn apply_build(
     // `With<Sun>`: the moon (scene.rs) is a second DirectionalLight — don't repaint it.
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<crate::scene::Sun>>,
     mut castle_built: ResMut<crate::castle::CastleBuilt>,
+    mut world_ready: ResMut<WorldReady>,
 ) {
     if !pending.0 {
         return;
@@ -337,6 +349,7 @@ fn apply_build(
     *castle_built = crate::castle::CastleBuilt::default();
 
     crate::worldmap::build(&mut commands, &mut meshes, &mut images, &mut std_mats, &mut terrain_mats, &mut water_mats, &mut creature_mats);
+    world_ready.0 = true; // the loading veil reveals once the world is up (boot + every rebuild)
     info!("view → world map");
     let atmo: Atmo = crate::worldmap::ATMOSPHERE;
 

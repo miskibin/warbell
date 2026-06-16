@@ -529,8 +529,8 @@ impl Plugin for SiegePlugin {
             // which is a Playing↔Paused transition and never touches these).
             .add_systems(OnExit(AppState::StartScreen), reset_siege)
             .add_systems(OnExit(AppState::GameOver), reset_siege);
-        // (Pause-menu Restart / Load relaunch the process now — see game_state::RestartProcess —
-        // so the run restarts in a clean world; no in-process OnExit(Paused) reset needed.)
+        // No OnExit(Paused) reset: pause-menu Restart resets in-process by routing through
+        // StartScreen → Playing (see game_state::drive_fresh_run), so OnExit(StartScreen) covers it.
     }
 }
 

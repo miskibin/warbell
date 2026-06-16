@@ -1,7 +1,11 @@
 # In-process world reset (no relaunch) — design
 
 **Date:** 2026-06-16
-**Status:** approved (brainstorming) → ready for implementation plan
+**Status:** **implemented** — see "Implementation (as built)" at the bottom. The original design
+below proposed a new `WorldBuild` schedule + keep-list despawn; exploration found the engine already
+has both halves (a `PendingBuild`/`apply_build` world rebuild **and** a full suite of `OnExit`
+`reset_*` systems), so the build reused those instead. Kept for the design rationale + the rejected
+alternatives.
 
 ## Problem
 
@@ -160,3 +164,43 @@ strengthened in this change; finalize the symbol names in the plan's last step.)
   subsystems: tree count, chest count/closed, town plots empty, siege wave_index = -1).
 - Veil: shows on boot and reveals correctly (no 8 s hang); shows on reset and fades.
 - `cargo test` (core parity unchanged); `cargo run` smoke.
+
+---
+
+## Implementation (as built)
+
+Exploration overturned the spec's central assumption ("the world is built by ~33 scattered Startup
+systems with no in-process regen path"). Two key findings collapsed the scope:
+
+1. **The world rebuild already exists.** The whole island is built by a single `worldmap::build`
+   call inside `biome::apply_build`, gated on a `PendingBuild(true)` resource — and `apply_build`
+   already *despawns every `BiomeEntity` and rebuilds* (it's the path the 1–5 biome swap uses). So
+   no new `WorldBuild` schedule and no keep-list despawn were needed; re-arming `PendingBuild` does
+   the geometry rebuild. (The few non-`BiomeEntity` run entities — player-built town buildings, the
+   hero, battlefield transients — are already handled by the reset systems below.)
+2. **The full run-state reset already exists.** `reset_player`, `reset_economy`, `reset_inventory`,
+   `reset_quests`, `reset_siege` (which also despawns wave invaders), `reset_lives`, `reset_town`
+   (which reaps player-built buildings), and `clear_graves` all run on **`OnExit(StartScreen)`** (and
+   `OnExit(GameOver)`). So routing a fresh run through the `StartScreen → Playing` transition fires
+   the entire reset for free.
+
+**What was actually built:**
+
+- **`biome.rs`** — `PendingBuild` made `pub(crate)` (re-armable); new `WorldReady(bool)` resource set
+  by `apply_build` after every build (the veil's robust ready-signal, replacing the `BiomeEntity`
+  probe).
+- **`loading.rs`** — the one-shot veil became a persistent, re-raisable overlay driven by a `Veil`
+  resource (`raise(now)`); reveals on `WorldReady` + fonts, never despawns. This also fixed the boot
+  veil.
+- **`game_state.rs`** — new `FreshRunPending(Option<Difficulty>)` + `drive_fresh_run`: route any
+  fresh-run request through `StartScreen → Playing` (firing the `OnExit` resets), re-arm
+  `PendingBuild`, clear `WorldReady`, sweep the battlefield (`ContinueInPlace`), and hold the veil.
+  All fresh-run buttons (mid-run New Game, Play Again, pause Restart, confirm-overwrite) set
+  `FreshRunPending`. Deleted the relaunch machinery (`RestartProcess`, `BootIntent`, `ENV_RESTART`,
+  `ENV_WINGEO`, `do_process_restart`, `apply_boot_intent`, `window_geometry`) and the `main.rs`
+  geometry handoff.
+- **Tests** — `drive_fresh_run` arms-from-start-screen + hops-through-start-screen; `begin_new_game`
+  routing updated; old `window_geometry` test removed.
+
+Net: the spec's §a (WorldBuild schedule) and §b (keep-list despawn) were unnecessary; §c–§f landed as
+above. Nothing new needs the `Persistent` marker (no generic despawn-all), so it wasn't added.

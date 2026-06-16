@@ -228,7 +228,8 @@ impl Plugin for TownPlugin {
                 OnExit(AppState::GameOver),
                 reset_town.after(crate::economy::reset_economy),
             )
-            // (Pause-menu Restart / Load relaunch the process now — see game_state::RestartProcess.)
+            // (Pause-menu Restart resets in-process via StartScreen → Playing — see
+            // game_state::drive_fresh_run — so this OnExit(StartScreen) reap covers it; Load restores.)
             // Build mode (live — world stays unfrozen so the hero walks while placing): spawn /
             // despawn the palette on toggle, drive its rows, glow every valid plot, and place on E.
             .add_systems(

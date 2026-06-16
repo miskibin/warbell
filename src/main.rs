@@ -107,26 +107,6 @@ mod worldmap;
 use bevy::audio::{AudioPlugin, SpatialScale};
 use bevy::prelude::*;
 
-/// Apply the parent window's geometry passed across a fresh-run relaunch (`WARBELL_WINGEO` =
-/// `"x,y,physical_w,physical_h,fullscreen"`; see `game_state::window_geometry`). Best-effort: a
-/// missing/malformed value or an unresolved position (`-99999`) just leaves the OS default.
-fn apply_relaunch_geometry(window: &mut Window) {
-    let Ok(geo) = std::env::var("WARBELL_WINGEO") else { return };
-    let v: Vec<i32> = geo.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-    let [x, y, w, h, fs] = v[..] else { return };
-    if w > 0 && h > 0 {
-        window.resolution = bevy::window::WindowResolution::new(w as u32, h as u32);
-    }
-    if x != -99999 || y != -99999 {
-        window.position = bevy::window::WindowPosition::At(IVec2::new(x, y));
-    }
-    if fs != 0 {
-        window.mode = bevy::window::WindowMode::BorderlessFullscreen(
-            bevy::window::MonitorSelection::Current,
-        );
-    }
-}
-
 fn main() {
     // Screenshot harness window: render at a fixed high resolution + scale-factor 1.0 so the
     // captured PNG is crisp. (A small/low-res capture minifies the ground detail texture to a
@@ -140,11 +120,6 @@ fn main() {
         // ffmpeg a crisp source to downscale into a GIF (and a clean 720p MP4).
         window.resolution =
             bevy::window::WindowResolution::new(1280, 720).with_scale_factor_override(1.0);
-    } else {
-        // A fresh-run relaunch (New Game / Restart) hands us the parent window's geometry
-        // ("x,y,w,h,fullscreen" — see game_state::ENV_WINGEO) so the new process reopens in place
-        // and the swap reads as an in-place reload rather than a stray new window.
-        apply_relaunch_geometry(&mut window);
     }
     App::new()
         .add_plugins(

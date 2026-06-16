@@ -133,7 +133,8 @@ impl Plugin for InventoryPlugin {
             .add_systems(OnExit(AppState::GameOver), reset_inventory)
             // Every Continue path clears transient buffs/toasts (keyed off the load event).
             .add_systems(Update, clear_transients_on_load)
-            // (Pause-menu Restart / Load relaunch the process now — see game_state::RestartProcess.)
+            // (Pause-menu Restart resets in-process via StartScreen → Playing — see
+            // game_state::drive_fresh_run — so this OnExit(StartScreen) reset covers it; Load restores.)
             // Quick-bar (Q/Y/T) + open the satchel (Tab/I): only while playing with no panel up.
             .add_systems(Update, (quickbar_input, open_inventory).run_if(in_state(Modal::None)))
             // The satchel modal (freezes the world like the tree).
