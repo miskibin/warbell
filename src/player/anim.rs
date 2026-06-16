@@ -11,10 +11,19 @@ use super::{Hero, HeroHealth, HeroLimb, HeroPart};
 /// Forward lean of the resting sword arm (negative X) so the blade is presented in front.
 const ARM_FORWARD: f32 = 0.5;
 
+/// First-person **viewmodel** hold for the sword arm: raised + canted in so the blade rides up
+/// into the lower-right of the lens (the world rest pose drops the hand to ~0.3u, well below the
+/// eye line, so the weapon would otherwise be off-frame). Blended in by `FirstPerson::blend`; the
+/// swing/gesture overrides still win, so an attack reads normally in FP.
+fn fp_arm_pose() -> Quat {
+    Quat::from_euler(EulerRot::XYZ, -0.8, 0.18, 0.05)
+}
+
 pub fn hero_anim(
     time: Res<Time>,
     player: Res<super::PlayerRes>,
     dir: Res<crate::cinematic::DirectorState>,
+    fp: Res<super::FirstPerson>,
     hero_q: Query<(&Hero, &HeroHealth, &Children)>,
     mut parts: Query<(&HeroPart, &mut Transform)>,
 ) {
@@ -52,6 +61,10 @@ pub fn hero_anim(
     // Frame-rate-independent damp toward the shield's target pose (~0.25s settle).
     let damp = 1.0 - 0.004_f32.powf(dt);
 
+    // First-person viewmodel amount (eased): raises the sword arm into the lens. Coupled to the
+    // camera's FP `blend` so the arm lifts in lock-step with the dolly-in (no pop on toggle).
+    let fp_amt = fp.blend.clamp(0.0, 1.0);
+
     for &child in children {
         let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
         match part.limb {
@@ -64,7 +77,15 @@ pub fn hero_anim(
                     Some((Some(q), _)) => q,
                     _ => match attack_p {
                         Some(p) => attack_arm_quat(p),
-                        None => Quat::from_rotation_x(arm_swing + idle_sway - ARM_FORWARD),
+                        None => {
+                            // Rest/walk pose, blended toward the FP viewmodel hold while in FP.
+                            let rest = Quat::from_rotation_x(arm_swing + idle_sway - ARM_FORWARD);
+                            if fp_amt > 0.0 {
+                                rest.slerp(fp_arm_pose(), fp_amt)
+                            } else {
+                                rest
+                            }
+                        }
                     },
                 };
             }

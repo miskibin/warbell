@@ -36,16 +36,20 @@ const ZOOM_SENS: f32 = 0.7;
 /// Look-target height above the hero's feet (roughly the helm).
 const EYE_H: f32 = 1.0;
 
-/// First-person eye height above the hero's feet. Set ABOVE the knight's literal eye line
-/// (~0.8u) on purpose: at a realistic height the player feels dwarfed by the tall trees/orks, so
-/// the viewpoint is raised to read as commanding rather than tiny. Verified against a staged shot.
-const FP_EYE_H: f32 = 1.3;
+/// First-person eye height above the hero's feet. The knight stands ~0.765u tall (1.25u TS ×
+/// `HERO_SCALE`), so this sits right at the helm/eye line — earlier it was 1.3u, which floated the
+/// camera a half-unit ABOVE the knight's own head (felt "too tall" and dropped the sword-hand,
+/// at ~0.3u, clean off the bottom of frame). Verified against a staged `FOREST_FP` shot.
+const FP_EYE_H: f32 = 0.74;
 /// First-person forward eye offset (world units along the look direction). Eyes sit at the FRONT
 /// of the head, not the body centre — this nudges the viewpoint toward what you're aiming at so a
 /// tree/ork at swing reach (`verbs::SWING_RANGE` = 1.9u) reads as reachable instead of "hug it".
-/// Kept small so the camera stays BEHIND the sword-arm's shoulder (else the viewmodel arm/sword
-/// pushes off-screen) and doesn't poke through whatever you walk up against.
-const FP_FWD_OFF: f32 = 0.2;
+/// Kept SMALL: the sword hand only projects ~0.3u in front of the body, so too large an offset
+/// puts the eye on top of (or past) the weapon and it falls out of the forward frustum. The eye
+/// must stay BEHIND the sword-hand for the viewmodel to read. Slightly NEGATIVE: the eye sits a
+/// touch behind the body centre (the head is hidden in FP, so nothing clips) so the raised
+/// sword-arm has room to project forward into the lens instead of straddling it.
+const FP_FWD_OFF: f32 = -0.08;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;
