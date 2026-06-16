@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use tileworld_core::inventory::Bag;
 use tileworld_core::player::Player;
+use tileworld_core::quest::QuestLog;
 use tileworld_core::resource_store::ResourceState;
 use tileworld_core::town_store::Town;
 use tileworld_core::upgrade_store::{node_by_id, UpgradeEffect, UpgradeState};
@@ -36,6 +37,7 @@ use crate::game_state::{AppState, Modal};
 use crate::inventory::Inventory;
 use crate::landmarks::{Discoveries, Landmark};
 use crate::player::PlayerRes;
+use crate::quest::QuestLogRes;
 use crate::siege::{Difficulty, GamePhase, KeepHp, Siege};
 use crate::succession::Lives;
 use crate::town::TownRes;
@@ -79,6 +81,9 @@ pub struct SaveData {
     pub discovered_landmarks: Vec<String>,
     /// Indexed by `ChestId`; only one-shot treasure chests (caches respawn on their own).
     pub opened_chests: Vec<bool>,
+    /// Tutorial-quest progress. Additive — old saves default to the start of the chain.
+    #[serde(default)]
+    pub quest: QuestLog,
 }
 
 /// Set when the player picks **Continue**; drained by [`apply_pending_load`] on the next play frame.
@@ -207,6 +212,7 @@ struct SaveCtx<'w, 's> {
     camps: Res<'w, RescuedCamps>,
     captives: Option<Res<'w, crate::ork_fortress::BlightCaptives>>,
     disc: Res<'w, Discoveries>,
+    quest: Res<'w, QuestLogRes>,
     chests: Query<'w, 's, (&'static Chest, &'static ChestId)>,
     landmarks: Query<'w, 's, &'static Landmark>,
 }
@@ -249,6 +255,7 @@ impl SaveCtx<'_, '_> {
                 .map(|l| l.name.to_string())
                 .collect(),
             opened_chests,
+            quest: self.quest.0.clone(),
         }
     }
 }
@@ -468,6 +475,7 @@ mod tests {
             discoveries_completed: false,
             discovered_landmarks: vec!["The Hollow Oak".into()],
             opened_chests: vec![false, true, false],
+            quest: QuestLog { active: 3, progress: 2.0 },
         }
     }
 
@@ -487,6 +495,7 @@ mod tests {
         assert_eq!(back.rescued_camps, vec![true, false, true]);
         assert_eq!(back.discovered_landmarks, vec!["The Hollow Oak".to_string()]);
         assert_eq!(back.opened_chests, vec![false, true, false]);
+        assert_eq!(back.quest, QuestLog { active: 3, progress: 2.0 });
         assert!(back.bag.has_item("potion"));
         assert!(back.town.plots[0].is_built());
     }

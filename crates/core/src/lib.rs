@@ -70,6 +70,7 @@ pub mod ork_config;
 pub mod pathfinding;
 pub mod player;
 pub mod projectile;
+pub mod quest;
 pub mod resource_store;
 pub mod rng;
 pub mod roads;

@@ -75,6 +75,7 @@ mod player;
 mod projectile;
 mod props;
 mod quality;
+mod quest;
 mod roads;
 mod ruins;
 mod savegame;
@@ -236,6 +237,7 @@ fn main() {
             loading::LoadingPlugin, // branded boot veil over the first ~1s blank frame
             trees::TreeDebugPlugin, // FOREST_TREELINE="x,z" parks one of each tree kind for model shots
             hints::HintsPlugin, // bottom-right affordance toasts: spend/equip nudges (Prep-only)
+            quest::QuestPlugin, // tutorial quest chain: right-center tracker + J explainer card
         ))
         .run();
 }

@@ -49,6 +49,8 @@ pub enum Modal {
     Inventory,
     Tutorial,
     Build,
+    /// The quest explainer card (freeze gate, like `Tutorial`; opened by **J** or the tracker).
+    Quest,
     /// "Warden slain" reward dialog (freezes the world; opened by `boss::reward_on_death`).
     BossReward,
 }
