@@ -39,6 +39,9 @@ const DEFENDER_BOLT_TTL: f32 = 3.0;
 /// World Y of the keep roof the archer figures stand on (the keep body top, ≈ `(KEEP_FOUND + KEEP_H)`
 /// scaled by the keep's 0.7 y-scale). Tuned against a staged shot.
 const ARCHER_FEET_Y: f32 = 1.54;
+/// Shrink the ~1.6-unit `archer_mesh` to peasant size. Villagers render a ~1.37-natural body at
+/// `villagers::SCALE` 0.63 (≈0.86 world tall); 0.53 brings the archer to the same apparent height.
+const ARCHER_SCALE: f32 = 0.53;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -410,7 +413,8 @@ pub fn populate_defenders(
     for (i, (x, z)) in [(0.0_f32, 2.0_f32), (0.0, -2.0), (2.7, 0.0), (-2.7, 0.0)].into_iter().enumerate() {
         let outward = Vec3::new(x, 0.0, z).normalize_or_zero();
         let tf = Transform::from_xyz(x, ARCHER_FEET_Y, z)
-            .looking_to(if outward == Vec3::ZERO { Vec3::NEG_Z } else { outward }, Vec3::Y);
+            .looking_to(if outward == Vec3::ZERO { Vec3::NEG_Z } else { outward }, Vec3::Y)
+            .with_scale(Vec3::splat(ARCHER_SCALE));
         commands.spawn((
             Defender {
                 kind: Kind::Archer,
