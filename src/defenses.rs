@@ -36,6 +36,9 @@ const DMG_SCALE: f32 = 0.236;
 const HALF_X: f32 = 17.0;
 const HALF_Z: f32 = 12.0;
 const DEFENDER_BOLT_TTL: f32 = 3.0;
+/// World Y of the keep roof the archer figures stand on (the keep body top, ≈ `(KEEP_FOUND + KEEP_H)`
+/// scaled by the keep's 0.7 y-scale). Tuned against a staged shot.
+const ARCHER_FEET_Y: f32 = 1.54;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -62,6 +65,16 @@ struct Defender {
 const TOWER_BATTER_RANGE: f32 = 3.0;
 const TOWER_BATTER_CD: f32 = 1.0;
 const TOWER_BATTER_DMG: f32 = 12.0;
+
+/// A visible keep-archer figure standing guard on the keep roof — the firing logic stays on the
+/// co-located [`Defender`]; this is just the model. Shown whenever the Keep Archers upgrade is owned
+/// (day + night, not only during a siege). The only "animation" is a hair of idle bob — a single
+/// transform per frame, no skeleton — so four of them barely register on the frame budget.
+#[derive(Component)]
+struct KeepArcher {
+    base_y: f32,
+    phase: f32,
+}
 
 /// A defender bolt in flight, homing on its target invader.
 #[derive(Component)]
@@ -106,6 +119,7 @@ impl Plugin for DefensePlugin {
                     batter_towers,
                     revive_towers,
                     shrine_heal,
+                    sync_keep_archers,
                 )
                     .run_if(in_state(Modal::None)),
             );
@@ -339,6 +353,26 @@ fn shrine_heal(
     }
 }
 
+/// Reveal the keep-archer figures once the Keep Archers upgrade is owned (they stand guard day +
+/// night, not only during a siege), with a hair of idle bob. Cheap — four transforms, no skeleton.
+fn sync_keep_archers(
+    time: Res<Time>,
+    defenses: Res<Defenses>,
+    mut q: Query<(&KeepArcher, &mut Visibility, &mut Transform)>,
+) {
+    let t = time.elapsed_secs();
+    for (a, mut vis, mut tf) in &mut q {
+        if defenses.keep_archers {
+            if *vis != Visibility::Inherited {
+                *vis = Visibility::Inherited;
+            }
+            tf.translation.y = a.base_y + (t * 1.4 + a.phase).sin() * 0.02; // subtle idle bob
+        } else if *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
 // (The war bell's **E** ring-in is now handled by the unified `interaction.rs` resolver, along
 // with keep→upgrades and merchant→shop. The bare **B** debug skip stays in `siege::siege_controls`.)
 
@@ -365,7 +399,18 @@ pub fn populate_defenders(
             crate::biome::BiomeEntity,
         ));
     }
-    for (x, z) in [(-2.8, -2.4), (2.8, -2.4), (2.8, 2.4), (-2.8, 2.4)] {
+    // Keep archers: four figures manning the keep-roof corners. The `Defender` is the firing logic
+    // (muzzle a touch above the figure's bow); the mesh + transform make them visible, facing outward.
+    // Hidden until the Keep Archers upgrade is owned (`sync_keep_archers`).
+    let archer_handle = meshes.add(archer_mesh());
+    let archer_material =
+        materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    // One archer at the middle of each roof edge (front/back/sides) — on the open roof, clear of the
+    // corner turrets, facing out over the battlements.
+    for (i, (x, z)) in [(0.0_f32, 2.0_f32), (0.0, -2.0), (2.7, 0.0), (-2.7, 0.0)].into_iter().enumerate() {
+        let outward = Vec3::new(x, 0.0, z).normalize_or_zero();
+        let tf = Transform::from_xyz(x, ARCHER_FEET_Y, z)
+            .looking_to(if outward == Vec3::ZERO { Vec3::NEG_Z } else { outward }, Vec3::Y);
         commands.spawn((
             Defender {
                 kind: Kind::Archer,
@@ -376,6 +421,11 @@ pub fn populate_defenders(
                 max_hp: f32::INFINITY,
                 batter_cd: 0.0,
             },
+            Mesh3d(archer_handle.clone()),
+            MeshMaterial3d(archer_material.clone()),
+            tf,
+            Visibility::Hidden,
+            KeepArcher { base_y: ARCHER_FEET_Y, phase: i as f32 * 1.7 },
             crate::biome::BiomeEntity,
         ));
     }
@@ -451,6 +501,36 @@ fn ballista_mesh() -> Mesh {
         bbox(0.05, 0.05, 0.9, vc(0.0, 0.84, -0.3), bolt),
         bbox(0.09, 0.09, 0.16, vc(0.0, 0.84, -0.8), iron),
         bbox(0.13, 0.11, 0.04, vc(0.0, 0.84, 0.12), wood_dk),
+    ])
+}
+
+// ── Keep-archer figure (vertex-coloured, flat-shaded) ───────────────────────────────
+// A low-poly archer at the ready, feet at y=0, facing −Z (forward). Shares the ballista's
+// vertex-colour helpers + one white material; `looking_to` aims each one outward off the keep roof.
+fn archer_mesh() -> Mesh {
+    let cloth = lin(0x4f7e38); // ranger green — pops on the grey roof, distinct from the blue banners
+    let cloth_dk = lin(0x37591f);
+    let skin = lin(0xd0a070);
+    let leather = lin(0x6a4f2e);
+    let bow_c = lin(0x7a5530);
+    let string = lin(0xe0d2ad);
+    bgroup(vec![
+        // legs
+        bbox(0.16, 0.6, 0.18, vc(-0.12, 0.3, 0.0), cloth_dk),
+        bbox(0.16, 0.6, 0.18, vc(0.12, 0.3, 0.0), cloth_dk),
+        // torso + belt
+        bbox(0.44, 0.62, 0.3, vc(0.0, 0.9, 0.0), cloth),
+        bbox(0.46, 0.1, 0.32, vc(0.0, 0.6, 0.0), leather),
+        // head + helm
+        bbox(0.27, 0.27, 0.27, vc(0.0, 1.36, 0.0), skin),
+        bbox(0.32, 0.15, 0.32, vc(0.0, 1.55, 0.0), leather),
+        // front (bow) arm reaching out toward −Z; back arm drawing the string
+        bboxr(0.13, 0.52, 0.13, vc(-0.18, 1.0, -0.24), Quat::from_rotation_x(-1.3), skin),
+        bboxr(0.13, 0.42, 0.13, vc(0.2, 0.96, 0.1), Quat::from_rotation_x(0.7), skin),
+        // bow stave held out front (vertical) + bowstring + a nocked arrow aiming out
+        bbox(0.07, 1.15, 0.08, vc(-0.24, 1.05, -0.5), bow_c),
+        bbox(0.03, 1.0, 0.03, vc(-0.17, 1.05, -0.5), string),
+        bbox(0.04, 0.04, 0.7, vc(-0.06, 1.06, -0.26), bow_c),
     ])
 }
 
