@@ -728,6 +728,53 @@ fn keep_parts() -> Vec<(Mesh, M)> {
     v
 }
 
+/// **Keep tier 1 — "fortified"** (revealed once the Palisade Walls go up). Four corner turrets rise
+/// above the keep's battlements with spired caps + gold finials, so the keep reads as a real castle
+/// rather than a lone hall. Authored in the same local space as [`keep_parts`] and spawned with the
+/// same transform, so these parts sit exactly on the base keep — purely additive.
+fn keep_tier1_parts() -> Vec<(Mesh, M)> {
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    let roof_y = KEEP_FOUND + KEEP_H;
+    for sx in [-1.0_f32, 1.0] {
+        for sz in [-1.0_f32, 1.0] {
+            let cx = sx * (KEEP_W / 2.0 - 0.15);
+            let cz = sz * (KEEP_D / 2.0 - 0.15);
+            v.push((bx(0.74, 1.7, 0.74, cx, roof_y + 0.85, cz), M::Stone)); // turret shaft above the merlons
+            v.push((bx(0.9, 0.16, 0.9, cx, roof_y + 1.62, cz), M::DarkStone)); // corbel ring
+            v.push((pyramid(0.58, 0.62, roof_y + 1.7).translated_by(Vec3::new(cx, 0.0, cz)), M::Roof)); // spired cap
+            v.push((
+                Sphere::new(0.1).mesh().ico(1).unwrap().translated_by(Vec3::new(cx, roof_y + 2.44, cz)),
+                M::Gold,
+            )); // finial
+        }
+    }
+    v
+}
+
+/// **Keep tier 2 — "grand fortress"** (revealed once the Reinforced Keep upgrade is bought). A tall
+/// pennant spire crowns the central tower, big heraldic banners drape the front, the corner turrets
+/// get gilded caps, and a gold band wraps the central tower — the keep at its mightiest. Additive
+/// over tiers 0 + 1.
+fn keep_tier2_parts() -> Vec<(Mesh, M)> {
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    let roof_y = KEEP_FOUND + KEEP_H;
+    // Gilded caps crowning the four corner turrets.
+    for sx in [-1.0_f32, 1.0] {
+        for sz in [-1.0_f32, 1.0] {
+            let cx = sx * (KEEP_W / 2.0 - 0.15);
+            let cz = sz * (KEEP_D / 2.0 - 0.15);
+            v.push((pyramid(0.34, 0.42, roof_y + 2.32).translated_by(Vec3::new(cx, 0.0, cz)), M::Gold));
+        }
+    }
+    // Large heraldic banners draping the front of the keep body.
+    for sx in [-1.7_f32, 1.7] {
+        v.push((bx(0.95, 2.5, 0.05, sx, KEEP_FOUND + 1.45, KEEP_D / 2.0 + 0.12), M::Banner));
+    }
+    // Gilded band low on the central tower.
+    v.push((bx(2.22, 0.16, 2.22, 0.0, roof_y + 0.2, 0.0), M::Gold));
+    v
+}
+
 const WALL_H: f32 = 1.35;
 const WALL_THICK: f32 = 0.6;
 
@@ -1279,8 +1326,12 @@ pub fn build(
         );
     }
 
-    // Keep (centre) — always present.
+    // Keep (centre) — always present, then two grandeur tiers that reveal as you fortify (corner
+    // turrets with the Walls, the grand spire + banners with the Reinforced Keep). Same transform as
+    // the keep so the parts sit exactly on it.
     spawn(keep_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88), CastleKind::Always);
+    spawn(keep_tier1_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88), CastleKind::KeepTier1);
+    spawn(keep_tier2_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88), CastleKind::KeepTier2);
     for (x, z, rot, len) in wall_segments() {
         spawn(wall_parts(len), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.78, 1.0), CastleKind::Walls);
     }
@@ -1591,6 +1642,12 @@ pub enum CastleKind {
     Gate,
     Towers,
     House(u8),
+    /// Keep grandeur tier 1 (corner turrets) — revealed when the Palisade Walls go up, so the keep
+    /// visibly fortifies alongside its castle. See [`keep_tier1_parts`].
+    KeepTier1,
+    /// Keep grandeur tier 2 (grand spire + banners + gilding) — revealed when Reinforced Keep is
+    /// bought. See [`keep_tier2_parts`].
+    KeepTier2,
 }
 
 #[derive(Component)]
@@ -1638,6 +1695,10 @@ fn sync_castle(
             CastleKind::Gate => def.walls && def.gate, // a gate without walls would float
             CastleKind::Towers => def.towers,
             CastleKind::House(i) => (i as u32) < houses,
+            // The keep grades up as you fortify: corner turrets with the Walls, the grand spire +
+            // banners with the Reinforced Keep upgrade.
+            CastleKind::KeepTier1 => def.walls,
+            CastleKind::KeepTier2 => def.reinforced,
         };
         if live && show && *vis == Visibility::Hidden {
             if let Some(crate::build_fx::RevealAt(pos)) = at {
