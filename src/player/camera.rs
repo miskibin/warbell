@@ -36,9 +36,15 @@ const ZOOM_SENS: f32 = 0.7;
 /// Look-target height above the hero's feet (roughly the helm).
 const EYE_H: f32 = 1.0;
 
-/// First-person eye height above the hero's feet — just below the third-person helm look-target
-/// (`EYE_H`), i.e. the knight's eye line (he stands ~0.87u tall). Verified against a staged shot.
-const FP_EYE_H: f32 = 0.9;
+/// First-person eye height above the hero's feet. Set ABOVE the knight's literal eye line
+/// (~0.8u) on purpose: at a realistic height the player feels dwarfed by the tall trees/orks, so
+/// the viewpoint is raised to read as commanding rather than tiny. Verified against a staged shot.
+const FP_EYE_H: f32 = 1.3;
+/// First-person forward eye offset (world units along the look direction). Eyes sit at the FRONT
+/// of the head, not the body centre — this nudges the viewpoint toward what you're aiming at so a
+/// tree/ork at swing reach (`verbs::SWING_RANGE` = 1.9u) reads as reachable instead of "hug it".
+/// Kept small so the camera doesn't poke through whatever you walk up against.
+const FP_FWD_OFF: f32 = 0.35;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;
@@ -205,7 +211,12 @@ pub fn player_camera(
     let look_yaw = a + std::f32::consts::PI;
     let (fpy_sin, fpy_cos) = look_yaw.sin_cos();
     let (fpp_sin, fpp_cos) = fp.pitch.sin_cos();
-    let fp_eye = Vec3::new(hero.pos.x, hero.y + FP_EYE_H, hero.pos.y);
+    // Eye sits at head height, nudged forward along the (horizontal) look direction.
+    let fp_eye = Vec3::new(
+        hero.pos.x + fpy_sin * FP_FWD_OFF,
+        hero.y + FP_EYE_H,
+        hero.pos.y + fpy_cos * FP_FWD_OFF,
+    );
     let fp_fwd = Vec3::new(fpy_sin * fpp_cos, fpp_sin, fpy_cos * fpp_cos);
     let fp_look = fp_eye + fp_fwd;
 
