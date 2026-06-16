@@ -426,18 +426,20 @@ pub fn populate_landmarks(
 ) {
     use crate::biome::{Biome, BiomeEntity};
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.92, ..default() });
-    // (biome, mesh, scale, block_radius, footprint_radius) — one landmark each. block_radius is
-    // the solid base footprint (≤1.0 for the blockers neighbour-scan); footprint_radius (mesh-local)
-    // is the half-extent the flatness probe samples so the whole base lands on level ground.
-    let specs: [(Biome, Mesh, f32, f32, f32); 5] = [
-        (Biome::Snow, build_frozen_spire_mesh(), 1.4, 0.85, 1.0),
-        (Biome::Desert, build_sunken_pyramid_mesh(), 1.3, 1.0, 2.0),
-        (Biome::Rocky, build_trilithon_mesh(), 1.3, 0.6, 2.0),
-        (Biome::Forest, build_giant_dead_tree_mesh(), 1.2, 0.6, 0.7),
-        (Biome::Swamp, build_swamp_sentinel_mesh(), 1.1, 0.6, 0.8),
+    // (biome, mesh, scale, (box_hw, box_hd), footprint_radius) — one landmark each. The solid is an
+    // oriented BOX (not a ≤1.0 circle) so wide set-pieces — the trilithon's standing stones, the
+    // pyramid's broad base — actually block instead of letting you walk through their edges. The
+    // half-extents (mesh-local, world-scaled below) hug each silhouette; footprint_radius is the
+    // flatness-probe reach so the whole base lands on level ground.
+    let specs: [(Biome, Mesh, f32, (f32, f32), f32); 5] = [
+        (Biome::Snow, build_frozen_spire_mesh(), 1.4, (0.7, 0.7), 1.0),
+        (Biome::Desert, build_sunken_pyramid_mesh(), 1.3, (1.15, 1.15), 2.0),
+        (Biome::Rocky, build_trilithon_mesh(), 1.3, (1.25, 0.55), 2.0), // wide arch, thin depth
+        (Biome::Forest, build_giant_dead_tree_mesh(), 1.2, (0.55, 0.55), 0.7),
+        (Biome::Swamp, build_swamp_sentinel_mesh(), 1.1, (0.65, 0.65), 0.8),
     ];
     let mut rng: u32 = 0x1a2b_3c4d;
-    for (biome, mesh, scale, block_r, foot_r) in specs {
+    for (biome, mesh, scale, (box_hw, box_hd), foot_r) in specs {
         let handle = meshes.add(mesh);
         let probe_r = foot_r * scale;
         // Best-of: keep the flattest candidate seen; take the first perfectly level one.
@@ -475,7 +477,8 @@ pub fn populate_landmarks(
                     BiomeEntity,
                 ))
                 .id();
-            crate::blockers::add(x, z, block_r);
+            // Solid oriented box, scaled into world units + turned to match the placed mesh yaw.
+            crate::blockers::add_obb(x, z, box_hw * scale, box_hd * scale, yaw);
             crate::landmarks::attach(commands, id, biome, Vec3::new(x, y, z), meshes, materials);
             if spread > crate::worldmap::GROUND_STEP {
                 info!("landmark {:?}: best spot still uneven (spread {:.2})", biome, spread);
