@@ -12,6 +12,7 @@
 //! Decoupling rule: gameplay code NEVER spawns a sink — it writes an [`AudioCue`] (or flips a
 //! flag on [`MusicState`]). Only this module reads them and plays sound.
 
+mod advice;
 mod ambience;
 mod animals;
 pub(crate) mod director;
@@ -77,6 +78,9 @@ pub enum AudioCue {
     OrkGrunt(Vec3),
     /// Warband alert roar at a world position (hero enters a camp clearing).
     OrkRoar(Vec3),
+    /// A warden (biome boss) roar at a world position — the deep "ancient thing wakes" bellow, far
+    /// bigger than an ork's. Fired on aggro + each crit wind-up (`boss::boss_brain`).
+    BossRoar(Vec3),
     /// A wild predator's snarl as it bites the hero, at a world position. `big` = a heavy beast
     /// (bear/croc/golem) → a deeper, louder roar. Pitch-jittered so a flurry never repeats.
     CreatureBite { at: Vec3, big: bool },
@@ -147,6 +151,9 @@ const HOME_RADIUS: f32 = 16.0;
 #[derive(Resource, Default)]
 pub struct MusicState {
     pub fighting: bool,
+    /// True while any warden (biome boss) is engaged (hostile); [`music`] swells the boss-fight
+    /// track over the daytime mix from it. Set by `boss::warden_music_flag`.
+    pub warden_active: bool,
 }
 
 /// Shared **hero-line spacing** for the hero's spoken voice. EVERY spoken hero LINE — the catalog's
@@ -252,6 +259,7 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<RemarkTrigger>()
             .init_resource::<npc::VillagerTrigger>()
             .init_resource::<ork::OrkTrigger>()
+            .init_resource::<advice::AdviceTrigger>()
             .add_message::<AudioCue>()
             .add_message::<director::Speak>()
             .add_systems(
@@ -300,6 +308,7 @@ impl Plugin for GameAudioPlugin {
                     detect_biome_entry,
                     detect_siege_voice,
                     detect_gear_found,
+                    advice::detect_town_advice,
                 )
                     .run_if(in_state(crate::game_state::Modal::None)),
             )
@@ -324,11 +333,11 @@ impl Plugin for GameAudioPlugin {
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, advice::reset_advice),
             )
             .add_systems(
                 OnExit(crate::game_state::AppState::GameOver),
-                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, advice::reset_advice),
             );
     }
 }
