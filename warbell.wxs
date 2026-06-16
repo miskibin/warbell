@@ -2,9 +2,12 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
+  <!-- Version is bound to the built exe's FileVersion, which build.rs derives from
+       CARGO_PKG_VERSION — so the installer version follows Cargo.toml automatically and
+       a release never hand-edits a version here. (WarbellExe = the File Id below.) -->
   <Package Name="Warbell"
            Manufacturer="miskibin"
-           Version="0.6.0"
+           Version="!(bind.FileVersion.WarbellExe)"
            UpgradeCode="153DC597-1BAA-4427-946B-2C3F407A01B3"
            Language="1033"
            Scope="perMachine">

@@ -2,8 +2,11 @@
 /target
 /target-hero
 
-# Locally built installers (wix build output)
+# Locally built installers (wix build output) — both the CI `dist/` dir and the
+# root-level MSI/PDB the website installer (`warbell.wxs`) emits during a release.
 /dist/
+/*.msi
+/*.wixpdb
 
 # Dev screenshots / comparison renders (the FOREST_SHOT harness writes PNGs here, and the
 # per-biome reference shots live under shots/). Real game art lives under assets/.
