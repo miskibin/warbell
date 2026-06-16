@@ -102,6 +102,9 @@ pub(crate) struct SfxBank {
     foot_stone: Handle<AudioSource>,
     ork_grunts: Vec<Handle<AudioSource>>,
     ork_roars: Vec<Handle<AudioSource>>,
+    /// Warden (biome boss) roars — the deep "ancient thing wakes" bellow, picked at random per
+    /// roar. Far bigger + louder than an ork's; played on a warden's aggro + crit wind-up.
+    boss_roars: Vec<Handle<AudioSource>>,
     /// Gnashfang Hold's war-horn (`war-horn.ogg` — wood crack, then a deep horn blast).
     war_horn: Handle<AudioSource>,
     /// Warp-bolt release (`warp-cast.ogg`) — shaman staff casts + fortress tower fire.
@@ -148,6 +151,7 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .map(|f| asset.load(*f))
             .collect(),
         ork_roars: ["audio/ork-roar.ogg", "audio/wave-start-roar.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        boss_roars: ["audio/boss-roar-1.ogg", "audio/boss-roar-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         war_horn: asset.load("audio/war-horn.ogg"),
         warp_cast: asset.load("audio/warp-cast.ogg"),
         beast_snarls: ["audio/monster-snarl.ogg", "audio/monster-growl.ogg", "audio/bear-growl.ogg"]
@@ -264,6 +268,12 @@ pub(crate) fn play_cues(
                 }
                 let clip = pick(&bank.ork_roars, &mut seed);
                 spatial_shot(&mut commands, clip, 0.50 * voice, jitter(&mut seed, 0.08), pos);
+            }
+            // A warden waking / winding up — louder than an ork roar and pitched a touch lower for
+            // weight. Not throttled: it's already rare (aggro + crit telegraph only).
+            AudioCue::BossRoar(pos) => {
+                let clip = pick(&bank.boss_roars, &mut seed);
+                spatial_shot(&mut commands, clip, 0.85 * voice, jitter(&mut seed, 0.08) * 0.92, pos);
             }
             // A predator's bite snarl — wide pitch jitter so a flurry of bites never repeats. A
             // heavy beast (bear/croc/golem) gets the deeper roar set, louder + pitched down.

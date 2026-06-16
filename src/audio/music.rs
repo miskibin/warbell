@@ -48,6 +48,9 @@ pub(crate) enum MusicLayer {
     Arid,
     Night,
     Boss,
+    /// The warden (biome-boss) fight theme — swells over the daytime mix while any warden is
+    /// engaged (`MusicState.warden_active`), ducking the day/combat/biome layers under it.
+    Warden,
     /// The title-screen theme — swells on `AppState::StartScreen` and ducks every other layer.
     Menu,
 }
@@ -77,6 +80,7 @@ pub(crate) fn setup_music(asset: Res<AssetServer>, mut commands: Commands) {
     layer("audio/heat-hail.ogg", 0.0, MusicLayer::Arid); // silent until the hero enters desert/rock
     layer(NIGHT_TRACK, 0.0, MusicLayer::Night); // silent until the siege wave — always this track
     layer("audio/orc-march-tallow.ogg", 0.0, MusicLayer::Boss); // silent until the boss wave
+    layer("audio/boss-fight-music.ogg", 0.0, MusicLayer::Warden); // silent until a warden is engaged
     layer("audio/menu-theme.ogg", 0.0, MusicLayer::Menu); // fades in on the title screen
 }
 
@@ -90,6 +94,8 @@ pub(crate) struct DriverFlags {
     prev_on_menu: bool,
     /// Has the first frame run? (first-frame day-track roll + instant menu swell).
     booted: bool,
+    /// Eased warden-fight swell, toward `MusicState.warden_active` (0 = no warden engaged).
+    warden: f32,
 }
 
 pub(crate) fn update_music(
@@ -154,6 +160,9 @@ pub(crate) fn update_music(
             )
     });
     *arid += ((if in_arid { 1.0 } else { 0.0 }) - *arid) * (dt * NIGHT_FADE).min(1.0);
+    // Warden fight: swell the boss theme while any biome boss is engaged (eased on `flags`, which
+    // is already a `Local`, so we don't add a 16th system param).
+    flags.warden += ((if state.warden_active { 1.0 } else { 0.0 }) - flags.warden) * (dt * NIGHT_FADE).min(1.0);
     // The title screen has its own theme; swell it (and duck everything else) while on it. On the
     // FIRST frame snap it straight to full so it plays the instant the window opens — it used to
     // ease up from silence over ~1 s, so the day bed was heard first and the menu theme only crept
@@ -165,23 +174,27 @@ pub(crate) fn update_music(
         *menu += (menu_target - *menu) * (dt * NIGHT_FADE).min(1.0);
     }
     flags.booted = true;
-    let (h, n, b, a, m) = (*heat, *night, *blight, *arid, *menu);
+    let (h, n, b, a, m, w) = (*heat, *night, *blight, *arid, *menu, flags.warden);
     let day = cfg.music_vol * (1.0 - n); // day tracks fade out as night rises
 
     for (layer, mut sink) in &mut q {
         let v = match layer {
-            // Only the chosen day track is audible; combat ducks it; biome themes mute it.
+            // Only the chosen day track is audible; combat ducks it; biome themes mute it; a
+            // warden fight (`w`) ducks it like the biome themes do.
             MusicLayer::Day(i) => {
                 day * (1.0 - BED_DUCK * h)
                     * (1.0 - b)
                     * (1.0 - a)
+                    * (1.0 - w)
                     * if *i == *day_pick { 1.0 } else { 0.0 }
             }
-            MusicLayer::Combat => day * cfg.combat_music * h,
+            MusicLayer::Combat => day * cfg.combat_music * h * (1.0 - w),
             // Biome themes ride the day slot (ducked by combat, gone at night) but gated on
-            // position instead of the day-track roll.
-            MusicLayer::Blight => day * (1.0 - BED_DUCK * h) * b,
-            MusicLayer::Arid => day * (1.0 - BED_DUCK * h) * a,
+            // position instead of the day-track roll; a warden fight overrides them too.
+            MusicLayer::Blight => day * (1.0 - BED_DUCK * h) * b * (1.0 - w),
+            MusicLayer::Arid => day * (1.0 - BED_DUCK * h) * a * (1.0 - w),
+            // The warden theme owns the daytime mix while a boss is engaged (gone at night).
+            MusicLayer::Warden => day * w,
             MusicLayer::Night => cfg.music_vol * n * if !boss { 1.0 } else { 0.0 },
             MusicLayer::Boss => cfg.music_vol * n * if boss { 1.0 } else { 0.0 },
             MusicLayer::Menu => cfg.music_vol * m,

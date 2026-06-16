@@ -90,6 +90,24 @@ pub enum Concept {
     ReplyToVillagerJab,
     /// Second-level chain: after the hero's comeback, the villager gets the last word.
     VillagerLastWord,
+    // ── Guidance / tutorial nudges (hero hint + townsfolk gripe POOLED per concept, so the same
+    //    advice sometimes comes as the hero musing, sometimes a peasant nagging — never both at
+    //    once). Emitted sparingly by `audio/advice.rs` when the matching town/economy state holds. ──
+    AdviseFarm,
+    AdviseHouses,
+    AdviseWood,
+    AdviseStone,
+    AdviseUpgrade,
+    AdviseWalls,
+    AdviseBell,
+    PrepNudge,
+    PopLost,
+    TownThriving,
+    // ── Warden (boss) approach — the hero feels the boon worth taking. `WardenSighted` is the
+    //    one-per-run generic "why hunt it" teach; `NearWarden(biome)` is the per-warden flavor
+    //    (emitted by `boss::boss_proximity`). ──
+    WardenSighted,
+    NearWarden(Biome),
 }
 
 /// A follow-up dispatched when a line finishes: ask `target` to look up a line whose
@@ -326,6 +344,36 @@ pub const LINES: &[Line] = &[
     Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_a", Speaker::Villager, Concept::VillagerLastWord, "Ooh, sharp. Practice that one on the cows, did we?") },
     Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_b", Speaker::Villager, Concept::VillagerLastWord, "Noted, m'lord. I'll scream quieter tonight, just for you.") },
     Line { priority: 12, floor: 120.0, reply_to: Some(Concept::VillagerLastWord), ..line("last_word_c", Speaker::Villager, Concept::VillagerLastWord, "Touchy, touchy. And after everything we do for you.") },
+    // ── Guidance: HERO hints (priority 5 musing tier — wait out the hero window; rarely barge) ──
+    Line { floor: 300.0, priority: 5, ..line("hint_houses", Speaker::Hero, Concept::AdviseHouses, "Folk are packed in tight down there. I should raise more houses — give them room to grow.") },
+    Line { floor: 300.0, priority: 5, ..line("hint_farm",   Speaker::Hero, Concept::AdviseFarm,   "Stomachs are growling louder than the orks. We need a farm before someone faints on the wall.") },
+    Line { floor: 300.0, priority: 5, ..line("hint_wood",   Speaker::Hero, Concept::AdviseWood,   "Walls eat timber, and we're nearly dry. Best put someone on the trees.") },
+    Line { floor: 300.0, priority: 5, ..line("hint_stone",  Speaker::Hero, Concept::AdviseStone,  "Stone's thin. The hills are full of it — time someone started digging.") },
+    Line { floor: 300.0, priority: 5, ..line("hint_upgrade", Speaker::Hero, Concept::AdviseUpgrade, "Coin's piling up. I should spend it at the War Table before I get sentimental about it.") },
+    Line { floor: 240.0, priority: 5, ..line("hint_bell",   Speaker::Hero, Concept::AdviseBell,   "Daylight won't hold. When I'm set, the bell calls the night.") },
+    Line { floor: 300.0, priority: 5, ..line("hint_walls",  Speaker::Hero, Concept::AdviseWalls,  "These walls won't stop a stiff breeze. I should shore them up while there's light.") },
+    Line { floor: 240.0, priority: 5, ..line("hint_prep",   Speaker::Hero, Concept::PrepNudge,    "Quiet now. Doesn't last. Use the hours — loot, build, arm.") },
+    // ── Guidance: TOWNSFOLK gripes (Ed) — priority 11 so advice outranks idle chatter (10) but
+    //    still yields to event lines (15); spatial, positioned on the nearest peasant. ──
+    Line { floor: 300.0, priority: 11, ..line("need_farm_a",  Speaker::Villager, Concept::AdviseFarm,   "We're down to boiled belt-leather, m'lord. Build us a farm. I'm far too pretty to starve.") },
+    Line { floor: 300.0, priority: 11, ..line("need_farm_b",  Speaker::Villager, Concept::AdviseFarm,   "The little ones are gnawing the fenceposts. Maybe — just a thought — a farm?") },
+    Line { floor: 300.0, priority: 11, ..line("need_house_a", Speaker::Villager, Concept::AdviseHouses, "Eight of us to one cot, m'lord. I know every snore by name. Build a house, I beg you.") },
+    Line { floor: 300.0, priority: 11, ..line("need_house_b", Speaker::Villager, Concept::AdviseHouses, "Give us room and we'd breed like rabbits. Houses, m'lord. It's romance, really.") },
+    Line { floor: 300.0, priority: 11, ..line("need_wood",    Speaker::Villager, Concept::AdviseWood,   "Can't shore a wall with good wishes. We need wood — put someone on the trees.") },
+    Line { floor: 300.0, priority: 11, ..line("need_stone",   Speaker::Villager, Concept::AdviseStone,  "Walls want stone, and we've none. Hills are lousy with it. Send a miner, eh?") },
+    Line { floor: 300.0, priority: 11, ..line("spend_gold",   Speaker::Villager, Concept::AdviseUpgrade, "Rich as a bishop, and still swinging that rusty thing. Spend it, m'lord — the War Table.") },
+    Line { floor: 300.0, priority: 11, ..line("weak_walls",   Speaker::Villager, Concept::AdviseWalls,  "These walls are a fence and a prayer. The orks point. They laugh. I've seen them.") },
+    Line { floor: 240.0, priority: 11, ..line("ring_bell",    Speaker::Villager, Concept::AdviseBell,   "Whenever you're ready for the screaming, the bell's right there. No rush. Some rush.") },
+    Line { floor: 300.0, priority: 11, ..line("pop_lost",     Speaker::Villager, Concept::PopLost,      "Buried another last night. Fewer of us to complain at you now. Small mercies.") },
+    Line { floor: 600.0, priority: 11, ..line("thriving",     Speaker::Villager, Concept::TownThriving, "Food in the pot, roof overhead — careful, m'lord, you'll spoil us. We'll want chairs next.") },
+    Line { floor: 600.0, priority: 11, ..line("strong_walls", Speaker::Villager, Concept::TownThriving, "Lovely strong walls these days. Almost a shame the orks keep knocking.") },
+    // ── Warden approach (hero, priority 8 — lands over musings, yields to combat warnings) ──
+    Line { once: true, priority: 8, ..line("warden_near",   Speaker::Hero, Concept::WardenSighted,          "Something vast sleeps out here. I feel it in my bones — put that beast down, and I'd walk away the stronger for it.") },
+    Line { floor: 600.0, priority: 8, ..line("warden_forest", Speaker::Hero, Concept::NearWarden(Biome::Forest), "That old wooden thing among the trees… beat it, and I think my blade would learn a new sweep. I can almost feel it.") },
+    Line { floor: 600.0, priority: 8, ..line("warden_snow",   Speaker::Hero, Concept::NearWarden(Biome::Snow),   "Whatever stirs in the ice up here — kill it, and I swear the cold itself would start fighting on my side.") },
+    Line { floor: 600.0, priority: 8, ..line("warden_rock",   Speaker::Hero, Concept::NearWarden(Biome::Rocky),  "A mountain that walks. Break it, and maybe I'd learn to bring the mountain down myself.") },
+    Line { floor: 600.0, priority: 8, ..line("warden_desert", Speaker::Hero, Concept::NearWarden(Biome::Desert), "That dead thing moves like the wind off the dunes. Put it down, and perhaps I would too.") },
+    Line { floor: 600.0, priority: 8, ..line("warden_swamp",  Speaker::Hero, Concept::NearWarden(Biome::Swamp),  "The bog-hag's brewed every poison there is. Best her, and I'd turn that venom loose on the horde.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.

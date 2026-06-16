@@ -27,6 +27,10 @@ use crate::ui::theme::*;
 use crate::ui::widgets;
 use crate::{steer, worldmap};
 
+use crate::audio::director::{Speak, VoiceManager};
+use crate::audio::lines::Concept;
+use crate::audio::MusicState;
+
 // ── Tuning (all forest-side; not parity-gated) ────────────────────────────────────────
 /// Warden HP at level 1, ×`HP_GROWTH` per level. Out-stats a bare hero on purpose (mid-game) —
 /// a deliberately long, attrition fight; bumped so wardens aren't melted by a geared hero.
@@ -212,6 +216,7 @@ impl Plugin for BossPlugin {
             // On a loaded game, remove wardens the saved hero already slew (ungated; once per load).
             .add_systems(Update, despawn_slain_wardens)
             .add_systems(Update, boss_limbs) // limb sway keeps running while frozen
+            .add_systems(Update, warden_music_flag) // ungated: boss music holds through a panel-freeze
             .add_systems(Update, sync_boss_bar.run_if(in_state(AppState::Playing)))
             .add_systems(OnExit(AppState::Playing), despawn_boss_bar)
             .add_systems(
@@ -355,9 +360,12 @@ fn boss_brain(
         b.sig_cd -= dt;
         b.crit_cd -= dt;
 
-        // Aggro on any HP loss (hero swing / cleave / poison).
-        if health.hp < b.last_hp - 0.01 {
+        // Aggro on any HP loss (hero swing / cleave / poison) — the warden wakes with a roar on
+        // the turn to hostile (not every subsequent hit).
+        if !b.hostile && health.hp < b.last_hp - 0.01 {
             b.hostile = true;
+            let gy = steer::footing(b.pos.x, b.pos.y).unwrap_or(tf.translation.y);
+            cues.write(crate::audio::AudioCue::BossRoar(Vec3::new(b.pos.x, gy + 1.8, b.pos.y)));
         }
         b.last_hp = health.hp;
 
@@ -431,7 +439,7 @@ fn boss_brain(
                 b.crit_cd = CRIT_CD;
                 b.crit_at = now + CRIT_TELEGRAPH;
                 let gy = steer::footing(b.pos.x, b.pos.y).unwrap_or(tf.translation.y);
-                cues.write(crate::audio::AudioCue::OrkRoar(Vec3::new(b.pos.x, gy + 1.8, b.pos.y)));
+                cues.write(crate::audio::AudioCue::BossRoar(Vec3::new(b.pos.x, gy + 1.8, b.pos.y)));
                 if !*taught_crit {
                     *taught_crit = true;
                     notice.push(
@@ -513,7 +521,9 @@ fn boss_brain(
 fn boss_proximity(
     time: Res<Time>,
     hero: Res<HeroState>,
+    mgr: Res<VoiceManager>,
     mut notice: ResMut<Notice>,
+    mut speak: MessageWriter<Speak>,
     mut q: Query<&mut Boss, Without<Dying>>,
 ) {
     if !hero.alive {
@@ -527,8 +537,22 @@ fn boss_proximity(
         if b.pos.distance(hero.pos) < NOTICE_RANGE {
             b.seen = true;
             notice.push(format!("Something massive stirs in the {}…", biome_word(b.biome)), now);
+            // First warden of the run → the hero's generic "why hunt it" teach (`warden_near`,
+            // a `once` line); after it's played, every sighting gets that warden's biome flavor.
+            let concept = if mgr.played_once.contains("warden_near") {
+                Concept::NearWarden(b.biome)
+            } else {
+                Concept::WardenSighted
+            };
+            speak.write(Speak::new(concept));
         }
     }
+}
+
+/// Drive the boss-fight music layer: on while any warden is engaged (turned hostile). `music.rs`
+/// swells the boss track over the daytime mix from this flag.
+fn warden_music_flag(bosses: Query<&Boss, Without<Dying>>, mut music: ResMut<MusicState>) {
+    music.warden_active = bosses.iter().any(|b| b.hostile);
 }
 
 fn biome_word(b: Biome) -> &'static str {
