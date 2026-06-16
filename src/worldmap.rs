@@ -141,9 +141,10 @@ const REGIONS: [Region; 6] = [
     // leaving the castle safe-ring (south edge ~z36) on clean grass.
     Region { x: 101.0, z: 10.0, r: 34.0, biome: TB::Desert, peak: 0 },
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
-    // the safe-zone fray instead of a 33-unit trek) and LOWERED (peak 15→9) so most faces are
-    // 1-class terraces the nav-grid can climb; less coast-clipping on the far side too.
-    Region { x: 116.0, z: 57.0, r: 34.0, biome: TB::Rock, peak: 9 },
+    // the safe-zone fray instead of a 33-unit trek). Raised to a real MOUNTAIN height (the tallest
+    // biome by far) — `terrace_inland` relaxes the inland faces to ≤1-class steps so the nav-grid
+    // still climbs the taller bulk; the seaward coastal band stays sheer, reading as cliff peaks.
+    Region { x: 116.0, z: 57.0, r: 34.0, biome: TB::Rock, peak: 18 },
     Region { x: 32.0, z: 80.0, r: 34.0, biome: TB::Forest, peak: 0 }, // SW forest
     Region { x: 72.0, z: 92.0, r: 26.0, biome: TB::Swamp, peak: 0 }, // S swamp
     // Eastern marsh arm: fills the open grass strip that ran between the S swamp and the

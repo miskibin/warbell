@@ -740,7 +740,7 @@ pub fn config() -> BiomeConfig {
                     (build_dry_shrub_mesh(0), 1.0),
                     (build_dry_shrub_mesh(1), 1.0),
                 ],
-                chance: 0.045,
+                chance: 0.035,
                 scale: (0.8, 1.35),
                 tree: false,
                 block_radius: 0.0,
@@ -754,10 +754,11 @@ pub fn config() -> BiomeConfig {
                     (build_boulder_mesh(2), 1.05),
                     (build_boulder_mesh(3), 0.3), // cairns stay a rare waymarker treat
                 ],
-                // Thinned (0.085→0.055) + lighter blockers (0.3→0.24, so only s≳0.9 instances
-                // pass the ≥0.22 floor): keeps the crag look but leaves walking lanes for the
-                // hero + the stone miners' A* instead of a collision maze.
-                chance: 0.055,
+                // Thinned (0.085→0.055→0.042) + lighter blockers (0.3→0.24, so only s≳0.9
+                // instances pass the ≥0.22 floor): keeps the crag look but leaves walking lanes for
+                // the hero + the stone miners' A* — and lets the taller mountain bulk read, not a
+                // crag carpet.
+                chance: 0.042,
                 scale: (0.7, 2.2),
                 tree: false,
                 block_radius: 0.24,
@@ -772,7 +773,7 @@ pub fn config() -> BiomeConfig {
                     (build_windpine_mesh(1), 0.9),
                     (build_snag_mesh(), 0.45),
                 ],
-                chance: 0.018, // trunk-blocked spires kept sparse — see crag-thinning note above
+                chance: 0.014, // trunk-blocked spires kept sparse — see crag-thinning note above
                 scale: (0.9, 1.8),
                 tree: true,
                 block_radius: 0.0,
@@ -783,7 +784,7 @@ pub fn config() -> BiomeConfig {
                     (build_scree_mesh(0), 1.0),
                     (build_scree_mesh(1), 1.0),
                 ],
-                chance: 0.03,
+                chance: 0.023,
                 scale: (0.7, 1.5),
                 tree: false,
                 block_radius: 0.0,
