@@ -112,11 +112,86 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_hud, setup_inv_hud))
+        app.add_systems(Startup, (setup_hud, setup_inv_hud, setup_build_button))
             .add_systems(
                 Update,
-                (setup_stat_bar, update_hud, update_inv_hud, update_town_stats, flash_quick_slots),
+                (setup_stat_bar, update_hud, update_inv_hud, update_town_stats, flash_quick_slots, build_button),
             );
+    }
+}
+
+/// The always-on `Build` button (top-left, under the stat bar) + its label marker.
+#[derive(Component)]
+struct BuildButton;
+#[derive(Component)]
+struct BuildButtonLabel;
+
+/// Spawn the persistent `Build` button — the discoverable entry into build mode. Clicking it
+/// toggles [`crate::town::BuildMode`]; the **B** key does the same (and cycles the building),
+/// which is the reliable path since combat locks the mouse cursor.
+fn setup_build_button(mut commands: Commands, fonts: Res<UiFonts>) {
+    commands
+        .spawn((
+            Button,
+            Interaction::default(),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(56.0),
+                left: Val::Px(14.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(7.0),
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)),
+                border: border(2.0),
+                border_radius: radius(R_BTN),
+                ..default()
+            },
+            BackgroundColor(rgb(27, 22, 16)),
+            BorderColor::all(rgba(224, 168, 74, 0.45)),
+            shadow_hud(),
+            BuildButton,
+        ))
+        .with_children(|b| {
+            b.spawn((label(&fonts.extrabold, "BUILD", 14.0, GOLD), BuildButtonLabel));
+            // Key hint chip — building is also (reliably) on the B key.
+            b.spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(6.0), Val::Px(1.0)),
+                    border: border(1.0),
+                    border_radius: radius(5.0),
+                    ..default()
+                },
+                widgets::keycap_paint(),
+                children![label(&fonts.bold, "B", 10.0, rgba(255, 224, 170, 0.92))],
+            ));
+        });
+}
+
+/// Click the `Build` button → toggle build mode; reflect the active state on the button (gold
+/// border, label flips to `DONE` so "click again to leave" reads). The B key + Esc also toggle /
+/// exit it (see `town::build_mode_keys` / `game_state::pause_toggle`).
+fn build_button(
+    mut mode: ResMut<crate::town::BuildMode>,
+    q: Query<&Interaction, (Changed<Interaction>, With<BuildButton>)>,
+    mut border_q: Query<&mut BorderColor, With<BuildButton>>,
+    mut label_q: Query<&mut Text, With<BuildButtonLabel>>,
+) {
+    for i in &q {
+        if *i == Interaction::Pressed {
+            mode.active = !mode.active;
+            if mode.active {
+                mode.sel = 0;
+            }
+        }
+    }
+    if let Ok(mut bc) = border_q.single_mut() {
+        *bc = BorderColor::all(if mode.active { GOLD } else { rgba(224, 168, 74, 0.45) });
+    }
+    if let Ok(mut t) = label_q.single_mut() {
+        let want = if mode.active { "DONE" } else { "BUILD" };
+        if t.0 != want {
+            t.0 = want.to_string();
+        }
     }
 }
 
@@ -278,12 +353,12 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
 }
 
 fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
-    // Top-left pickup-toast column (sits below the stat bar).
+    // Top-left pickup-toast column (sits below the stat bar + the Build button).
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(18.0),
-            top: Val::Px(58.0),
+            top: Val::Px(98.0),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(8.0),
             ..default()

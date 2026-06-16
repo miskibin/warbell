@@ -1067,11 +1067,13 @@ fn invader_brain(
     }
 }
 
-/// Keyboard (prep only): **B** rings the war bell (summon the night early), **G** cycles
-/// difficulty. Restart is handled by the game-over screen (Enter → `OnExit(GameOver)` reset),
-/// so there is no `R` keybind. Gated to `Playing` (no panel) by the plugin's run condition.
+/// Keyboard (prep only): **N** rings the war bell (summon the night early — a dev fallback; the
+/// player-facing ring is **E** at the bell), **G** cycles difficulty. `B` is now **Build mode**
+/// (`town::build_mode_keys`), so the bell shortcut moved off it to avoid an accidental night start
+/// mid-build. Restart is handled by the game-over screen (Enter → `OnExit(GameOver)` reset), so
+/// there is no `R` keybind. Gated to `Playing` (no panel) by the plugin's run condition.
 fn siege_controls(keys: Res<ButtonInput<KeyCode>>, mut siege: ResMut<Siege>) {
-    if keys.just_pressed(KeyCode::KeyB) && siege.phase == GamePhase::Prep {
+    if keys.just_pressed(KeyCode::KeyN) && siege.phase == GamePhase::Prep {
         siege.skip_requested = true; // floored to MIN_PREP_SECONDS inside the reducer
     }
     if keys.just_pressed(KeyCode::KeyG) && siege.phase == GamePhase::Prep {

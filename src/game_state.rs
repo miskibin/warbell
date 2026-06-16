@@ -301,12 +301,18 @@ fn pause_toggle(
     mut next_app: ResMut<NextState<AppState>>,
     mut next_modal: ResMut<NextState<Modal>>,
     confirm: Res<ConfirmWipe>,
+    mut build_mode: ResMut<crate::town::BuildMode>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
     }
     // While the overwrite dialog is up, Esc belongs to it (cancel), not the pause toggle.
     if confirm.0.is_some() {
+        return;
+    }
+    // Build mode is a live placement state (not a panel) — Esc leaves it instead of pausing.
+    if build_mode.active {
+        build_mode.active = false;
         return;
     }
     match app.get() {

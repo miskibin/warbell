@@ -26,9 +26,6 @@ use crate::ui::widgets::{self, border};
 const KEEP_DIST: f32 = 4.2;
 const BELL_DIST: f32 = 4.2;
 const SHOP_DIST: f32 = 3.5;
-const BUILD_DIST: f32 = 3.0;
-/// Range around the next dwelling slot's construction pad (`castle::next_house_site`).
-const HOUSE_DIST: f32 = 3.0;
 /// Talk-back range: a bit over the villager-chatter trigger (`npc::NEAR_DIST` 7.0) so stepping
 /// back half a pace during the jab doesn't lose the prompt.
 const TALK_DIST: f32 = 8.0;
@@ -38,11 +35,6 @@ enum InteractKind {
     Upgrades,
     Shop,
     WarBell,
-    Build,
-    /// Standing at the next dwelling slot's construction pad inside the walls — E raises the
-    /// house right there (houses left the plot Build menu: a building must rise where you
-    /// stand, never somewhere else).
-    RaiseHouse,
     /// A villager jabbed at the hero and a comeback is on offer (`director::OfferedReply`).
     TalkBack,
     /// Standing next to an unopened treasure chest — **E** opens it (the resolver emits
@@ -55,8 +47,6 @@ impl InteractKind {
             InteractKind::Upgrades => "Upgrades",
             InteractKind::Shop => "Shop",
             InteractKind::WarBell => "Ring the bell",
-            InteractKind::Build => "Build",
-            InteractKind::RaiseHouse => "Raise house",
             InteractKind::TalkBack => "Talk back",
             InteractKind::Chest => "Open chest",
         }
@@ -71,24 +61,11 @@ impl InteractKind {
 #[derive(Resource, Default)]
 struct ActiveInteraction {
     kind: Option<InteractKind>,
-    /// When the active interaction can't be acted on *right now* (e.g. Raise house with too
-    /// little wood/stone), the player-facing reason — `None` means actionable. Drives the
-    /// prompt's red "can't afford" state + the shortfall line, so the player sees *why* before
-    /// pressing E (not a silent no-op).
+    /// A player-facing "can't act yet" reason for the active interaction (red prompt + detail),
+    /// or `None` when actionable. No current interaction gates on cost — building's afford check
+    /// moved to the HUD-button build mode (`town::build_place`) — so this stays `None` today, but
+    /// the prompt machinery is kept for the next gated interaction.
     blocked: Option<String>,
-}
-
-/// Wood/stone the player is still short of for a House, as a prompt line — `None` if affordable.
-fn house_shortfall(bank: &tileworld_core::resource_store::ResourceState) -> Option<String> {
-    use tileworld_core::town_store::HOUSE_COST;
-    let nw = (HOUSE_COST.wood - bank.wood()).max(0.0).ceil() as i64;
-    let ns = (HOUSE_COST.stone - bank.stone()).max(0.0).ceil() as i64;
-    match (nw, ns) {
-        (0, 0) => None,
-        (w, 0) => Some(format!("need {w} more wood")),
-        (0, s) => Some(format!("need {s} more stone")),
-        (w, s) => Some(format!("need {w} wood + {s} stone")),
-    }
 }
 
 /// The chest read + open-request, bundled so `drive_interaction` stays under Bevy's 16-param cap.
@@ -130,16 +107,12 @@ fn shop_anchor() -> Vec2 {
 fn drive_interaction(
     keys: Res<ButtonInput<KeyCode>>,
     hero: Res<HeroState>,
+    build_mode: Res<crate::town::BuildMode>,
     mut siege: ResMut<Siege>,
     mut active: ResMut<ActiveInteraction>,
     mut next_modal: ResMut<NextState<Modal>>,
     mut cues: MessageWriter<AudioCue>,
     mut feedback: ResMut<HitFeedback>,
-    plot_spots: Res<crate::town::PlotSpots>,
-    mut town: ResMut<crate::town::TownRes>,
-    mut bank: ResMut<crate::economy::Bank>,
-    mut floats: ResMut<crate::combat_fx::FloatQueue>,
-    mut build_target: ResMut<crate::town::BuildTarget>,
     time: Res<Time>,
     mut offered: ResMut<crate::audio::director::OfferedReply>,
     mut voices: ResMut<crate::audio::director::VoiceManager>,
@@ -147,17 +120,13 @@ fn drive_interaction(
 ) {
     let p = hero.pos;
 
-    // Nearest buildable (Empty/Rubble) plot the hero is standing on.
-    let mut nearest_plot: Option<(usize, f32)> = None;
-    for (idx, spot) in plot_spots.0.iter().enumerate() {
-        if town.0.plots.get(idx).map_or(false, |pl| pl.is_buildable()) {
-            let d = p.distance(*spot);
-            if d < BUILD_DIST && nearest_plot.map_or(true, |(_, bd)| d < bd) {
-                nearest_plot = Some((idx, d));
-            }
-        }
+    // While placing buildings, the build palette owns E + its own on-spot prompt — don't also
+    // surface keep/shop/bell/chest prompts (they'd fight `town::build_place` for the key).
+    if build_mode.active {
+        active.kind = None;
+        active.blocked = None;
+        return;
     }
-    build_target.0 = nearest_plot.map(|(i, _)| i);
 
     // (kind, position, radius, available?)
     let mut candidates: Vec<(InteractKind, Vec2, f32, bool)> = vec![
@@ -165,15 +134,6 @@ fn drive_interaction(
         (InteractKind::Shop, shop_anchor(), SHOP_DIST, true),
         (InteractKind::WarBell, Vec2::new(0.0, 6.0), BELL_DIST, siege.phase == GamePhase::Prep),
     ];
-    if let Some((idx, _)) = nearest_plot {
-        candidates.push((InteractKind::Build, plot_spots.0[idx], BUILD_DIST, true));
-    }
-    // The next free dwelling slot inside the walls (its pad is visible in the world): E here
-    // raises a House on the spot. Anchored to the site so the prompt and the building agree.
-    let house_site = crate::castle::next_house_site(town.0.houses);
-    if let Some(site) = house_site {
-        candidates.push((InteractKind::RaiseHouse, site, HOUSE_DIST, true));
-    }
     // A villager jab on offer: the prompt anchors where the speaker stood (expiry is handled by
     // `tick_chains`; here we only range-gate it).
     if let Some(offer) = offered.0 {
@@ -209,12 +169,7 @@ fn drive_interaction(
         }
     }
     active.kind = best.map(|(k, _)| k);
-    // Surface affordability on the prompt itself (red + shortfall) so the player knows *before*
-    // pressing E — only Raise house carries a cost gate today.
-    active.blocked = match active.kind {
-        Some(InteractKind::RaiseHouse) => house_shortfall(&bank.0),
-        _ => None,
-    };
+    active.blocked = None; // no interaction carries a cost gate now (building moved to build mode)
 
     if let (true, Some(kind)) = (keys.just_pressed(KeyCode::KeyE), active.kind) {
         match kind {
@@ -224,32 +179,6 @@ fn drive_interaction(
                 siege.request_prep_skip();
                 cues.write(AudioCue::WarBell);
                 feedback.trauma = (feedback.trauma + 0.3).min(1.0);
-            }
-            InteractKind::Build => next_modal.set(Modal::Build),
-            InteractKind::RaiseHouse => {
-                // Build right here, right now — and ALWAYS answer the press: a float names
-                // either the new beds or exactly what's missing (no silent no-op).
-                let site = house_site.unwrap_or(p);
-                let y = crate::worldmap::ground_at_world(site.x, site.y).unwrap_or(0.0);
-                use tileworld_core::town_store::POP_PER_HOUSE;
-                if town.0.build_house(&mut bank.0) {
-                    cues.write(AudioCue::UiSelect);
-                    floats.0.push(crate::combat_fx::FloatReq {
-                        world: Vec3::new(site.x, y + 3.0, site.y),
-                        text: format!("\u{1f3e0} House raised \u{2014} beds for {POP_PER_HOUSE} more"),
-                        color: Color::srgb(0.55, 1.0, 0.6),
-                        scale: 1.25,
-                    });
-                } else {
-                    // Can't afford — name exactly what's short (the prompt already warned in red).
-                    let why = house_shortfall(&bank.0).unwrap_or_else(|| "need more resources".into());
-                    floats.0.push(crate::combat_fx::FloatReq {
-                        world: Vec3::new(site.x, y + 3.0, site.y),
-                        text: format!("Can't raise house \u{2014} {why}"),
-                        color: Color::srgb(1.0, 0.4, 0.35),
-                        scale: 1.1,
-                    });
-                }
             }
             InteractKind::TalkBack => {
                 if let Some(offer) = offered.0.take() {

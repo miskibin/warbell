@@ -270,6 +270,9 @@ near the **keep** → War Table (upgrades), near the **merchant stall** → shop
 `interaction.rs`; nearest in-range wins, proximity-only/no-facing) · **Tab** (or **I**) Satchel ·
 **Q** eat food · **Y/T** bindable quick-slots (auto-fill resist/power; in the satchel,
 hover an item + Y/T pins it) · **Z/X/C** combat arts (Slam/Dash/Sweep, once unlocked) ·
-**F** forage / rescue · **R** recruit · **1–5** swap
-biome patch · **P/Esc** pause. (`B` is a debug ring-the-bell fallback in `siege::siege_controls`.)
+**B** / the HUD **Build** button toggle **build mode** — every buildable plot glows; B cycles the
+building (House → Farm → Lumber → Mine → off), walk onto a glowing spot and **E** raises it, Esc
+exits (lives in `town.rs::build_mode_keys` / `build_place`; keyboard-first because combat locks the
+mouse) · **F** forage / rescue · **R** recruit · **1–5** swap
+biome patch · **P/Esc** pause. (`N` is a debug ring-the-bell fallback in `siege::siege_controls`.)
 Fly-cam: Space/Ctrl up·down, Shift sprint, hold Right-Mouse to look.
