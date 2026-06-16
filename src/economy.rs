@@ -351,8 +351,8 @@ fn build_shop_panel(
                     ShopItemButton(item.id),
                 ))
                 .with_children(|b| {
-                    if let Some(handle) = atlas.get(item.id) {
-                        b.spawn(widgets::icon(handle, 24.0));
+                    if let Some(entry) = atlas.get_tintable(item.id) {
+                        b.spawn(widgets::icon_tinted(entry, 24.0, crate::inventory::item_tint(item.id)));
                     }
                     b.spawn((
                         Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, ..default() },
@@ -391,8 +391,8 @@ fn build_shop_panel(
                         ShopSellButton(id.clone()),
                     ))
                     .with_children(|b| {
-                        if let Some(handle) = atlas.get(&id) {
-                            b.spawn(widgets::icon(handle, 22.0));
+                        if let Some(entry) = atlas.get_tintable(&id) {
+                            b.spawn(widgets::icon_tinted(entry, 22.0, crate::inventory::item_tint(&id)));
                         }
                         b.spawn((
                             Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, ..default() },

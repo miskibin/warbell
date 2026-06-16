@@ -1456,11 +1456,19 @@ fn setup_drop_assets(
     commands.insert_resource(TreeFx { chip_mesh, wood_mat, leaf_mat });
 }
 
+/// Chance a hunt-kill ALSO coughs up a frontier gear piece, at the safe core (`_BASE`) climbing to
+/// the rim (`_BASE + _SLOPE`). Kept small on purpose: a wild kill is mainly meat/hide, and a
+/// dropped weapon/armor should read as a rare frontier treat — not a steady rain of duplicate
+/// swords. (Was 10%→45%, which buried the hero in identical kit every few kills.)
+const GEAR_DROP_BASE: f64 = 0.04;
+const GEAR_DROP_SLOPE: f64 = 0.14;
+
 /// Roll an animal's drops (primary + secondary + a frontier-graded bonus gear roll) and spawn
 /// a floating mote for each, scattered around the kill point.
 fn animal_drops(
     mut kills: MessageReader<AnimalKilled>,
     mut rng: ResMut<VerbRng>,
+    inv: Res<Inventory>,
     assets: Option<Res<DropAssets>>,
     mut commands: Commands,
 ) {
@@ -1480,10 +1488,15 @@ fn animal_drops(
                 drops.push(id);
             }
         }
-        // Frontier bonus: a small, distance-graded chance to also drop a gear piece.
+        // Frontier bonus: a small, distance-graded chance to also drop a gear piece — but never a
+        // weapon/armor the hero already owns (a duplicate with identical stats is just clutter, the
+        // same dedup the chests do). The roll is still consumed either way so loot stays deterministic.
         let f = forest_frontier(k.at.x, k.at.z);
-        if rng.unit() < 0.1 + 0.35 * f {
-            drops.push(frontier::roll_gear(f, rng.unit()));
+        if rng.unit() < GEAR_DROP_BASE + GEAR_DROP_SLOPE * f {
+            let id = frontier::roll_gear(f, rng.unit());
+            if !inv.0.owns_wearable(id) {
+                drops.push(id);
+            }
         }
         for id in drops {
             let ang = (rng.unit() * std::f64::consts::TAU) as f32;

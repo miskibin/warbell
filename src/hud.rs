@@ -462,18 +462,23 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         });
 }
 
-/// What a quick-slot should render: its icon handle, the tint alpha (full / greyed-depleted /
-/// faint-ghost), and the count to show. Q derives the next food; Y/T use the bound item
-/// (or, unbound, the derived next item of their kind) via the core `quick_view`.
-fn quick_display(inv: &Inventory, atlas: &IconAtlas, kind: SlotKind) -> (Option<Handle<Image>>, f32, i64) {
+/// What a quick-slot should render: its icon entry (handle + tintable flag), the tint alpha (full /
+/// greyed-depleted / faint-ghost), the count to show, and the item id (for the per-item colour;
+/// `None` for the empty-slot ghost, which stays a neutral tint). Q derives the next food; Y/T use
+/// the bound item (or, unbound, the derived next item of their kind) via the core `quick_view`.
+fn quick_display(
+    inv: &Inventory,
+    atlas: &IconAtlas,
+    kind: SlotKind,
+) -> (Option<(Handle<Image>, bool)>, f32, i64, Option<String>) {
     let view = match kind.bind_slot() {
         None => inv.0.food_slot(),
         Some(i) => inv.0.quick_view(i),
     };
     match view {
-        Some(qs) if qs.count > 0 => (atlas.get(&qs.item_id), 1.0, qs.count),
-        Some(qs) => (atlas.get(&qs.item_id), DEPLETED_ALPHA, 0), // pinned but exhausted
-        None => (atlas.get(kind.ghost_key()), GHOST_ALPHA, 0),   // empty → category ghost
+        Some(qs) if qs.count > 0 => (atlas.get_tintable(&qs.item_id), 1.0, qs.count, Some(qs.item_id)),
+        Some(qs) => (atlas.get_tintable(&qs.item_id), DEPLETED_ALPHA, 0, Some(qs.item_id)), // pinned but exhausted
+        None => (atlas.get_tintable(kind.ghost_key()), GHOST_ALPHA, 0, None), // empty → category ghost
     }
 }
 
@@ -505,12 +510,18 @@ fn update_inv_hud(
     let now = time.elapsed_secs() as f64;
 
     // Quick-slot icons: live item (full), pinned-but-empty (greyed), or category ghost (faint).
+    // A bound item inks to its per-item hue (so the bar reads like the satchel); the empty ghost and
+    // full-colour Twemoji rasters keep a neutral white tint.
     for (slot, mut node, mut img) in &mut icon_q {
-        let (handle, alpha, _) = quick_display(&inv, &atlas, slot.0);
-        match handle {
-            Some(h) => {
+        let (entry, alpha, _, id) = quick_display(&inv, &atlas, slot.0);
+        match entry {
+            Some((h, tintable)) => {
                 img.image = h;
-                img.color = Color::WHITE.with_alpha(alpha);
+                let base = match (tintable, &id) {
+                    (true, Some(id)) => crate::inventory::item_tint(id),
+                    _ => Color::WHITE,
+                };
+                img.color = base.with_alpha(alpha);
                 node.display = Display::Flex;
             }
             None => node.display = Display::None,
@@ -518,7 +529,7 @@ fn update_inv_hud(
     }
     // Quick-slot counts ("" unless a live stack of >1).
     for (slot, mut text) in &mut count_q {
-        let (_, _, count) = quick_display(&inv, &atlas, slot.0);
+        let (_, _, count, _) = quick_display(&inv, &atlas, slot.0);
         **text = if count > 1 { format!("{count}") } else { String::new() };
     }
 
@@ -581,8 +592,8 @@ fn update_inv_hud(
                     anim(AnimKind::ToastIn, 0.0, 0.18),
                 ))
                 .with_children(|row| {
-                    if let Some(h) = atlas.get(&tt.item_id) {
-                        row.spawn(widgets::icon(h, 26.0));
+                    if let Some(e) = atlas.get_tintable(&tt.item_id) {
+                        row.spawn(widgets::icon_tinted(e, 26.0, crate::inventory::item_tint(&tt.item_id)));
                     }
                     row.spawn(label(&fonts.extrabold, format!("+{} {}", tt.count, name), 14.0, rgb(242, 244, 250)));
                 });

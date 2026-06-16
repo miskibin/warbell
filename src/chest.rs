@@ -159,28 +159,17 @@ fn roll_chest_item(factor: f64, roll: f64) -> &'static str {
     frontier::roll_gear(factor, g)
 }
 
-/// True if `id` is a wearable (weapon/armor) the hero already holds — in the bag or equipped.
-fn owns_wearable(bag: &Bag, id: &str) -> bool {
-    match item_def(id) {
-        Some(d) if matches!(d.kind, ItemKind::Weapon | ItemKind::Armor) => {
-            bag.has_item(id)
-                || bag.equipped_id.as_deref() == Some(id)
-                || bag.equipped_armor_id.as_deref() == Some(id)
-        }
-        _ => false,
-    }
-}
-
 /// Drop wearable gear the hero already owns (and collapse a repeat within the same haul) so a
 /// chest never grants a second copy of a weapon/armor piece — that's just bag clutter. Consumables
-/// pass through untouched; order is preserved.
+/// pass through untouched; order is preserved. Ownership test lives on core `Bag::owns_wearable`,
+/// shared with the hunt-kill loot roll (`verbs::animal_drops`).
 fn dedup_wearables(bag: &Bag, loot: Vec<&'static str>) -> Vec<&'static str> {
     let mut kept: Vec<&'static str> = Vec::new();
     for id in loot {
         let wear = item_def(id)
             .map(|d| matches!(d.kind, ItemKind::Weapon | ItemKind::Armor))
             .unwrap_or(false);
-        if wear && (owns_wearable(bag, id) || kept.contains(&id)) {
+        if wear && (bag.owns_wearable(id) || kept.contains(&id)) {
             continue; // duplicate wearable — ignore
         }
         kept.push(id);

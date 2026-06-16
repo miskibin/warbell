@@ -460,7 +460,7 @@ fn build_inv_panel(
                                 ))
                                 .with_children(|b| {
                                     if let Some(e) = atlas.get_tintable(id) {
-                                        b.spawn(widgets::icon_tinted(e, 22.0, Color::WHITE));
+                                        b.spawn(widgets::icon_tinted(e, 22.0, item_tint(id)));
                                     }
                                     text_col(b, "Click to unequip", rgba(255, 213, 140, 0.75));
                                 });
@@ -559,8 +559,8 @@ fn build_inv_panel(
                                                 BackgroundColor(kind_accent_color(k)),
                                             ));
                                         }
-                                        if let Some(handle) = atlas.get(id) {
-                                            cell.spawn(widgets::icon(handle, 28.0));
+                                        if let Some(entry) = atlas.get_tintable(id) {
+                                            cell.spawn(widgets::icon_tinted(entry, 28.0, item_tint(id)));
                                         }
                                         if slot.count > 1 {
                                             cell.spawn((
@@ -625,6 +625,19 @@ fn kind_accent_color(kind: ItemKind) -> Color {
         ItemKind::Consumable => GREEN,
         ItemKind::Token => TEXT_FAINT,
     }
+}
+
+/// Per-item display tint for the item icons (satchel grid, quick-bar, pickup toast, shop rows).
+/// The shipped game-icons are white monochrome silhouettes, so untinted EVERY item reads as the
+/// same colourless shape; we ink each with its core `IconSpec` primary hue (red apple, gold blade,
+/// frost-blue greatsword, tan fur, green venom…) so the bag is readable at a glance. Channels are
+/// lifted off the floor so a dark recipe channel still shows as a hue, not black, on the dark slot.
+/// Passed through [`widgets::icon_tinted`], which leaves full-colour Twemoji rasters untouched, so
+/// this only ever recolours the monochrome source.
+pub fn item_tint(id: &str) -> Color {
+    let (r, g, b) = item_def(id).map(|d| d.icon_spec().fg).unwrap_or((225, 225, 225));
+    let ch = |c: u8| (c as f32 / 255.0).mul_add(0.7, 0.3);
+    Color::srgb(ch(r), ch(g), ch(b))
 }
 
 /// Click a bag row → use the consumable (heal + buff) or equip the gear, then rebuild the panel

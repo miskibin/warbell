@@ -471,6 +471,22 @@ impl Bag {
         self.count_item(item_id) > 0
     }
 
+    /// True if `id` is a wearable (weapon/armor) the hero ALREADY owns — held in the bag or worn
+    /// in either equip slot. Loot rolls (chests, hunt-kill bonus) call this so they never grant a
+    /// second copy of a piece the hero has: a duplicate weapon/armor with identical stats is pure
+    /// bag clutter, never an upgrade. Non-wearables (consumables/tokens) always return false — they
+    /// stack, so a repeat is fine.
+    pub fn owns_wearable(&self, id: &str) -> bool {
+        match item_def(id) {
+            Some(d) if matches!(d.kind, ItemKind::Weapon | ItemKind::Armor) => {
+                self.has_item(id)
+                    || self.equipped_id.as_deref() == Some(id)
+                    || self.equipped_armor_id.as_deref() == Some(id)
+            }
+            _ => false,
+        }
+    }
+
     /// True if the bag could accept EVERY id in `ids` at once — accounts for empty
     /// slots plus stackable merges. Lets a chest avoid granting loot it has no room
     /// for. Mirrors `bagHasRoomFor`.
@@ -1006,6 +1022,20 @@ mod tests {
         }
         assert!(!full.has_room_for(&["sword_iron"]));
         assert!(full.has_room_for(&["leather_armor"]));
+    }
+
+    #[test]
+    fn owns_wearable_tracks_held_and_equipped_gear_only() {
+        let mut b = Bag::new();
+        assert!(!b.owns_wearable("sword_iron")); // nothing held yet
+        b.add("sword_iron", 1);
+        assert!(b.owns_wearable("sword_iron")); // in the bag
+        b.activate_bag_item(idx_of(&b, "sword_iron")); // equip it (leaves the bag)
+        assert!(b.owns_wearable("sword_iron")); // worn counts as owned
+        // Consumables/tokens are never "owned wearables" (they stack — a repeat is fine).
+        b.add("bread", 1);
+        assert!(!b.owns_wearable("bread"));
+        assert!(!b.owns_wearable("mercenary_contract"));
     }
 
     #[test]
