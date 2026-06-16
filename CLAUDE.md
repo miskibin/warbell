@@ -104,6 +104,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
+| `FOREST_FP=1` | boot straight into first-person (forces Play so the follow-cam eye-view can be captured; `player/camera.rs`) |
 | `FOREST_LOADTEST=1` | hold the boot loading veil up (even under a capture) so it can be shot (`loading.rs`); pair with `FOREST_SHOT`+`FOREST_MENU=1` |
 | `FOREST_PANEL=tree\|inv` | seed + open the upgrade-tree / satchel panel for a shot |
 | `FOREST_EQUIP="sword_gold,gold_armor"` | equip the listed item ids at startup so the hero model shows its weapon/armor |
@@ -263,7 +264,9 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
 
 ## Controls (gameplay)
 
-` (backquote) toggle free-roam fly-cam ↔ follow-cam · WASD move · LMB attack · RMB block ·
+` (backquote) toggle free-roam fly-cam ↔ follow-cam · **V** / the HUD **FP** button toggle
+first-person view (a sub-mode of Play — shows an arms+sword+shield viewmodel, hides head/torso/legs;
+`player/camera.rs::FirstPerson`) · WASD move · LMB attack · RMB block ·
 F1 debug egui tuning panel · F2 perf/state stats overlay · **E** contextual interact — walk up to a thing and a screen prompt names it:
 near the **keep** → War Table (upgrades), near the **merchant stall** → shop, near the **war bell**
 (prep only) → ring in the night, near a **treasure chest** → open it (the unified resolver lives in
