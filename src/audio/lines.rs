@@ -367,13 +367,15 @@ pub const LINES: &[Line] = &[
     Line { floor: 300.0, priority: 11, ..line("pop_lost",     Speaker::Villager, Concept::PopLost,      "Buried another last night. Fewer of us to complain at you now. Small mercies.") },
     Line { floor: 600.0, priority: 11, ..line("thriving",     Speaker::Villager, Concept::TownThriving, "Food in the pot, roof overhead — careful, m'lord, you'll spoil us. We'll want chairs next.") },
     Line { floor: 600.0, priority: 11, ..line("strong_walls", Speaker::Villager, Concept::TownThriving, "Lovely strong walls these days. Almost a shame the orks keep knocking.") },
-    // ── Warden approach (hero, priority 8 — lands over musings, yields to combat warnings) ──
-    Line { once: true, priority: 8, ..line("warden_near",   Speaker::Hero, Concept::WardenSighted,          "Something vast sleeps out here. I feel it in my bones — put that beast down, and I'd walk away the stronger for it.") },
-    Line { floor: 600.0, priority: 8, ..line("warden_forest", Speaker::Hero, Concept::NearWarden(Biome::Forest), "That old wooden thing among the trees… beat it, and I think my blade would learn a new sweep. I can almost feel it.") },
-    Line { floor: 600.0, priority: 8, ..line("warden_snow",   Speaker::Hero, Concept::NearWarden(Biome::Snow),   "Whatever stirs in the ice up here — kill it, and I swear the cold itself would start fighting on my side.") },
-    Line { floor: 600.0, priority: 8, ..line("warden_rock",   Speaker::Hero, Concept::NearWarden(Biome::Rocky),  "A mountain that walks. Break it, and maybe I'd learn to bring the mountain down myself.") },
-    Line { floor: 600.0, priority: 8, ..line("warden_desert", Speaker::Hero, Concept::NearWarden(Biome::Desert), "That dead thing moves like the wind off the dunes. Put it down, and perhaps I would too.") },
-    Line { floor: 600.0, priority: 8, ..line("warden_swamp",  Speaker::Hero, Concept::NearWarden(Biome::Swamp),  "The bog-hag's brewed every poison there is. Best her, and I'd turn that venom loose on the horde.") },
+    // ── Warden approach (hero) — priority 15 (urgent tier): approaching a world boss is a rare,
+    //    significant beat, so it must cut through the hero-line window (anything < 15 is held while
+    //    the window is open, which would silently drop this once-per-warden line). ──
+    Line { once: true, priority: 15, ..line("warden_near",   Speaker::Hero, Concept::WardenSighted,          "Something vast sleeps out here. I feel it in my bones — put that beast down, and I'd walk away the stronger for it.") },
+    Line { floor: 600.0, priority: 15, ..line("warden_forest", Speaker::Hero, Concept::NearWarden(Biome::Forest), "That old wooden thing among the trees… beat it, and I think my blade would learn a new sweep. I can almost feel it.") },
+    Line { floor: 600.0, priority: 15, ..line("warden_snow",   Speaker::Hero, Concept::NearWarden(Biome::Snow),   "Whatever stirs in the ice up here — kill it, and I swear the cold itself would start fighting on my side.") },
+    Line { floor: 600.0, priority: 15, ..line("warden_rock",   Speaker::Hero, Concept::NearWarden(Biome::Rocky),  "A mountain that walks. Break it, and maybe I'd learn to bring the mountain down myself.") },
+    Line { floor: 600.0, priority: 15, ..line("warden_desert", Speaker::Hero, Concept::NearWarden(Biome::Desert), "That dead thing moves like the wind off the dunes. Put it down, and perhaps I would too.") },
+    Line { floor: 600.0, priority: 15, ..line("warden_swamp",  Speaker::Hero, Concept::NearWarden(Biome::Swamp),  "The bog-hag's brewed every poison there is. Best her, and I'd turn that venom loose on the horde.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.

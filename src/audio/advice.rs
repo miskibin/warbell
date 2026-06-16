@@ -39,14 +39,19 @@ const LOW_STOCK: f64 = 12.0;
 pub(crate) struct AdviceTrigger {
     /// Earliest time the next nudge may be emitted.
     next: f32,
-    /// Population at the last nudge — a drop since then voices the "we lost someone" line.
+    /// Population seen last frame — the baseline for detecting a drop. Tracked EVERY Prep frame
+    /// (not just on a nudge) so it never goes stale.
     prev_pop: Option<u32>,
+    /// A population drop has been observed but not yet voiced. Latched on the drop and held through
+    /// the throttle / one-mouth wait so a loss during a busy window isn't lost; cleared when the
+    /// dirge actually fires.
+    pop_lost_pending: bool,
 }
 
 impl Default for AdviceTrigger {
     fn default() -> Self {
         // Hold off the first ~35 s so a fresh player gets to look around before being advised.
-        Self { next: 35.0, prev_pop: None }
+        Self { next: 35.0, prev_pop: None, pop_lost_pending: false }
     }
 }
 
@@ -111,6 +116,15 @@ pub(crate) fn detect_town_advice(
         return;
     }
     let now = time.elapsed_secs();
+
+    // Track population EVERY Prep frame so the loss baseline never goes stale, and latch a drop
+    // until it's voiced — so a death during the throttle / while someone's talking isn't dropped.
+    let pop = town.0.population;
+    if t.prev_pop.is_some_and(|p| pop < p) {
+        t.pop_lost_pending = true;
+    }
+    t.prev_pop = Some(pop);
+
     if now < t.next {
         return;
     }
@@ -119,20 +133,18 @@ pub(crate) fn detect_town_advice(
         return;
     }
 
-    let pop = town.0.population;
-    let lost = t.prev_pop.is_some_and(|p| pop < p);
     let walls = up.0.is_purchased("def_walls");
-
-    match advice_for(&town.0, &bank.0, player.0.gold, walls, siege.wave_index, lost) {
+    match advice_for(&town.0, &bank.0, player.0.gold, walls, siege.wave_index, t.pop_lost_pending) {
         Some(concept) => {
             // at=None → the director positions a villager line at the hero (head-locked for the
             // hero's own musings); the catalog + replay floors decide which pooled line, if any.
             speak.write(Speak::new(concept));
-            t.prev_pop = Some(pop);
+            if concept == Concept::PopLost {
+                t.pop_lost_pending = false; // dirge requested — clear the latch
+            }
             t.next = now + ADVICE_GAP;
         }
-        // Nothing to advise: short poll so we're not evaluating every frame, and a pop change is
-        // still caught next time (prev_pop is left untouched until we actually advise).
+        // Nothing to advise right now: short poll so we're not evaluating every frame.
         None => t.next = now + POLL_GAP,
     }
 }
