@@ -115,8 +115,11 @@ impl Plugin for HudPlugin {
         app.add_systems(Startup, (setup_hud, setup_inv_hud, setup_build_button))
             .add_systems(
                 Update,
-                (setup_stat_bar, update_hud, update_inv_hud, update_town_stats, flash_quick_slots, build_button),
-            );
+                (setup_stat_bar, update_hud, update_inv_hud, update_town_stats, flash_quick_slots),
+            )
+            // Only while actually playing (no panel) — so a click can't toggle build mode on the
+            // start / pause / game-over screens, where the spawn/clean systems don't run.
+            .add_systems(Update, build_button.run_if(in_state(crate::game_state::Modal::None)));
     }
 }
 

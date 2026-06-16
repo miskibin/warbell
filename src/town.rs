@@ -201,11 +201,23 @@ impl BuildMode {
 /// lives in `game_state::pause_toggle` (so Esc leaves build mode instead of pausing). Keyboard-first
 /// on purpose: combat locks the mouse cursor (`player::camera`), so a click-only entry would be dead
 /// at dawn — right after a night of fighting, the prime rebuild moment.
-fn build_mode_keys(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<BuildMode>) {
+fn build_mode_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    siege: Option<Res<crate::siege::Siege>>,
+    mut mode: ResMut<BuildMode>,
+) {
+    // Build mode is a daytime activity — the night assault force-exits it (you defend, not build).
+    let prep = siege.map_or(true, |s| s.phase == crate::siege::GamePhase::Prep);
+    if mode.active && !prep {
+        mode.active = false;
+        return;
+    }
     if keys.just_pressed(KeyCode::KeyB) {
         if !mode.active {
-            mode.active = true;
-            mode.sel = 0;
+            if prep {
+                mode.active = true;
+                mode.sel = 0;
+            }
         } else if mode.sel + 1 < BUILD_TYPES.len() {
             mode.sel += 1;
         } else {
@@ -238,16 +250,13 @@ impl Plugin for TownPlugin {
             // despawn the palette on toggle, drive its rows, glow every valid plot, and place on E.
             .add_systems(
                 Update,
-                (
-                    build_mode_keys,
-                    sync_build_strip,
-                    build_strip_input,
-                    build_strip_update,
-                    build_place,
-                    sync_build_rings,
-                )
+                (build_mode_keys, build_strip_input, build_strip_update, build_place)
                     .run_if(in_state(Modal::None)),
             )
+            // Ungated, but self-gated on `Modal::None` inside: the palette + glow rings must be
+            // REAPED when play is left or a panel opens (a `Modal::None` run-condition would just
+            // stop running and strand the strip over the pause / game-over screen).
+            .add_systems(Update, (sync_build_strip, sync_build_rings))
             // The timber pad marks where the NEXT house will rise (visible even outside build mode).
             .add_systems(Update, sync_house_site_pad)
             // Trailer Director (F1 → "Build stronghold"): live, real-time construction timelapse.
@@ -465,11 +474,13 @@ fn sync_population_bodies(
 fn reset_town(
     mut town: ResMut<TownRes>,
     mut bank: ResMut<Bank>,
+    mut build_mode: ResMut<BuildMode>,
     siege: Option<Res<crate::siege::Siege>>,
     mut commands: Commands,
     stale: Query<Entity, Or<(With<BuildingMesh>, With<Flame>)>>,
 ) {
     town.0.reset();
+    *build_mode = BuildMode::default(); // never resume a new run with build mode stuck on (in-process Continue)
     // Difficulty handicap: Easy seeds spare townsfolk — heirs ARE the headcount now, so the
     // old "spare heirs" grant lands here. They arrive housed (a free house per pair), but only
     // the larder pair eats free: keeping the spares fed means building farms.
@@ -1003,17 +1014,21 @@ struct BuildHint;
 /// would reset the rows' `Interaction` and eat clicks).
 fn sync_build_strip(
     mode: Res<BuildMode>,
+    modal: Option<Res<State<Modal>>>,
     existing: Query<Entity, With<BuildUi>>,
     fonts: Res<UiFonts>,
     icons: Res<crate::ui::icons::IconAtlas>,
     mut commands: Commands,
 ) {
+    // `Modal::None` only exists inside `Playing` with no panel, so this one check means "show the
+    // palette only while actually playing" — pausing / a panel / game-over reaps it.
+    let show = mode.active && modal.map_or(false, |m| *m.get() == Modal::None);
     let shown = !existing.is_empty();
-    if mode.active && !shown {
+    if show && !shown {
         spawn_build_strip(&mut commands, &fonts, &icons);
-    } else if !mode.active && shown {
+    } else if !show && shown {
         for e in &existing {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
         }
     }
 }
@@ -1140,20 +1155,28 @@ fn build_strip_update(
 /// spawn their mesh here; a House just bumps the core count (the courtyard reveals the dwelling).
 /// A float always answers the press — the new beds, or exactly what's short (never a silent no-op).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn build_place(
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<BuildMode>,
+    siege: Option<Res<crate::siege::Siege>>,
     hero: Res<HeroState>,
     spots: Res<PlotSpots>,
     mut town: ResMut<TownRes>,
     mut bank: ResMut<Bank>,
     mats: Option<Res<VillageMats>>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     existing: Query<(Entity, &BuildingMesh)>,
 ) {
     if !mode.active || !keys.just_pressed(KeyCode::KeyE) {
+        return;
+    }
+    // No raising buildings mid-assault — build mode is a daytime activity (`build_mode_keys` also
+    // force-exits at dusk; this guards the in-frame race where E lands the same tick night falls).
+    if siege.is_some_and(|s| s.phase != crate::siege::GamePhase::Prep) {
         return;
     }
     let Some(mats) = mats else { return };
@@ -1168,6 +1191,7 @@ fn build_place(
                     }
                 }
                 spawn_building(&mut commands, &mut meshes, &mats.0, idx, k, &spots);
+                cues.write(crate::audio::AudioCue::UiSelect);
             } else {
                 let at = spots.0.get(idx).copied().unwrap_or(hero.pos);
                 push_cant_afford(&mut floats, k.cost(), &bank.0, k.label(), at);
@@ -1176,6 +1200,7 @@ fn build_place(
         (BuildType::House, BuildSpot::House(site)) => {
             if town.0.build_house(&mut bank.0) {
                 let y = crate::worldmap::ground_at_world(site.x, site.y).unwrap_or(0.0);
+                cues.write(crate::audio::AudioCue::UiSelect);
                 floats.0.push(FloatReq {
                     world: Vec3::new(site.x, y + 3.0, site.y),
                     text: format!("\u{1f3e0} House raised \u{2014} beds for {POP_PER_HOUSE} more"),
@@ -1236,15 +1261,17 @@ struct HouseSitePad;
 #[allow(clippy::too_many_arguments)]
 fn sync_build_rings(
     mode: Res<BuildMode>,
+    modal: Option<Res<State<Modal>>>,
     town: Res<TownRes>,
     spots: Res<PlotSpots>,
-    hero: Res<HeroState>,
+    hero: Option<Res<HeroState>>,
     time: Res<Time>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut rings: Query<(&BuildRing, &mut Transform, &mut Visibility)>,
     mut spawned: Local<bool>,
+    mut prev_shown: Local<bool>,
 ) {
     // One-time lazy spawn once the plots exist — a flat gold annulus per spot, sharing one mesh +
     // material (same unlit-emissive planar-flash recipe as the combat rings, so it reads day/night).
@@ -1268,23 +1295,37 @@ fn sync_build_rings(
         spawn_build_ring(&mut commands, mesh, mat, BuildRingKind::House);
         return; // rings show from next frame
     }
+    // Self-gate (build mode is off ~all the time): when not shown, hide every ring once on the
+    // falling edge then idle — no per-frame work while build mode is closed / not playing.
+    let show = mode.active && modal.map_or(false, |m| *m.get() == Modal::None);
+    if !show {
+        if *prev_shown {
+            *prev_shown = false;
+            for (_, _, mut vis) in &mut rings {
+                *vis = Visibility::Hidden;
+            }
+        }
+        return;
+    }
+    *prev_shown = true;
     let kind = mode.kind();
     let pulse = 1.0 + (time.elapsed_secs() * 2.6).sin() * 0.05;
+    let hero_pos = hero.map(|h| h.pos);
     for (ring, mut tf, mut vis) in &mut rings {
-        let (spot, show) = match ring.0 {
+        let (spot, ring_on) = match ring.0 {
             BuildRingKind::Plot(idx) => {
                 let free = town.0.plots.get(idx).is_some_and(|p| p.is_buildable());
-                (spots.0.get(idx).copied(), mode.active && !kind.is_house() && free)
+                (spots.0.get(idx).copied(), !kind.is_house() && free)
             }
             BuildRingKind::House => {
                 let site = crate::castle::next_house_site(town.0.houses);
-                (site, mode.active && kind.is_house() && site.is_some())
+                (site, kind.is_house() && site.is_some())
             }
         };
-        match (show, spot) {
+        match (ring_on, spot) {
             (true, Some(p)) => {
                 let y = crate::worldmap::ground_at_world(p.x, p.y).unwrap_or(0.0);
-                let near = hero.pos.distance(p) < BUILD_DIST.max(HOUSE_DIST);
+                let near = hero_pos.is_some_and(|hp| hp.distance(p) < BUILD_DIST.max(HOUSE_DIST));
                 tf.translation = Vec3::new(p.x, y + 0.06, p.y);
                 tf.scale = Vec3::splat(pulse * if near { 1.12 } else { 1.0 });
                 *vis = Visibility::Visible;
