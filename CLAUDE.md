@@ -226,11 +226,18 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
 - **Death is a fade, not a pop** (`src/dying.rs`): kills insert `Dying{since}` and crumple over
   ~1.4s. Every AI/targeting/count query must filter `Without<Dying>` so corpses aren't targeted or
   counted — but reward/clear logic fires once pre-fade.
-- **New cross-run progression MUST round-trip the save** (`src/savegame.rs`) or it's silently lost
-  on Continue — this is exactly how a run's level/items went missing before. Any resource/flag/entity
-  a player *earns or changes over a run* has to be added to `SaveData` + `SaveCtx::snapshot()` +
-  `apply_pending_load` (and reconciled from the `GameLoaded` message if it lives on entities). See
-  the **Save / load** section above for the full checklist and the deliberately-unsaved list.
+- **Anything a player earns or changes over a run has TWO obligations — persist it AND reset it.**
+  Add any new run-state (resource, flag, or earned entity) to *both* paths or it breaks silently:
+  1. **Persist** — round-trip it through the save (`src/savegame.rs`): `SaveData` +
+     `SaveCtx::snapshot()` + `apply_pending_load` (reconcile from the `GameLoaded` message if it
+     lives on entities). Miss this and it's lost on Continue — exactly how a run's level/items, and
+     later the quest chain, went missing. See the **Save / load** section for the checklist + the
+     deliberately-unsaved list.
+  2. **Reset** — make sure **New Game** wipes it back to its fresh-boot value (resources via the
+     `OnExit(StartScreen)`/`OnExit(GameOver)` reset systems or the in-process world rebuild;
+     world entities via the rebuild's despawn). Miss this and a new run inherits the old run's state.
+  Default rule of thumb: prefer holding it in a core store (those already serialize) and a resource
+  that a reset system clears, so both obligations are one edit each.
 - **Every voice/quote line carries its spoken text in a code comment.** When you wire up *any*
   spoken line (hero `voice.rs`, villager `audio/npc.rs`, ork `audio/ork.rs`, or future speakers),
   put the exact transcript next to where the clip is loaded / keyed, plus its trigger. The audio
