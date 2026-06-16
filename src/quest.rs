@@ -103,7 +103,13 @@ fn restore_quest_log(
     mut track: ResMut<QuestTracking>,
 ) {
     let Some(GameLoaded(data)) = ev.read().last() else { return };
-    log.0 = data.quest.clone();
+    // A save from before the quest system carries no quest data (`None`). That player already had a
+    // running town, so they're past onboarding — mark the chain complete rather than restart the
+    // tutorial on every load. A present log (any new save) restores verbatim.
+    log.0 = match &data.quest {
+        Some(q) => q.clone(),
+        None => QuestLog { active: QUESTS.len(), progress: 0.0 },
+    };
     track.prev_wood = None;
     track.prev_stone = None;
 }

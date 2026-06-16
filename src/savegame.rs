@@ -2,8 +2,9 @@
 //! after quitting.
 //!
 //! The world is built once at `Startup` and is otherwise *persistent* within a process (in-run
-//! state changes never rebuild the island; a *fresh-run* reset relaunches the process — see
-//! `game_state::RestartProcess`), so a save is a **logic snapshot**, not an ECS dump:
+//! state changes never rebuild the island; a *fresh-run* reset rebuilds it **in-process** —
+//! `game_state::drive_fresh_run` re-arms `biome::PendingBuild`), so a save is a **logic snapshot**,
+//! not an ECS dump:
 //! we capture the run-state resources (hero / economy / town / upgrades / keep / heirs / night)
 //! plus a few world flags (looted treasure chests, rescued camps, discovered landmarks), write
 //! them as JSON, and on load overwrite those same resources + mark the already-spawned entities.
@@ -81,9 +82,12 @@ pub struct SaveData {
     pub discovered_landmarks: Vec<String>,
     /// Indexed by `ChestId`; only one-shot treasure chests (caches respawn on their own).
     pub opened_chests: Vec<bool>,
-    /// Tutorial-quest progress. Additive — old saves default to the start of the chain.
+    /// Tutorial-quest progress. Additive + **optional**: a save written before the quest system
+    /// existed has no field → `None` (distinguishable from a new save sitting at quest 0, which is
+    /// `Some(active: 0)`). `restore_quest_log` treats `None` as "already past onboarding" so an old
+    /// run doesn't restart the tutorial on every Continue.
     #[serde(default)]
-    pub quest: QuestLog,
+    pub quest: Option<QuestLog>,
 }
 
 /// Set when the player picks **Continue**; drained by [`apply_pending_load`] on the next play frame.
@@ -255,7 +259,7 @@ impl SaveCtx<'_, '_> {
                 .map(|l| l.name.to_string())
                 .collect(),
             opened_chests,
-            quest: self.quest.0.clone(),
+            quest: Some(self.quest.0.clone()),
         }
     }
 }
@@ -475,7 +479,7 @@ mod tests {
             discoveries_completed: false,
             discovered_landmarks: vec!["The Hollow Oak".into()],
             opened_chests: vec![false, true, false],
-            quest: QuestLog { active: 3, progress: 2.0 },
+            quest: Some(QuestLog { active: 3, progress: 2.0 }),
         }
     }
 
@@ -495,9 +499,20 @@ mod tests {
         assert_eq!(back.rescued_camps, vec![true, false, true]);
         assert_eq!(back.discovered_landmarks, vec!["The Hollow Oak".to_string()]);
         assert_eq!(back.opened_chests, vec![false, true, false]);
-        assert_eq!(back.quest, QuestLog { active: 3, progress: 2.0 });
+        assert_eq!(back.quest, Some(QuestLog { active: 3, progress: 2.0 }));
         assert!(back.bag.has_item("potion"));
         assert!(back.town.plots[0].is_built());
+    }
+
+    /// A save written before the quest system has no `quest` field → it must parse as `None` (not a
+    /// silent `active: 0`), so the load path can tell a pre-quest run from a new run sitting at the
+    /// first quest. This is what stops old runs from restarting the tutorial on every Continue.
+    #[test]
+    fn old_save_without_quest_field_parses_as_none() {
+        let mut v = serde_json::to_value(sample()).expect("to value");
+        v.as_object_mut().unwrap().remove("quest"); // simulate a pre-quest-system save
+        let back: SaveData = serde_json::from_value(v).expect("deserialize old save");
+        assert_eq!(back.quest, None, "absent quest field is distinguishable from active:0");
     }
 
     /// The `apply_pending_load` *system* drains `PendingLoad` and overwrites the live run-state
