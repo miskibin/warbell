@@ -266,9 +266,10 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
 ` (backquote) toggle free-roam fly-cam ↔ follow-cam · WASD move · LMB attack · RMB block ·
 F1 debug egui tuning panel · F2 perf/state stats overlay · **E** contextual interact — walk up to a thing and a screen prompt names it:
 near the **keep** → War Table (upgrades), near the **merchant stall** → shop, near the **war bell**
-(prep only) → ring in the night (the unified resolver lives in `interaction.rs`; nearest in-range
-wins, proximity-only/no-facing) · **Tab** (or **I**) Satchel ·
-**Q** eat food · **Z/X/C** bindable quick-slots (auto-fill resist/power/haste; in the satchel,
-hover an item + Z/X/C pins it) · **F** open chest / forage / rescue · **R** recruit · **1–5** swap
+(prep only) → ring in the night, near a **treasure chest** → open it (the unified resolver lives in
+`interaction.rs`; nearest in-range wins, proximity-only/no-facing) · **Tab** (or **I**) Satchel ·
+**Q** eat food · **Y/T** bindable quick-slots (auto-fill resist/power; in the satchel,
+hover an item + Y/T pins it) · **Z/X/C** combat arts (Slam/Dash/Sweep, once unlocked) ·
+**F** forage / rescue · **R** recruit · **1–5** swap
 biome patch · **P/Esc** pause. (`B` is a debug ring-the-bell fallback in `siege::siege_controls`.)
 Fly-cam: Space/Ctrl up·down, Shift sprint, hold Right-Mouse to look.

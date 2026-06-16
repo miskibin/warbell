@@ -5,11 +5,12 @@
 //! in-range interactable wins (the keep and bell zones overlap), and a screen-space "E" prompt names
 //! it. Proximity only — no facing check, matching the original.
 //!
-//! Other verbs keep their dedicated keys: **F** chest/forage (`verbs`/`chest`), **R** recruit
-//! (`villagers`), **I** satchel (`inventory`), **Q/Y/T** quick-use (`inventory`). The same prompt
-//! chip also surfaces an **F** "Open chest" indicator near an unopened chest — the open itself is
-//! still handled in `chest.rs`; here we only light up the cue (the chip's keycap names E or F).
+//! Treasure **chests** join this E resolver too: near an unopened chest the prompt shows
+//! **E "Open chest"** and a press emits `chest::OpenChest` (the actual loot + lid swing stays in
+//! `chest.rs`). Other verbs keep their own keys: **F** forage/rescue (`verbs`/`villagers`),
+//! **R** recruit (`villagers`), **I** satchel, **Q/Y/T** quick-use (`inventory`).
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::audio::AudioCue;
@@ -44,8 +45,8 @@ enum InteractKind {
     RaiseHouse,
     /// A villager jabbed at the hero and a comeback is on offer (`director::OfferedReply`).
     TalkBack,
-    /// Standing next to an unopened treasure chest — the prompt names the **F** key; the open
-    /// itself is handled in `chest.rs` (this kind only drives the indicator, like every other verb).
+    /// Standing next to an unopened treasure chest — **E** opens it (the resolver emits
+    /// `chest::OpenChest`; `chest.rs` does the actual loot + lid swing).
     Chest,
 }
 impl InteractKind {
@@ -60,13 +61,9 @@ impl InteractKind {
             InteractKind::Chest => "Open chest",
         }
     }
-    /// The keycap shown on the prompt chip. Most contextual actions are on **E**; the world verbs
-    /// keep their own keys (chest/forage/rescue → **F**), so the prompt names the right one.
+    /// The keycap shown on the prompt chip. Every contextual action — chests included — is on **E**.
     fn key_label(self) -> &'static str {
-        match self {
-            InteractKind::Chest => "F",
-            _ => "E",
-        }
+        "E"
     }
 }
 
@@ -92,6 +89,13 @@ fn house_shortfall(bank: &tileworld_core::resource_store::ResourceState) -> Opti
         (0, s) => Some(format!("need {s} more stone")),
         (w, s) => Some(format!("need {w} wood + {s} stone")),
     }
+}
+
+/// The chest read + open-request, bundled so `drive_interaction` stays under Bevy's 16-param cap.
+#[derive(SystemParam)]
+struct ChestIo<'w, 's> {
+    chests: Query<'w, 's, (Entity, &'static crate::chest::Chest, &'static Transform)>,
+    open: MessageWriter<'w, crate::chest::OpenChest>,
 }
 
 #[derive(Component)]
@@ -139,7 +143,7 @@ fn drive_interaction(
     time: Res<Time>,
     mut offered: ResMut<crate::audio::director::OfferedReply>,
     mut voices: ResMut<crate::audio::director::VoiceManager>,
-    chests: Query<(&crate::chest::Chest, &Transform)>,
+    mut chest_io: ChestIo,
 ) {
     let p = hero.pos;
 
@@ -176,13 +180,21 @@ fn drive_interaction(
         let at = offer.pos.map_or(p, |v| Vec2::new(v.x, v.z));
         candidates.push((InteractKind::TalkBack, at, TALK_DIST, true));
     }
-    // Unopened treasure chests within reach — the indicator only (the F-press open lives in
-    // `chest.rs`). Anchored to each chest so the nearest-wins pick names the one you'd open.
-    for (chest, tf) in &chests {
-        if !chest.opened {
-            let at = Vec2::new(tf.translation.x, tf.translation.z);
-            candidates.push((InteractKind::Chest, at, crate::chest::CHEST_INTERACT_DIST, true));
+    // Nearest unopened treasure chest in reach — joins the E nearest-wins arbitration. We remember
+    // the entity so an E press opens exactly the one the prompt named (chest.rs does the open).
+    let mut nearest_chest: Option<(Entity, Vec2, f32)> = None;
+    for (e, chest, tf) in &chest_io.chests {
+        if chest.opened {
+            continue;
         }
+        let at = Vec2::new(tf.translation.x, tf.translation.z);
+        let d = p.distance(at);
+        if d < crate::chest::CHEST_INTERACT_DIST && nearest_chest.map_or(true, |(_, _, bd)| d < bd) {
+            nearest_chest = Some((e, at, d));
+        }
+    }
+    if let Some((_, at, _)) = nearest_chest {
+        candidates.push((InteractKind::Chest, at, crate::chest::CHEST_INTERACT_DIST, true));
     }
 
     // Pick the nearest in-range, available interactable.
@@ -244,9 +256,12 @@ fn drive_interaction(
                     voices.accept_reply(offer, time.elapsed_secs());
                 }
             }
-            // Chest is opened by `chest.rs` on its own F key — this branch only ever shows the
-            // prompt, so an E press here is a deliberate no-op.
-            InteractKind::Chest => {}
+            // Ask chest.rs to open exactly the chest the resolver picked as nearest-in-range.
+            InteractKind::Chest => {
+                if let Some((e, _, _)) = nearest_chest {
+                    chest_io.open.write(crate::chest::OpenChest(e));
+                }
+            }
         }
     }
 }

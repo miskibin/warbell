@@ -24,11 +24,19 @@ use crate::worldmap;
 
 pub struct ChestPlugin;
 
+/// Request to open a specific chest — emitted by the unified **E** interact resolver
+/// (`interaction.rs`) when the player presses E next to it. Routing the open through the resolver
+/// (rather than chest.rs polling its own key) means a chest joins the nearest-wins arbitration, so
+/// it can't double-fire with a keep/shop/house that's also in range.
+#[derive(Message)]
+pub(crate) struct OpenChest(pub(crate) Entity);
+
 impl Plugin for ChestPlugin {
     fn build(&self, app: &mut App) {
         // Sim systems freeze behind panels/pauses; the lid swing is pure animation (a lid keeps
         // falling open behind a panel), so it stays ungated like the other impact-juice drivers.
-        app.add_systems(Update, (chest_interact, chest_respawn).run_if(in_state(Modal::None)))
+        app.add_message::<OpenChest>()
+            .add_systems(Update, (chest_interact, chest_respawn).run_if(in_state(Modal::None)))
             .add_systems(Update, drive_lid_swing);
     }
 }
@@ -188,8 +196,8 @@ fn dedup_wearables(bag: &Bag, loot: Vec<&'static str>) -> Vec<&'static str> {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn chest_interact(
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
     hero: Res<HeroState>,
+    mut open_evs: MessageReader<OpenChest>,
     mut inv: ResMut<Inventory>,
     mut toasts: ResMut<Toasts>,
     mut player: ResMut<PlayerRes>,
@@ -201,18 +209,17 @@ fn chest_interact(
     mut chests: Query<(&mut Chest, &Transform, &Children), Without<ChestLid>>,
     lids: Query<(), (With<ChestLid>, Without<Chest>)>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyF) || !hero.alive {
+    if !hero.alive {
         return;
     }
     let now = time.elapsed_secs();
-    for (mut chest, tf, children) in &mut chests {
+    // Open exactly the chest the resolver named (it already range-gated + won nearest-wins).
+    for ev in open_evs.read() {
+        let Ok((mut chest, tf, children)) = chests.get_mut(ev.0) else { continue };
         if chest.opened {
             continue;
         }
         let p = tf.translation;
-        if Vec2::new(p.x, p.z).distance(hero.pos) > CHEST_INTERACT_DIST {
-            continue;
-        }
         let head = Vec3::new(p.x, p.y + 1.4, p.z);
 
         // Resolve loot: hand-authored trophy → fixed haul; caches → gold + a loaf; deep-rim hoard →
@@ -257,7 +264,7 @@ fn chest_interact(
                 scale: 1.0,
             });
             cues.write(AudioCue::UiSelect);
-            return;
+            continue; // leave it unopened — the prompt stays up so a cleared bag can try again
         }
         player.0.add_gold(gold);
         for id in &loot {
@@ -288,7 +295,6 @@ fn chest_interact(
                 commands.entity(c).try_insert(LidSwing { started: now, from: 0.0, to: CHEST_LID_OPEN });
             }
         }
-        return; // one chest per press
     }
 }
 
