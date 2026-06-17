@@ -26,6 +26,9 @@ use crate::town::TownRes;
 use super::director::{Speak, VoiceManager};
 use super::lines::Concept;
 
+use crate::player::Hero;
+use crate::villagers::{Townsfolk, Villager};
+
 /// Minimum seconds between any two guidance nudges (on top of each line's own replay floor).
 const ADVICE_GAP: f32 = 75.0;
 /// How long, when nothing currently warrants a nudge, before we re-evaluate (cheap poll + debounce).
@@ -99,6 +102,24 @@ fn advice_for(
     })
 }
 
+/// World position (XZ at mouth height) of the townsperson nearest the hero, if any are alive.
+/// Used to anchor a spatial villager advice line on a real peasant so it doesn't blare from the
+/// hero's own head.
+fn nearest_townsperson(
+    hero: Vec2,
+    townsfolk: &Query<&GlobalTransform, (With<Townsfolk>, With<Villager>, Without<crate::dying::Dying>)>,
+) -> Option<Vec3> {
+    let mut best: Option<(Vec3, f32)> = None;
+    for gt in townsfolk {
+        let t = gt.translation();
+        let d = Vec2::new(t.x, t.z).distance(hero);
+        if best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((t, d));
+        }
+    }
+    best.map(|(t, _)| t)
+}
+
 /// The guidance trigger. Registered `Modal::None`-gated (no advice while a panel is open).
 pub(crate) fn detect_town_advice(
     time: Res<Time>,
@@ -108,6 +129,8 @@ pub(crate) fn detect_town_advice(
     up: Res<Upgrades>,
     player: Res<PlayerRes>,
     mgr: Res<VoiceManager>,
+    hero: Query<&Hero>,
+    townsfolk: Query<&GlobalTransform, (With<Townsfolk>, With<Villager>, Without<crate::dying::Dying>)>,
     mut t: ResMut<AdviceTrigger>,
     mut speak: MessageWriter<Speak>,
 ) {
@@ -136,9 +159,19 @@ pub(crate) fn detect_town_advice(
     let walls = up.0.is_purchased("def_walls");
     match advice_for(&town.0, &bank.0, player.0.gold, walls, siege.wave_index, t.pop_lost_pending) {
         Some(concept) => {
-            // at=None → the director positions a villager line at the hero (head-locked for the
-            // hero's own musings); the catalog + replay floors decide which pooled line, if any.
-            speak.write(Speak::new(concept));
+            // Advice concepts are pooled hero+villager (the director picks the speaker). A villager
+            // gripe is spatial, so it MUST come from a real peasant's mouth — position the request at
+            // the nearest living townsperson so distance attenuates it (a far peasant is faint, not
+            // blaring in the hero's ear). Hero lines are head-locked (`spatial:false`) → the pos is
+            // ignored for them. No townsfolk alive → fall back to the head-locked hero position.
+            let near = hero
+                .single()
+                .ok()
+                .and_then(|h| nearest_townsperson(h.pos, &townsfolk));
+            match near {
+                Some(pos) => speak.write(Speak::at(concept, pos)),
+                None => speak.write(Speak::new(concept)),
+            };
             if concept == Concept::PopLost {
                 t.pop_lost_pending = false; // dirge requested — clear the latch
             }

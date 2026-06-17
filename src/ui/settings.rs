@@ -19,7 +19,12 @@ use super::widgets::border;
 
 #[derive(Resource, Default)]
 pub struct AudioSettings {
+    /// Player's manual mute (M key / the HUD speaker icon).
     pub muted: bool,
+    /// Background mute: true while the game window isn't focused (CS2-style). Driven by
+    /// [`track_window_focus`], kept separate from `muted` so refocusing restores the player's own
+    /// mute choice and the speaker icon never flips on an alt-tab. `sync_mute` ORs the two.
+    pub unfocused: bool,
 }
 
 #[derive(Component)]
@@ -52,7 +57,7 @@ impl Plugin for SettingsPlugin {
             .add_systems(Startup, setup_settings)
             .add_systems(
                 Update,
-                (settings_click, keys, sync_audio_icon, sync_mute, sync_quality_label),
+                (settings_click, keys, track_window_focus, sync_audio_icon, sync_mute, sync_quality_label),
             );
     }
 }
@@ -313,6 +318,22 @@ pub(crate) fn toggle_quality(quality: &mut GraphicsQuality, notice: &mut Notice,
     notice.push(format!("Graphics: {}", quality.label()), now);
 }
 
+/// CS2-style background mute: silence the game whenever its window loses focus (alt-tabbed, or
+/// another app on top), and unmute the moment it's focused again. Writes [`AudioSettings::unfocused`]
+/// — `sync_mute` ORs it with the manual `muted` flag — so the player's own mute choice survives a
+/// tab-away and the speaker icon (which tracks only `muted`) doesn't twitch on focus changes. Only
+/// writes on an actual change to avoid needless change-detection churn.
+fn track_window_focus(
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut settings: ResMut<AudioSettings>,
+) {
+    let Ok(window) = window.single() else { return };
+    let unfocused = !window.focused;
+    if settings.unfocused != unfocused {
+        settings.unfocused = unfocused;
+    }
+}
+
 /// Keep every live audio sink's mute state matching the setting. Bevy's `GlobalVolume` is only
 /// read when a sink is created, so muting must be pushed onto the playing sinks here — this also
 /// catches sinks that start while muted (they get muted within a frame). `mute()`/`unmute()`
@@ -322,7 +343,7 @@ fn sync_mute(
     mut sinks: Query<&mut AudioSink>,
     mut spatial: Query<&mut SpatialAudioSink>,
 ) {
-    let want = settings.muted;
+    let want = settings.muted || settings.unfocused;
     for mut s in &mut sinks {
         if s.is_muted() != want {
             if want {

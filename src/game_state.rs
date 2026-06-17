@@ -124,7 +124,7 @@ impl Plugin for GameStatePlugin {
             .add_systems(OnEnter(AppState::GameOver), clear_run_active)
             .add_systems(
                 Update,
-                (start_screen_input, cycle_difficulty, start_click, update_diff_seg)
+                (start_screen_input, cycle_difficulty, start_click, update_diff_seg, cycle_map, update_map_seg)
                     .run_if(in_state(AppState::StartScreen)),
             )
             .add_systems(
@@ -310,16 +310,25 @@ fn clear_run_active(mut run: ResMut<RunInProgress>) {
 fn begin_new_game(
     run_active: bool,
     cur_diff: crate::siege::Difficulty,
+    map_changed: bool,
     pending: &mut crate::savegame::PendingLoad,
     next_app: &mut NextState<AppState>,
     fresh: &mut FreshRunPending,
 ) {
-    if run_active {
-        fresh.0 = Some(cur_diff); // mid-run: full in-process reset (drive_fresh_run rebuilds the world)
+    if run_active || map_changed {
+        // Mid-run (dirty world) OR the player picked a different map than the one currently built:
+        // a full in-process reset, so `drive_fresh_run` rebuilds the world from the chosen `ActiveMap`.
+        fresh.0 = Some(cur_diff);
     } else {
-        pending.0 = None; // cold boot: world already fresh, start in-process
+        pending.0 = None; // cold boot, same map: world already fresh, start in-process
         next_app.set(AppState::Playing);
     }
+}
+
+/// Whether the picked map (the [`crate::worldmap::ActiveMap`] resource) differs from the world
+/// currently built — if so a New Game must rebuild even on a cold boot.
+fn map_changed(active: &crate::worldmap::ActiveMap) -> bool {
+    active.0 as u8 != crate::worldmap::current_map_u8()
 }
 
 fn start_screen_input(
@@ -331,6 +340,7 @@ fn start_screen_input(
     run: Res<RunInProgress>,
     siege: Option<Res<crate::siege::Siege>>,
     mut fresh: ResMut<FreshRunPending>,
+    active_map: Res<crate::worldmap::ActiveMap>,
 ) {
     // While the overwrite dialog is up, it owns the keyboard (see `confirm_input`).
     if confirm.0.is_some() {
@@ -345,7 +355,7 @@ fn start_screen_input(
             confirm.0 = Some(false); // ask before wiping the existing run
         } else {
             let cur_diff = current_difficulty(siege.as_deref());
-            begin_new_game(run.0, cur_diff, &mut pending, &mut next_app, &mut fresh);
+            begin_new_game(run.0, cur_diff, map_changed(&active_map), &mut pending, &mut next_app, &mut fresh);
         }
     }
 }
@@ -445,6 +455,9 @@ struct GameOverMenuBtn;
 /// A difficulty segment (click to select).
 #[derive(Component)]
 struct SegButton(crate::siege::Difficulty);
+/// A map segment on the start screen (click to choose which world a New Game generates).
+#[derive(Component)]
+struct MapSeg(crate::worldmap::MapId);
 // ── Pause-menu buttons ──
 #[derive(Component)]
 struct PauseResumeBtn;
@@ -506,8 +519,10 @@ fn spawn_start_screen(
     siege: Option<Res<crate::siege::Siege>>,
     mut save: ResMut<crate::savegame::SaveExists>,
     run: Res<RunInProgress>,
+    active_map: Res<crate::worldmap::ActiveMap>,
 ) {
     let cur = current_difficulty(siege.as_deref());
+    let cur_map = active_map.0;
     // Re-check the file here: Bevy runs the initial `OnEnter(StartScreen)` *before* `Startup`
     // (where `detect_existing_save` sets the flag), so reading `save.0` directly would miss an
     // existing save on a fresh launch. Recompute + write it back so the flag is right from frame 0.
@@ -681,6 +696,53 @@ fn spawn_start_screen(
                             ))
                             .with_children(|b| {
                                 b.spawn(label(&fonts.semibold, diff_name(d), 13.0, if on { INK } else { TEXT_FAINT }));
+                            });
+                        }
+                    });
+                });
+                // Map selector — which world a New Game builds (Green Isle / Ashlands). Mirrors the
+                // difficulty segmented control; the live choice lives in the `ActiveMap` resource.
+                m.spawn((
+                    Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(7.0), ..default() },
+                    anim(AnimKind::Rise, 0.35, 0.7),
+                ))
+                .with_children(|d| {
+                    d.spawn(label(&fonts.semibold, "MAP", 11.0, KICKER));
+                    d.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            padding: UiRect::all(Val::Px(3.0)),
+                            border: widgets::border(1.0),
+                            border_radius: radius(10.0),
+                            ..default()
+                        },
+                        BackgroundColor(rgba(24, 19, 13, 0.72)),
+                        BorderColor::all(BORDER_SOFT),
+                    ))
+                    .with_children(|seg| {
+                        for mp in MAPS {
+                            let on = mp == cur_map;
+                            seg.spawn((
+                                Button,
+                                Interaction::default(),
+                                Node {
+                                    padding: UiRect::axes(Val::Px(20.0), Val::Px(7.0)),
+                                    border_radius: radius(7.0),
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(6.0),
+                                    ..default()
+                                },
+                                BackgroundColor(if on { GOLD_DEEP } else { Color::NONE }),
+                                BorderColor::all(Color::NONE),
+                                MapSeg(mp),
+                            ))
+                            .with_children(|b| {
+                                b.spawn(label(&fonts.semibold, map_name(mp), 13.0, if on { INK } else { TEXT_FAINT }));
+                                // Flag a not-yet-finished map so players know what they're picking.
+                                if !map_ready(mp) {
+                                    b.spawn(label(&fonts.semibold, "(not ready)", 10.0, if on { INK } else { TEXT_FAINT }));
+                                }
                             });
                         }
                     });
@@ -1134,6 +1196,7 @@ fn start_click(
             Option<&StartResumeButton>,
             Option<&CreditsButton>,
             Option<&SegButton>,
+            Option<&MapSeg>,
         ),
         Changed<Interaction>,
     >,
@@ -1145,21 +1208,26 @@ fn start_click(
     run: Res<RunInProgress>,
     mut fresh: ResMut<FreshRunPending>,
     mut credits: ResMut<crate::mainmenu::CreditsOpen>,
+    mut active_map: ResMut<crate::worldmap::ActiveMap>,
 ) {
     if confirm.0.is_some() {
         return; // dialog up — the scrim already blocks these, but be explicit
     }
     let mut siege = siege;
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, play, cont, resume, cred, seg) in &q {
+    for (interaction, play, cont, resume, cred, seg, mapseg) in &q {
         if *interaction != Interaction::Pressed {
             continue;
+        }
+        // Pick a map segment first, so a New Game in the same click batch sees the new choice.
+        if let Some(ms) = mapseg {
+            active_map.0 = ms.0;
         }
         if play.is_some() {
             if save.0 {
                 confirm.0 = Some(false); // New Game would overwrite — confirm first
             } else {
-                begin_new_game(run.0, cur_diff, &mut pending, &mut next_app, &mut fresh);
+                begin_new_game(run.0, cur_diff, map_changed(&active_map), &mut pending, &mut next_app, &mut fresh);
             }
         }
         if resume.is_some() {
@@ -1189,6 +1257,49 @@ fn update_diff_seg(
     let cur = current_difficulty(siege.as_deref());
     for (seg, mut bg, children) in &mut q {
         let on = seg.0 == cur;
+        bg.0 = if on { GOLD_DEEP } else { Color::NONE };
+        for child in children.iter() {
+            if let Ok(mut tc) = text_q.get_mut(child) {
+                tc.0 = if on { Color::WHITE } else { TEXT_FAINT };
+            }
+        }
+    }
+}
+
+/// The maps offered on the start screen (order = segment order).
+const MAPS: [crate::worldmap::MapId; 2] =
+    [crate::worldmap::MapId::Home, crate::worldmap::MapId::Ashlands];
+fn map_name(m: crate::worldmap::MapId) -> &'static str {
+    match m {
+        crate::worldmap::MapId::Home => "Green Isle",
+        crate::worldmap::MapId::Ashlands => "Ashlands",
+    }
+}
+/// Whether a map is finished enough to ship without a caveat. Ashlands is a playable prototype
+/// (ground/atmosphere reskinned, but tree foliage etc. not yet charred), so the menu flags it.
+fn map_ready(m: crate::worldmap::MapId) -> bool {
+    !matches!(m, crate::worldmap::MapId::Ashlands)
+}
+
+/// On the start screen, **M** cycles which map a New Game builds. The segmented control reflects it.
+fn cycle_map(keys: Res<ButtonInput<KeyCode>>, mut active: ResMut<crate::worldmap::ActiveMap>) {
+    if !keys.just_pressed(KeyCode::KeyM) {
+        return;
+    }
+    active.0 = match active.0 {
+        crate::worldmap::MapId::Home => crate::worldmap::MapId::Ashlands,
+        crate::worldmap::MapId::Ashlands => crate::worldmap::MapId::Home,
+    };
+}
+
+/// Recolour the map segments to match the live [`crate::worldmap::ActiveMap`] (M key or click).
+fn update_map_seg(
+    active: Res<crate::worldmap::ActiveMap>,
+    mut q: Query<(&MapSeg, &mut BackgroundColor, &Children)>,
+    mut text_q: Query<&mut TextColor>,
+) {
+    for (seg, mut bg, children) in &mut q {
+        let on = seg.0 == active.0;
         bg.0 = if on { GOLD_DEEP } else { Color::NONE };
         for child in children.iter() {
             if let Ok(mut tc) = text_q.get_mut(child) {
@@ -1494,7 +1605,7 @@ mod tests {
         let mut pending = crate::savegame::PendingLoad::default();
         let mut next = NextState::<AppState>::default();
         let mut fresh = FreshRunPending::default();
-        begin_new_game(false, Difficulty::Normal, &mut pending, &mut next, &mut fresh);
+        begin_new_game(false, Difficulty::Normal, false, &mut pending, &mut next, &mut fresh);
         assert!(fresh.0.is_none(), "cold boot needs no rebuild");
         assert!(matches!(next, NextState::Pending(AppState::Playing)), "cold boot queues Playing");
 
@@ -1503,7 +1614,7 @@ mod tests {
         let mut pending = crate::savegame::PendingLoad::default();
         let mut next = NextState::<AppState>::default();
         let mut fresh = FreshRunPending::default();
-        begin_new_game(true, Difficulty::Normal, &mut pending, &mut next, &mut fresh);
+        begin_new_game(true, Difficulty::Normal, false, &mut pending, &mut next, &mut fresh);
         assert!(
             matches!(fresh.0, Some(Difficulty::Normal)),
             "mid-run New Game must request an in-process reset at the chosen difficulty"

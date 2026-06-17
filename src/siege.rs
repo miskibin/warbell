@@ -409,7 +409,7 @@ const KEEP_DAMAGE: f32 = 9.0;
 const GUARD_ENGAGE: f32 = 8.0;
 /// Keep total HP — tuned so an unopposed early wave threatens it over the night and a late wave
 /// razes it fast, but the hero thinning the horde saves it.
-pub const KEEP_MAX_HP: f32 = 1000.0;
+pub const KEEP_MAX_HP: f32 = 1500.0;
 /// Keep self-repair during the prep breather (HP/s) — the day is a chance to recover.
 const KEEP_REPAIR_RATE: f32 = 12.0;
 /// On top of the slow continuous repair, the keep is shored up by this fraction of its MAX HP at
@@ -419,8 +419,9 @@ const KEEP_DAWN_REPAIR_FRAC: f32 = 0.2;
 const INVADER_FACTION: orks::Faction = orks::Faction::Red;
 /// How close an arsonist invader must be to batter a building.
 const BUILDING_ATTACK_RANGE: f32 = 1.8;
-/// Building damage per invader per second. FORGIVING slice tuning: a farm (60 HP)
-/// survives ~12s of one undefended arsonist, so you can usually reach it in time.
+/// Building damage per invader per second. FORGIVING slice tuning: a farm (110 HP)
+/// survives ~22s of one undefended arsonist at base, ~15s at the night-4 dmg ramp, so you can
+/// usually reach it in time even on later nights.
 const BUILDING_DPS: f32 = 5.0;
 
 /// The keep's vitals. Razed (hp ≤ 0) during a wave → defeat.

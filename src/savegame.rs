@@ -65,6 +65,11 @@ pub struct SaveData {
     pub keep_hp: f32,
     pub keep_max: f32,
     pub heirs: u32,
+    /// Which world this run is on (`crate::worldmap::MapId` as `u8`; 0 = Home). Additive —
+    /// old saves default to 0, so they resume on the home island as before. On load,
+    /// `restore_active_map` rebuilds the world if this differs from the booted map.
+    #[serde(default)]
+    pub map_id: u8,
     // ── core stores (serde via the core `serde` feature) ──
     pub player: Player,
     pub bank: ResourceState,
@@ -132,7 +137,11 @@ impl Plugin for SaveGamePlugin {
             // Apply a pending load the moment a run is playing (cheap no-op when nothing pending).
             .add_systems(Update, apply_pending_load.run_if(in_state(AppState::Playing)))
             // Reconcile world entities from the GameLoaded snapshot (ungated; fires once per load).
-            .add_systems(Update, (restore_discovered_landmarks, restore_opened_chests));
+            // `restore_active_map` rebuilds the terrain if the loaded run was on a different map.
+            .add_systems(
+                Update,
+                (restore_discovered_landmarks, restore_opened_chests, restore_active_map),
+            );
     }
 }
 
@@ -221,6 +230,7 @@ struct SaveCtx<'w, 's> {
     captives: Option<Res<'w, crate::ork_fortress::BlightCaptives>>,
     disc: Res<'w, Discoveries>,
     quest: Res<'w, QuestLogRes>,
+    active_map: Res<'w, crate::worldmap::ActiveMap>,
     chests: Query<'w, 's, (&'static Chest, &'static ChestId)>,
     landmarks: Query<'w, 's, &'static Landmark>,
 }
@@ -244,6 +254,7 @@ impl SaveCtx<'_, '_> {
             keep_hp: self.keep.hp,
             keep_max: self.keep.max,
             heirs: self.lives.heirs,
+            map_id: self.active_map.0 as u8,
             player: self.player.0,
             bank: self.bank.0,
             bag: self.inv.0.clone(),
@@ -432,6 +443,30 @@ pub(crate) fn restore_discovered_landmarks(
     }
 }
 
+/// On load, if the saved run was on a different map than the one currently built, swap the
+/// [`crate::worldmap::ActiveMap`] resource and re-arm the world rebuild. The booted world is Home
+/// by default, so resuming an Ashlands run would otherwise land on Home terrain. Same-map loads
+/// (the common case) skip the rebuild and resume in place. Reads the carried `SaveData`.
+pub(crate) fn restore_active_map(
+    mut ev: MessageReader<GameLoaded>,
+    mut active: ResMut<crate::worldmap::ActiveMap>,
+    mut pending_build: ResMut<crate::biome::PendingBuild>,
+    mut world_ready: ResMut<crate::biome::WorldReady>,
+    mut veil: ResMut<crate::loading::Veil>,
+    time: Res<Time>,
+) {
+    let Some(GameLoaded(data)) = ev.read().last() else { return };
+    if data.map_id == crate::worldmap::current_map_u8() {
+        return; // same world already built — resume in place
+    }
+    active.0 = crate::worldmap::MapId::from_u8(data.map_id);
+    // Re-arm the in-process rebuild; the veil holds over the despawn-and-rebuild and lifts when the
+    // loaded map's world lands. `biome::apply_build` reads `ActiveMap` + regenerates the terrain.
+    pending_build.0 = true;
+    world_ready.0 = false;
+    veil.raise(time.elapsed_secs());
+}
+
 /// Re-open looted treasure chests on a load (entity flag + lid pose), keyed by `ChestId`.
 pub(crate) fn restore_opened_chests(
     mut ev: MessageReader<GameLoaded>,
@@ -476,6 +511,7 @@ mod tests {
             keep_hp: 640.0,
             keep_max: 1400.0,
             heirs: 5,
+            map_id: 1, // Ashlands — exercises the non-default map round-trip
             player,
             bank: tbank,
             bag,
@@ -505,6 +541,7 @@ mod tests {
         assert_eq!(back.wave_index, 2);
         assert_eq!(back.player.gold, 777);
         assert_eq!(back.heirs, 5);
+        assert_eq!(back.map_id, 1, "map id round-trips");
         assert_eq!(back.upgrades, data.upgrades);
         assert!(back.defenses.walls);
         assert_eq!(back.rescued_camps, vec![true, false, true]);
@@ -524,6 +561,16 @@ mod tests {
         v.as_object_mut().unwrap().remove("quest"); // simulate a pre-quest-system save
         let back: SaveData = serde_json::from_value(v).expect("deserialize old save");
         assert_eq!(back.quest, None, "absent quest field is distinguishable from active:0");
+    }
+
+    /// A save written before the second map has no `map_id` → it must default to 0 (Home), so old
+    /// runs resume on the home island exactly as before.
+    #[test]
+    fn old_save_without_map_id_defaults_to_home() {
+        let mut v = serde_json::to_value(sample()).expect("to value");
+        v.as_object_mut().unwrap().remove("map_id"); // simulate a pre-second-map save
+        let back: SaveData = serde_json::from_value(v).expect("deserialize old save");
+        assert_eq!(back.map_id, 0, "absent map_id resumes on Home");
     }
 
     /// The `apply_pending_load` *system* drains `PendingLoad` and overwrites the live run-state

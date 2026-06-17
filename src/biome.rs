@@ -312,6 +312,8 @@ impl Plugin for BiomePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PendingBuild(true))
             .init_resource::<WorldReady>()
+            .init_resource::<crate::worldmap::ActiveMap>()
+            .add_systems(Startup, init_active_map_from_env)
             .add_systems(Update, apply_build.run_if(build_warmup_elapsed));
     }
 }
@@ -319,6 +321,15 @@ impl Plugin for BiomePlugin {
 /// Atmosphere tuple: (sky, fog_density, sun_color, sun_illuminance, ambient_color,
 /// ambient_brightness, sun_pos).
 type Atmo = (u32, f32, u32, f32, u32, f32, Vec3);
+
+/// Debug boot hook: `FOREST_MAP=2` starts the run on the Volcanic Ashlands map (the start-screen
+/// toggle is the normal path; this is for the screenshot harness + quick testing).
+fn init_active_map_from_env(mut active: ResMut<crate::worldmap::ActiveMap>) {
+    if std::env::var("FOREST_MAP").ok().as_deref() == Some("2") {
+        active.0 = crate::worldmap::MapId::Ashlands;
+        info!("FOREST_MAP=2 → booting Volcanic Ashlands");
+    }
+}
 
 /// Run-condition gate for [`apply_build`]: hold the (heavy, frame-blocking) build off for
 /// [`BUILD_WARMUP`] seconds after it's armed, so the loading veil presents and animates first and
@@ -357,11 +368,16 @@ fn apply_build(
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<crate::scene::Sun>>,
     mut castle_built: ResMut<crate::castle::CastleBuilt>,
     mut world_ready: ResMut<WorldReady>,
+    active_map: Res<crate::worldmap::ActiveMap>,
 ) {
     if !pending.0 {
         return;
     }
     pending.0 = false;
+
+    // Point the (resource-blind) generator at the chosen map BEFORE building. `tiles()` memoises
+    // per map, so this just selects which grid `worldmap::build` reads.
+    crate::worldmap::set_active_map(active_map.0);
 
     // Wipe any prior build (incl. the obstacle set wildlife navigates by). `try_despawn`: a
     // BiomeEntity may already be queued for reap by combat/AI the same frame a rebuild fires.
@@ -378,7 +394,7 @@ fn apply_build(
     crate::worldmap::build(&mut commands, &mut meshes, &mut images, &mut std_mats, &mut terrain_mats, &mut water_mats, &mut creature_mats);
     world_ready.0 = true; // the loading veil reveals once the world is up (boot + every rebuild)
     info!("view → world map");
-    let atmo: Atmo = crate::worldmap::ATMOSPHERE;
+    let atmo: Atmo = crate::worldmap::active_atmosphere();
 
     // Atmosphere (camera/sun/IBL persist; just re-tint).
     let (sky, _fog_density, sun_color, sun_illuminance, amb_color, amb_brightness, sun_pos) = atmo;

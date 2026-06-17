@@ -260,7 +260,7 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
 - **Determinism**: scatter/placement uses `mulberry32` (core `rng.rs`) seeded per-tile, so the
   world is reproducible. "Feels the same" parity, not byte-exact RNG/map.
 - **Forest's divergences are canonical, not bugs**: `siege.rs`'s wave director is richer than
-  core's `wave.rs` and is the one in use; `KEEP_MAX_HP = 1000` / 12-per-s repair; the bespoke
+  core's `wave.rs` and is the one in use; `KEEP_MAX_HP = 1500` / 12-per-s repair; the bespoke
   `Atmosphere`/IBL lighting; the custom CoC bokeh `dof.rs` over a plain DoF. Don't "restore" these
   to match core.
 

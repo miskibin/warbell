@@ -235,7 +235,7 @@ fn rally_one(commands: &mut Commands, e: Entity, guard: Option<&Guard>, v: &Vill
 // NPC combat tuning. Townsfolk take damage ONLY through the [`NpcDamage`] channel (ork blades
 // from `siege.rs`, predator bites from `wildlife.rs`) — no self-inflicted melt — so guards are
 // beefy enough that a pair wins a 1v1 but a wave still overwhelms them.
-const NPC_MAX_HP: f32 = 140.0; // +20% over the prior 117: the militia stands its ground longer
+const NPC_MAX_HP: f32 = 210.0; // raised from 140: defender HP is flat but the night dmg ramp is steep, so late nights gangs shredded peasants — bigger pool lets the militia survive a night-4+ swarm
 /// Base unarmed-guard strike. Each `villager_arms_tier` (the Defense "Guard Arms" line) lifts this
 /// to the advertised figure via [`guard_damage`]; the guard-vigor line adds flat HP atop NPC_MAX_HP.
 const GUARD_DAMAGE: f32 = 6.3; // −30% off the old 9: guards trade slower, lean on staying power
@@ -464,7 +464,7 @@ pub fn spawn_courtyard_guard(
     let half = crate::castle::courtyard_half();
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
-    spawn(commands, meshes, &mat, kind, home, home, 1.6, 1.4, SCALE, next_u32(&mut rng));
+    spawn(commands, meshes, &mat, kind, home, home, 2.3, 1.4, SCALE, next_u32(&mut rng));
 }
 
 /// Spawn a plain **peasant** for a staged trailer scene at `pos`/`facing`, tagged
@@ -1169,6 +1169,11 @@ fn guard_combat(
     let hero_pos = hero.single().ok().map(|h| h.pos);
     // Effective strike for the town's current arms tier (Defense "Guard Arms" upgrades).
     let guard_dmg = guard_damage(def.villager_arms_tier);
+    // Each arms tier also widens the watch (the upgrade descs promise "chase from farther" /
+    // "wider watch"): +3u detect, +4u leash per tier. Previously unwired — only damage scaled.
+    let tier = def.villager_arms_tier as f32;
+    let guard_detect = GUARD_DETECT + tier * 3.0;
+    let guard_leash = GUARD_LEASH + tier * 4.0;
     // Everything a guard may engage: every ork, plus the predator species only — the militia
     // doesn't slaughter the deer herds.
     let inv: Vec<(Entity, Vec2, bool)> = hostiles
@@ -1202,7 +1207,7 @@ fn guard_combat(
             } else {
                 let dp = p.distance(g.post);
                 let engaged = d < GUARD_MELEE * 2.0;
-                if dp > if engaged { GUARD_LEASH } else { GUARD_DETECT } {
+                if dp > if engaged { guard_leash } else { guard_detect } {
                     continue;
                 }
             }
@@ -1914,7 +1919,7 @@ pub fn populate(
         let g = gates[i % gates.len()];
         let home = g + (-g).normalize_or_zero() * 2.0;
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: PILGRIM_ROBE, hat: true };
-        let e = spawn(commands, meshes, &body_mat, kind, home, home, 1.5, 2.0, SCALE, next_u32(&mut rng));
+        let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.0, 2.0, SCALE, next_u32(&mut rng));
         commands.entity(e).insert(Pilgrim {
             target: home,
             pause: 0.0,

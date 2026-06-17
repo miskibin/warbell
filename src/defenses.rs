@@ -4,11 +4,12 @@
 //! in the night early. Each structure is gated behind its Bulwark upgrade ([`Defenses`] flags),
 //! so the castle only fights as hard as you've built it.
 //!
-//! Numbers come from the test-gated `tileworld_core::defense` fire profiles, scaled down by
-//! `DMG_SCALE` so defenses *support* rather than auto-clear. NOTE: `DMG_SCALE` was tuned in the
-//! old era when ork HP was rescaled down (~0.35×); orks now read full core HP (grunt 254, etc.),
-//! so defenders chip ~4× softer than that tuning intended — a deliberate balance re-derive of
-//! `DMG_SCALE` against the current ork HP is worth doing (left as-is here to avoid a blind buff).
+//! Numbers come from the test-gated `tileworld_core::defense` fire profiles, scaled by
+//! `DMG_SCALE` so defenses *support* rather than auto-clear. `DMG_SCALE` was re-derived (2026-06)
+//! against full-HP orks: it was 0.236 from the old era when ork HP was rescaled ~0.35× down, which
+//! left towers/ballista/archers firing but killing nothing once orks went to full core HP (grunt
+//! 254, etc.) — the Defense branch's auto-fire upgrades read as "broken." Lifting it ~2.85× (the
+//! HP ratio) restores the intended support feel without auto-clearing a wave.
 //! Bolt geometry reuses `projectile::advance_bolt`; targets are the night [`WaveInvader`]s.
 //! Emitters are invisible logic points co-located with `castle.rs`'s meshes.
 //!
@@ -29,10 +30,12 @@ use crate::player::{spawn_burst, CombatFx, Health, HeroState, PlayerRes};
 use crate::projectile::{advance_bolt, BoltStep};
 use crate::siege::{GamePhase, Siege};
 
-/// Scale defender damage down from core's TS-anchored values so towers/archers *support* the
-/// defense rather than auto-clearing the wave. (Predates the full-HP ork change — see module doc;
-/// likely under-tuned now, but re-deriving it is a balance decision, not a bug fix.)
-const DMG_SCALE: f32 = 0.236;
+/// Scale defender damage from core's TS-anchored values so towers/archers *support* the defense
+/// rather than auto-clearing the wave. Re-derived 2026-06 from the old 0.236 (tuned for ~0.35×-HP
+/// orks) up to ~0.65 against full-HP orks — see module doc. At 0.65 a Tower-Mastery tower does
+/// ~7.8 dmg/bolt (≈7.8 DPS), a ballista ~29/bolt, so a fully-built castle chips ~50 DPS into a
+/// wave: real help, not an auto-clear.
+const DMG_SCALE: f32 = 0.65;
 const HALF_X: f32 = 17.0;
 const HALF_Z: f32 = 12.0;
 const DEFENDER_BOLT_TTL: f32 = 3.0;

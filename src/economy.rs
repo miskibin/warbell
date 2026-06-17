@@ -63,7 +63,7 @@ impl Default for EconomyState {
     }
 }
 
-/// Reinforced-Keep bonus (forest's keep is 1000 base; +400 → 1400, healed to full).
+/// Reinforced-Keep bonus (forest's keep is 1500 base; +400 → 1900, healed to full).
 const REINFORCE_BONUS: f32 = 400.0;
 // (The old flat Tax Office stipend is gone: dawn gold is now the population tithe —
 // `town_store::Town::tithe`, paid in `siege::run_director` — and Tax Office doubles it.)

@@ -14,7 +14,9 @@
 //! a soft distance-weighted mix of the biome palettes), while the discrete classification
 //! still drives heights + which biome's props scatter on each tile.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -70,43 +72,117 @@ pub const ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
     (0xb4d2ec, 0.0060, 0xffedc7, 11_000.0, 0xe6edf5, 165.0, Vec3::new(80.0, 110.0, 40.0));
 
 // ── Biome palette (sRGB hex) for the blended ground colour ──────────────────────
-const COL_GRASS: u32 = 0x6fb24c;
-/// Meadow macro-patch tones mottled into the grass base (see `ground_color`).
-const COL_GRASS_DARK: u32 = 0x4f8c38; // lush shaded patches
-const COL_GRASS_DRY: u32 = 0x8fa953; // dry, sun-bleached patches
-const COL_GRASS_GOLD: u32 = 0xa8b048; // broad sun-gilded meadow sweeps
-const COL_SAND: u32 = 0xcdb079;
-const COL_FOREST: u32 = 0x5d9e44;
-const COL_ROCK: u32 = 0x8d847a;
-const COL_SNOW: u32 = 0xe4ecf5;
-const COL_DESERT: u32 = 0xddc189;
-const COL_SWAMP: u32 = 0x55613a;
-/// Swamp-interior mottle (see `biome_col_at`): dark standing-water muck pools, mossy
-/// sunlit hummocks and a green algae seep, so the marsh floor reads wet and blotchy
-/// instead of one flat olive sheet.
-const COL_SWAMP_DARK: u32 = 0x363f27; // dark muck / standing-water pools
-const COL_SWAMP_MOSS: u32 = 0x6e7c48; // mossy sunlit hummocks
-const COL_SWAMP_ALGAE: u32 = 0x4c6232; // green algae seep
-/// The Blight: trampled ork mud (interior mottle adds churned-black, ash, a sickly
-/// warp-green tinge and dried-blood rust — see `biome_col_at`).
-const COL_BLIGHT: u32 = 0x4d3e2a;
-const COL_BLIGHT_DARK: u32 = 0x2c2113; // churned-black trample troughs (deepened)
-const COL_BLIGHT_ASH: u32 = 0x6f695c;
-const COL_BLIGHT_GREEN: u32 = 0x59653a;
-const COL_BLIGHT_RUST: u32 = 0x5a3320; // dried-blood / rust-stained patches
-/// Snow-interior mottle (see `biome_col_at`): cool drift-shadow troughs + wind-polished
-/// bright crests, so the snowfield reads as wind-shaped drifts instead of one cream sheet.
-const COL_SNOW_SHADE: u32 = 0xc9d6e8;
-const COL_SNOW_BRIGHT: u32 = 0xf4f9ff;
-/// Forest-floor mottle: dark moist loam under the canopy + dry leaf-litter patches.
-const COL_FOREST_DARK: u32 = 0x4a8136;
-const COL_FOREST_DRY: u32 = 0x79a24c;
-/// Exposed soil on grass-biome cliff faces (lip lighter, base darker).
-const COL_DIRT: u32 = 0x6b4f30;
-/// Snow-biome cliff faces: a bright snow lip over exposed blue-grey rock — the old
-/// "darken the snow colour" walls read as bare foam blocks in the same cream as the tops.
-const SNOW_CLIFF_LIP: u32 = 0xe9f0f9;
-const SNOW_CLIFF_ROCK: u32 = 0x7b8597;
+// Every per-map ground tone lives in a `Palette` so a second map is a pure data swap (see
+// `MapDef` / `active_map`). `PAL_HOME` holds the original island's values **verbatim** — it's
+// the regression anchor (map 0 must render byte-identically). Field docs: `*_dark/_dry/_gold`
+// are the grass meadow macro-patch tones; `swamp_*` the wet marsh mottle; `blight_*` the
+// trampled-ork-mud mottle; `snow_shade/_bright` the wind-drift sastrugi; `forest_dark/_dry`
+// the canopy loam/litter; `dirt` grass-cliff soil; `snow_cliff_*` the snow lip over rock;
+// `road_dirt` the baked approach-road tint; `lava_*` the volcanic-map magma field (map 2).
+#[derive(Clone, Copy)]
+struct Palette {
+    grass: u32,
+    grass_dark: u32,
+    grass_dry: u32,
+    grass_gold: u32,
+    sand: u32,
+    forest: u32,
+    rock: u32,
+    snow: u32,
+    desert: u32,
+    swamp: u32,
+    swamp_dark: u32,
+    swamp_moss: u32,
+    swamp_algae: u32,
+    blight: u32,
+    blight_dark: u32,
+    blight_ash: u32,
+    blight_green: u32,
+    blight_rust: u32,
+    snow_shade: u32,
+    snow_bright: u32,
+    forest_dark: u32,
+    forest_dry: u32,
+    dirt: u32,
+    snow_cliff_lip: u32,
+    snow_cliff_rock: u32,
+    road_dirt: u32,
+    // ── Lava field (map 2 only — see `TB::Lava`) ──
+    lava_basalt: u32,
+    lava_seam: u32,
+    lava_seam_hot: u32,
+}
+
+/// The home island's original palette — values unchanged from the pre-second-map era.
+const PAL_HOME: Palette = Palette {
+    grass: 0x6fb24c,
+    grass_dark: 0x4f8c38,
+    grass_dry: 0x8fa953,
+    grass_gold: 0xa8b048,
+    sand: 0xcdb079,
+    forest: 0x5d9e44,
+    rock: 0x8d847a,
+    snow: 0xe4ecf5,
+    desert: 0xddc189,
+    swamp: 0x55613a,
+    swamp_dark: 0x363f27,
+    swamp_moss: 0x6e7c48,
+    swamp_algae: 0x4c6232,
+    blight: 0x4d3e2a,
+    blight_dark: 0x2c2113,
+    blight_ash: 0x6f695c,
+    blight_green: 0x59653a,
+    blight_rust: 0x5a3320,
+    snow_shade: 0xc9d6e8,
+    snow_bright: 0xf4f9ff,
+    forest_dark: 0x4a8136,
+    forest_dry: 0x79a24c,
+    dirt: 0x6b4f30,
+    snow_cliff_lip: 0xe9f0f9,
+    snow_cliff_rock: 0x7b8597,
+    road_dirt: 0x8a6d44,
+    lava_basalt: 0x2a2421,
+    lava_seam: 0xc8521a,
+    lava_seam_hot: 0xffb347,
+};
+
+/// **Volcanic Ashlands** (map 2) — the 5 biomes reskinned for a charred volcanic world, but each
+/// kept VISUALLY DISTINCT so a biome still reads as itself under the ember sun (an earlier muddy
+/// pass made snow read tan + forest read flat-brown). Snow stays COOL (blue-grey ash) so it never
+/// warms to desert; forest keeps a sooty GREEN (g>r) so the terrain shader's foliage layer fires
+/// and it reads as scorched woodland, not mud; desert is clearly warm sand; rock is near-black
+/// basalt; swamp a sulfur olive.
+const PAL_ASH: Palette = Palette {
+    grass: 0x575249,       // cinder flats (the neutral "safe" ground)
+    grass_dark: 0x3c3931,  // shaded ash hollows
+    grass_dry: 0x6f6453,   // dry warm cinder
+    grass_gold: 0x8c6838,  // scorched sun-baked sweeps
+    sand: 0x837458,        // grey-tan volcanic grit beaches
+    forest: 0x424e36,      // sooty GREEN grove floor (g>r → reads as woodland)
+    rock: 0x312c27,        // near-black basalt range
+    snow: 0xe2e7f0,        // BRIGHT cool ashfall — value (not hue) is what reads as snow vs tan
+    desert: 0x9c8a63,      // warm tan dunes (clearly sandy)
+    swamp: 0x4a4226,       // sulfur-tainted muck
+    swamp_dark: 0x2a2615,  // tar pools
+    swamp_moss: 0x726232,  // sulfur crust
+    swamp_algae: 0x5c4c22, // brimstone seep
+    blight: 0x3a2e1f,      // trampled ash mud
+    blight_dark: 0x1f1810,
+    blight_ash: 0x6a6258,
+    blight_green: 0x55502f,
+    blight_rust: 0x6a3318,
+    snow_shade: 0xa2aab8,  // cool drift shadow
+    snow_bright: 0xdfe6ee, // wind-polished cool ash crest
+    forest_dark: 0x313b27, // charred green loam
+    forest_dry: 0x586338,  // ash-dusted leaf litter (greenish)
+    dirt: 0x3a2c1d,        // cliff soil
+    snow_cliff_lip: 0xd0d8e2,
+    snow_cliff_rock: 0x565b64,
+    road_dirt: 0x4a3a26,
+    lava_basalt: 0x2a2421, // cooled crust between the seams
+    lava_seam: 0xc8521a,   // glowing crack
+    lava_seam_hot: 0xffb347, // white-hot core
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TB {
@@ -120,6 +196,10 @@ enum TB {
     /// The ork-blighted mire around Gnashfang Hold (south extension). Maps to
     /// [`Biome::Swamp`] for gameplay (poison, slow, ambience) but draws its own ground.
     Blight,
+    /// **Lava field** — the Volcanic Ashlands signature biome (map 2 only). Like the Blight it
+    /// draws its own ground (basalt + glowing magma seams) but maps to [`Biome::Swamp`] for
+    /// gameplay, so standing in it burns (the swamp poison-and-slow floor, reskinned).
+    Lava,
 }
 
 struct Region {
@@ -170,12 +250,118 @@ const PLATEAUS: [Plateau; 4] = [
 
 const DELIBERATE_LAKE: (f32, f32, f32, f32) = (92.0, 80.0, 5.0, 3.0); // x,z,rx,rz
 
+// ── Map selection (which world to generate) ──────────────────────────────────────
+/// **Volcanic Ashlands** atmosphere (map 2): a dim red-brown sky + orange fog carry the hellish
+/// mood, while the sun is only *warm* (not pure-orange) so biome hues still read — a fully
+/// saturated ember sun washed snow to tan and erased every biome's colour. Low sun = long hostile
+/// shadows. Same tuple shape as [`ATMOSPHERE`]; fog stays moderate (heavy volumetric fog blacks
+/// the Atmosphere sky — see the ultra-graphics note).
+const ASH_ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
+    (0x5a3b32, 0.0075, 0xffdca8, 10_500.0, 0x6a5e54, 145.0, Vec3::new(90.0, 64.0, 30.0));
+
+/// Ashlands biome layout — the same five biome kinds (reskinned by [`PAL_ASH`]) placed in a
+/// deliberately DIFFERENT arrangement from the home island, so the world reads as a new place
+/// even before the palette/atmosphere land. Mirror was dropped (it desyncs colour-vs-class +
+/// bridges/town-plots); bespoke positions + the noise reseed do the layout work instead.
+const ASH_REGIONS: [Region; 6] = [
+    Region { x: 24.0, z: 54.0, r: 32.0, biome: TB::Rock, peak: 18 }, // W charcoal massif (home put it E)
+    Region { x: 112.0, z: 26.0, r: 28.0, biome: TB::Snow, peak: 9 }, // NE ashfall drifts
+    Region { x: 110.0, z: 82.0, r: 30.0, biome: TB::Desert, peak: 0 }, // SE bleached dunes
+    Region { x: 58.0, z: 92.0, r: 26.0, biome: TB::Forest, peak: 0 }, // S burnt grove
+    Region { x: 96.0, z: 48.0, r: 18.0, biome: TB::Lava, peak: 0 }, // E lava field (the signature biome)
+    Region { x: 70.0, z: 14.0, r: 20.0, biome: TB::Swamp, peak: 0 }, // N sulfur seep
+];
+
+/// Which world a run generates. `u8` on the wire (0 = Home, default) so it rides the save +
+/// the boot global trivially. Add a variant + a [`MapDef`] to ship a third map.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum MapId {
+    #[default]
+    Home = 0,
+    Ashlands = 1,
+}
+
+/// The chosen map, as a Bevy resource (start-screen owns it; default Home). `biome::apply_build`
+/// reads it and calls [`set_active_map`] before [`build`], so the pure generation functions —
+/// which can't read a resource — see the right map.
+#[derive(Resource, Clone, Copy, Default)]
+pub struct ActiveMap(pub MapId);
+
+/// Everything that differs between maps. All other generation (island ellipse, rivers, lake,
+/// plateaus, coast ridges) is shared and merely perturbed by `noise_phase`.
+struct MapDef {
+    regions: &'static [Region],
+    palette: Palette,
+    atmosphere: (u32, f32, u32, f32, u32, f32, Vec3),
+    /// Added inside `noise_a`/`noise_b` → reseeds the coastline fray, river winding and inland
+    /// hills. Home is `0.0` (identical output — the regression anchor).
+    noise_phase: f32,
+    has_lava: bool,
+}
+
+const MAP_HOME: MapDef = MapDef {
+    regions: &REGIONS,
+    palette: PAL_HOME,
+    atmosphere: ATMOSPHERE,
+    noise_phase: 0.0,
+    has_lava: false,
+};
+const MAP_ASH: MapDef = MapDef {
+    regions: &ASH_REGIONS,
+    palette: PAL_ASH,
+    atmosphere: ASH_ATMOSPHERE,
+    noise_phase: 13.37,
+    has_lava: true,
+};
+
+/// Process-global active map id, set once per build by [`set_active_map`] (from
+/// `biome::apply_build`, which reads the [`ActiveMap`] resource). The pure generation fns read
+/// it; runtime resources don't reach down here.
+static ACTIVE: AtomicU8 = AtomicU8::new(0);
+
+/// Point the generator at `id`. Called immediately before [`build`] (and on load). Switching
+/// maps just changes which memoised grid [`tiles`] returns — the loading veil covers the regen.
+pub fn set_active_map(id: MapId) {
+    ACTIVE.store(id as u8, Ordering::Relaxed);
+}
+fn active_id() -> u8 {
+    ACTIVE.load(Ordering::Relaxed)
+}
+/// The currently-generated map id as `u8` — the save path compares it against a loaded snapshot
+/// to decide whether resuming needs a world rebuild.
+pub fn current_map_u8() -> u8 {
+    active_id()
+}
+
+impl MapId {
+    /// Decode the `u8` stored in a save (unknown ids fall back to Home).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => MapId::Ashlands,
+            _ => MapId::Home,
+        }
+    }
+}
+fn active_map() -> &'static MapDef {
+    match active_id() {
+        1 => &MAP_ASH,
+        _ => &MAP_HOME,
+    }
+}
+/// The active map's atmosphere tuple (read by `biome::apply_build` + [`build`]).
+pub fn active_atmosphere() -> (u32, f32, u32, f32, u32, f32, Vec3) {
+    active_map().atmosphere
+}
+
 // ── Procedural generation (ported from tileMap.ts, base space) ──────────────────
 fn noise_a(x: f32, z: f32) -> f32 {
-    (x * 0.13 + 1.7).sin() * (z * 0.11 - 2.3).cos() + (x * 0.31 + z * 0.29 + 4.5).sin() * 0.5
+    let p = active_map().noise_phase;
+    (x * 0.13 + 1.7 + p).sin() * (z * 0.11 - 2.3 + p).cos() + (x * 0.31 + z * 0.29 + 4.5 + p).sin() * 0.5
 }
 fn noise_b(x: f32, z: f32) -> f32 {
-    (x * 0.21 - 3.1).sin() * (z * 0.19 + 0.7).cos() + ((x + z) * 0.07 + 5.2).sin() * 0.4
+    let p = active_map().noise_phase;
+    (x * 0.21 - 3.1 + p).sin() * (z * 0.19 + 0.7 + p).cos() + ((x + z) * 0.07 + 5.2 + p).sin() * 0.4
 }
 
 fn is_land_shape(x: f32, z: f32) -> bool {
@@ -224,7 +410,7 @@ fn river_z2(x: f32) -> f32 {
 }
 fn in_mountain(x: f32, z: f32) -> bool {
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
-    REGIONS.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 2.0)
+    active_map().regions.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 2.0)
 }
 fn is_river(x: f32, z: f32) -> bool {
     if dist_from_castle(x, z) < SAFE_R {
@@ -272,7 +458,7 @@ fn region_at(x: f32, z: f32) -> Option<usize> {
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     let mut best: Option<usize> = None;
     let mut best_edge = f32::INFINITY;
-    for (i, reg) in REGIONS.iter().enumerate() {
+    for (i, reg) in active_map().regions.iter().enumerate() {
         let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
         let d = (x - reg.x).hypot(z - reg.z) + wob + fray;
         let edge = d - reg.r;
@@ -426,7 +612,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         let ch = coast_hill_class(x, z);
         if ch > 0 {
             let b = match region_at(x, z) {
-                Some(ri) if REGIONS[ri].peak == 0 => REGIONS[ri].biome,
+                Some(ri) if active_map().regions[ri].peak == 0 => active_map().regions[ri].biome,
                 _ if ch >= 4 => TB::Rock,
                 _ => TB::Grass,
             };
@@ -438,13 +624,13 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         // A plateau inside a flat biome blob keeps that biome (desert mesa, forest highland);
         // out on the frontier it's a grass plateau.
         let b = match region_at(x, z) {
-            Some(ri) if REGIONS[ri].peak == 0 => REGIONS[ri].biome,
+            Some(ri) if active_map().regions[ri].peak == 0 => active_map().regions[ri].biome,
             _ => TB::Grass,
         };
         return Some((b, ph));
     }
     if let Some(ri) = region_at(x, z) {
-        let reg = &REGIONS[ri];
+        let reg = &active_map().regions[ri];
         if reg.biome == TB::Swamp && dc < SAFE_R {
             return Some((TB::Grass, 1));
         }
@@ -453,7 +639,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         }
         // Flat biomes still get the inland-hills field: dunes in the desert, wooded rises in
         // the forest; the swamp stays marsh-flat.
-        let max = if reg.biome == TB::Swamp { 1 } else { 3 };
+        let max = if matches!(reg.biome, TB::Swamp | TB::Lava) { 1 } else { 3 };
         return Some((reg.biome, inland_hills(x, z, dc, max)));
     }
     let h = inland_hills(x, z, dc, 4);
@@ -464,20 +650,31 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     Some((TB::Grass, h))
 }
 
-// ── Tile cache ──────────────────────────────────────────────────────────────────
-static TILES: OnceLock<Vec<Option<(TB, i32)>>> = OnceLock::new();
-fn tiles() -> &'static Vec<Option<(TB, i32)>> {
-    TILES.get_or_init(|| {
-        let mut v = Vec::with_capacity((COLS * ROWS) as usize);
-        for iz in 0..ROWS {
-            for ix in 0..COLS {
-                // Sample generation in BASE space so the island shape is unchanged.
-                v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
-            }
+// ── Tile cache (per map) ──────────────────────────────────────────────────────────
+type Grid = Vec<Option<(TB, i32)>>;
+/// One memoised grid per [`MapId`] that's been generated this process. Keyed by the `u8` id, so
+/// switching maps (a New Game on the other world) regenerates once and then returns instantly on
+/// switch-back. The one-time regen is fully covered by the loading veil. `tiles()` hands out a
+/// cheap `Arc` clone; every reader goes through `tile_at`, so the swap is invisible to them.
+static TILES: OnceLock<Mutex<HashMap<u8, Arc<Grid>>>> = OnceLock::new();
+fn tiles() -> Arc<Grid> {
+    let id = active_id();
+    let cache = TILES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("tile cache poisoned");
+    guard.entry(id).or_insert_with(build_grid).clone()
+}
+/// Classify the whole grid for the **active** map, then relax inland cliffs. Sampling runs in
+/// BASE space so the island silhouette is unchanged; `active_map()` (via `classify`/the noise
+/// phase/the regions) makes it the right world.
+fn build_grid() -> Arc<Grid> {
+    let mut v = Vec::with_capacity((COLS * ROWS) as usize);
+    for iz in 0..ROWS {
+        for ix in 0..COLS {
+            v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
         }
-        terrace_inland(&mut v);
-        v
-    })
+    }
+    terrace_inland(&mut v);
+    Arc::new(v)
 }
 
 /// Post-process the heightfield so every **inland** land tile sits at most ONE height class
@@ -551,14 +748,20 @@ fn tile_biome_world(wx: f32, wz: f32) -> Option<Biome> {
         TB::Snow => Some(Biome::Snow),
         TB::Rock => Some(Biome::Rocky),
         TB::Desert => Some(Biome::Desert),
-        // The Blight IS swamp to gameplay: poison + slow (`player::movement`), swamp
-        // ambience/weather, swamp wildlife/forage. Only the ground + scatter differ.
-        TB::Swamp | TB::Blight => Some(Biome::Swamp),
+        // The Blight + Lava field both ARE swamp to gameplay: poison + slow (`player::movement`),
+        // swamp ambience/weather, swamp wildlife/forage. Only the ground + scatter differ. (For
+        // the Lava field the swamp DoT reads as a lava burn.)
+        TB::Swamp | TB::Blight | TB::Lava => Some(Biome::Swamp),
         _ => None,
     }
 }
 pub fn is_grass_world(wx: f32, wz: f32) -> bool {
     matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Grass))
+}
+/// Is world `(x, z)` a Lava-field tile? Lava maps to gameplay [`Biome::Swamp`], so scatter keys
+/// off the underlying `TB` directly (swamp props are kept off it; basalt boulders go on it).
+fn is_lava_world(wx: f32, wz: f32) -> bool {
+    matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Lava))
 }
 fn tile_top_y_world(wx: f32, wz: f32) -> f32 {
     match tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32) {
@@ -603,15 +806,17 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 fn biome_col(b: TB) -> [f32; 3] {
+    let p = &active_map().palette;
     lin3(match b {
-        TB::Grass => COL_GRASS,
-        TB::Sand => COL_SAND,
-        TB::Forest => COL_FOREST,
-        TB::Rock => COL_ROCK,
-        TB::Snow => COL_SNOW,
-        TB::Desert => COL_DESERT,
-        TB::Swamp => COL_SWAMP,
-        TB::Blight => COL_BLIGHT,
+        TB::Grass => p.grass,
+        TB::Sand => p.sand,
+        TB::Forest => p.forest,
+        TB::Rock => p.rock,
+        TB::Snow => p.snow,
+        TB::Desert => p.desert,
+        TB::Swamp => p.swamp,
+        TB::Blight => p.blight,
+        TB::Lava => p.lava_basalt,
     })
 }
 
@@ -622,20 +827,21 @@ fn biome_col(b: TB) -> [f32; 3] {
 /// scatter is dense enough to break the ground up).
 fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
     let base = biome_col(b);
+    let p = &active_map().palette;
     match b {
         TB::Snow => {
             // Broad cool drift-shadow troughs + tighter wind-streak crests (sastrugi).
             let drift = smoothstep(0.15, 1.25, noise_a(x * 3.2 - 7.0, z * 3.2 + 19.0));
             let streak = smoothstep(0.55, 1.35, noise_b(x * 7.5 + 3.0, z * 2.4 - 13.0));
-            let col = mix3(base, lin3(COL_SNOW_SHADE), drift * 0.50);
-            mix3(col, lin3(COL_SNOW_BRIGHT), streak * 0.55)
+            let col = mix3(base, lin3(p.snow_shade), drift * 0.50);
+            mix3(col, lin3(p.snow_bright), streak * 0.55)
         }
         TB::Forest => {
             // Dark moist loam patches under the canopy + dry leaf-litter speckle.
             let moist = smoothstep(0.20, 1.30, noise_a(x * 3.6 + 13.0, z * 3.6 - 5.0));
             let dry = smoothstep(0.35, 1.40, noise_b(x * 8.0 - 23.0, z * 8.0 + 7.0));
-            let col = mix3(base, lin3(COL_FOREST_DARK), moist * 0.50);
-            mix3(col, lin3(COL_FOREST_DRY), dry * 0.35)
+            let col = mix3(base, lin3(p.forest_dark), moist * 0.50);
+            mix3(col, lin3(p.forest_dry), dry * 0.35)
         }
         TB::Swamp => {
             // Standing-water muck pools + mossy hummocks + a green algae seep — the marsh
@@ -648,11 +854,11 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
             // the mid-tones into a finer wet tooth so the muck reads textured up close.
             let fleck = smoothstep(0.55, 1.35, noise_b(x * 15.0 + 33.0, z * 15.0 - 19.0));
             let damp = smoothstep(0.62, 1.40, noise_a(x * 11.0 - 61.0, z * 11.0 + 47.0));
-            let col = mix3(base, lin3(COL_SWAMP_DARK), pool * 0.58);
-            let col = mix3(col, lin3(COL_SWAMP_MOSS), moss * 0.42);
-            let col = mix3(col, lin3(COL_SWAMP_ALGAE), algae * 0.32);
-            let col = mix3(col, lin3(COL_SWAMP_DARK), fleck * 0.20);
-            mix3(col, lin3(COL_SWAMP_MOSS), damp * 0.22)
+            let col = mix3(base, lin3(p.swamp_dark), pool * 0.58);
+            let col = mix3(col, lin3(p.swamp_moss), moss * 0.42);
+            let col = mix3(col, lin3(p.swamp_algae), algae * 0.32);
+            let col = mix3(col, lin3(p.swamp_dark), fleck * 0.20);
+            mix3(col, lin3(p.swamp_moss), damp * 0.22)
         }
         TB::Blight => {
             // Churned-black trample troughs, dead-ash patches, a sickly warp-green seep and
@@ -668,12 +874,22 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
             // frequency, so the beaten mud has tooth at gameplay height, not flat tan.
             let crack = smoothstep(0.50, 1.30, noise_b(x * 16.0 - 27.0, z * 16.0 + 13.0));
             let crust = smoothstep(0.60, 1.40, noise_a(x * 12.0 + 53.0, z * 12.0 - 37.0));
-            let col = mix3(base, lin3(COL_BLIGHT_DARK), churn * 0.78);
-            let col = mix3(col, lin3(COL_BLIGHT_ASH), ash * 0.48);
-            let col = mix3(col, lin3(COL_BLIGHT_GREEN), seep * 0.42);
-            let col = mix3(col, lin3(COL_BLIGHT_RUST), rust * 0.30);
-            let col = mix3(col, lin3(COL_BLIGHT_DARK), crack * 0.22);
-            mix3(col, lin3(COL_BLIGHT_ASH), crust * 0.18)
+            let col = mix3(base, lin3(p.blight_dark), churn * 0.78);
+            let col = mix3(col, lin3(p.blight_ash), ash * 0.48);
+            let col = mix3(col, lin3(p.blight_green), seep * 0.42);
+            let col = mix3(col, lin3(p.blight_rust), rust * 0.30);
+            let col = mix3(col, lin3(p.blight_dark), crack * 0.22);
+            mix3(col, lin3(p.blight_ash), crust * 0.18)
+        }
+        TB::Lava => {
+            // Cooled black basalt veined with a network of glowing magma seams. Seams sit at the
+            // noise zero-crossings (`1 - smoothstep(|n|)` → a thin bright line), with white-hot
+            // cores where two seam systems cross.
+            let seam = 1.0 - smoothstep(0.0, 0.13, noise_a(x * 2.4 + 9.0, z * 2.4 - 4.0).abs());
+            let fine = 1.0 - smoothstep(0.0, 0.09, noise_b(x * 5.5 - 13.0, z * 5.5 + 8.0).abs());
+            let col = mix3(base, lin3(p.lava_seam), seam * 0.85);
+            let col = mix3(col, lin3(p.lava_seam), fine * 0.40);
+            mix3(col, lin3(p.lava_seam_hot), seam * fine * 0.95)
         }
         _ => base,
     }
@@ -682,7 +898,8 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
 /// Smooth blended ground colour at tile-space (x,z): grass base, each biome blob mixed in
 /// over a soft `BLEND` band at its edge, plus a sandy coast fade.
 fn ground_color(x: f32, z: f32) -> [f32; 4] {
-    let mut col = lin3(COL_GRASS);
+    let p = &active_map().palette;
+    let mut col = lin3(p.grass);
     // Meadow macro-patches on the grass base (before the biome-region blends, so biome
     // interiors keep their own colour): two noise octaves mottle the green between a
     // darker lush tone and a drier warm one. Open grass stops being one flat neon sheet —
@@ -690,11 +907,11 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
     let p1 = noise_a(x * 4.0 + 31.0, z * 4.0 - 17.0); // ~12-world-tile patches
     let p2 = noise_b(x * 9.0 - 11.0, z * 9.0 + 23.0); // ~4-tile speckle
     let p3 = noise_a(x * 1.6 - 71.0, z * 1.6 + 59.0); // ~30-tile golden sweeps
-    col = mix3(col, lin3(COL_GRASS_DARK), smoothstep(0.1, 1.3, p1) * 0.55);
-    col = mix3(col, lin3(COL_GRASS_DRY), smoothstep(0.25, 1.4, p2) * 0.40);
-    col = mix3(col, lin3(COL_GRASS_GOLD), smoothstep(0.55, 1.5, p3) * 0.45);
+    col = mix3(col, lin3(p.grass_dark), smoothstep(0.1, 1.3, p1) * 0.55);
+    col = mix3(col, lin3(p.grass_dry), smoothstep(0.25, 1.4, p2) * 0.40);
+    col = mix3(col, lin3(p.grass_gold), smoothstep(0.55, 1.5, p3) * 0.45);
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
-    for reg in &REGIONS {
+    for reg in active_map().regions {
         let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
         let d = (x - reg.x).hypot(z - reg.z) + wob + fray;
         let edge = reg.r - d; // >0 inside
@@ -710,7 +927,7 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // Sandy coast fade — damped inside the Blight: `dist_from_coast` only knows the OLD
     // island shape, so without the damp the whole southern landmass would tint to beach.
     let dco = dist_from_coast(x, z) as f32;
-    col = mix3(col, lin3(COL_SAND), smoothstep(3.5, 0.5, dco) * 0.85 * (1.0 - blight_w));
+    col = mix3(col, lin3(p.sand), smoothstep(3.5, 0.5, dco) * 0.85 * (1.0 - blight_w));
     // Universal mottle — value jitter + a slow warm/cool hue wander over the *blended*
     // colour, so biome interiors (forest, sand, snow…) get texture too, not just the open
     // grass. Multiplicative and small: it breaks the flat fill without recolouring a biome.
@@ -727,13 +944,10 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // just a brown blend in the terrain, like the original game's roads).
     let strength = crate::roads::road_strength(x - GX, z - GZ);
     if strength > 0.0 {
-        col = mix3(col, lin3(ROAD_DIRT), strength * 0.85);
+        col = mix3(col, lin3(p.road_dirt), strength * 0.85);
     }
     [col[0], col[1], col[2], 1.0]
 }
-
-/// Trampled-earth tint blended into the ground along the gate approach-roads.
-const ROAD_DIRT: u32 = 0x8a6d44;
 
 // ── Shore-distance field (water shader foam / shallows) ─────────────────────────
 /// Max encoded shore distance, in tiles — keep in sync with `SHORE_MAX` in
@@ -822,7 +1036,7 @@ pub fn build(
     //    biome: the island proper on a grass blade-grain, the SWAMP on a wet blotchy
     //    mottle (it used to share the grass blades — that's why the marsh read blank), and
     //    the Blight on its own filthy trampled-mud grain. ──
-    let ground = build_terrain_mesh(|tb| tb != TB::Blight && tb != TB::Swamp);
+    let ground = build_terrain_mesh(|tb| tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava);
     let grass_detail = GroundDetail {
         scale: 0.18,
         strength: 0.52, // a touch rougher/grainier grass (was 0.40)
@@ -886,6 +1100,31 @@ pub fn build(
         crate::biome::BiomeEntity,
     ));
 
+    // ── Lava field (map 2): its own basalt sheet; the glowing magma seams ride the vertex
+    //    colour from `biome_col_at`. Gated on the active map so the home island never builds an
+    //    empty sheet. A dark, low-variation grain reads as cooled crust between the bright seams. ──
+    if active_map().has_lava {
+        let lava_ground = build_terrain_mesh(|tb| tb == TB::Lava);
+        let lava_detail = GroundDetail {
+            scale: 0.30,
+            strength: 0.55,
+            variation: 0.70,
+            seed: 13.0,
+            dark: 0x16110d,
+            base: 0x2a2421,
+            light: 0x4a3a2a,
+            grain: 0.80,
+            streak: 0.40,
+        };
+        let lava_mat = crate::terrain::make_material(&lava_detail, 0.90, images, terrain_mats);
+        commands.spawn((
+            Mesh3d(meshes.add(lava_ground)),
+            MeshMaterial3d(lava_mat),
+            Transform::default(),
+            crate::biome::BiomeEntity,
+        ));
+    }
+
     // ── Sea (big animated water plane under everything; shows at coast/rivers/lake) ──
     let sea_mesh = meshes.add(Plane3d::default().mesh().size(900.0, 900.0).subdivisions(8).build());
     let (shore_tex, shore_region) = bake_shore_distance(images);
@@ -934,11 +1173,25 @@ pub fn build(
     // the hero-region transition system can lerp toward it without rebuilding configs per frame.
     let mut ambiences: Vec<(Biome, BiomeAmbience)> = Vec::new();
     for biome in [Biome::Forest, Biome::Snow, Biome::Rocky, Biome::Desert, Biome::Swamp] {
-        let cfg = config_for(biome);
-        ambiences.push((
-            biome,
-            BiomeAmbience { atmo: AtmoSample::from_config(&cfg), particle: cfg.particle },
-        ));
+        let mut cfg = config_for(biome);
+        // On a reskinned map (Ashlands) every biome's ground COVER is the hard-coded green/floral
+        // meadow (ferns, flowers, mushrooms, reeds from groundcover.rs) — it reads as lush verdant
+        // turf on the scorched ground. Swap them ALL for the neutral/dead litter family so the
+        // forest/swamp floor reads charred, not blooming. (Trees/rocks — the `classes` — are
+        // untouched; those are the documented prop-recolour non-goal.)
+        if active_id() != 0 {
+            cfg.cover = frontier_cover();
+        }
+        // On a reskinned map the per-biome configs still carry the HOME green/white atmospheres;
+        // override them with the map's own atmosphere so biome interiors don't pull the sky back
+        // toward the home palette. Home keeps its configs.
+        let atmo = if active_id() == 0 {
+            AtmoSample::from_config(&cfg)
+        } else {
+            let (sky, fog, sun_c, sun_i, amb_c, amb_b, _s) = active_atmosphere();
+            AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b, fog)
+        };
+        ambiences.push((biome, BiomeAmbience { atmo, particle: cfg.particle }));
         scatter_region(
             &cfg,
             commands,
@@ -948,7 +1201,17 @@ pub fn build(
             hi,
             false,
             &move |x, z| {
-                tile_biome_world(x, z) == Some(biome)
+                let here = tile_biome_world(x, z);
+                // Lava tiles read as Swamp to gameplay, but visually they take ROCK scatter
+                // (basalt boulders), never swamp reeds — so route by the underlying `TB`.
+                let biome_match = if biome == Biome::Rocky {
+                    here == Some(Biome::Rocky) || is_lava_world(x, z)
+                } else if biome == Biome::Swamp {
+                    here == Some(Biome::Swamp) && !is_lava_world(x, z)
+                } else {
+                    here == Some(biome)
+                };
+                biome_match
                     && !crate::camps::in_clearing(x, z)
                     && !crate::bridges::near_bridge(x, z, 1.0)
                     // Keep swamp scatter off the fortress gate road, and out of the deep
@@ -960,8 +1223,8 @@ pub fn build(
             &|x, z| tile_top_y_world(x, z),
         );
     }
-    // Island-wide base ambience (grass / sand / water): the shared daytime atmosphere, no weather.
-    let (sky, fog, sun_c, sun_i, amb_c, amb_b, _sun_p) = ATMOSPHERE;
+    // Island-wide base ambience (grass / sand / water): the active map's daytime atmosphere, no weather.
+    let (sky, fog, sun_c, sun_i, amb_c, amb_b, _sun_p) = active_atmosphere();
     commands.insert_resource(BiomeAmbiences {
         base: BiomeAmbience {
             atmo: AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b, fog),
@@ -1096,12 +1359,69 @@ fn config_for(b: Biome) -> BiomeConfig {
     }
 }
 
+/// Ground cover for the open frontier, chosen by the active map. The home isle gets the lush
+/// meadow (grass tufts, clover, ferns, flowers, mushrooms — all hard-coded green/floral in
+/// `groundcover.rs`); a reskinned map like Ashlands instead gets **charred ground litter** (grey
+/// pebbles, bark twigs, rust-burnt leaves, pinecones, acorns) so the cinder frontier reads as a
+/// scorched waste, not a flower lawn. (Recolouring every cover mesh per-map would be far more
+/// invasive — the litter family is already neutral/dead-toned, so we just scatter that instead.)
+fn frontier_cover() -> Vec<PropClass> {
+    if active_id() != 0 {
+        return vec![
+            PropClass {
+                variants: (0..gc::NUM_LITTER_VARIANTS).map(|v| (gc::build_floor_litter_mesh(v), 1.0)).collect(),
+                chance: 0.26,
+                scale: (0.7, 1.35),
+                tree: false,
+                block_radius: 0.0,
+            },
+        ];
+    }
+    vec![
+        PropClass {
+            variants: (0..gc::NUM_GRASS_VARIANTS).map(|v| (gc::build_grass_tuft_mesh(v), 1.0)).collect(),
+            chance: 0.32,
+            scale: (0.6, 1.25),
+            tree: false,
+            block_radius: 0.0,
+        },
+        PropClass {
+            variants: (0..gc::NUM_CLOVER_VARIANTS).map(|v| (gc::build_clover_mesh(v), 1.0)).collect(),
+            chance: 0.30,
+            scale: (0.7, 1.2),
+            tree: false,
+            block_radius: 0.0,
+        },
+        PropClass {
+            variants: (0..gc::NUM_FERN_VARIANTS).map(|v| (gc::build_fern_mesh(v), 1.0)).collect(),
+            chance: 0.10,
+            scale: (0.5, 0.95),
+            tree: false,
+            block_radius: 0.0,
+        },
+        PropClass {
+            variants: (0..gc::NUM_FLOWER_VARIANTS).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
+            chance: 0.16,
+            scale: (0.8, 1.4),
+            tree: false,
+            block_radius: 0.0,
+        },
+        PropClass {
+            variants: (0..2).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
+            chance: 0.05,
+            scale: (0.6, 1.0),
+            tree: false,
+            block_radius: 0.0,
+        },
+    ]
+}
+
 /// A cover-only pseudo-config for the open grass frontier (no trees/rocks).
 fn grass_config() -> BiomeConfig {
     BiomeConfig {
         biome: Biome::Forest,
         name: "Grass",
-        ground_color: COL_GRASS,
+        ground_color: active_map().palette.grass,
         ground_roughness: 0.95,
         detail: GroundDetail {
             scale: 0.18, strength: 0.4, variation: 0.7, seed: 1.0,
@@ -1112,43 +1432,7 @@ fn grass_config() -> BiomeConfig {
         seed: 7777,
         tree_min_dist: 2.0,
         classes: vec![],
-        cover: vec![
-            PropClass {
-                variants: (0..gc::NUM_GRASS_VARIANTS).map(|v| (gc::build_grass_tuft_mesh(v), 1.0)).collect(),
-                chance: 0.32,
-                scale: (0.6, 1.25),
-                tree: false,
-                block_radius: 0.0,
-            },
-            PropClass {
-                variants: (0..gc::NUM_CLOVER_VARIANTS).map(|v| (gc::build_clover_mesh(v), 1.0)).collect(),
-                chance: 0.30,
-                scale: (0.7, 1.2),
-                tree: false,
-                block_radius: 0.0,
-            },
-            PropClass {
-                variants: (0..gc::NUM_FERN_VARIANTS).map(|v| (gc::build_fern_mesh(v), 1.0)).collect(),
-                chance: 0.10,
-                scale: (0.5, 0.95),
-                tree: false,
-                block_radius: 0.0,
-            },
-            PropClass {
-                variants: (0..gc::NUM_FLOWER_VARIANTS).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
-                chance: 0.16,
-                scale: (0.8, 1.4),
-                tree: false,
-                block_radius: 0.0,
-            },
-            PropClass {
-                variants: (0..2).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
-                chance: 0.05,
-                scale: (0.6, 1.0),
-                tree: false,
-                block_radius: 0.0,
-            },
-        ],
+        cover: frontier_cover(),
         cover_per_tile: 2,
         river: false,
         river_color: 0x2f8fd6,
@@ -1211,7 +1495,7 @@ fn build_terrain_mesh(keep: impl Fn(TB) -> bool) -> Mesh {
             let top_col = ground_color((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE);
             let (wall_top, wall_bot) = if tb == TB::Grass {
                 let j = 0.82 + 0.32 * (noise_b(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) * 0.5 + 0.5);
-                let d = lin3(COL_DIRT);
+                let d = lin3(active_map().palette.dirt);
                 let top = [d[0] * j, d[1] * j, d[2] * j, 1.0];
                 // Base lifted off the old 0.55× — in cliff shadow at low sun that
                 // multiplied down to pure black pits; shaded soil, not holes.
@@ -1221,8 +1505,8 @@ fn build_terrain_mesh(keep: impl Fn(TB) -> bool) -> Mesh {
                 // Bright snow lip overhanging exposed blue-grey rock: the warm/cool value
                 // split that makes the terraces read as carved drifts over stone instead
                 // of foam blocks in the same cream as the snowfield tops.
-                let lip = lin3(SNOW_CLIFF_LIP);
-                let rock = lin3(SNOW_CLIFF_ROCK);
+                let lip = lin3(active_map().palette.snow_cliff_lip);
+                let rock = lin3(active_map().palette.snow_cliff_rock);
                 ([lip[0], lip[1], lip[2], 1.0], [rock[0], rock[1], rock[2], 1.0])
             } else {
                 // Graded lip→base (was a flat 0.5× that went black at dusk): the lip keeps
