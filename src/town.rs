@@ -298,7 +298,17 @@ fn auto_assign_workers(
     // following the hero, off the labour pool, until the player stands the war party down.
     idle: Query<
         (Entity, &Transform),
-        (With<Townsfolk>, With<Guard>, Without<Worker>, Without<crate::villagers::Rallied>),
+        // `Without<Dying>`: a night-siege corpse still mid-fade keeps its `Townsfolk + Guard` tags
+        // until it despawns. Without this filter auto-assign could hand a crumpling corpse the farm
+        // `Worker` job — it occupies the slot, then despawns, and the farm sits empty (yet reads as
+        // staffed) until the next frame re-picks. This is the intermittent "after-night farm unstaffed".
+        (
+            With<Townsfolk>,
+            With<Guard>,
+            Without<Worker>,
+            Without<crate::villagers::Rallied>,
+            Without<crate::dying::Dying>,
+        ),
     >,
 ) {
     if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
