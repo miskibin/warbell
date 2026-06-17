@@ -728,6 +728,9 @@ fn spawn_start_screen(
                                 Node {
                                     padding: UiRect::axes(Val::Px(20.0), Val::Px(7.0)),
                                     border_radius: radius(7.0),
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(6.0),
                                     ..default()
                                 },
                                 BackgroundColor(if on { GOLD_DEEP } else { Color::NONE }),
@@ -736,6 +739,10 @@ fn spawn_start_screen(
                             ))
                             .with_children(|b| {
                                 b.spawn(label(&fonts.semibold, map_name(mp), 13.0, if on { INK } else { TEXT_FAINT }));
+                                // Flag a not-yet-finished map so players know what they're picking.
+                                if !map_ready(mp) {
+                                    b.spawn(label(&fonts.semibold, "(not ready)", 10.0, if on { INK } else { TEXT_FAINT }));
+                                }
                             });
                         }
                     });
@@ -1267,6 +1274,11 @@ fn map_name(m: crate::worldmap::MapId) -> &'static str {
         crate::worldmap::MapId::Home => "Green Isle",
         crate::worldmap::MapId::Ashlands => "Ashlands",
     }
+}
+/// Whether a map is finished enough to ship without a caveat. Ashlands is a playable prototype
+/// (ground/atmosphere reskinned, but tree foliage etc. not yet charred), so the menu flags it.
+fn map_ready(m: crate::worldmap::MapId) -> bool {
+    !matches!(m, crate::worldmap::MapId::Ashlands)
 }
 
 /// On the start screen, **M** cycles which map a New Game builds. The segmented control reflects it.
