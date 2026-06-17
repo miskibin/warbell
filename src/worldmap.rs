@@ -1173,10 +1173,18 @@ pub fn build(
     // the hero-region transition system can lerp toward it without rebuilding configs per frame.
     let mut ambiences: Vec<(Biome, BiomeAmbience)> = Vec::new();
     for biome in [Biome::Forest, Biome::Snow, Biome::Rocky, Biome::Desert, Biome::Swamp] {
-        let cfg = config_for(biome);
-        // On a reskinned map (e.g. Ashlands) the per-biome configs still carry the HOME
-        // green/white atmospheres; override them with the map's own atmosphere so biome
-        // interiors don't pull the sky back toward the home palette. Home keeps its configs.
+        let mut cfg = config_for(biome);
+        // On a reskinned map (Ashlands) every biome's ground COVER is the hard-coded green/floral
+        // meadow (ferns, flowers, mushrooms, reeds from groundcover.rs) — it reads as lush verdant
+        // turf on the scorched ground. Swap them ALL for the neutral/dead litter family so the
+        // forest/swamp floor reads charred, not blooming. (Trees/rocks — the `classes` — are
+        // untouched; those are the documented prop-recolour non-goal.)
+        if active_id() != 0 {
+            cfg.cover = frontier_cover();
+        }
+        // On a reskinned map the per-biome configs still carry the HOME green/white atmospheres;
+        // override them with the map's own atmosphere so biome interiors don't pull the sky back
+        // toward the home palette. Home keeps its configs.
         let atmo = if active_id() == 0 {
             AtmoSample::from_config(&cfg)
         } else {
