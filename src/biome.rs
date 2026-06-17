@@ -297,6 +297,15 @@ pub(crate) struct PendingBuild(pub bool);
 #[derive(Resource, Default)]
 pub(crate) struct WorldReady(pub bool);
 
+/// Seconds to let the loading veil present (and its dots pulse) BEFORE the heavy synchronous
+/// `worldmap::build` runs. The build blocks the frame it runs on, so without this delay it fires on
+/// the very frame the veil is raised — the render never presents until the build finishes, so the
+/// player stares at a blank/frozen window for ~2 s instead of the branded cover. Deferring it a few
+/// frames lets the veil draw first, then the build freeze happens *behind* the cover (boot + every
+/// in-process reset). Skipped under the capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want
+/// the world up on frame 0.
+const BUILD_WARMUP: f32 = 0.4;
+
 pub struct BiomePlugin;
 
 impl Plugin for BiomePlugin {
@@ -305,7 +314,7 @@ impl Plugin for BiomePlugin {
             .init_resource::<WorldReady>()
             .init_resource::<crate::worldmap::ActiveMap>()
             .add_systems(Startup, init_active_map_from_env)
-            .add_systems(Update, apply_build);
+            .add_systems(Update, apply_build.run_if(build_warmup_elapsed));
     }
 }
 
@@ -320,6 +329,24 @@ fn init_active_map_from_env(mut active: ResMut<crate::worldmap::ActiveMap>) {
         active.0 = crate::worldmap::MapId::Ashlands;
         info!("FOREST_MAP=2 → booting Volcanic Ashlands");
     }
+}
+
+/// Run-condition gate for [`apply_build`]: hold the (heavy, frame-blocking) build off for
+/// [`BUILD_WARMUP`] seconds after it's armed, so the loading veil presents and animates first and
+/// the build freeze happens *behind* the branded cover. Returns `false` (skip the build) while the
+/// warmup runs; disarms when there's nothing pending so the next raise (an in-process reset) re-runs
+/// the wait. Capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`) skip the delay — they want the world on
+/// frame 0.
+fn build_warmup_elapsed(pending: Res<PendingBuild>, time: Res<Time>, mut armed_at: Local<Option<f32>>) -> bool {
+    if !pending.0 {
+        *armed_at = None;
+        return false;
+    }
+    if std::env::var("FOREST_SHOT").is_ok() || std::env::var("FOREST_CLIP").is_ok() {
+        return true;
+    }
+    let started = *armed_at.get_or_insert(time.elapsed_secs());
+    time.elapsed_secs() - started >= BUILD_WARMUP
 }
 
 /// Build the combined world map once, then apply its atmosphere. Camera/sun/IBL persist.
