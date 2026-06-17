@@ -75,6 +75,9 @@ pub enum Concept {
     NightMusing,
     QuietMusing,
     KillMusing,
+    // ── Hero commands — the muster (K): rally the town to follow, or stand it down ──
+    MusterCall,
+    MusterStandDown,
     // ── Villager ──
     Greeting,
     VillagerArmedJab,
@@ -186,6 +189,17 @@ pub const LINES: &[Line] = &[
     Line { floor: 300.0,              ..line("broke",         Speaker::Hero, Concept::Broke,        "Pockets empty. Steel will have to do the talking.") },
     Line { floor: 300.0, priority: 25, ..line("keep_hurt",    Speaker::Hero, Concept::KeepHurt,     "The keep's taking a beating. Get to the walls.") },
     Line { floor: 300.0,              ..line("shrine_heal",   Speaker::Hero, Concept::ShrineHeal,   "The old stones still have mercy in them.") },
+    // ── Hero commands — the muster (K). One rally variant rolls when the war party forms up, one
+    //    stand-down variant when it disbands (emitted from `villagers::muster_keys`). priority 25 so
+    //    a deliberate order plays over idle musings; transcripts == the recorded `.ogg` (don't reword
+    //    without re-recording, or the subtitle desyncs from the clip). ──
+    Line { priority: 25, ..line("muster_to_me",     Speaker::Hero, Concept::MusterCall,      "To me! Form up!") },
+    Line { priority: 25, ..line("muster_on_me",     Speaker::Hero, Concept::MusterCall,      "On me, all of you. We move.") },
+    Line { priority: 25, ..line("muster_take_arms", Speaker::Hero, Concept::MusterCall,      "Take up arms — fall in behind me!") },
+    Line { priority: 25, ..line("muster_with_me",   Speaker::Hero, Concept::MusterCall,      "With me, lads. Stay close now.") },
+    Line { priority: 25, ..line("standdown_work",   Speaker::Hero, Concept::MusterStandDown, "Stand down. Back to your work.") },
+    Line { priority: 25, ..line("standdown_ease",   Speaker::Hero, Concept::MusterStandDown, "That'll do. Ease off.") },
+    Line { priority: 25, ..line("standdown_hold",   Speaker::Hero, Concept::MusterStandDown, "Hold here. Rest while you can.") },
     // ── Hero biome musings (once per biome per run via `once`) ──
     Line { once: true, ..line("forest", Speaker::Hero, Concept::BiomeEntered(Biome::Forest), "Oh, a forest. Looks like good hunting. Might find some apples, too. Huh. Prisoners. Maybe I can help them.") },
     Line { once: true, ..line("snow",   Speaker::Hero, Concept::BiomeEntered(Biome::Snow),   "Brr, freezing up here. Bet there's beasts to hunt. Maybe loot in the ice. Someone's locked in that cage. Should I free them?") },

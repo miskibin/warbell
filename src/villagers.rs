@@ -1026,6 +1026,7 @@ fn muster_keys(
     hero: Res<crate::player::HeroState>,
     mut commands: Commands,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     fresh: Query<
         (Entity, Option<&Guard>, &Villager, Has<crate::town::Worker>),
         (With<Townsfolk>, Without<Rallied>, Without<crate::dying::Dying>),
@@ -1040,6 +1041,8 @@ fn muster_keys(
         for (slot, (e, guard, v, is_worker)) in fresh.iter().enumerate() {
             rally_one(&mut commands, e, guard, v, is_worker, slot);
         }
+        // Hero barks a rally order (one of the MusterCall variants; ~20s hero-line spacing throttles spam).
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::MusterCall));
         ("To me! Form up!", Color::srgb(0.72, 0.9, 1.0))
     } else {
         // Stand down: restore each guard's real post, then drop the marker — guard_combat walks
@@ -1048,6 +1051,7 @@ fn muster_keys(
             g.post = r.home;
             commands.entity(e).try_remove::<Rallied>();
         }
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::MusterStandDown));
         ("Stand down.", Color::srgb(0.92, 0.85, 0.68))
     };
     floats.0.push(crate::combat_fx::FloatReq {
