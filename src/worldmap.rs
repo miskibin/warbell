@@ -146,35 +146,38 @@ const PAL_HOME: Palette = Palette {
     lava_seam_hot: 0xffb347,
 };
 
-/// **Volcanic Ashlands** (map 2) — the 5 biomes reskinned ash-grey + ember-red. Each field
-/// is the home tone re-imagined: grass → grey-green cinder flats, forest → burnt-dead, rock →
-/// charcoal basalt, snow → grey ash drifts, desert → bleached grey dune, swamp → sulfur muck.
+/// **Volcanic Ashlands** (map 2) — the 5 biomes reskinned for a charred volcanic world, but each
+/// kept VISUALLY DISTINCT so a biome still reads as itself under the ember sun (an earlier muddy
+/// pass made snow read tan + forest read flat-brown). Snow stays COOL (blue-grey ash) so it never
+/// warms to desert; forest keeps a sooty GREEN (g>r) so the terrain shader's foliage layer fires
+/// and it reads as scorched woodland, not mud; desert is clearly warm sand; rock is near-black
+/// basalt; swamp a sulfur olive.
 const PAL_ASH: Palette = Palette {
-    grass: 0x5a5347,       // cinder flats (the "safe" ground)
-    grass_dark: 0x3f3a31,  // shaded ash hollows
+    grass: 0x575249,       // cinder flats (the neutral "safe" ground)
+    grass_dark: 0x3c3931,  // shaded ash hollows
     grass_dry: 0x6f6453,   // dry warm cinder
-    grass_gold: 0x8a6a3c,  // sun-baked scorched sweeps
-    sand: 0x6b5f4c,        // grey volcanic grit beaches
-    forest: 0x4a4338,      // burnt-dead grove floor
-    rock: 0x3a3530,        // charcoal basalt range
-    snow: 0xb8b4ad,        // grey ashfall drifts
-    desert: 0x8a7c63,      // bleached grey dunes
-    swamp: 0x4a4128,       // sulfur-tainted muck
-    swamp_dark: 0x2a2616,  // tar pools
-    swamp_moss: 0x6e5e34,  // sulfur crust
-    swamp_algae: 0x5a4a22, // brimstone seep
+    grass_gold: 0x8c6838,  // scorched sun-baked sweeps
+    sand: 0x837458,        // grey-tan volcanic grit beaches
+    forest: 0x424e36,      // sooty GREEN grove floor (g>r → reads as woodland)
+    rock: 0x312c27,        // near-black basalt range
+    snow: 0xe2e7f0,        // BRIGHT cool ashfall — value (not hue) is what reads as snow vs tan
+    desert: 0x9c8a63,      // warm tan dunes (clearly sandy)
+    swamp: 0x4a4226,       // sulfur-tainted muck
+    swamp_dark: 0x2a2615,  // tar pools
+    swamp_moss: 0x726232,  // sulfur crust
+    swamp_algae: 0x5c4c22, // brimstone seep
     blight: 0x3a2e1f,      // trampled ash mud
     blight_dark: 0x1f1810,
     blight_ash: 0x6a6258,
     blight_green: 0x55502f,
     blight_rust: 0x6a3318,
-    snow_shade: 0x9a968f,  // drift shadow in the ashfall
-    snow_bright: 0xd6d2cb, // wind-polished ash crest
-    forest_dark: 0x36302a, // charred loam
-    forest_dry: 0x5e5440,  // ash-litter
-    dirt: 0x3a2c1e,        // cliff soil
-    snow_cliff_lip: 0xc2bdb4,
-    snow_cliff_rock: 0x59544c,
+    snow_shade: 0xa2aab8,  // cool drift shadow
+    snow_bright: 0xdfe6ee, // wind-polished cool ash crest
+    forest_dark: 0x313b27, // charred green loam
+    forest_dry: 0x586338,  // ash-dusted leaf litter (greenish)
+    dirt: 0x3a2c1d,        // cliff soil
+    snow_cliff_lip: 0xd0d8e2,
+    snow_cliff_rock: 0x565b64,
     road_dirt: 0x4a3a26,
     lava_basalt: 0x2a2421, // cooled crust between the seams
     lava_seam: 0xc8521a,   // glowing crack
@@ -248,11 +251,13 @@ const PLATEAUS: [Plateau; 4] = [
 const DELIBERATE_LAKE: (f32, f32, f32, f32) = (92.0, 80.0, 5.0, 3.0); // x,z,rx,rz
 
 // ── Map selection (which world to generate) ──────────────────────────────────────
-/// **Volcanic Ashlands** atmosphere (map 2): a dim red-brown sky, a low ember sun (long
-/// hostile shadows), warm-dark ambient. Same tuple shape as [`ATMOSPHERE`]; fog stays
-/// moderate (heavy volumetric fog blacks the Atmosphere sky — see the ultra-graphics note).
+/// **Volcanic Ashlands** atmosphere (map 2): a dim red-brown sky + orange fog carry the hellish
+/// mood, while the sun is only *warm* (not pure-orange) so biome hues still read — a fully
+/// saturated ember sun washed snow to tan and erased every biome's colour. Low sun = long hostile
+/// shadows. Same tuple shape as [`ATMOSPHERE`]; fog stays moderate (heavy volumetric fog blacks
+/// the Atmosphere sky — see the ultra-graphics note).
 const ASH_ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
-    (0x5a3b32, 0.0075, 0xff7a3c, 9_000.0, 0x7a5246, 130.0, Vec3::new(90.0, 60.0, 30.0));
+    (0x5a3b32, 0.0075, 0xffdca8, 10_500.0, 0x6a5e54, 145.0, Vec3::new(90.0, 64.0, 30.0));
 
 /// Ashlands biome layout — the same five biome kinds (reskinned by [`PAL_ASH`]) placed in a
 /// deliberately DIFFERENT arrangement from the home island, so the world reads as a new place
