@@ -18,7 +18,7 @@
 //! out overnight regrows to the pair within a couple of minutes of dawn. Everyone
 //! *beyond* the pair must be housed by built Houses and fed by staffed Farms.
 //!
-//! Numbers are tuned for forest's 60-HP combat units and the day/night siege cadence;
+//! Numbers are tuned for forest's building HP pools (see [`BuildKind::max_hp`]) and the day/night siege cadence;
 //! tweak the constants below (also exposed to the F1 debug panel).
 
 use crate::resource_store::ResourceState;
@@ -111,10 +111,13 @@ impl BuildKind {
     }
 
     pub fn max_hp(self) -> f64 {
+        // Raised ~+80% (Farm 60→110, producers 55→100): defender HP is FLAT but the night
+        // `dmg_scale` ramp steepens hard (1.0→2.35+), so the old pools melted in seconds on
+        // later nights. The bigger pools let you reach a burning plot in time even at night 4+.
         match self {
-            BuildKind::Farm => 60.0,
-            BuildKind::Lumber => 55.0,
-            BuildKind::Mine => 55.0,
+            BuildKind::Farm => 110.0,
+            BuildKind::Lumber => 100.0,
+            BuildKind::Mine => 100.0,
         }
     }
 
@@ -627,9 +630,9 @@ mod tests {
         let mut t = Town::new(1, 0);
         let mut bank = bank_with(50.0, 0.0, 0.0);
         t.build(0, BuildKind::Farm, &mut bank);
-        t.damage(0, 30.0); // hp 30, burning
+        t.damage(0, 30.0); // burning
         t.repair(100.0); // heals to max, clears burning
-        assert_eq!(t.plots[0].state, PlotState::Built { hp: 60.0, burning: false });
+        assert_eq!(t.plots[0].state, PlotState::Built { hp: 110.0, burning: false });
     }
 
     #[test]
