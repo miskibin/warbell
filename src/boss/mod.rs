@@ -376,6 +376,12 @@ fn boss_brain(
         // the turn to hostile (not every subsequent hit).
         if !b.hostile && health.hp < b.last_hp - 0.01 {
             b.hostile = true;
+            // Reaction beat: seed the melee + critical cooldowns so the warden ROARS and rears
+            // before it can swing — otherwise it counter-hits the very frame you wake it (with
+            // `atk_cd`/`crit_cd` already at 0), an instant un-blockable blow that on a leveled
+            // warden chunks ~80% of the hero's HP before the player can react.
+            b.atk_cd = MELEE_CD;
+            b.crit_cd = b.crit_cd.max(CRIT_CD * 0.5);
             let gy = steer::footing(b.pos.x, b.pos.y).unwrap_or(tf.translation.y);
             cues.write(crate::audio::AudioCue::BossRoar(Vec3::new(b.pos.x, gy + 1.8, b.pos.y)));
         }
