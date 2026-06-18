@@ -94,7 +94,39 @@ impl Plugin for ScenePlugin {
             })
             .init_resource::<SmoothBiomeAtmo>()
             .add_systems(Startup, (setup_camera, setup_sun))
-            .add_systems(Update, ((track_biome_atmo, advance_sky).chain(), drive_dof_focus));
+            .add_systems(
+                Update,
+                ((track_biome_atmo, advance_sky).chain(), drive_dof_focus, freeze_ibl_filtering),
+            );
+    }
+}
+
+/// `GeneratedEnvironmentMapLight` re-filters its source cubemap into the diffuse/specular IBL maps
+/// EVERY frame — the `lightprobe_irradiance_map` + `lightprobe_radiance_map` GPU passes (≈2.3ms on
+/// a weak iGPU). That realtime path is meant for *dynamic* skyboxes, but ours is a STATIC gradient
+/// cubemap (`gradient_env_cubemap`, built once at setup), so every refilter recomputes the identical
+/// result. Once Bevy has produced the filtered `EnvironmentMapLight` and a handful of frames have let
+/// the GPU convolution settle, we drop the `Generated` component: bevy_pbr's
+/// `extract_generated_environment_map_entities` is gated on it, so removing it stops the per-frame
+/// extract+filter while the now-static `EnvironmentMapLight` keeps the last-filtered maps (correct
+/// forever, since the source never changes). Day/night IBL dimming then rides
+/// `EnvironmentMapLight.intensity` in `advance_sky` — a cheap scalar, no refiltering.
+fn freeze_ibl_filtering(
+    mut commands: Commands,
+    q: Query<Entity, (With<GeneratedEnvironmentMapLight>, With<EnvironmentMapLight>)>,
+    mut settle: Local<u32>,
+) {
+    // Count only once the filtered light exists (Bevy inserts it a frame or two after the cubemap
+    // image finishes loading). 12 frames is well past the one frame the convolution needs.
+    if q.is_empty() {
+        return;
+    }
+    *settle += 1;
+    if *settle < 12 {
+        return;
+    }
+    for e in &q {
+        commands.entity(e).remove::<GeneratedEnvironmentMapLight>();
     }
 }
 
@@ -238,7 +270,10 @@ fn advance_sky(
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>, Without<Moon>)>,
     mut moon_q: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>, Without<Sun>)>,
     mut fog_q: Query<&mut DistanceFog>,
-    mut env_q: Query<&mut GeneratedEnvironmentMapLight>,
+    // Drives IBL day/night dimming on the *filtered* light (a cheap scalar). We deliberately stop
+    // re-filtering the static cubemap after boot (`freeze_ibl_filtering`), so intensity must ride
+    // `EnvironmentMapLight`, which survives that, not `GeneratedEnvironmentMapLight`, which is removed.
+    mut env_q: Query<&mut EnvironmentMapLight>,
     mut grade_q: Query<&mut ColorGrading>,
     biome: Option<Res<SmoothBiomeAtmo>>,
 ) {

@@ -238,12 +238,16 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             shadow_size: 2048,
             fog: None,
             bloom: None,
-            cascade_far: None,
+            // 3 cascades (not the authored 4) at the SAME 150 reach: the 4th split mostly covers
+            // 100–150 tiles, where the linear fog (full by ≈190) already washes shadows out — so
+            // it's a near-invisible shadow pass we can drop. Keeps near/mid texel density (first
+            // bound stays 12). Routing through the builder requires a non-None cascade_far.
+            cascade_far: Some(150.0),
             normal_prepass: true, // SSAO consumes normals
             outline: true,
             bloom_on: true,
             dof_on: true,
-            cascades_count: None,
+            cascades_count: Some(3),
         },
         GraphicsQuality::Ultra => PresetVals {
             god_rays: true,

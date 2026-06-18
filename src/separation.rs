@@ -50,10 +50,16 @@ fn separate_agents(
         Query<(Entity, &mut Villager, &mut Transform), Without<crate::dying::Dying>>,
         Query<(Entity, &mut Animal, &mut Transform), Without<crate::dying::Dying>>,
     )>,
+    // Scratch buffers kept across frames (cleared, not reallocated) — this runs every frame over the
+    // whole crowd, so a fresh Vec+HashMap per call was pure churn. `.clear()` retains capacity.
+    mut bodies: Local<Vec<Body>>,
+    mut grid: Local<HashMap<(i32, i32), Vec<usize>>>,
+    mut push: Local<Vec<Vec2>>,
+    mut pushes: Local<HashMap<Entity, Vec2>>,
 ) {
     // 1. Snapshot every live ork + villager + animal body. (Read through the mut queries one at a
     // time — all three touch `Transform`, which is why they live in a `ParamSet`.)
-    let mut bodies: Vec<Body> = Vec::new();
+    bodies.clear();
     for (e, o, _) in set.p0().iter() {
         bodies.push((e, o.pos, o.body_r));
     }
@@ -69,11 +75,12 @@ fn separate_agents(
 
     // 2. Bucket by 1-unit tile and resolve each overlapping pair once. Bodies overlap only within
     // `r_i + r_j` (≤ ~0.8 < 1 tile), so a 3×3 neighbour scan catches every real pair.
-    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    grid.clear();
     for (i, (_, p, _)) in bodies.iter().enumerate() {
         grid.entry((p.x.floor() as i32, p.y.floor() as i32)).or_default().push(i);
     }
-    let mut push = vec![Vec2::ZERO; bodies.len()];
+    push.clear();
+    push.resize(bodies.len(), Vec2::ZERO);
     for (i, &(_, pi, ri)) in bodies.iter().enumerate() {
         let (tx, tz) = (pi.x.floor() as i32, pi.y.floor() as i32);
         for dx in -1..=1 {
@@ -106,12 +113,12 @@ fn separate_agents(
     }
 
     // 3. Map each entity to its accumulated nudge (skip the bodies that aren't overlapping).
-    let pushes: HashMap<Entity, Vec2> = bodies
-        .iter()
-        .zip(push.iter())
-        .filter(|(_, p)| p.length_squared() > 1e-8)
-        .map(|((e, _, _), p)| (*e, *p))
-        .collect();
+    pushes.clear();
+    for ((e, _, _), p) in bodies.iter().zip(push.iter()) {
+        if p.length_squared() > 1e-8 {
+            pushes.insert(*e, *p);
+        }
+    }
     if pushes.is_empty() {
         return;
     }
