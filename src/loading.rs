@@ -32,13 +32,10 @@ const FADE_DUR: f32 = 0.45;
 /// Hard ceiling: reveal regardless after this long, so a missing/slow asset (or a stuck rebuild)
 /// can't trap the player on the veil forever.
 const MAX_WAIT: f32 = 8.0;
-/// Progress-bar track size (px) and the sweeping highlight's width (px).
+/// Progress-bar track size (px). The fill grows left→right with the real world-build progress
+/// (`biome::BuildProgress`), so it's a genuine determinate loader, not a fake spinner.
 const BAR_W: f32 = 240.0;
 const BAR_H: f32 = 5.0;
-const FILL_W: f32 = 84.0;
-/// Seconds for the highlight to scan across the track and back (ping-pong — stays inside the track,
-/// so no overflow clipping needed, and reads as a clean indeterminate loader).
-const SWEEP_PERIOD: f32 = 1.5;
 
 /// Loading-screen flavour lines — one is shown per load (boot + every in-process reset), rotated so
 /// repeat loads feel fresh. Kept short; each names a real mechanic so it doubles as a play tip. Edit
@@ -172,8 +169,8 @@ fn spawn_loading(mut commands: Commands, time: Res<Time>, fonts: Res<UiFonts>) {
             root.spawn((label(&fonts.display, "WARBELL", 72.0, GOLD), LoadingText(GOLD)));
             // Rotating flavour line (its content set from `TIPS[tip]`, re-rolled per load).
             root.spawn((label(&fonts.regular, TIPS[tip], 14.0, TEXT_DIM), LoadingText(TEXT_DIM), TipText));
-            // Indeterminate progress bar — a dim rail with a gold highlight that scans across it.
-            // Font-free, so it draws from frame 0; the sweep animates during the warmup + fade.
+            // Determinate progress bar — a dim rail whose gold fill grows with the real world-build
+            // progress (`biome::BuildProgress`). Font-free, so it draws from frame 0.
             root.spawn((
                 Node {
                     width: Val::Px(BAR_W),
@@ -189,7 +186,7 @@ fn spawn_loading(mut commands: Commands, time: Res<Time>, fonts: Res<UiFonts>) {
                 track.spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        width: Val::Px(FILL_W),
+                        width: Val::Px(0.0), // grown each frame to BAR_W * progress
                         height: Val::Percent(100.0),
                         border_radius: radius(BAR_H * 0.5),
                         ..default()
@@ -201,15 +198,16 @@ fn spawn_loading(mut commands: Commands, time: Res<Time>, fonts: Res<UiFonts>) {
         });
 }
 
-/// Sweep the progress highlight, rotate the tip, decide when the cover can lift (fonts + world
-/// ready), fade, then go dormant. Never despawns the node — it persists so a later reset can raise
-/// it again.
+/// Grow the progress fill to the real build progress, rotate the tip, decide when the cover can
+/// lift (fonts + world ready), fade, then go dormant. Never despawns the node — it persists so a
+/// later reset can raise it again.
 #[allow(clippy::too_many_arguments)]
 fn drive_veil(
     time: Res<Time>,
     assets: Res<AssetServer>,
     fonts: Res<UiFonts>,
     world_ready: Res<WorldReady>,
+    progress: Res<crate::biome::BuildProgress>,
     mut veil: ResMut<Veil>,
     mut root_q: Query<(&mut Node, &mut BackgroundColor), With<VeilRoot>>,
     mut fill_q: Query<(&mut Node, &mut BackgroundColor), (With<ProgressFill>, Without<VeilRoot>, Without<ProgressTrack>)>,
@@ -219,6 +217,8 @@ fn drive_veil(
     // Last tip index applied to the text node — so we only rewrite (and re-lay-out) it when it
     // actually changes, never per-frame.
     mut last_tip: Local<usize>,
+    // Eased displayed progress — glides up over the cheap phases, snaps to 0 when a build re-arms.
+    mut shown: Local<f32>,
 ) {
     let Ok((mut node, mut root_bg)) = root_q.single_mut() else { return };
     let now = time.elapsed_secs();
@@ -250,13 +250,17 @@ fn drive_veil(
     node.display = if alpha > 0.0 { Display::Flex } else { Display::None };
     root_bg.0 = VEIL.with_alpha(alpha);
 
-    // Scan the highlight across the rail and back (ping-pong, so it stays inside the track), fading
-    // with the veil. It only visibly moves during the warmup + fade — the build freeze pins it
-    // mid-rail, which reads as a paused loader rather than a hang.
-    let tri = 1.0 - (2.0 * (now / SWEEP_PERIOD).fract() - 1.0).abs();
-    let left = tri * (BAR_W - FILL_W);
+    // Grow the fill toward the real build progress. Ease up so the cheap phases (many fast frames)
+    // glide smoothly; snap straight to a lower target when a build re-arms (progress resets to 0)
+    // so the bar empties for the new load instead of draining slowly.
+    let target = progress.0;
+    if target < *shown {
+        *shown = target;
+    } else {
+        *shown += (target - *shown) * (dt * 6.0).min(1.0);
+    }
     if let Ok((mut fill, mut fill_bg)) = fill_q.single_mut() {
-        fill.left = Val::Px(left);
+        fill.width = Val::Px(BAR_W * shown.clamp(0.0, 1.0));
         fill_bg.0 = GOLD.with_alpha(alpha);
     }
     if let Ok(mut track_bg) = track_q.single_mut() {

@@ -1022,6 +1022,26 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
 
 // ── Build ────────────────────────────────────────────────────────────────────────
 #[allow(clippy::too_many_arguments)]
+/// Cross-frame state for the chunked build: data made by one phase and consumed by a later one.
+/// The build is now spread one phase per frame (see [`build_step`]) so the loading veil can
+/// animate, so these can no longer be plain locals on the stack.
+#[derive(Default)]
+pub struct BuildState {
+    /// Shared textured material set from [`crate::castle::build`] (phase 13), reused by the town
+    /// plots (phase 19).
+    village_mats: Option<crate::castle::Mats>,
+    /// Per-biome atmosphere/weather captured during the scatter phases (5–9), inserted as the
+    /// [`crate::biome::BiomeAmbiences`] resource at phase 10.
+    ambiences: Vec<(Biome, BiomeAmbience)>,
+}
+
+/// Number of phases [`build_step`] walks through. The loading veil maps its progress bar onto this.
+pub const BUILD_STEPS: u32 = 28;
+
+/// Build the whole world in ONE call (terrain → scatter → castle → fortress → …). Used by the
+/// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0. The normal
+/// game path drives [`build_step`] one phase per frame instead (see `biome::drive_build`) so the
+/// render loop — and the loading screen — can tick between phases.
 pub fn build(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -1031,33 +1051,89 @@ pub fn build(
     water_mats: &mut Assets<WaterMaterial>,
     creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
-    // ── Terraced ground mesh (blended vertex colours, per-face normals) — THREE sheets,
-    //    each with its own baked detail texture so the wrong grain never bleeds across a
-    //    biome: the island proper on a grass blade-grain, the SWAMP on a wet blotchy
-    //    mottle (it used to share the grass blades — that's why the marsh read blank), and
-    //    the Blight on its own filthy trampled-mud grain. ──
+    let mut state = BuildState::default();
+    for step in 0..BUILD_STEPS {
+        build_step(step, commands, meshes, images, std_mats, terrain_mats, water_mats, creature_mats, &mut state);
+    }
+}
+
+/// Run ONE phase of the world build. The phases are exactly the sequence the old monolithic `build`
+/// ran, in the same order — just one per call, so the render loop can present between them.
+/// Cross-phase data rides [`BuildState`]. Steps past the last are no-ops.
+#[allow(clippy::too_many_arguments)]
+pub fn build_step(
+    step: u32,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    std_mats: &mut Assets<StandardMaterial>,
+    terrain_mats: &mut Assets<TerrainMaterial>,
+    water_mats: &mut Assets<WaterMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    state: &mut BuildState,
+) {
+    match step {
+        0 => bs_grass_sheet(commands, meshes, images, terrain_mats),
+        1 => bs_swamp_sheet(commands, meshes, images, terrain_mats),
+        2 => bs_blight_sheet(commands, meshes, images, terrain_mats),
+        3 => bs_lava_sheet(commands, meshes, images, terrain_mats),
+        4 => bs_sea_and_boats(commands, meshes, images, std_mats, water_mats),
+        5 => bs_scatter_biome(Biome::Forest, commands, meshes, std_mats, state),
+        6 => bs_scatter_biome(Biome::Snow, commands, meshes, std_mats, state),
+        7 => bs_scatter_biome(Biome::Rocky, commands, meshes, std_mats, state),
+        8 => bs_scatter_biome(Biome::Desert, commands, meshes, std_mats, state),
+        9 => bs_scatter_biome(Biome::Swamp, commands, meshes, std_mats, state),
+        10 => bs_insert_ambiences(commands, state),
+        11 => bs_snow_drifts(commands, meshes, std_mats),
+        12 => bs_grass_cover(commands, meshes, std_mats),
+        13 => state.village_mats = Some(crate::castle::build(commands, meshes, images, std_mats)),
+        14 => crate::camps::build(commands, meshes, images, std_mats, creature_mats),
+        15 => crate::villagers::populate(commands, meshes, std_mats, creature_mats),
+        16 => crate::training_dummies::populate(commands, meshes, std_mats),
+        17 => crate::wildlife::populate(commands, meshes, creature_mats),
+        18 => crate::verbs::populate_ore(commands, meshes, std_mats),
+        19 => crate::town::populate_plots(
+            commands,
+            meshes,
+            state.village_mats.as_ref().expect("castle (phase 13) runs before town plots (phase 19)"),
+        ),
+        20 => crate::verbs::populate_forage(commands, meshes, std_mats),
+        21 => crate::chest::populate_chests(commands, meshes, std_mats),
+        22 => crate::defenses::populate_defenders(commands, meshes, std_mats),
+        23 => crate::ruins::populate_landmarks(commands, meshes, std_mats),
+        24 => crate::vignettes::populate_vignettes(commands, meshes, std_mats),
+        25 => crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats),
+        26 => crate::bridges::populate(commands, meshes, std_mats),
+        27 => crate::distant_isles::build(commands, meshes, std_mats),
+        _ => {}
+    }
+}
+
+// ── Build phases (each one [`build_step`] arm; see the old `build` doc for the why of each) ──
+
+/// The island proper: grass blade-grain detail, all tiles that aren't Blight/Swamp/Lava.
+fn bs_grass_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
     let grass_detail = GroundDetail {
         scale: 0.18,
-        strength: 0.52, // a touch rougher/grainier grass (was 0.40)
+        strength: 0.52,
         variation: 0.70,
         seed: 1.0,
         dark: 0x356b28,
         base: 0x5d9e44,
         light: 0x95d162,
-        grain: 0.72, // more blade-grain speckle (was 0.55)
+        grain: 0.72,
         streak: 0.5,
     };
     let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, images, terrain_mats);
-    spawn_terrain_sheet(commands, meshes, ground_mat, |tb| {
-        tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava
-    });
-    // The swamp gets the bespoke wet mottle from `biome_swamp::config` — broad blotchy
-    // wet/dry patches with a damp streak, NOT the island's vertical grass blades. Lower
-    // roughness than grass so the dim sun throws a faint bog-water sheen across the muck.
+    spawn_terrain_sheet(commands, meshes, ground_mat, |tb| tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava);
+}
+
+/// The swamp: bespoke wet blotchy mottle (not the grass blades), lower roughness for a bog sheen.
+fn bs_swamp_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
     let swamp_detail = GroundDetail {
         scale: 0.16,
         strength: 0.55,
-        variation: 0.95, // high → blotchy wet/dry mottle
+        variation: 0.95,
         seed: 11.0,
         dark: 0x2c3522,
         base: 0x49543a,
@@ -1067,43 +1143,49 @@ pub fn build(
     };
     let swamp_mat = crate::terrain::make_material(&swamp_detail, 0.82, images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, swamp_mat, |tb| tb == TB::Swamp);
+}
+
+/// The Blight: its own filthy beaten-earth grain so the trampled mud reads near the keep.
+fn bs_blight_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
     let blight_detail = GroundDetail {
-        // Pushed back up toward the first pass: the 0.42 "calm" tune read blank/flat-brown
-        // near the keep where props are sparse. Finer scale + harder grain gives the mud a
-        // beaten-earth tooth without the old over-grained busyness.
         scale: 0.26,
-        strength: 0.60, // a touch stronger so the finer grain reads (was 0.52)
+        strength: 0.60,
         variation: 0.78,
         seed: 7.0,
         dark: 0x2c2114,
         base: 0x4d3e2a,
         light: 0x6b5c42,
-        grain: 0.88, // finer beaten-earth tooth (was 0.74)
+        grain: 0.88,
         streak: 0.55,
     };
     let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, blight_mat, |tb| tb == TB::Blight);
+}
 
-    // ── Lava field (map 2): its own basalt sheet; the glowing magma seams ride the vertex
-    //    colour from `biome_col_at`. Gated on the active map so the home island never builds an
-    //    empty sheet. A dark, low-variation grain reads as cooled crust between the bright seams. ──
-    if active_map().has_lava {
-        let lava_detail = GroundDetail {
-            scale: 0.30,
-            strength: 0.55,
-            variation: 0.70,
-            seed: 13.0,
-            dark: 0x16110d,
-            base: 0x2a2421,
-            light: 0x4a3a2a,
-            grain: 0.80,
-            streak: 0.40,
-        };
-        let lava_mat = crate::terrain::make_material(&lava_detail, 0.90, images, terrain_mats);
-        spawn_terrain_sheet(commands, meshes, lava_mat, |tb| tb == TB::Lava);
+/// Lava field (map 2 only): basalt crust sheet; magma seams ride the vertex colour. No-op on maps
+/// without lava so the home island never builds an empty sheet.
+fn bs_lava_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
+    if !active_map().has_lava {
+        return;
     }
+    let lava_detail = GroundDetail {
+        scale: 0.30,
+        strength: 0.55,
+        variation: 0.70,
+        seed: 13.0,
+        dark: 0x16110d,
+        base: 0x2a2421,
+        light: 0x4a3a2a,
+        grain: 0.80,
+        streak: 0.40,
+    };
+    let lava_mat = crate::terrain::make_material(&lava_detail, 0.90, images, terrain_mats);
+    spawn_terrain_sheet(commands, meshes, lava_mat, |tb| tb == TB::Lava);
+}
 
-    // ── Sea (big animated water plane under everything; shows at coast/rivers/lake) ──
+/// The sea plane + shore-distance bake + background sailboats, then plan the ork camps (BEFORE
+/// scatter, so their clearings can be reserved out of the prop placement).
+fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>, water_mats: &mut Assets<WaterMaterial>) {
     let sea_mesh = meshes.add(Plane3d::default().mesh().size(900.0, 900.0).subdivisions(8).build());
     let (shore_tex, shore_region) = bake_shore_distance(images);
     let sea = water_mats.add(ExtendedMaterial {
@@ -1117,150 +1199,129 @@ pub fn build(
         },
         extension: WaterExt {
             params: WaterParams {
-                // x amp, y freq, z scroll, w fresnel strength.
                 params: Vec4::new(0.22, 0.45, 0.4, 0.85),
-                // rgb sky tint at grazing angles, w shore-fx strength (foam collar +
-                // shallow→deep gradient in water.wgsl).
                 sky_tint: Vec4::new(0.70, 0.82, 0.93, 1.0),
                 region: shore_region,
             },
             shore: Some(shore_tex),
         },
     });
-    commands.spawn((
-        Mesh3d(sea_mesh),
-        MeshMaterial3d(sea),
-        Transform::from_xyz(0.0, SEA_Y, 0.0),
-        crate::biome::BiomeEntity,
-    ));
+    commands.spawn((Mesh3d(sea_mesh), MeshMaterial3d(sea), Transform::from_xyz(0.0, SEA_Y, 0.0), crate::biome::BiomeEntity));
 
-    // ── Background sailboats on the open water around the island ──
-    // Island shape is authored in BASE space (CX/CZ, ISLAND_R*); convert to world:
-    // world = base*MAP_SCALE - G. Centre ≈ origin; radii scale by MAP_SCALE.
+    // Island shape is authored in BASE space (CX/CZ, ISLAND_R*); convert to world.
     let isle_c = Vec2::new(CX * MAP_SCALE - GX, CZ * MAP_SCALE - GZ);
     let isle_r = Vec2::new(ISLAND_RX * MAP_SCALE, ISLAND_RZ * MAP_SCALE);
     crate::boats::spawn_boats_island(commands, meshes, std_mats, isle_c, isle_r, SEA_Y);
 
-    // ── Plan the ork camps BEFORE scatter so their clearings can be reserved. ──
     crate::camps::plan();
+}
 
-    // ── Scatter: each biome's props on its tiles (height-aware), + grass cover ──
+/// Scatter one biome's props on its tiles (height-aware), and capture its atmosphere/weather into
+/// `state.ambiences` for the [`BiomeAmbiences`] resource (inserted at phase 10).
+fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>, state: &mut BuildState) {
     let lo = -GX;
     let hi = GX; // square covers the whole grid; off-map tiles mask out
-    // Capture each biome's atmosphere + weather while we already have its config in hand, so
-    // the hero-region transition system can lerp toward it without rebuilding configs per frame.
-    let mut ambiences: Vec<(Biome, BiomeAmbience)> = Vec::new();
-    for biome in [Biome::Forest, Biome::Snow, Biome::Rocky, Biome::Desert, Biome::Swamp] {
-        let mut cfg = config_for(biome);
-        // On a reskinned map (Ashlands) every biome's ground COVER is the hard-coded green/floral
-        // meadow (ferns, flowers, mushrooms, reeds from groundcover.rs) — it reads as lush verdant
-        // turf on the scorched ground. Swap them ALL for the neutral/dead litter family so the
-        // forest/swamp floor reads charred, not blooming. (Trees/rocks — the `classes` — are
-        // untouched; those are the documented prop-recolour non-goal.)
-        if active_id() != 0 {
-            cfg.cover = frontier_cover();
-        }
-        // On a reskinned map the per-biome configs still carry the HOME green/white atmospheres;
-        // override them with the map's own atmosphere so biome interiors don't pull the sky back
-        // toward the home palette. Home keeps its configs.
-        let atmo = if active_id() == 0 {
-            AtmoSample::from_config(&cfg)
-        } else {
-            let (sky, fog, sun_c, sun_i, amb_c, amb_b, _s) = active_atmosphere();
-            AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b, fog)
-        };
-        ambiences.push((biome, BiomeAmbience { atmo, particle: cfg.particle }));
-        scatter_region(
-            &cfg,
-            commands,
-            meshes,
-            std_mats,
-            lo,
-            hi,
-            false,
-            &move |x, z| {
-                let here = tile_biome_world(x, z);
-                // Lava tiles read as Swamp to gameplay, but visually they take ROCK scatter
-                // (basalt boulders), never swamp reeds — so route by the underlying `TB`.
-                let biome_match = if biome == Biome::Rocky {
-                    here == Some(Biome::Rocky) || is_lava_world(x, z)
-                } else if biome == Biome::Swamp {
-                    here == Some(Biome::Swamp) && !is_lava_world(x, z)
-                } else {
-                    here == Some(biome)
-                };
-                biome_match
-                    && !crate::camps::in_clearing(x, z)
-                    && !crate::bridges::near_bridge(x, z, 1.0)
-                    // Keep swamp scatter off the fortress gate road, and out of the deep
-                    // Blight (the Blight tiles read as Swamp; ork_fortress scatters its own
-                    // dead-wood there — swamp props only bleed into the northern blend band).
-                    && !crate::ork_fortress::on_gate_approach(x, z)
-                    && !(crate::ork_fortress::in_blight_world(x, z) && z > 86.0)
-            },
-            &|x, z| tile_top_y_world(x, z),
-        );
+    let mut cfg = config_for(biome);
+    // On a reskinned map (Ashlands) swap every biome's lush green cover for the dead-litter family
+    // so the scorched ground doesn't read as blooming meadow. (Trees/rocks left alone.)
+    if active_id() != 0 {
+        cfg.cover = frontier_cover();
     }
-    // Island-wide base ambience (grass / sand / water): the active map's daytime atmosphere, no weather.
+    // On a reskinned map override the per-biome HOME atmosphere with the map's own.
+    let atmo = if active_id() == 0 {
+        AtmoSample::from_config(&cfg)
+    } else {
+        let (sky, fog, sun_c, sun_i, amb_c, amb_b, _s) = active_atmosphere();
+        AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b, fog)
+    };
+    state.ambiences.push((biome, BiomeAmbience { atmo, particle: cfg.particle }));
+    scatter_region(
+        &cfg,
+        commands,
+        meshes,
+        std_mats,
+        lo,
+        hi,
+        false,
+        &move |x, z| {
+            let here = tile_biome_world(x, z);
+            // Lava tiles read as Swamp to gameplay but take ROCK scatter (basalt), never reeds.
+            let biome_match = if biome == Biome::Rocky {
+                here == Some(Biome::Rocky) || is_lava_world(x, z)
+            } else if biome == Biome::Swamp {
+                here == Some(Biome::Swamp) && !is_lava_world(x, z)
+            } else {
+                here == Some(biome)
+            };
+            biome_match
+                && !crate::camps::in_clearing(x, z)
+                && !crate::bridges::near_bridge(x, z, 1.0)
+                && !crate::ork_fortress::on_gate_approach(x, z)
+                && !(crate::ork_fortress::in_blight_world(x, z) && z > 86.0)
+        },
+        &|x, z| tile_top_y_world(x, z),
+    );
+}
+
+/// Insert the [`BiomeAmbiences`] resource: island base + the per-biome list captured during
+/// scatter + the Blight's bespoke red-ember mood.
+fn bs_insert_ambiences(commands: &mut Commands, state: &mut BuildState) {
     let (sky, fog, sun_c, sun_i, amb_c, amb_b, _sun_p) = active_atmosphere();
     commands.insert_resource(BiomeAmbiences {
         base: BiomeAmbience {
             atmo: AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b, fog),
             particle: ParticleKind::None,
         },
-        list: ambiences,
-        // The ork castle's own red-ember mood (the Blight reads as swamp to gameplay, but its
-        // atmosphere is bespoke — see `ork_fortress::blight_ambience`).
+        list: std::mem::take(&mut state.ambiences),
         blight: crate::ork_fortress::blight_ambience(),
     });
-    // ── Snow drifts banked against terrace walls: where a snow tile abuts a higher
-    // neighbour, pile a wind-drift mound into the corner so the cliff faces rise out of
-    // drifted snow instead of standing naked on a flat field. Deterministic per tile.
-    {
-        let drift_mat = std_mats.add(StandardMaterial {
-            base_color: Color::WHITE, // vertex colour carries the hue (mesh contract)
-            perceptual_roughness: 0.62,
-            reflectance: 0.5,
-            ..default()
-        });
-        let drift_meshes: Vec<Handle<Mesh>> =
-            (0..3).map(|v| meshes.add(crate::biome_snow::build_mound_mesh(v))).collect();
-        for iz in 0..ROWS {
-            for ix in 0..COLS {
-                let Some((TB::Snow, h)) = tile_at(ix, iz) else { continue };
-                let mut rng =
-                    tileworld_core::rng::Mulberry32::new((iz * COLS + ix) as u32 ^ 0x5eed_d81f);
-                for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    let Some((_, nh)) = tile_at(ix + dx, iz + dz) else { continue };
-                    if nh <= h || rng.next() > 0.35 {
-                        continue;
-                    }
-                    // Pull the mound off the shared edge into THIS (lower) tile so it
-                    // leans against the wall base.
-                    let wx = ix as f32 - GX + 0.5 - dx as f32 * 0.32
-                        + (rng.next() as f32 - 0.5) * 0.3;
-                    let wz = iz as f32 - GZ + 0.5 - dz as f32 * 0.32
-                        + (rng.next() as f32 - 0.5) * 0.3;
-                    if crate::bridges::near_bridge(wx, wz, 0.5) {
-                        continue; // keep drift mounds off the plank decks
-                    }
-                    let v = (rng.next() * 3.0) as u32;
-                    commands.spawn((
-                        Mesh3d(drift_meshes[(v % 3) as usize].clone()),
-                        MeshMaterial3d(drift_mat.clone()),
-                        Transform {
-                            translation: Vec3::new(wx, (h - 1) as f32 * GROUND_STEP, wz),
-                            rotation: Quat::from_rotation_y(rng.next() as f32 * std::f32::consts::TAU),
-                            scale: Vec3::splat(0.9 + rng.next() as f32 * 0.7),
-                        },
-                        crate::biome::BiomeEntity,
-                    ));
+}
+
+/// Snow drifts banked against terrace walls where a snow tile abuts a higher neighbour.
+fn bs_snow_drifts(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+    let drift_mat = std_mats.add(StandardMaterial {
+        base_color: Color::WHITE, // vertex colour carries the hue (mesh contract)
+        perceptual_roughness: 0.62,
+        reflectance: 0.5,
+        ..default()
+    });
+    let drift_meshes: Vec<Handle<Mesh>> =
+        (0..3).map(|v| meshes.add(crate::biome_snow::build_mound_mesh(v))).collect();
+    for iz in 0..ROWS {
+        for ix in 0..COLS {
+            let Some((TB::Snow, h)) = tile_at(ix, iz) else { continue };
+            let mut rng = tileworld_core::rng::Mulberry32::new((iz * COLS + ix) as u32 ^ 0x5eed_d81f);
+            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let Some((_, nh)) = tile_at(ix + dx, iz + dz) else { continue };
+                if nh <= h || rng.next() > 0.35 {
+                    continue;
                 }
+                // Pull the mound off the shared edge into THIS (lower) tile so it leans on the wall.
+                let wx = ix as f32 - GX + 0.5 - dx as f32 * 0.32 + (rng.next() as f32 - 0.5) * 0.3;
+                let wz = iz as f32 - GZ + 0.5 - dz as f32 * 0.32 + (rng.next() as f32 - 0.5) * 0.3;
+                if crate::bridges::near_bridge(wx, wz, 0.5) {
+                    continue; // keep drift mounds off the plank decks
+                }
+                let v = (rng.next() * 3.0) as u32;
+                commands.spawn((
+                    Mesh3d(drift_meshes[(v % 3) as usize].clone()),
+                    MeshMaterial3d(drift_mat.clone()),
+                    Transform {
+                        translation: Vec3::new(wx, (h - 1) as f32 * GROUND_STEP, wz),
+                        rotation: Quat::from_rotation_y(rng.next() as f32 * std::f32::consts::TAU),
+                        scale: Vec3::splat(0.9 + rng.next() as f32 * 0.7),
+                    },
+                    crate::biome::BiomeEntity,
+                ));
             }
         }
     }
+}
 
-    // Grass frontier cover (tufts/clover/flowers) on grass tiles.
+/// Grass frontier cover (tufts/clover/flowers) on grass tiles, around the castle/camps/plots.
+fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+    let lo = -GX;
+    let hi = GX;
     let grass_cfg = grass_config();
     scatter_region(
         &grass_cfg,
@@ -1279,52 +1340,6 @@ pub fn build(
         },
         &|x, z| tile_top_y_world(x, z),
     );
-
-    // ── Central castle (fully built) on the flat grass centre ──
-    // Returns the shared textured material set so the town plots/buildings match the keep.
-    let village_mats = crate::castle::build(commands, meshes, images, std_mats);
-
-    // ── Ork camps: tents/fire/banner/cage + a patrolling warband (registers blockers). ──
-    crate::camps::build(commands, meshes, images, std_mats, creature_mats);
-
-    // ── Castle townsfolk: ambient villagers milling the courtyard + gates. ──
-    crate::villagers::populate(commands, meshes, std_mats, creature_mats);
-
-    // ── Training dummies: practice pells in the keep courtyard (hit-feedback only). ──
-    crate::training_dummies::populate(commands, meshes, std_mats);
-
-    // ── Ambient wildlife — biome-placed animals that wander/graze/startle ──
-    crate::wildlife::populate(commands, meshes, creature_mats);
-
-    // ── Biome verbs: mineable ore (rock), forage (swamp herbs / forest apples), chests ──
-    crate::verbs::populate_ore(commands, meshes, std_mats);
-    crate::town::populate_plots(commands, meshes, &village_mats);
-    crate::verbs::populate_forage(commands, meshes, std_mats);
-    crate::chest::populate_chests(commands, meshes, std_mats);
-
-    // ── Castle defenses: tower/archer/ballista fire emitters (upgrade-gated at runtime) ──
-    crate::defenses::populate_defenders(commands, meshes, std_mats);
-
-    // ── Signature landmarks: one per biome region (frozen spire, pyramid, trilithon, …) ──
-    crate::ruins::populate_landmarks(commands, meshes, std_mats);
-
-    // ── Biome vignettes: one mute set-piece story per region (abandoned camp, lost caravan,
-    //    collapsed watchtower, …) — discoverable POIs + pilgrim destinations. After the landmarks
-    //    so each routes around the ruin already planted in its biome.
-    crate::vignettes::populate_vignettes(commands, meshes, std_mats);
-
-    // ── Gnashfang Hold + the Blight: the ork fortress and its walkable poisoned landmass
-    //    south of the old coast (camp props, patrols, watchtowers; see `ork_fortress.rs`).
-    crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats);
-
-    // ── River bridges: plank decks at the real river crossings (also nav-grid walkable). ──
-    crate::bridges::populate(commands, meshes, std_mats);
-    // (Roads are NOT spawned as geometry — they're baked into the ground colour by
-    //  `ground_color` via `roads::road_strength`, so they read as a brown blend in the terrain.)
-
-    // Distant background islands: faint terraced landmasses ringing the open sea, sitting past
-    // the fog wall so they ghost in only as the hero nears a far shore (see `distant_isles.rs`).
-    crate::distant_isles::build(commands, meshes, std_mats);
 }
 
 fn config_for(b: Biome) -> BiomeConfig {

@@ -297,14 +297,33 @@ pub(crate) struct PendingBuild(pub bool);
 #[derive(Resource, Default)]
 pub(crate) struct WorldReady(pub bool);
 
-/// Seconds to let the loading veil present (and its dots pulse) BEFORE the heavy synchronous
-/// `worldmap::build` runs. The build blocks the frame it runs on, so without this delay it fires on
-/// the very frame the veil is raised — the render never presents until the build finishes, so the
-/// player stares at a blank/frozen window for ~2 s instead of the branded cover. Deferring it a few
-/// frames lets the veil draw first, then the build freeze happens *behind* the cover (boot + every
-/// in-process reset). Skipped under the capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want
-/// the world up on frame 0.
+/// Seconds to let the loading veil present (and its progress bar show at 0) BEFORE the first build
+/// phase runs. Each phase blocks the frame it runs on, so without this the first phase fires on the
+/// very frame the veil is raised — before the render ever presents the cover. Skipped under the
+/// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0.
 const BUILD_WARMUP: f32 = 0.4;
+
+/// Drives the chunked world build: one [`crate::worldmap::build_step`] phase per frame so the
+/// render loop — and the loading veil — ticks between phases instead of freezing for the whole
+/// ~2 s build. Re-armed by [`PendingBuild`] on boot and every in-process rebuild.
+#[derive(Resource, Default)]
+pub(crate) struct BuildJob {
+    /// True while a build is mid-flight (armed → final phase).
+    building: bool,
+    /// Next phase index to run.
+    step: u32,
+    /// `elapsed_secs` when the build was armed — drives the [`BUILD_WARMUP`] veil-present delay.
+    armed_at: f32,
+    /// Set once the pre-build wipe (despawn old `BiomeEntity` + blocker/castle reset) has run.
+    wiped: bool,
+    /// Data produced by one phase and consumed by a later one (carried across frames).
+    state: crate::worldmap::BuildState,
+}
+
+/// 0..1 world-build progress, read by the loading veil's progress bar: reset to 0 when a build is
+/// armed, climbs as phases complete, pinned at 1.0 once the world is up.
+#[derive(Resource, Default)]
+pub(crate) struct BuildProgress(pub f32);
 
 pub struct BiomePlugin;
 
@@ -312,9 +331,14 @@ impl Plugin for BiomePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PendingBuild(true))
             .init_resource::<WorldReady>()
+            .init_resource::<BuildJob>()
+            .init_resource::<BuildProgress>()
             .init_resource::<crate::worldmap::ActiveMap>()
             .add_systems(Startup, init_active_map_from_env)
-            .add_systems(Update, apply_build.run_if(build_warmup_elapsed));
+            .add_systems(
+                Update,
+                (drive_build, apply_world_atmosphere.run_if(resource_changed::<WorldReady>)),
+            );
     }
 }
 
@@ -331,28 +355,14 @@ fn init_active_map_from_env(mut active: ResMut<crate::worldmap::ActiveMap>) {
     }
 }
 
-/// Run-condition gate for [`apply_build`]: hold the (heavy, frame-blocking) build off for
-/// [`BUILD_WARMUP`] seconds after it's armed, so the loading veil presents and animates first and
-/// the build freeze happens *behind* the branded cover. Returns `false` (skip the build) while the
-/// warmup runs; disarms when there's nothing pending so the next raise (an in-process reset) re-runs
-/// the wait. Capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`) skip the delay — they want the world on
-/// frame 0.
-fn build_warmup_elapsed(pending: Res<PendingBuild>, time: Res<Time>, mut armed_at: Local<Option<f32>>) -> bool {
-    if !pending.0 {
-        *armed_at = None;
-        return false;
-    }
-    if std::env::var("FOREST_SHOT").is_ok() || std::env::var("FOREST_CLIP").is_ok() {
-        return true;
-    }
-    let started = *armed_at.get_or_insert(time.elapsed_secs());
-    time.elapsed_secs() - started >= BUILD_WARMUP
-}
-
-/// Build the combined world map once, then apply its atmosphere. Camera/sun/IBL persist.
+/// The world-build driver. When [`PendingBuild`] is raised it arms a [`BuildJob`], waits
+/// [`BUILD_WARMUP`] so the veil presents, wipes the prior world ONCE, then runs one
+/// [`crate::worldmap::build_step`] phase per frame — so the loading screen animates between
+/// phases — until the world is up (`WorldReady`). Capture harnesses run every phase in one frame.
 #[allow(clippy::too_many_arguments)]
-fn apply_build(
+fn drive_build(
     mut pending: ResMut<PendingBuild>,
+    mut job: ResMut<BuildJob>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
@@ -361,42 +371,93 @@ fn apply_build(
     mut water_mats: ResMut<Assets<WaterMaterial>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     existing: Query<Entity, With<BiomeEntity>>,
-    mut ambient: ResMut<GlobalAmbientLight>,
-    mut clear: ResMut<ClearColor>,
-    mut fog_q: Query<&mut DistanceFog>,
-    // `With<Sun>`: the moon (scene.rs) is a second DirectionalLight — don't repaint it.
-    mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<crate::scene::Sun>>,
     mut castle_built: ResMut<crate::castle::CastleBuilt>,
     mut world_ready: ResMut<WorldReady>,
     active_map: Res<crate::worldmap::ActiveMap>,
+    mut progress: ResMut<BuildProgress>,
+    time: Res<Time>,
 ) {
-    if !pending.0 {
+    // Arm a fresh build whenever PendingBuild is raised (boot + every in-process rebuild).
+    if pending.0 {
+        pending.0 = false;
+        job.building = true;
+        job.step = 0;
+        job.wiped = false;
+        job.armed_at = time.elapsed_secs();
+        job.state = crate::worldmap::BuildState::default();
+        progress.0 = 0.0;
+        // Point the (resource-blind) generator at the chosen map BEFORE building. `tiles()`
+        // memoises per map, so this just selects which grid the build phases read.
+        crate::worldmap::set_active_map(active_map.0);
+    }
+    if !job.building {
         return;
     }
-    pending.0 = false;
 
-    // Point the (resource-blind) generator at the chosen map BEFORE building. `tiles()` memoises
-    // per map, so this just selects which grid `worldmap::build` reads.
-    crate::worldmap::set_active_map(active_map.0);
+    let capturing = std::env::var("FOREST_SHOT").is_ok() || std::env::var("FOREST_CLIP").is_ok();
 
-    // Wipe any prior build (incl. the obstacle set wildlife navigates by). `try_despawn`: a
-    // BiomeEntity may already be queued for reap by combat/AI the same frame a rebuild fires.
-    for e in &existing {
-        commands.entity(e).try_despawn();
+    // Hold the first phase off until the veil has presented (player sees the cover + bar at 0, not
+    // a frozen frame), then wipe the prior world ONCE, just before the first spawn.
+    if !job.wiped {
+        if !capturing && time.elapsed_secs() - job.armed_at < BUILD_WARMUP {
+            return;
+        }
+        // `try_despawn`: a BiomeEntity may already be queued for reap by combat/AI the frame a
+        // rebuild fires. Reset blockers + the castle's "already built" tracking so `sync_castle`
+        // re-registers collision for the rebuilt walls/houses (else you'd walk through them).
+        for e in &existing {
+            commands.entity(e).try_despawn();
+        }
+        crate::blockers::reset();
+        *castle_built = crate::castle::CastleBuilt::default();
+        job.wiped = true;
     }
-    crate::blockers::reset();
-    // The reset wiped the castle's lazily-registered wall/tower/house collision boxes; clear their
-    // "already built" tracking so `sync_castle` re-registers everything currently revealed next
-    // frame. Without this the initial houses (and walls/towers, post-rebuild) read as solid in the
-    // tracker but have no blocker — you walk straight through them.
-    *castle_built = crate::castle::CastleBuilt::default();
 
-    crate::worldmap::build(&mut commands, &mut meshes, &mut images, &mut std_mats, &mut terrain_mats, &mut water_mats, &mut creature_mats);
-    world_ready.0 = true; // the loading veil reveals once the world is up (boot + every rebuild)
-    info!("view → world map");
+    // Run phases: one per frame normally (so the veil animates between them), all at once under a
+    // capture (the harness wants a finished world to warm up on, not the veil).
+    loop {
+        let step = job.step;
+        crate::worldmap::build_step(
+            step,
+            &mut commands,
+            &mut meshes,
+            &mut images,
+            &mut std_mats,
+            &mut terrain_mats,
+            &mut water_mats,
+            &mut creature_mats,
+            &mut job.state,
+        );
+        job.step += 1;
+        if job.step >= crate::worldmap::BUILD_STEPS || !capturing {
+            break;
+        }
+    }
+
+    progress.0 = (job.step as f32 / crate::worldmap::BUILD_STEPS as f32).min(1.0);
+    if job.step >= crate::worldmap::BUILD_STEPS {
+        job.building = false;
+        progress.0 = 1.0;
+        world_ready.0 = true; // veil reveals; apply_world_atmosphere re-tints sky/sun/fog next frame
+        info!("view → world map");
+    }
+}
+
+/// Re-tint sky / sun / fog / ambient to the active map's atmosphere when a world build finishes
+/// (`WorldReady` flips true). Runs on any `WorldReady` change; the reset's true→false change is a
+/// no-op. Split out of [`drive_build`] so that driver stays under Bevy's system-param cap.
+fn apply_world_atmosphere(
+    world_ready: Res<WorldReady>,
+    mut clear: ResMut<ClearColor>,
+    mut ambient: ResMut<GlobalAmbientLight>,
+    mut fog_q: Query<&mut DistanceFog>,
+    // `With<Sun>`: the moon (scene.rs) is a second DirectionalLight — don't repaint it.
+    mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<crate::scene::Sun>>,
+) {
+    if !world_ready.0 {
+        return;
+    }
     let atmo: Atmo = crate::worldmap::active_atmosphere();
-
-    // Atmosphere (camera/sun/IBL persist; just re-tint).
     let (sky, _fog_density, sun_color, sun_illuminance, amb_color, amb_brightness, sun_pos) = atmo;
     *clear = ClearColor(srgb(sky));
     ambient.color = srgb(amb_color);
@@ -404,9 +465,7 @@ fn apply_build(
     let (fog_clear, fog_full) = fog_dist();
     for mut fog in &mut fog_q {
         fog.color = srgb(sky);
-        // Linear: fully CLEAR within `fog_clear` tiles of the camera, then ramps to the
-        // horizon colour by `fog_full`. Gives a hard "see clearly nearby" radius (vs the
-        // density-from-0 exponential), matching the DoF clear zone.
+        // Linear: fully CLEAR within `fog_clear` tiles, then ramps to the horizon by `fog_full`.
         fog.falloff = bevy::pbr::FogFalloff::Linear { start: fog_clear, end: fog_full };
     }
     for (mut light, mut tf) in &mut sun_q {

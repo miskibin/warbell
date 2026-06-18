@@ -170,9 +170,15 @@ fn drive_fresh_run(
     mut cont: ResMut<ContinueInPlace>,
     siege: Option<ResMut<crate::siege::Siege>>,
     time: Res<Time>,
+    // Set once the rebuild is armed, so we don't re-arm (restart the chunked build) every frame
+    // while waiting for it to finish.
+    mut armed: Local<bool>,
 ) {
-    let Some(diff) = req.0 else { return };
-    // Keep the cover up across the hop + rebuild (hides the 1-frame start-screen flash).
+    let Some(diff) = req.0 else {
+        *armed = false;
+        return;
+    };
+    // Keep the cover up across the hop + the chunked rebuild (hides the start-screen flash).
     veil.raise(time.elapsed_secs());
 
     if *app.get() != AppState::StartScreen {
@@ -181,16 +187,28 @@ fn drive_fresh_run(
         return;
     }
 
-    // On the start screen now: arm the rebuild, then drop into Playing (firing OnExit resets).
-    if let Some(mut siege) = siege {
-        siege.difficulty = diff; // reset_siege preserves difficulty across its wipe
+    // On the start screen: arm the rebuild ONCE. The world build (`biome::drive_build`) then runs
+    // chunked over many frames HERE in StartScreen — sim is off, so nothing runs on the half-built
+    // world, and the loading veil animates over it. The build is deterministic + run-state-blind,
+    // so building before the OnExit(StartScreen) resets is fine (it's how cold boot already works).
+    if !*armed {
+        if let Some(mut siege) = siege {
+            siege.difficulty = diff; // reset_siege preserves difficulty across its wipe
+        }
+        pending_load.0 = None; // a fresh run, never a load — don't let a stale save overwrite the reset
+        world_ready.0 = false; // hold the veil until the rebuilt world lands
+        pending_build.0 = true; // re-run the world build (despawn all BiomeEntity + rebuild fresh)
+        cont.0 = true; // clear_battlefield sweeps invaders / marchers / bolts / corpses once Playing
+        *armed = true;
     }
-    pending_load.0 = None; // a fresh run, never a load — don't let a stale save overwrite the reset
-    world_ready.0 = false; // hold the veil until the rebuilt world lands
-    pending_build.0 = true; // re-run worldmap::build (despawn all BiomeEntity + rebuild fresh)
-    cont.0 = true; // clear_battlefield sweeps invaders / marchers / bolts / corpses on the Playing frame
-    next_app.set(AppState::Playing);
-    req.0 = None;
+
+    // Drop into Playing only once the rebuilt world has fully landed — firing OnExit(StartScreen)'s
+    // `reset_*` suite, then starting the sim on a complete world.
+    if world_ready.0 {
+        next_app.set(AppState::Playing);
+        req.0 = None;
+        *armed = false;
+    }
 }
 
 /// Shared by every **Continue / Load last save** entry point (game-over, the C key, pause→Load):
@@ -1542,21 +1560,36 @@ mod tests {
         app
     }
 
-    /// From the start screen, a `FreshRunPending` request arms the whole in-process reset in one
-    /// update: world rebuild + veil hold + battlefield sweep, request drained, and `Playing` queued
-    /// (so `OnExit(StartScreen)` runs every `reset_*`).
+    /// From the start screen, a `FreshRunPending` request arms the in-process reset (world rebuild +
+    /// veil hold + battlefield sweep) but STAYS pending until the chunked build finishes — only then
+    /// does it drain the request and queue `Playing` (so `OnExit(StartScreen)` runs every `reset_*`
+    /// on a complete world). This holds the sim off the half-built world during the rebuild.
     #[test]
-    fn drive_fresh_run_arms_rebuild_from_start_screen() {
+    fn drive_fresh_run_arms_rebuild_then_waits_for_world() {
         use crate::siege::Difficulty;
         let mut app = fresh_run_app(AppState::StartScreen);
         app.world_mut().resource_mut::<FreshRunPending>().0 = Some(Difficulty::Hard);
         app.update();
 
+        // Armed, but waiting: build re-armed, WorldReady cleared, still pending, not yet Playing.
+        {
+            let w = app.world();
+            assert!(w.resource::<crate::biome::PendingBuild>().0, "world rebuild armed");
+            assert!(!w.resource::<crate::biome::WorldReady>().0, "WorldReady cleared so the veil holds");
+            assert!(w.resource::<ContinueInPlace>().0, "battlefield sweep flagged");
+            assert!(w.resource::<FreshRunPending>().0.is_some(), "stays pending until the world is built");
+            assert!(
+                !matches!(w.resource::<NextState<AppState>>(), NextState::Pending(AppState::Playing)),
+                "not Playing until the rebuilt world lands"
+            );
+        }
+
+        // Simulate the chunked build finishing.
+        app.world_mut().resource_mut::<crate::biome::WorldReady>().0 = true;
+        app.update();
+
         let w = app.world();
-        assert!(w.resource::<crate::biome::PendingBuild>().0, "world rebuild armed");
-        assert!(!w.resource::<crate::biome::WorldReady>().0, "WorldReady cleared so the veil holds");
-        assert!(w.resource::<ContinueInPlace>().0, "battlefield sweep flagged");
-        assert!(w.resource::<FreshRunPending>().0.is_none(), "request drained — fires once");
+        assert!(w.resource::<FreshRunPending>().0.is_none(), "request drained once the world is up");
         assert!(
             matches!(w.resource::<NextState<AppState>>(), NextState::Pending(AppState::Playing)),
             "Playing queued so OnExit(StartScreen) runs the resets"
@@ -1565,7 +1598,7 @@ mod tests {
 
     /// From elsewhere (pause Restart / game-over Play Again) the request first hops to the start
     /// screen — its `OnExit` is what runs the resets — and stays pending until it lands there, only
-    /// arming the rebuild on the start-screen frame.
+    /// arming the rebuild on the start-screen frame, then waiting for the build before `Playing`.
     #[test]
     fn drive_fresh_run_hops_through_start_screen_when_paused() {
         use crate::siege::Difficulty;
@@ -1576,10 +1609,15 @@ mod tests {
         assert!(app.world().resource::<FreshRunPending>().0.is_some(), "still pending mid-hop");
         assert!(!app.world().resource::<crate::biome::PendingBuild>().0, "not armed off the title");
 
-        app.update(); // StateTransition lands StartScreen, then drive arms + drains the request
+        app.update(); // StateTransition lands StartScreen, then drive arms the rebuild (still pending)
         assert_eq!(app.world().resource::<State<AppState>>().get(), &AppState::StartScreen);
         assert!(app.world().resource::<crate::biome::PendingBuild>().0, "rebuild armed on the title");
-        assert!(app.world().resource::<FreshRunPending>().0.is_none(), "request drained");
+        assert!(app.world().resource::<FreshRunPending>().0.is_some(), "still pending until the world is built");
+
+        // Simulate the chunked build finishing → the request drains.
+        app.world_mut().resource_mut::<crate::biome::WorldReady>().0 = true;
+        app.update();
+        assert!(app.world().resource::<FreshRunPending>().0.is_none(), "request drained once the world is up");
     }
 
     #[test]
