@@ -1,7 +1,7 @@
 //! Distant background islands — faint hazed landmasses ringing the open sea.
 //!
 //! These exist purely to give the horizon something to read: small terraced low-poly
-//! islands built with the **same recipe as the real island** (`worldmap::build_terrain_mesh`)
+//! islands built with the **same recipe as the real island** (`worldmap::build_terrain_chunk`)
 //! — elliptical falloff + noisy coast → per-tile height classes stepped into flat terraces,
 //! biome colour baked into vertex `ATTRIBUTE_COLOR`, faceted per-quad normals — but stripped
 //! of all detail: **no props, rivers, scatter, collision, or nav.** They sit out past the
@@ -209,7 +209,7 @@ fn top_color(isle: &Isle, c: i32, peak: i32, cx: f32, cz: f32) -> [f32; 4] {
 
 // ── Mesh ─────────────────────────────────────────────────────────────────────────
 /// Build one island's terraced mesh in local space (centred at origin, Y already in world
-/// terms). Same flat-shaded quad recipe as `worldmap::build_terrain_mesh`: a top quad per land
+/// terms). Same flat-shaded quad recipe as `worldmap::build_terrain_chunk`: a top quad per land
 /// tile plus cliff walls down to lower neighbours / the waterline at the coast.
 fn build_mesh(isle: &Isle) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();

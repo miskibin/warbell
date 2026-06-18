@@ -614,7 +614,11 @@ fn spawn_chunks(
                     bevy::light::NotShadowCaster,
                     bevy::camera::visibility::VisibilityRange {
                         start_margin: 0.0..0.0,
-                        end_margin: 120.0..120.0,
+                        // 100u: props are low bushes/rocks — small enough at range that the abrupt
+                        // cutoff hides in the fog ramp (FOG_CLEAR 85 → FOG_FULL 190). Tighter than
+                        // trees (kept at 180), which are tall enough that an earlier cull would read
+                        // as a "forest edge" on a clear day (fog can push past 300 in clear biomes).
+                        end_margin: 100.0..100.0,
                         use_aabb: true,
                     },
                 ));

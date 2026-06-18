@@ -1036,7 +1036,6 @@ pub fn build(
     //    biome: the island proper on a grass blade-grain, the SWAMP on a wet blotchy
     //    mottle (it used to share the grass blades — that's why the marsh read blank), and
     //    the Blight on its own filthy trampled-mud grain. ──
-    let ground = build_terrain_mesh(|tb| tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava);
     let grass_detail = GroundDetail {
         scale: 0.18,
         strength: 0.52, // a touch rougher/grainier grass (was 0.40)
@@ -1049,16 +1048,12 @@ pub fn build(
         streak: 0.5,
     };
     let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, images, terrain_mats);
-    commands.spawn((
-        Mesh3d(meshes.add(ground)),
-        MeshMaterial3d(ground_mat),
-        Transform::default(),
-        crate::biome::BiomeEntity,
-    ));
+    spawn_terrain_sheet(commands, meshes, ground_mat, |tb| {
+        tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava
+    });
     // The swamp gets the bespoke wet mottle from `biome_swamp::config` — broad blotchy
     // wet/dry patches with a damp streak, NOT the island's vertical grass blades. Lower
     // roughness than grass so the dim sun throws a faint bog-water sheen across the muck.
-    let swamp_ground = build_terrain_mesh(|tb| tb == TB::Swamp);
     let swamp_detail = GroundDetail {
         scale: 0.16,
         strength: 0.55,
@@ -1071,13 +1066,7 @@ pub fn build(
         streak: 0.6,
     };
     let swamp_mat = crate::terrain::make_material(&swamp_detail, 0.82, images, terrain_mats);
-    commands.spawn((
-        Mesh3d(meshes.add(swamp_ground)),
-        MeshMaterial3d(swamp_mat),
-        Transform::default(),
-        crate::biome::BiomeEntity,
-    ));
-    let blight_ground = build_terrain_mesh(|tb| tb == TB::Blight);
+    spawn_terrain_sheet(commands, meshes, swamp_mat, |tb| tb == TB::Swamp);
     let blight_detail = GroundDetail {
         // Pushed back up toward the first pass: the 0.42 "calm" tune read blank/flat-brown
         // near the keep where props are sparse. Finer scale + harder grain gives the mud a
@@ -1093,18 +1082,12 @@ pub fn build(
         streak: 0.55,
     };
     let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, images, terrain_mats);
-    commands.spawn((
-        Mesh3d(meshes.add(blight_ground)),
-        MeshMaterial3d(blight_mat),
-        Transform::default(),
-        crate::biome::BiomeEntity,
-    ));
+    spawn_terrain_sheet(commands, meshes, blight_mat, |tb| tb == TB::Blight);
 
     // ── Lava field (map 2): its own basalt sheet; the glowing magma seams ride the vertex
     //    colour from `biome_col_at`. Gated on the active map so the home island never builds an
     //    empty sheet. A dark, low-variation grain reads as cooled crust between the bright seams. ──
     if active_map().has_lava {
-        let lava_ground = build_terrain_mesh(|tb| tb == TB::Lava);
         let lava_detail = GroundDetail {
             scale: 0.30,
             strength: 0.55,
@@ -1117,12 +1100,7 @@ pub fn build(
             streak: 0.40,
         };
         let lava_mat = crate::terrain::make_material(&lava_detail, 0.90, images, terrain_mats);
-        commands.spawn((
-            Mesh3d(meshes.add(lava_ground)),
-            MeshMaterial3d(lava_mat),
-            Transform::default(),
-            crate::biome::BiomeEntity,
-        ));
+        spawn_terrain_sheet(commands, meshes, lava_mat, |tb| tb == TB::Lava);
     }
 
     // ── Sea (big animated water plane under everything; shows at coast/rivers/lake) ──
@@ -1451,7 +1429,53 @@ fn grass_config() -> BiomeConfig {
 /// and the Blight (trampled-mud detail) — so each sheet bakes its own grain. Walls key off
 /// the neighbour's `tile_at` height, not `keep`, so a split never opens a seam: the wall is
 /// always owned (and drawn) by the higher tile's sheet.
-fn build_terrain_mesh(keep: impl Fn(TB) -> bool) -> Mesh {
+/// Terrain chunk edge, in tiles. ~6×7 chunks per sheet across the 259×295 island — fine enough
+/// that a low follow-cam (a narrow near-ground frustum) frustum-culls most of the island, coarse
+/// enough that the extra draw calls (≤~40 per sheet) are trivial on the GPU.
+const TERRAIN_CHUNK: i32 = 48;
+
+/// Spawn a terrain sheet as frustum-cullable CHUNKS instead of one island-spanning monolith. The
+/// monolith carried a single AABB, so the whole sheet (up to ~1.2M verts across all sheets) was
+/// submitted every frame even when only a corner was on screen. Splitting into `TERRAIN_CHUNK`-tile
+/// blocks — all sharing the one `mat` handle, so they still batch — gives each chunk its own AABB,
+/// and Bevy frustum-culls the off-screen majority for free. Empty chunks (e.g. grass over open sea)
+/// emit no geometry and aren't spawned.
+fn spawn_terrain_sheet(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mat: Handle<TerrainMaterial>,
+    keep: impl Fn(TB) -> bool + Copy,
+) {
+    let mut cz = 0;
+    while cz < ROWS {
+        let mut cx = 0;
+        while cx < COLS {
+            let mesh = build_terrain_chunk(
+                keep,
+                cx,
+                (cx + TERRAIN_CHUNK).min(COLS),
+                cz,
+                (cz + TERRAIN_CHUNK).min(ROWS),
+            );
+            if mesh.count_vertices() > 0 {
+                commands.spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::default(),
+                    crate::biome::BiomeEntity,
+                ));
+            }
+            cx += TERRAIN_CHUNK;
+        }
+        cz += TERRAIN_CHUNK;
+    }
+}
+
+/// Build one terrain CHUNK — the tiles in `[ix0,ix1) × [iz0,iz1)` that pass `keep`. Walls still
+/// query global `tile_at` for neighbour heights, so a wall spanning a chunk seam is owned by the
+/// higher tile and drawn exactly once (no gap, no overlap). `spawn_terrain_sheet` tiles the whole
+/// island with these so each chunk gets its own AABB and frustum-culls independently.
+fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, iz1: i32) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -1470,8 +1494,8 @@ fn build_terrain_mesh(keep: impl Fn(TB) -> bool) -> Mesh {
 
     const NB: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
-    for iz in 0..ROWS {
-        for ix in 0..COLS {
+    for iz in iz0..iz1 {
+        for ix in ix0..ix1 {
             let Some((tb, h)) = tile_at(ix, iz) else { continue };
             if !keep(tb) {
                 continue;
