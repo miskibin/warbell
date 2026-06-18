@@ -32,14 +32,17 @@ const SENS_X: f32 = 0.0035;
 const SENS_Y: f32 = 0.0016;
 const MIN_PITCH: f32 = 0.12;
 const MAX_PITCH: f32 = 1.45;
-const MIN_DIST: f32 = 3.5;
-const MAX_DIST: f32 = 16.0;
-const ZOOM_SENS: f32 = 0.7;
+const MIN_DIST: f32 = 2.3;
+const MAX_DIST: f32 = 11.0;
+const ZOOM_SENS: f32 = 0.55;
 /// Extra follow distance pulled back (smoothly) while a warden winds up its killing blow — a slow
 /// dolly-out that builds tension across the telegraph, then eases back in once the blow resolves.
 const CRIT_ZOOM_OUT: f32 = 4.5;
-/// Look-target height above the hero's feet (roughly the helm).
-const EYE_H: f32 = 1.0;
+/// Look-target height above the hero's feet. The knight is only ~0.765u tall (1.25u TS ×
+/// `HERO_SCALE`), so this aims at his chest, NOT above the helm — an above-the-head target shoves
+/// the (already small) hero toward the bottom of frame and makes him read as a distant speck.
+/// Framing the torso keeps him centred and prominent.
+const EYE_H: f32 = 0.55;
 
 /// First-person eye height above the hero's feet. The knight stands ~0.765u tall (1.25u TS ×
 /// `HERO_SCALE`), so this sits right at the helm/eye line — earlier it was 1.3u, which floated the
@@ -76,7 +79,7 @@ pub struct OrbitCam {
 
 impl Default for OrbitCam {
     fn default() -> Self {
-        OrbitCam { azimuth: std::f32::consts::PI * 0.85, pitch: 0.5, dist: 7.0, locked: false }
+        OrbitCam { azimuth: std::f32::consts::PI * 0.85, pitch: 0.42, dist: 4.2, locked: false }
     }
 }
 
