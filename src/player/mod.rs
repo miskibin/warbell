@@ -158,10 +158,16 @@ impl Plugin for PlayerPlugin {
         // Capture screenshots hold the scene's static overview camera → start in FreeRoam
         // so the follow-cam never hijacks the shot (the hero still spawns, at rest). `FOREST_FP`
         // forces Play + first-person so the eye-view can be captured (it needs the follow-cam).
+        // `FOREST_FREEROAM=1` boots into the fly-cam *without* capturing/exiting — so a fixed
+        // `FOREST_CAM` view holds (the fly-cam stays put with no input), giving a pinned, identical
+        // frame to A/B perf changes (e.g. `FOREST_NOCULL` on/off) off the F2 overlay.
         let fp_boot = std::env::var("FOREST_FP").is_ok();
         let start_mode = if fp_boot {
             PlayMode::Play
-        } else if std::env::var("FOREST_SHOT").is_ok() || std::env::var("FOREST_CLIP").is_ok() {
+        } else if std::env::var("FOREST_SHOT").is_ok()
+            || std::env::var("FOREST_CLIP").is_ok()
+            || std::env::var("FOREST_FREEROAM").is_ok()
+        {
             PlayMode::FreeRoam
         } else {
             PlayMode::Play
