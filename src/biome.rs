@@ -588,10 +588,21 @@ fn spawn_chunks(
             ));
         }
         if let Some(mesh) = merge_props(bucket.props) {
+            // Props (bushes/rocks/litter) cut out farther than cover (120 vs 80) — they read at a
+            // greater distance — and stop casting shadows: a fogged-out bush past the cascade max
+            // (≈150) only adds shadow-pass + opaque-pass cost. Same ABRUPT range as cover (empty
+            // band) so it keeps early-z instead of the dithered-crossfade `discard` path.
+            let props_range = bevy::camera::visibility::VisibilityRange {
+                start_margin: 0.0..0.0,
+                end_margin: 120.0..120.0,
+                use_aabb: true,
+            };
             commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),
                 Transform::from_translation(center),
+                bevy::light::NotShadowCaster,
+                props_range,
                 BiomeEntity,
             ));
         }
@@ -743,6 +754,16 @@ pub fn scatter_region(
                             // Every scattered tree is choppable for wood (1 tree = 1 wood). The
                             // trunk blocker is cleared on fell via `blockers::remove_at`.
                             crate::verbs::ChopTree::new(trunk_r),
+                            // Distance-cull far trees: past ~180u the fog (FOG_FULL ≈190) has them
+                            // nearly opaque and shadows already stop at the cascade max (≈150), so a
+                            // far tree is pure rasterizer cost (these are the bulk of the opaque pass
+                            // on weak GPUs). ABRUPT (empty band) like the cover range — a crossfade
+                            // band routes through the dithered-`discard` pipeline and defeats early-z.
+                            bevy::camera::visibility::VisibilityRange {
+                                start_margin: 0.0..0.0,
+                                end_margin: 180.0..180.0,
+                                use_aabb: true,
+                            },
                             BiomeEntity,
                         ));
                         // Desert "trees" are saguaro cacti — tag them so felling plays the dry
