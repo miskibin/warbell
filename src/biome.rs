@@ -558,6 +558,17 @@ fn chunk_center(key: (i32, i32)) -> Vec3 {
 /// bucket. Cover buckets skip the shadow pass and fade out before the fog hides them; props
 /// buckets keep shadows. Every chunk entity is tagged [`BiomeEntity`] so the biome-swap path
 /// (keys 1–5) despawns + rebuilds them with the rest of the scene.
+/// Whether to attach the scatter distance-culling (`VisibilityRange`) added for perf. `FOREST_NOCULL=1`
+/// turns it OFF so the win can be measured cleanly: pin the same spot with `FOREST_HERO`, run once
+/// with and once without, and compare the F2 `main_opaque_pass` timing. (A raw baseline-vs-after
+/// comparison at different camera positions confounds the number — opaque cost is view-dependent.)
+/// Read once via `OnceLock` so the per-tree spawn loop doesn't hit the environment each instance.
+fn scatter_cull_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_NOCULL").is_err())
+}
+
 fn spawn_chunks(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -588,23 +599,26 @@ fn spawn_chunks(
             ));
         }
         if let Some(mesh) = merge_props(bucket.props) {
-            // Props (bushes/rocks/litter) cut out farther than cover (120 vs 80) — they read at a
-            // greater distance — and stop casting shadows: a fogged-out bush past the cascade max
-            // (≈150) only adds shadow-pass + opaque-pass cost. Same ABRUPT range as cover (empty
-            // band) so it keeps early-z instead of the dithered-crossfade `discard` path.
-            let props_range = bevy::camera::visibility::VisibilityRange {
-                start_margin: 0.0..0.0,
-                end_margin: 120.0..120.0,
-                use_aabb: true,
-            };
-            commands.spawn((
+            let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),
                 Transform::from_translation(center),
-                bevy::light::NotShadowCaster,
-                props_range,
                 BiomeEntity,
             ));
+            // Props (bushes/rocks/litter) cut out farther than cover (120 vs 80) — they read at a
+            // greater distance — and stop casting shadows: a fogged-out bush past the cascade max
+            // (≈150) only adds shadow-pass + opaque-pass cost. Same ABRUPT range as cover (empty
+            // band) so it keeps early-z. Gated by `FOREST_NOCULL` for A/B measurement.
+            if scatter_cull_enabled() {
+                e.insert((
+                    bevy::light::NotShadowCaster,
+                    bevy::camera::visibility::VisibilityRange {
+                        start_margin: 0.0..0.0,
+                        end_margin: 120.0..120.0,
+                        use_aabb: true,
+                    },
+                ));
+            }
         }
     }
 }
@@ -754,18 +768,22 @@ pub fn scatter_region(
                             // Every scattered tree is choppable for wood (1 tree = 1 wood). The
                             // trunk blocker is cleared on fell via `blockers::remove_at`.
                             crate::verbs::ChopTree::new(trunk_r),
-                            // Distance-cull far trees: past ~180u the fog (FOG_FULL ≈190) has them
-                            // nearly opaque and shadows already stop at the cascade max (≈150), so a
-                            // far tree is pure rasterizer cost (these are the bulk of the opaque pass
-                            // on weak GPUs). ABRUPT (empty band) like the cover range — a crossfade
-                            // band routes through the dithered-`discard` pipeline and defeats early-z.
-                            bevy::camera::visibility::VisibilityRange {
+                            BiomeEntity,
+                        ));
+                        // Distance-cull far trees: past ~180u the fog (FOG_FULL ≈190) has them
+                        // nearly opaque and shadows already stop at the cascade max (≈150), so a far
+                        // tree is pure rasterizer cost. ABRUPT (empty band) so it stays a hard GPU
+                        // cull — `is_abrupt()` true means Bevy skips the dithered-crossfade `discard`
+                        // shader entirely (verified in bevy_camera `entity_has_crossfading_…`), and
+                        // VisibilityRange leaves auto-batching intact (separate `no_automatic_batching`
+                        // flag). Gated by `FOREST_NOCULL` so the win can be A/B-measured (see helper).
+                        if scatter_cull_enabled() {
+                            tree.insert(bevy::camera::visibility::VisibilityRange {
                                 start_margin: 0.0..0.0,
                                 end_margin: 180.0..180.0,
                                 use_aabb: true,
-                            },
-                            BiomeEntity,
-                        ));
+                            });
+                        }
                         // Desert "trees" are saguaro cacti — tag them so felling plays the dry
                         // wood-crack instead of the full timber crash (no woody trunk to crash).
                         if cfg.biome == Biome::Desert {
