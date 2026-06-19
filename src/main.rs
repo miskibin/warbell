@@ -100,6 +100,7 @@ mod verbs;
 mod vignettes;
 mod villagers;
 mod visual;
+mod viewer;
 mod warlord;
 mod water;
 mod wildlife;
@@ -110,6 +111,13 @@ use bevy::audio::{AudioPlugin, SpatialScale};
 use bevy::prelude::*;
 
 fn main() {
+    // `FOREST_VIEW=<model>` boots the standalone model viewer (a minimal app — clean stage, no
+    // world/gameplay/HUD) instead of the full game, for fast visual inspection of one model.
+    if std::env::var("FOREST_VIEW").is_ok() {
+        viewer::run();
+        return;
+    }
+
     // Screenshot harness window: render at a fixed high resolution + scale-factor 1.0 so the
     // captured PNG is crisp. (A small/low-res capture minifies the ground detail texture to a
     // washed-out pale mean — the real game at native res looks lush.)

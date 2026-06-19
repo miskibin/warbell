@@ -18,7 +18,7 @@ pub(crate) use combat::{
     spawn_sweep_burst, CombatFx, Health,
 };
 mod health;
-mod model;
+pub(crate) mod model;
 mod movement;
 
 /// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
@@ -380,7 +380,7 @@ fn spawn_joint(
 /// Spawn the full articulated knight (hips → torso → neck → head; shoulder → elbow → hand
 /// + weapon/shield; hip → knee → foot) as children of the hero `root`, all sharing the hero
 /// material. Shared by [`spawn_hero`] and [`reskin_hero`] so an equip swap rebuilds the same tree.
-fn spawn_hero_meshes(
+pub(crate) fn spawn_hero_meshes(
     commands: &mut Commands,
     root: Entity,
     m: model::KnightMeshes,
