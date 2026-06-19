@@ -1,8 +1,10 @@
-//! **Knight hero model** — box-mesh humanoid ported 1:1 from the TS `Character.tsx` mesh
-//! tree (plate armour, visored helm, an iron sword baked into the right arm, a cross
-//! shield on its own pivot). Built exactly like `orks.rs` / `critters.rs`: each articulated
-//! part is ONE merged, flat-shaded, vertex-coloured `Mesh` against the shared white hero
-//! material; feet rest at `y = 0` so the root, placed on the ground, plants the knight.
+//! **Knight hero model** — a low-poly plate-harness humanoid (originally a 1:1 port of the TS
+//! `Character.tsx` mesh tree, since rebuilt into a more articulated, fitted harness: a faceted
+//! great-helm with a swept-back plume, a tapered/keeled cuirass with rounded pauldrons and
+//! pectorals, segmented faulds, articulated arms/legs, an iron sword baked at the right hand and
+//! a heater shield on its own pivot). Built exactly like `orks.rs` / `critters.rs`: each
+//! articulated part is ONE merged, flat-shaded, vertex-coloured `Mesh` against the shared white
+//! hero material; feet rest at `y = 0` so the root, placed on the ground, plants the knight.
 //!
 //! Authoring is in TS units (the TS root group is `scale 0.5`, knight ~1.25u tall before
 //! scale); the spawn applies `HERO_SCALE` so the knight stands the same height as the orks.
@@ -109,6 +111,14 @@ fn cone(r: f32, h: f32, off: Vec3, rot: Quat, c: u32) -> Mesh {
 fn sphere(r: f32, off: Vec3, c: u32) -> Mesh {
     tinted(Sphere::new(r).mesh().ico(1).unwrap().translated_by(off), c)
 }
+/// Faceted ellipsoid — an ico-sphere squashed to `(rx,ry,rz)` radii. With the flat-shade pass it
+/// reads as a crisp low-poly dome (rounded pauldrons, pectorals, helm crown) rather than a box.
+fn ell(rx: f32, ry: f32, rz: f32, off: Vec3, c: u32) -> Mesh {
+    tinted(
+        Sphere::new(1.0).mesh().ico(1).unwrap().scaled_by(v(rx, ry, rz)).translated_by(off),
+        c,
+    )
+}
 // ── Equip-driven palette + geometry selectors ────────────────────────────────────────
 /// Lerp an sRGB-hex colour `t` of the way toward `target` (in byte space — close enough for
 /// the "feels the same" parity bar; the TS derives plate light/dark the same way).
@@ -193,58 +203,82 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
     // Static torso: legs are articulated; belt + body + plate layers are baked in here. The
     // silhouette (belt/body/breastplate) is the TS one; the gorget, backplate, tassets, mail
     // skirt and gold trim are Bevy-side dressing that recolours with the worn tier.
+    // The cuirass is built bottom-up as a tapered stack — a broad-shouldered, narrow-waisted V —
+    // with rounded pectoral domes, a vertical keel ridge and segmented abdominal faulds, so the
+    // silhouette reads as a fitted plate harness rather than a single box. Belt/tassets/mail are
+    // the lower dressing; gorget + collar trim cap the neck.
     let torso = group(vec![
-        bx(0.40, 0.10, 0.24, v(0.0, 0.33, 0.0), CHAIN), // mail skirt under the belt
-        bx(0.42, 0.08, 0.22, v(0.0, 0.4, 0.0), BELT), // belt
-        bx(0.10, 0.06, 0.012, v(0.0, 0.4, 0.115), GOLD), // buckle
-        bxr(0.15, 0.14, 0.02, v(-0.17, 0.31, 0.11), xyz(0.15, 0.0, 0.12), ad), // tassets (hip plates)
-        bxr(0.15, 0.14, 0.02, v(0.17, 0.31, 0.11), xyz(0.15, 0.0, -0.12), ad),
-        bx(0.42, 0.46, 0.26, v(0.0, 0.66, 0.0), a), // body
-        bx(0.32, 0.32, 0.02, v(0.0, 0.70, 0.135), al), // breastplate
-        bx(0.05, 0.30, 0.016, v(0.0, 0.70, 0.142), a), // breastplate centre ridge
-        bx(0.32, 0.035, 0.018, v(0.0, 0.875, 0.14), GOLD), // gilded collar trim
-        bx(0.30, 0.34, 0.02, v(0.0, 0.68, -0.135), ad), // backplate
-        bx(0.26, 0.10, 0.30, v(0.0, 0.92, 0.0), ad), // gorget (neck ring)
+        bx(0.40, 0.12, 0.26, v(0.0, 0.30, 0.0), CHAIN), // mail skirt under the belt
+        bx(0.44, 0.085, 0.24, v(0.0, 0.40, 0.0), BELT), // belt
+        bx(0.11, 0.06, 0.02, v(0.0, 0.40, 0.125), GOLD), // buckle
+        bxr(0.16, 0.16, 0.03, v(-0.18, 0.32, 0.10), xyz(0.12, 0.0, 0.16), ad), // tassets (hip plates)
+        bxr(0.16, 0.16, 0.03, v(0.18, 0.32, 0.10), xyz(0.12, 0.0, -0.16), ad),
+        // Abdominal faulds: two stepped lames bridging belt → cuirass (the segmented belly).
+        bx(0.355, 0.075, 0.235, v(0.0, 0.495, 0.015), ad),
+        bx(0.385, 0.075, 0.245, v(0.0, 0.575, 0.03), a),
+        // Cuirass core: a narrower waist box under a wider chest box → the V-taper.
+        bx(0.40, 0.18, 0.25, v(0.0, 0.66, 0.0), a), // lower torso
+        bx(0.45, 0.20, 0.27, v(0.0, 0.80, 0.0), a), // upper chest (broader)
+        // Rounded muscled pectorals + a raised keel ridge down the breastplate centre.
+        ell(0.135, 0.13, 0.11, v(-0.115, 0.78, 0.10), al),
+        ell(0.135, 0.13, 0.11, v(0.115, 0.78, 0.10), al),
+        bxr(0.05, 0.36, 0.05, v(0.0, 0.74, 0.125), rx(0.04), al), // breastplate keel ridge
+        bx(0.34, 0.04, 0.02, v(0.0, 0.885, 0.135), GOLD), // gilded collar trim
+        bx(0.36, 0.40, 0.03, v(0.0, 0.72, -0.135), ad), // backplate
+        // Gorget: a rounded neck ring seating the helm.
+        ell(0.16, 0.075, 0.17, v(0.0, 0.915, 0.0), ad),
     ]);
     let torso = surf(torso, Surf::Metal); // plate sheen (mail/belt read metal-subtle; hue unchanged)
 
-    // Head: helm + stepped crown + visor slit, breath holes, gilded brow band, cheek guards,
-    // the dark crest brim and a crimson plume sweeping back over the crown.
+    // The helm is a faceted great-helm: a rounded crown dome over a face that tapers to the chin,
+    // a recessed T-visor (horizontal eye slit + vertical nasal bar), breath holes, a gilded brow
+    // band and side cheek-plates. A tall crimson plume rides the crown as an arc of fins sweeping
+    // front→back (the brush crest), seated in a dark crest mount.
+    let plume_fin = |y: f32, z: f32, h: f32, lean: f32| bxr(0.055, h, 0.10, v(0.0, y, z), rx(lean), PLUME);
     let head = group(vec![
-        bx(0.32, 0.3, 0.32, v(0.0, 0.0, 0.0), al),
-        bx(0.28, 0.10, 0.28, v(0.0, 0.18, 0.0), al), // stepped crown
-        bx(0.24, 0.06, 0.01, v(0.0, -0.01, 0.165), VISOR),
-        bx(0.02, 0.025, 0.01, v(-0.045, -0.085, 0.165), VISOR), // breath holes
-        bx(0.02, 0.025, 0.01, v(0.045, -0.085, 0.165), VISOR),
-        bx(0.30, 0.025, 0.014, v(0.0, 0.045, 0.166), GOLD), // gilded brow band
-        bx(0.02, 0.13, 0.18, v(-0.17, -0.075, 0.05), ad), // cheek guards
-        bx(0.02, 0.13, 0.18, v(0.17, -0.075, 0.05), ad),
-        bx(0.34, 0.06, 0.34, v(0.0, 0.135, 0.0), ad), // crest brim
-        bxr(0.05, 0.10, 0.26, v(0.0, 0.27, -0.02), rx(0.22), PLUME), // plume crest
-        bxr(0.04, 0.08, 0.20, v(0.0, 0.24, -0.20), rx(0.75), PLUME), // plume tail
+        ell(0.175, 0.175, 0.18, v(0.0, 0.07, 0.0), al), // rounded crown dome
+        bx(0.30, 0.18, 0.30, v(0.0, -0.04, 0.0), al), // upper face
+        bx(0.255, 0.10, 0.255, v(0.0, -0.165, 0.0), a), // chin taper
+        bx(0.26, 0.05, 0.012, v(0.0, -0.01, 0.158), VISOR), // visor eye slit (horizontal)
+        bx(0.035, 0.18, 0.014, v(0.0, -0.06, 0.16), VISOR), // nasal bar (vertical) → the T
+        bx(0.022, 0.028, 0.01, v(-0.06, -0.155, 0.155), VISOR), // breath holes
+        bx(0.022, 0.028, 0.01, v(0.06, -0.155, 0.155), VISOR),
+        bx(0.30, 0.028, 0.016, v(0.0, 0.055, 0.158), GOLD), // gilded brow band
+        bxr(0.025, 0.16, 0.20, v(-0.155, -0.07, 0.03), rz(0.05), ad), // cheek plates
+        bxr(0.025, 0.16, 0.20, v(0.155, -0.07, 0.03), rz(-0.05), ad),
+        bx(0.10, 0.05, 0.30, v(0.0, 0.20, 0.0), VISOR), // dark crest mount along the crown
+        // Plume crest: an arc of fins from the brow up and over the back of the helm.
+        plume_fin(0.255, 0.115, 0.13, -0.35),
+        plume_fin(0.30, 0.05, 0.17, -0.10),
+        plume_fin(0.315, -0.04, 0.18, 0.18),
+        plume_fin(0.295, -0.13, 0.16, 0.55),
+        plume_fin(0.245, -0.205, 0.13, 0.95),
+        plume_fin(0.175, -0.255, 0.11, 1.35),
     ]);
     let head = surf(head, Surf::Metal); // helm plate (plume keeps its crimson hue)
 
     // Right arm (sword hand): the bare plate arm. The equipped weapon is built as its OWN mesh
     // ([`KnightSpec::weapon`]) and spawned as a child of the ArmR *entity* at the hand offset, so
     // it still swings with the arm but can be hidden for weapon-free gestures. Sword sits at
-    // arm-local (0,-0.5,0.06) rotated x=-π/2 so it extends FORWARD (+Z).
-    // Plate-arm dressing shared by both arms (`s` mirrors the pauldron tilt): a two-lame
-    // pauldron, the upper arm, an elbow couter, the wrist cuff and a gauntleted fist.
+    // arm-local (0,-0.55,0.06) rotated x=-π/2 so it extends FORWARD (+Z).
+    // Plate-arm dressing shared by both arms (`s` mirrors the pauldron tilt): a rounded pauldron
+    // dome + lame, the upper arm (rerebrace), an elbow couter, the vambrace, a cuff flare and a
+    // gauntleted fist with a knuckle plate.
     let plate_arm = |s: f32| {
         vec![
-            bxr(0.20, 0.10, 0.30, v(0.0, -0.02, 0.0), rz(s * 0.10), al), // pauldron cap
-            bxr(0.17, 0.07, 0.26, v(s * 0.02, -0.105, 0.0), rz(s * 0.20), a), // pauldron lame
-            bx(0.12, 0.42, 0.22, v(0.0, -0.21, 0.0), a), // upper
-            sphere(0.075, v(0.0, -0.30, 0.03), ad), // elbow couter
-            bx(0.13, 0.08, 0.23, v(0.0, -0.45, 0.0), ad), // cuff
-            bx(0.11, 0.09, 0.13, v(0.0, -0.51, 0.03), ad), // gauntlet fist
-            bx(0.115, 0.025, 0.10, v(0.0, -0.485, 0.06), al), // knuckle plate
+            ell(0.165, 0.135, 0.205, v(s * 0.04, -0.01, 0.0), al), // rounded pauldron dome
+            bxr(0.18, 0.06, 0.26, v(s * 0.05, -0.12, 0.0), rz(s * 0.22), a), // pauldron lame
+            bx(0.115, 0.26, 0.20, v(0.0, -0.24, 0.0), a), // upper arm (rerebrace)
+            sphere(0.078, v(0.0, -0.32, 0.02), ad), // elbow couter
+            bx(0.105, 0.20, 0.185, v(0.0, -0.44, 0.0), a), // forearm (vambrace)
+            bx(0.115, 0.075, 0.22, v(0.0, -0.50, 0.0), ad), // cuff flare
+            bx(0.105, 0.10, 0.135, v(0.0, -0.555, 0.03), ad), // gauntlet fist
+            bx(0.11, 0.03, 0.11, v(0.0, -0.525, 0.065), al), // knuckle plate
         ]
     };
 
     let sw_rot = rx(-std::f32::consts::FRAC_PI_2);
-    let sw_off = v(0.0, -0.5, 0.06);
+    let sw_off = v(0.0, -0.55, 0.06);
     let arm_r = surf(group(plate_arm(1.0)), Surf::Metal);
     // The weapon is its own merged mesh (grouped once → no re-merge corruption) placed at the hand.
     let weapon = surf(group(weapon_parts(weapon)), Surf::Metal);
@@ -275,10 +309,11 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
     let leg = || {
         surf(
             group(vec![
-                bx(0.17, 0.17, 0.19, v(0.0, -0.085, 0.0), a), // cuisse (thigh plate)
-                bx(0.10, 0.06, 0.06, v(0.0, -0.175, 0.08), al), // poleyn (knee cap)
-                bx(0.15, 0.17, 0.17, v(0.0, -0.255, 0.0), ad), // greave
-                bx(0.15, 0.05, 0.24, v(0.0, -0.335, 0.04), al), // sabaton (foot)
+                bx(0.17, 0.17, 0.19, v(0.0, -0.08, 0.0), a), // cuisse (thigh plate)
+                ell(0.075, 0.065, 0.075, v(0.0, -0.17, 0.06), al), // poleyn (domed knee cap)
+                bx(0.145, 0.18, 0.165, v(0.0, -0.26, 0.0), ad), // greave (shin)
+                bx(0.155, 0.05, 0.18, v(0.0, -0.335, 0.025), al), // sabaton (foot)
+                cone(0.07, 0.10, v(0.0, -0.335, 0.14), rx(std::f32::consts::FRAC_PI_2), al), // pointed toe
             ]),
             Surf::Metal,
         )
