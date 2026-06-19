@@ -10,13 +10,23 @@ use bevy::prelude::*;
 use super::combat::ATTACK_DURATION;
 use super::{Hero, HeroHealth, HeroPart, Joint};
 
-/// Shield rest rotation under the left hand (matches its spawn pose); block swings it up to brace
-/// across the front, face toward the threat.
+/// Shield rest rotation under the left hand (matches its spawn pose).
 fn shield_rest() -> Quat {
     Quat::from_euler(EulerRot::XYZ, 0.2, -0.6, 0.15)
 }
+/// Block stance for the two-bone shield arm: upper arm forward + across the body, forearm bent up,
+/// which brings the hand (and the shield on it) IN FRONT of the chest.
+fn sh_block() -> Quat {
+    e3(-1.25, 0.45, 0.0)
+}
+fn el_block() -> Quat {
+    Quat::from_rotation_x(-1.25)
+}
+/// Shield's own local rotation while blocking. The shield mesh faces +Z (forward) at identity, so
+/// to keep its face pointing squarely forward and the plate upright — IN FRONT of the body, never
+/// tilted up by the head — we cancel the arm's cumulative rotation: `(shoulder·elbow)⁻¹`.
 fn shield_block() -> Quat {
-    Quat::from_euler(EulerRot::XYZ, 0.0, 0.55, 0.1)
+    (sh_block() * el_block()).inverse()
 }
 
 fn e3(x: f32, y: f32, z: f32) -> Quat {
@@ -47,6 +57,18 @@ pub fn hero_anim(
                 Joint::Shield => shield_rest(),
                 _ => Quat::IDENTITY,
             };
+        }
+        return;
+    }
+
+    // Airborne: a jump pose (legs tuck, arms up for balance) for the whole hop — push-off when
+    // rising, a deeper tuck when falling. Overrides locomotion (root height is the jump physics).
+    if !hero.on_ground {
+        for (part, mut tf) in &mut parts {
+            if part.joint == Joint::Hips {
+                tf.translation = Vec3::new(0.0, 0.95, 0.0);
+            }
+            tf.rotation = jump_pose(part.joint, hero.vel_y);
         }
         return;
     }
@@ -108,8 +130,8 @@ pub fn hero_anim(
                         }
                     }
                     _ if hh.blocking => {
-                        // Raise the shield arm up and across so the shield covers the chest/face.
-                        let target = if elbow { Quat::from_rotation_x(-1.6) } else { e3(-1.45, 0.25, -0.15) };
+                        // Shield arm braced IN FRONT of the chest (paired with `shield_block`).
+                        let target = if elbow { el_block() } else { sh_block() };
                         tf.rotation.slerp(target, damp)
                     }
                     _ => base_r,
@@ -161,24 +183,46 @@ fn idle_pose(j: Joint, t: f32) -> (Option<Vec3>, Quat) {
     }
 }
 
+/// Jump pose. `vel_y > 0` = rising (legs extend into a push-off, arms swing up); falling = a
+/// deeper knee tuck with the arms out, ready to land. Symmetric (both legs together).
+fn jump_pose(j: Joint, vel_y: f32) -> Quat {
+    let rising = vel_y > 0.0;
+    let hip = if rising { 0.15 } else { 0.7 };
+    let knee = if rising { -0.45 } else { -1.15 };
+    match j {
+        Joint::Hips => Quat::IDENTITY,
+        Joint::Torso => e3(0.12, 0.0, 0.0),
+        Joint::Head => e3(-0.05, 0.0, 0.0),
+        Joint::HipL | Joint::HipR => Quat::from_rotation_x(hip),
+        Joint::KneeL | Joint::KneeR => Quat::from_rotation_x(knee),
+        Joint::ShoulderL => e3(if rising { -1.4 } else { -0.7 }, 0.0, -0.35),
+        Joint::ElbowL => Quat::from_rotation_x(-0.7),
+        Joint::ShoulderR => e3(if rising { -1.4 } else { -0.7 }, 0.0, 0.35),
+        Joint::ElbowR => Quat::from_rotation_x(-0.7),
+        Joint::Shield => shield_rest(),
+    }
+}
+
 fn walk_pose(j: Joint, wp: f32) -> (Option<Vec3>, Quat) {
     let stride = wp.sin();
-    let torso_y = -wp.sin() * 0.08;
+    let torso_y = -wp.sin() * 0.11;
     match j {
+        // A confident march: deep hip/knee swing, a forward-leaning torso with shoulder counter-
+        // twist, a pronounced body bob, and arms pumping hard.
         Joint::Hips => (
-            Some(Vec3::new(wp.sin() * 0.02, 0.93 + (wp * 2.0).sin().abs() * 0.04, 0.0)),
-            e3(0.0, wp.sin() * 0.12, wp.sin() * 0.03),
+            Some(Vec3::new(wp.sin() * 0.03, 0.92 + (wp * 2.0).sin().abs() * 0.07, 0.0)),
+            e3(0.0, wp.sin() * 0.18, wp.sin() * 0.05),
         ),
-        Joint::Torso => (None, e3(0.05 + (wp * 2.0).sin() * 0.02, torso_y, 0.0)),
-        Joint::Head => (None, e3(-0.02 - (wp * 2.0).sin() * 0.01, -torso_y * 1.1, 0.0)),
-        Joint::HipL => (None, Quat::from_rotation_x(stride * 0.5)),
-        Joint::KneeL => (None, Quat::from_rotation_x(if stride < 0.0 { -stride * 0.8 } else { -stride * 0.15 })),
-        Joint::HipR => (None, Quat::from_rotation_x(-stride * 0.5)),
-        Joint::KneeR => (None, Quat::from_rotation_x(if stride > 0.0 { stride * 0.8 } else { stride * 0.15 })),
-        Joint::ShoulderL => (None, e3(-stride * 0.35 + 0.1, 0.0, -0.1)),
-        Joint::ElbowL => (None, Quat::from_rotation_x(-0.6 - stride.abs() * 0.3)),
-        Joint::ShoulderR => (None, e3(stride * 0.35 + 0.1, 0.0, 0.1)),
-        Joint::ElbowR => (None, Quat::from_rotation_x(-0.5 - stride.abs() * 0.3)),
+        Joint::Torso => (None, e3(0.13 + (wp * 2.0).sin() * 0.03, torso_y, 0.0)),
+        Joint::Head => (None, e3(-0.05 - (wp * 2.0).sin() * 0.015, -torso_y * 1.1, 0.0)),
+        Joint::HipL => (None, Quat::from_rotation_x(stride * 0.8)),
+        Joint::KneeL => (None, Quat::from_rotation_x(if stride < 0.0 { -stride * 1.25 } else { -stride * 0.2 })),
+        Joint::HipR => (None, Quat::from_rotation_x(-stride * 0.8)),
+        Joint::KneeR => (None, Quat::from_rotation_x(if stride > 0.0 { stride * 1.25 } else { stride * 0.2 })),
+        Joint::ShoulderL => (None, e3(-stride * 0.62 + 0.1, 0.0, -0.12)),
+        Joint::ElbowL => (None, Quat::from_rotation_x(-0.55 - stride.abs() * 0.5)),
+        Joint::ShoulderR => (None, e3(stride * 0.62 + 0.1, 0.0, 0.12)),
+        Joint::ElbowR => (None, Quat::from_rotation_x(-0.5 - stride.abs() * 0.5)),
         Joint::Shield => (None, shield_rest()),
     }
 }

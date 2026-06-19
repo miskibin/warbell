@@ -7,7 +7,7 @@
 //! The scene is world-space (castle at the origin, no centring group), so the hero stores
 //! its position as a world `Vec2` like the orks and grounds on `worldmap::ground_at_world`.
 
-mod anim;
+pub(crate) mod anim;
 mod arts;
 mod block;
 mod camera;
@@ -29,8 +29,9 @@ use bevy::prelude::*;
 use crate::inventory::Inventory;
 
 /// Root scale applied to the TS-unit knight so it stands the same height as the orks
-/// (`orks::BASE_SCALE` is 0.7; the knight authors ~1.85u tall → ~0.93u on the ground).
-pub const HERO_SCALE: f32 = 0.5;
+/// (`orks::BASE_SCALE` is 0.7; the knight authors ~1.85u tall → ~1.1u on the ground — a deliberately
+/// bigger, sturdier hero).
+pub const HERO_SCALE: f32 = 0.6;
 
 /// A rig **joint** — a transform-only entity the animator ([`anim`]) poses. Each joint's mesh is a
 /// separate child *leaf* entity ([`HeroMesh`]), so first-person can hide the body meshes without
@@ -271,6 +272,10 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.walk_phase += time.delta_secs() * 7.0; // = movement::STEP_FREQ
         }
         "block" => hh.blocking = true,
+        "jump" => {
+            hero.on_ground = false;
+            hero.vel_y = 2.0;
+        }
         _ => {}
     }
 }
@@ -410,7 +415,7 @@ pub(crate) fn spawn_hero_meshes(
         commands,
         hand_l,
         Some(Shield),
-        Transform { translation: Vec3::new(-0.13, 0.03, 0.08), rotation: Quat::from_euler(EulerRot::XYZ, 0.2, -0.6, 0.15), scale: Vec3::splat(0.92) },
+        Transform { translation: Vec3::new(-0.16, -0.02, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.2, -0.6, 0.15), scale: Vec3::splat(0.92) },
         mat,
         arm(meshes.add(m.shield)),
     );

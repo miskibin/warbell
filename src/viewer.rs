@@ -29,14 +29,46 @@ pub fn run() {
         WindowResolution::new(1000, 1000).with_scale_factor_override(1.0)
     };
 
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
         .add_plugins(crate::creature::CreaturePlugin) // the shared CreatureMaterial + its shader
         .add_plugins(crate::capture::CapturePlugin) // FOREST_SHOT / FOREST_CLIP (+ _ORBIT turntable)
         .insert_resource(GlobalAmbientLight { brightness: 160.0, ..default() })
         .insert_resource(ClearColor(Color::srgb(0.16, 0.17, 0.20)))
-        .add_systems(Startup, setup)
-        .run();
+        .add_systems(Startup, setup);
+
+    // `FOREST_VIEW_ANIM=idle|walk|block|attack` drives the REAL game animator on the previewed
+    // model (otherwise it shows the static rest pose). Reuses `hero_anim` so what you see matches
+    // the game exactly; the drive system synthesises the `Hero` state each frame.
+    if std::env::var("FOREST_VIEW_ANIM").is_ok() {
+        app.init_resource::<crate::player::PlayerRes>()
+            .init_resource::<crate::cinematic::DirectorState>()
+            .init_resource::<crate::player::FirstPerson>()
+            .add_systems(Update, (anim_drive, crate::player::anim::hero_anim).chain());
+    }
+    app.run();
+}
+
+/// Synthesise `Hero`/`HeroHealth` state from `FOREST_VIEW_ANIM` so `hero_anim` plays that clip.
+fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crate::player::HeroHealth)>) {
+    let Ok((mut hero, mut hh)) = q.single_mut() else { return };
+    let dt = time.delta_secs();
+    hero.moving = false;
+    hero.moving_amt = 0.0;
+    hh.blocking = false;
+    match std::env::var("FOREST_VIEW_ANIM").unwrap_or_default().as_str() {
+        "walk" => {
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.walk_phase += dt * 7.0; // = movement::STEP_FREQ
+        }
+        "block" => hh.blocking = true,
+        "jump" => {
+            hero.on_ground = false;
+            hero.vel_y = if (time.elapsed_secs() * 1.5).sin() > 0.0 { 2.0 } else { -2.0 };
+        }
+        _ => {} // idle
+    }
 }
 
 /// Parse `FOREST_CAM="ex,ey,ez,tx,ty,tz"` (eye + look-at), same format as the game's.
@@ -82,9 +114,30 @@ fn setup(
         Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
     ));
 
-    // The model itself, on the shared creature material.
+    // The model itself, on the shared creature material. The root also carries `Hero`/`HeroHealth`
+    // so the optional `hero_anim` preview (FOREST_VIEW_ANIM) has state to read; inert otherwise.
     let mat = crate::creature::make_creature_material(&mut creature_mats);
-    let root = commands.spawn((Transform::default(), Visibility::Visible)).id();
+    let root = commands
+        .spawn((
+            Transform::default(),
+            Visibility::Visible,
+            crate::player::Hero {
+                pos: Vec2::ZERO,
+                y: 0.0,
+                facing: 0.0,
+                vel_y: 0.0,
+                on_ground: true,
+                air_takeoff_y: 0.0,
+                walk_phase: 0.0,
+                moving_amt: 0.0,
+                moving: false,
+                attacking: false,
+                attack_t: 0.0,
+                hit_dealt: false,
+            },
+            crate::player::HeroHealth::default(),
+        ))
+        .id();
     spawn_model(&mut commands, root, &mut meshes, &mat);
 }
 

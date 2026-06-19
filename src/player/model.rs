@@ -228,34 +228,34 @@ fn shoulder_mesh(sign: f32, a: u32) -> Mesh {
         part(frustum(0.165, 0.165, 0.04, 6), Vec3::ONE, rz(sign * PI / 8.0), v(0.0, 0.01, 0.0), TRIM),
         part(cuboid(0.15, 0.1, 0.15), Vec3::ONE, rz(sign * PI / 12.0), v(sign * 0.03, -0.05, 0.0), a),
         at(cuboid(0.04, 0.03, 0.16), v(0.0, 0.08, 0.0), TRIM),
-        at(frustum(0.09, 0.07, 0.22, 5), v(0.0, -0.14, 0.0), a),
-        at(frustum(0.06, 0.06, 0.26, 4), v(0.0, -0.14, 0.0), SKIRT),
+        at(frustum(0.12, 0.095, 0.22, 5), v(0.0, -0.14, 0.0), a),
+        at(frustum(0.08, 0.08, 0.26, 4), v(0.0, -0.14, 0.0), SKIRT),
     ])
 }
 
 fn elbow_mesh(a: u32) -> Mesh {
     group(vec![
-        part(cuboid(0.09, 0.09, 0.09), Vec3::ONE, xyz(0.7, 0.7, 0.2), Vec3::ZERO, TRIM),
-        at(frustum(0.08, 0.095, 0.24, 6), v(0.0, -0.12, 0.0), a),
-        at(frustum(0.085, 0.1, 0.04, 6), v(0.0, -0.16, 0.0), TRIM),
-        at(cuboid(0.07, 0.07, 0.08), v(0.0, -0.24, 0.0), a),
+        part(cuboid(0.11, 0.11, 0.11), Vec3::ONE, xyz(0.7, 0.7, 0.2), Vec3::ZERO, TRIM),
+        at(frustum(0.105, 0.12, 0.24, 6), v(0.0, -0.12, 0.0), a),
+        at(frustum(0.11, 0.125, 0.04, 6), v(0.0, -0.16, 0.0), TRIM),
+        at(cuboid(0.09, 0.09, 0.10), v(0.0, -0.24, 0.0), a),
     ])
 }
 
 fn hip_mesh(a: u32) -> Mesh {
     group(vec![
-        at(frustum(0.08, 0.065, 0.36, 4), v(0.0, -0.18, 0.0), SKIRT),
-        at(frustum(0.122, 0.092, 0.32, 6), v(0.0, -0.18, 0.0), a),
-        at(frustum(0.126, 0.11, 0.04, 6), v(0.0, -0.04, 0.0), TRIM),
+        at(frustum(0.10, 0.085, 0.36, 4), v(0.0, -0.18, 0.0), SKIRT),
+        at(frustum(0.15, 0.115, 0.32, 6), v(0.0, -0.18, 0.0), a),
+        at(frustum(0.155, 0.135, 0.04, 6), v(0.0, -0.04, 0.0), TRIM),
     ])
 }
 
 fn knee_mesh(a: u32) -> Mesh {
     group(vec![
-        part(cuboid(0.10, 0.10, 0.10), Vec3::ONE, xyz(0.7, 0.0, 0.2), Vec3::ZERO, TRIM),
-        part(frustum(0.085, 0.11, 0.35, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.18, 0.0), a),
-        part(frustum(0.09, 0.115, 0.03, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.06, 0.0), TRIM),
-        part(frustum(0.11, 0.112, 0.03, 6), v(1.105, 1.0, 0.905), Quat::IDENTITY, v(0.0, -0.32, 0.0), TRIM),
+        part(cuboid(0.12, 0.12, 0.12), Vec3::ONE, xyz(0.7, 0.0, 0.2), Vec3::ZERO, TRIM),
+        part(frustum(0.105, 0.13, 0.35, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.18, 0.0), a),
+        part(frustum(0.11, 0.135, 0.03, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.06, 0.0), TRIM),
+        part(frustum(0.13, 0.132, 0.03, 6), v(1.105, 1.0, 0.905), Quat::IDENTITY, v(0.0, -0.32, 0.0), TRIM),
     ])
 }
 
