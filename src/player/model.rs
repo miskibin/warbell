@@ -16,7 +16,7 @@ use crate::creature::{surf, Surf};
 use crate::palette::lin;
 
 // ── Palette (the customizer's defaults + the held-weapon tints, sRGB hex) ─────────────
-const ARMOR: u32 = 0x3a3e4d; // primaryArmor (slate plate)
+const ARMOR: u32 = 0xa3adbb; // light steel plate (brighter than the original dark slate)
 const TRIM: u32 = 0xb58a6f; // trimColor (bronze) — hilt/buckle/throat/greave trim
 const PLUME: u32 = 0xb82424; // crimson crest
 const SHIELD_BASE: u32 = 0x2d2f36;
@@ -176,47 +176,38 @@ fn hips_mesh(a: u32) -> Mesh {
     ])
 }
 
+/// Bulkier heroic breastplate (wider + deeper than a realistic chest) so the silhouette reads as a
+/// stylized hero, not a slim human.
 fn torso_mesh(a: u32, al: u32) -> Mesh {
     group(vec![
-        part(frustum(0.26, 0.17, 0.46, 6), v(1.15, 1.0, 0.75), Quat::IDENTITY, v(0.0, 0.13, 0.0), a),
-        part(frustum(0.18, 0.22, 0.06, 6), v(1.15, 1.0, 0.85), Quat::IDENTITY, v(0.0, 0.33, 0.0), TRIM),
-        at(cuboid(0.35, 0.03, 0.06), v(0.0, 0.2, 0.185), TRIM),
-        at(cuboid(0.30, 0.03, 0.06), v(0.0, 0.1, 0.175), TRIM),
+        part(frustum(0.31, 0.21, 0.50, 6), v(1.32, 1.0, 0.80), Quat::IDENTITY, v(0.0, 0.14, 0.0), a),
+        part(frustum(0.21, 0.26, 0.07, 6), v(1.3, 1.0, 0.88), Quat::IDENTITY, v(0.0, 0.36, 0.0), TRIM),
+        at(cuboid(0.44, 0.035, 0.06), v(0.0, 0.22, 0.215), TRIM),
+        at(cuboid(0.38, 0.035, 0.06), v(0.0, 0.11, 0.205), TRIM),
         // a subtle lit breastplate ridge so the worn-tier highlight reads
-        at(cuboid(0.05, 0.30, 0.012), v(0.0, 0.16, 0.205), al),
+        at(cuboid(0.06, 0.34, 0.012), v(0.0, 0.17, 0.235), al),
     ])
 }
 
 fn neck_mesh(a: u32) -> Mesh {
     group(vec![
-        at(frustum(0.12, 0.14, 0.1, 8), v(0.0, -0.04, 0.0), a),
-        at(cuboid(0.16, 0.1, 0.14), v(0.0, -0.01, 0.06), TRIM),
+        at(frustum(0.15, 0.18, 0.1, 8), v(0.0, -0.04, 0.0), a),
+        at(cuboid(0.2, 0.11, 0.16), v(0.0, -0.01, 0.06), TRIM),
     ])
 }
 
+/// Simplified, slightly oversized stylized helm: a clean rounded bowl + dome cap, one wide eye
+/// slit with glowing eyes and a single bronze brow band. (No visor band / vertical trim / breath
+/// holes — those read as fussy realism; the bigger head reads as a heroic game silhouette.)
 fn head_mesh(a: u32, al: u32) -> Mesh {
-    let mut parts = vec![
-        at(frustum(0.16, 0.17, 0.22, 8), v(0.0, 0.05, 0.0), a),
-        at(ball(0.16), v(0.0, 0.16, 0.0), al),
-        part(frustum(0.162, 0.168, 0.15, 8), v(1.03, 1.0, 1.06), Quat::IDENTITY, v(0.0, 0.05, 0.005), a),
-        at(cuboid(0.22, 0.02, 0.02), v(0.0, 0.08, 0.185), DARK),
-        at(cuboid(0.23, 0.012, 0.015), v(0.0, 0.10, 0.187), TRIM),
-        at(cuboid(0.012, 0.12, 0.015), v(0.0, 0.02, 0.189), TRIM),
-        at(cuboid(0.03, 0.015, 0.01), v(-0.045, 0.08, 0.186), GLOW),
-        at(cuboid(0.03, 0.015, 0.01), v(0.045, 0.08, 0.186), GLOW),
-    ];
-    for r in 0..3 {
-        for side in [-1.0_f32, 1.0] {
-            parts.push(part(
-                cuboid(0.015, 0.015, 0.01),
-                Vec3::ONE,
-                ry(-side * 0.5),
-                v(side * (0.035 + r as f32 * 0.018), 0.02 + r as f32 * 0.015, 0.188 - r as f32 * 0.01),
-                DARK,
-            ));
-        }
-    }
-    group(parts)
+    group(vec![
+        at(frustum(0.19, 0.205, 0.26, 8), v(0.0, 0.04, 0.0), a), // bowl
+        at(ball(0.20), v(0.0, 0.18, 0.0), al),                   // dome cap
+        at(cuboid(0.27, 0.03, 0.03), v(0.0, 0.085, 0.20), DARK), // eye slit
+        at(cuboid(0.30, 0.022, 0.02), v(0.0, 0.14, 0.205), TRIM), // brow band
+        at(cuboid(0.04, 0.02, 0.012), v(-0.06, 0.085, 0.205), GLOW), // eye orbs
+        at(cuboid(0.04, 0.02, 0.012), v(0.06, 0.085, 0.205), GLOW),
+    ])
 }
 
 fn plume_mesh() -> Mesh {
@@ -233,49 +224,50 @@ fn plume_mesh() -> Mesh {
     group(segs.iter().map(|(s, p, rotx)| part(cuboid(s[0], s[1], s[2]), Vec3::ONE, rx(*rotx), v(p[0], p[1], p[2]), PLUME)).collect())
 }
 
+/// Big rounded pauldrons + a chunky bicep — broad heroic shoulders.
 fn shoulder_mesh(sign: f32, a: u32) -> Mesh {
     group(vec![
-        at(ball(0.08), v(0.0, 0.0, 0.0), SKIRT),
-        part(ball(0.16), v(1.0, 0.8, 1.0), rz(sign * PI / 8.0), v(0.0, 0.05, 0.0), a),
-        part(frustum(0.165, 0.165, 0.04, 6), Vec3::ONE, rz(sign * PI / 8.0), v(0.0, 0.01, 0.0), TRIM),
-        part(cuboid(0.15, 0.1, 0.15), Vec3::ONE, rz(sign * PI / 12.0), v(sign * 0.03, -0.05, 0.0), a),
-        at(cuboid(0.04, 0.03, 0.16), v(0.0, 0.08, 0.0), TRIM),
-        at(frustum(0.09, 0.07, 0.22, 5), v(0.0, -0.14, 0.0), a),
-        at(frustum(0.06, 0.06, 0.26, 4), v(0.0, -0.14, 0.0), SKIRT),
+        at(ball(0.09), v(0.0, 0.0, 0.0), SKIRT),
+        part(ball(0.21), v(1.0, 0.82, 1.0), rz(sign * PI / 8.0), v(0.0, 0.05, 0.0), a),
+        part(frustum(0.215, 0.215, 0.05, 6), Vec3::ONE, rz(sign * PI / 8.0), v(0.0, 0.01, 0.0), TRIM),
+        part(cuboid(0.19, 0.12, 0.18), Vec3::ONE, rz(sign * PI / 12.0), v(sign * 0.03, -0.06, 0.0), a),
+        at(cuboid(0.05, 0.035, 0.18), v(0.0, 0.09, 0.0), TRIM),
+        at(frustum(0.115, 0.085, 0.24, 5), v(0.0, -0.15, 0.0), a),
+        at(frustum(0.075, 0.075, 0.27, 4), v(0.0, -0.15, 0.0), SKIRT),
     ])
 }
 
 fn elbow_mesh(a: u32) -> Mesh {
     group(vec![
-        part(cuboid(0.09, 0.09, 0.09), Vec3::ONE, xyz(0.7, 0.7, 0.2), Vec3::ZERO, TRIM),
-        at(frustum(0.08, 0.095, 0.24, 6), v(0.0, -0.12, 0.0), a),
-        at(frustum(0.085, 0.1, 0.04, 6), v(0.0, -0.16, 0.0), TRIM),
-        at(cuboid(0.07, 0.07, 0.08), v(0.0, -0.24, 0.0), a),
+        part(cuboid(0.11, 0.11, 0.11), Vec3::ONE, xyz(0.7, 0.7, 0.2), Vec3::ZERO, TRIM),
+        at(frustum(0.095, 0.115, 0.26, 6), v(0.0, -0.12, 0.0), a),
+        at(frustum(0.10, 0.12, 0.04, 6), v(0.0, -0.16, 0.0), TRIM),
+        at(cuboid(0.09, 0.09, 0.10), v(0.0, -0.25, 0.0), a),
     ])
 }
 
 fn hip_mesh(a: u32) -> Mesh {
     group(vec![
-        at(frustum(0.08, 0.065, 0.36, 4), v(0.0, -0.18, 0.0), SKIRT),
-        at(frustum(0.122, 0.092, 0.32, 6), v(0.0, -0.18, 0.0), a),
-        at(frustum(0.126, 0.11, 0.04, 6), v(0.0, -0.04, 0.0), TRIM),
+        at(frustum(0.095, 0.08, 0.36, 4), v(0.0, -0.18, 0.0), SKIRT),
+        at(frustum(0.145, 0.11, 0.34, 6), v(0.0, -0.18, 0.0), a),
+        at(frustum(0.15, 0.13, 0.04, 6), v(0.0, -0.04, 0.0), TRIM),
     ])
 }
 
 fn knee_mesh(a: u32) -> Mesh {
     group(vec![
-        part(cuboid(0.10, 0.10, 0.10), Vec3::ONE, xyz(0.7, 0.0, 0.2), Vec3::ZERO, TRIM),
-        part(frustum(0.085, 0.11, 0.35, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.18, 0.0), a),
-        part(frustum(0.09, 0.115, 0.03, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.06, 0.0), TRIM),
-        part(frustum(0.11, 0.112, 0.03, 6), v(1.105, 1.0, 0.905), Quat::IDENTITY, v(0.0, -0.32, 0.0), TRIM),
+        part(cuboid(0.12, 0.12, 0.12), Vec3::ONE, xyz(0.7, 0.0, 0.2), Vec3::ZERO, TRIM),
+        part(frustum(0.10, 0.13, 0.36, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.18, 0.0), a),
+        part(frustum(0.105, 0.135, 0.03, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.06, 0.0), TRIM),
+        part(frustum(0.13, 0.132, 0.03, 6), v(1.105, 1.0, 0.905), Quat::IDENTITY, v(0.0, -0.33, 0.0), TRIM),
     ])
 }
 
 fn foot_mesh(a: u32) -> Mesh {
     group(vec![
-        at(cuboid(0.09, 0.08, 0.11), v(0.0, -0.04, -0.02), a),
-        part(cone(0.054, 0.15, 5), v(1.5, 1.0, 0.7), rx(PI / 2.0), v(0.0, -0.065, 0.07), a),
-        at(cuboid(0.10, 0.02, 0.12), v(0.0, -0.005, -0.02), TRIM),
+        at(cuboid(0.11, 0.09, 0.13), v(0.0, -0.04, -0.02), a),
+        part(cone(0.065, 0.16, 5), v(1.6, 1.0, 0.7), rx(PI / 2.0), v(0.0, -0.07, 0.08), a),
+        at(cuboid(0.12, 0.025, 0.14), v(0.0, -0.005, -0.02), TRIM),
     ])
 }
 

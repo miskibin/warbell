@@ -387,7 +387,7 @@ fn spawn_hero_meshes(
     spawn_joint(commands, head, Some(Plume), p(Vec3::new(0.0, 0.14, -0.08)), mat, body(meshes.add(m.plume)));
 
     // Left arm + lion-emblem heater shield (its own pivot on the forearm).
-    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-0.35, 0.25, 0.0)), mat, arm(meshes.add(m.shoulder_l)));
+    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-0.44, 0.27, 0.0)), mat, arm(meshes.add(m.shoulder_l)));
     let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, -0.28, 0.0)), mat, arm(meshes.add(m.elbow_l)));
     let hand_l = spawn_joint(commands, el_l, None, p(Vec3::new(0.0, -0.25, 0.0)), mat, None);
     let shield = spawn_joint(
@@ -401,16 +401,16 @@ fn spawn_hero_meshes(
     spawn_joint(commands, shield, None, p(Vec3::new(0.0, -0.03, 0.033)), mat, arm(meshes.add(m.lion)));
 
     // Right arm + held weapon.
-    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(0.35, 0.25, 0.0)), mat, arm(meshes.add(m.shoulder_r)));
+    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(0.44, 0.27, 0.0)), mat, arm(meshes.add(m.shoulder_r)));
     let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, -0.28, 0.0)), mat, arm(meshes.add(m.elbow_r)));
     let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, -0.25, 0.0)), mat, None);
     spawn_joint(commands, hand_r, None, m.weapon_xf, mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, weapon: true }));
 
     // Legs.
-    let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-0.16, -0.05, 0.0)), mat, body(meshes.add(m.hip_l)));
+    let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-0.19, -0.05, 0.0)), mat, body(meshes.add(m.hip_l)));
     let knee_l = spawn_joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.knee_l)));
     spawn_joint(commands, knee_l, None, p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.foot_l)));
-    let hip_r = spawn_joint(commands, hips, Some(HipR), p(Vec3::new(0.16, -0.05, 0.0)), mat, body(meshes.add(m.hip_r)));
+    let hip_r = spawn_joint(commands, hips, Some(HipR), p(Vec3::new(0.19, -0.05, 0.0)), mat, body(meshes.add(m.hip_r)));
     let knee_r = spawn_joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.knee_r)));
     spawn_joint(commands, knee_r, None, p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.foot_r)));
 }
