@@ -1551,6 +1551,32 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
         };
 
+    // Like `quad` but with a PER-VERTEX normal, for smoothly-shaded rounded lips: blend the
+    // normal from up (top of the roll) to out (base) and the flat-lit facet reads as a curve.
+    let quadn =
+        |p: [[f32; 3]; 4], n: [[f32; 3]; 4], c: [[f32; 4]; 4], idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
+            let b = pos.len() as u32;
+            for k in 0..4 {
+                pos.push(p[k]);
+                nrm.push(n[k]);
+                col.push(c[k]);
+            }
+            idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+        };
+
+    // Emit one flat-shaded triangle (terrain material is double-sided, so winding is irrelevant).
+    // Used to cap the dip where a chamfered wall ends into flat same-height ground.
+    let tri =
+        |p: [[f32; 3]; 3], n: [f32; 3], c: [[f32; 4]; 3], idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
+            let b = pos.len() as u32;
+            for k in 0..3 {
+                pos.push(p[k]);
+                nrm.push(n);
+                col.push(c[k]);
+            }
+            idx.extend_from_slice(&[b, b + 1, b + 2]);
+        };
+
     const NB: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
     for iz in iz0..iz1 {
@@ -1563,12 +1589,38 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             let wx = ix as f32 - GX;
             let wz = iz as f32 - GZ;
 
-            // Top quad (per-corner blended colour). Colour samples in BASE space.
+            // Neighbour top height for an axis direction (SEA_Y at the island edge), and whether
+            // this tile rises above it (→ a wall on that edge).
+            let nb_top = |dx: i32, dz: i32| match tile_at(ix + dx, iz + dz) {
+                Some((_, nh)) => (nh - 1) as f32 * GROUND_STEP,
+                None => SEA_Y,
+            };
+            let (w_e, w_w, w_n, w_s) = (
+                top > nb_top(1, 0) + 1e-4,
+                top > nb_top(-1, 0) + 1e-4,
+                top > nb_top(0, 1) + 1e-4,
+                top > nb_top(0, -1) + 1e-4,
+            );
+
+            // Round the terrace lip by chamfering the top INWARD on every walled edge — the wall
+            // FACE stays exactly on the tile boundary, so it never leans over the lower (walkable)
+            // tile and the hero (whose collision is the tile grid, not this mesh) can't clip into
+            // an overhang. `CROWN` = horizontal inset of the rounded lip; it shrinks the visible
+            // flat top by ≤CROWN per walled edge (gameplay tops are the tile grid — unaffected).
+            const CROWN: f32 = 0.22;
+            let ax0 = wx + if w_w { CROWN } else { 0.0 };
+            let ax1 = wx + 1.0 - if w_e { CROWN } else { 0.0 };
+            let az0 = wz + if w_s { CROWN } else { 0.0 };
+            let az1 = wz + 1.0 - if w_n { CROWN } else { 0.0 };
+
+            // Inset top quad (per-corner blended colour). `c` samples in BASE/tile-index space;
+            // `cw` is the same in world XZ (tile index = world + G).
             let c = |cx: f32, cz: f32| ground_color(cx / MAP_SCALE, cz / MAP_SCALE);
+            let cw = |x: f32, z: f32| c(x + GX, z + GZ);
             quad(
-                [[wx, top, wz], [wx + 1.0, top, wz], [wx + 1.0, top, wz + 1.0], [wx, top, wz + 1.0]],
+                [[ax0, top, az0], [ax1, top, az0], [ax1, top, az1], [ax0, top, az1]],
                 [0.0, 1.0, 0.0],
-                [c(ix as f32, iz as f32), c(ix as f32 + 1.0, iz as f32), c(ix as f32 + 1.0, iz as f32 + 1.0), c(ix as f32, iz as f32 + 1.0)],
+                [cw(ax0, az0), cw(ax1, az0), cw(ax1, az1), cw(ax0, az1)],
                 &mut indices, &mut positions, &mut normals, &mut colors,
             );
 
@@ -1598,29 +1650,82 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 let bot = [top_col[0] * 0.58, top_col[1] * 0.56, top_col[2] * 0.54, 1.0];
                 (top, bot)
             };
-            // Wall quad corner order is [bottom, bottom, top, top].
-            let wc = [wall_bot, wall_bot, wall_top, wall_top];
+            // ── Round the terrace lip. The old vertical wall read as a blocky Minecraft cliff.
+            //    Each walled edge now gets a CHAMFER (the inset top edge sloping down-out to the
+            //    tile boundary = a rounded grassy lip) above a vertical wall that sits exactly on
+            //    the boundary. Nothing leans over the lower tile, so the hero (tile-grid
+            //    collision) can't clip an overhang. Because the chamfer's inset edge reuses the
+            //    same `ax/az` bounds as the top quad, two chamfers at a convex corner share their
+            //    corner edge and close the gap themselves — no fill pass needed.
+            let nrm3 = |v: [f32; 3]| {
+                let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-4);
+                [v[0] / l, v[1] / l, v[2] / l]
+            };
             for (dx, dz) in NB {
-                let nh_top = match tile_at(ix + dx, iz + dz) {
-                    Some((_, nh)) => (nh - 1) as f32 * GROUND_STEP,
-                    None => SEA_Y, // coast / river / lake bank
-                };
-                if top <= nh_top + 1e-4 {
+                let nh = nb_top(dx, dz);
+                if top <= nh + 1e-4 {
                     continue;
                 }
-                // Shared edge between this tile and the neighbour, vertical nh_top..top.
-                let (e0, e1, n): ([f32; 2], [f32; 2], [f32; 3]) = match (dx, dz) {
-                    (1, 0) => ([wx + 1.0, wz], [wx + 1.0, wz + 1.0], [1.0, 0.0, 0.0]),
-                    (-1, 0) => ([wx, wz + 1.0], [wx, wz], [-1.0, 0.0, 0.0]),
-                    (0, 1) => ([wx + 1.0, wz + 1.0], [wx, wz + 1.0], [0.0, 0.0, 1.0]),
-                    _ => ([wx, wz], [wx + 1.0, wz], [0.0, 0.0, -1.0]),
+                let drop = (top - nh).min(0.26); // chamfer dip (never exceeds the wall height)
+                let cy = top - drop;
+                // Inset top edge (i0→i1) + the matching tile-boundary edge (b0→b1), plus the
+                // PERPENDICULAR direction at each end (p0 at the i0/b0 end, p1 at i1/b1). The inset
+                // ends ARE the top quad's own corners (`ax/az`), so adjacent chamfers meet at a
+                // convex corner with no gap; `n` = outward horizontal normal.
+                let (i0, i1, b0, b1, n, p0, p1): ([f32; 2], [f32; 2], [f32; 2], [f32; 2], [f32; 3], (i32, i32), (i32, i32)) = match (dx, dz) {
+                    (1, 0) => ([ax1, az0], [ax1, az1], [wx + 1.0, wz], [wx + 1.0, wz + 1.0], [1.0, 0.0, 0.0], (0, -1), (0, 1)),
+                    (-1, 0) => ([ax0, az1], [ax0, az0], [wx, wz + 1.0], [wx, wz], [-1.0, 0.0, 0.0], (0, 1), (0, -1)),
+                    (0, 1) => ([ax1, az1], [ax0, az1], [wx + 1.0, wz + 1.0], [wx, wz + 1.0], [0.0, 0.0, 1.0], (1, 0), (-1, 0)),
+                    _ => ([ax0, az0], [ax1, az0], [wx, wz], [wx + 1.0, wz], [0.0, 0.0, -1.0], (-1, 0), (1, 0)),
                 };
-                quad(
-                    [[e0[0], nh_top, e0[1]], [e1[0], nh_top, e1[1]], [e1[0], top, e1[1]], [e0[0], top, e0[1]]],
-                    n,
-                    wc,
+                // Chamfer (rounded lip): boundary@cy (dirt) → inset top@top (grass, matches the top
+                // quad colour). Per-vertex normals roll from near-UP at the top edge (blends into
+                // the flat top) to OUT+up at the base (blends into the wall), so the single facet
+                // shades as a smooth rounded lip instead of a flat-lit bevel.
+                let cn_top = nrm3([n[0] * 0.35, 1.0, n[2] * 0.35]);
+                let cn_bot = nrm3([n[0], 0.5, n[2]]);
+                quadn(
+                    [[b0[0], cy, b0[1]], [b1[0], cy, b1[1]], [i1[0], top, i1[1]], [i0[0], top, i0[1]]],
+                    [cn_bot, cn_bot, cn_top, cn_top],
+                    [wall_top, wall_top, cw(i1[0], i1[1]), cw(i0[0], i0[1])],
                     &mut indices, &mut positions, &mut normals, &mut colors,
                 );
+                // Vertical wall: boundary@nh → boundary@cy, on the tile boundary (no intrusion).
+                // Its top normal matches the chamfer base (`cn_bot`) so the lip→wall seam is smooth.
+                let wn_bot = nrm3([n[0], 0.12, n[2]]);
+                quadn(
+                    [[b0[0], nh, b0[1]], [b1[0], nh, b1[1]], [b1[0], cy, b1[1]], [b0[0], cy, b0[1]]],
+                    [wn_bot, wn_bot, cn_bot, cn_bot],
+                    [wall_bot, wall_bot, wall_top, wall_top],
+                    &mut indices, &mut positions, &mut normals, &mut colors,
+                );
+                // End-cap: where the wall ENDS into flat same-height ground (the perpendicular
+                // neighbour is NOT walled), the chamfer has dipped its lip to `cy` but that
+                // neighbour's top is still at `top` → a triangular notch (the "corner hole"). At a
+                // CONVEX corner the perpendicular IS walled and the two chamfers self-close, so we
+                // only cap the wall-end case. Triangle: inset-top corner, boundary-top corner,
+                // boundary-cy corner — fills the dip up to the neighbour's top level.
+                for (ik, bk, pk) in [(i0, b0, p0), (i1, b1, p1)] {
+                    let m_top = nb_top(pk.0, pk.1);
+                    if top > m_top + 1e-4 {
+                        continue; // convex corner — the two chamfers self-close
+                    }
+                    // If the perpendicular neighbour is the SAME height AND CONTINUES this wall
+                    // (it's higher than its own neighbour in our wall direction), its chamfer joins
+                    // ours seamlessly — capping there would leave a triangular FIN poking up above
+                    // the lip. Only cap a true wall-END, or a concave corner against a higher
+                    // neighbour (m_top > top).
+                    if (m_top - top).abs() < 1e-4 && m_top > nb_top(pk.0 + dx, pk.1 + dz) + 1e-4 {
+                        continue;
+                    }
+                    let cap_n = nrm3([n[0] + pk.0 as f32, 0.6, n[2] + pk.1 as f32]);
+                    tri(
+                        [[ik[0], top, ik[1]], [bk[0], top, bk[1]], [bk[0], cy, bk[1]]],
+                        cap_n,
+                        [cw(ik[0], ik[1]), cw(bk[0], bk[1]), wall_top],
+                        &mut indices, &mut positions, &mut normals, &mut colors,
+                    );
+                }
             }
         }
     }

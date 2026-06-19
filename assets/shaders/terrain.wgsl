@@ -80,6 +80,16 @@ fn terrain_h(p: vec2<f32>) -> f32 {
     return h;
 }
 
+// Rock/erosion relief for the terrace WALLS, sampled in the face plane: `along` is the
+// horizontal tangent down the wall (world X for Z-facing walls, world Z for X-facing) and
+// `wy` is world Y. Features run VERTICALLY (erosion runnels): higher frequency along the
+// horizontal axis than the vertical one, so the grooves streak top-to-bottom — the look that
+// is NATURAL on a cliff (and the exact streak artifact we banned on flat ground).
+fn rock_h(along: f32, wy: f32) -> f32 {
+    return ter_noise(vec2<f32>(along * 2.2, wy * 0.7)) * 0.6
+         + ter_noise(vec2<f32>(along * 5.0, wy * 1.6)) * 0.4;
+}
+
 // Lightly de-tiled detail-texture sample. The detail image is a Repeat texture sampled at
 // `wp * scale`, wrapping every `1/scale` world units (~5.6u). Now that the texture is fine
 // ISOTROPIC grain (no broad blobs, no directional streaks — see `terrain::detail_image`),
@@ -174,7 +184,33 @@ fn fragment(
         let e = 0.18;
         let hx = terrain_h(wp + vec2<f32>(e, 0.0)) - terrain_h(wp - vec2<f32>(e, 0.0));
         let hz = terrain_h(wp + vec2<f32>(0.0, e)) - terrain_h(wp - vec2<f32>(0.0, e));
-        pbr_input.N = normalize(gn + vec3<f32>(-hx, 0.0, -hz) * bump * topw);
+        var n2 = normalize(gn + vec3<f32>(-hx, 0.0, -hz) * bump * topw);
+
+        // Side-face rock relief on the terrace WALLS. The top relief above is an XZ height
+        // field — meaningless across a near-vertical face (XZ barely moves down a wall), so
+        // walls got nothing and read as flat painted blocks. Give them their own relief in
+        // the face plane (horizontal tangent + world Y) so the bevelled/sloped terrace faces
+        // read as eroded rock/dirt. `sidew` is 1 on walls, 0 on tops; with `bump` it's free
+        // on Low. Composes on top of `n2` so the bevel keeps a touch of the top relief.
+        let sidew = 1.0 - smoothstep(0.30, 0.72, gn.y);
+        if sidew > 0.001 {
+            let wy = in.world_position.y;
+            var along = wp.x;                  // Z-facing wall runs along world X
+            var tang = vec3<f32>(1.0, 0.0, 0.0);
+            if abs(gn.x) > abs(gn.z) {
+                along = wp.y;                  // X-facing wall runs along world Z (wp = world.xz)
+                tang = vec3<f32>(0.0, 0.0, 1.0);
+            }
+            let e2 = 0.18;
+            let dha = rock_h(along + e2, wy) - rock_h(along - e2, wy);
+            let dhy = rock_h(along, wy + e2) - rock_h(along, wy - e2);
+            n2 = normalize(n2 - (tang * dha + vec3<f32>(0.0, 1.0, 0.0) * dhy) * bump * 0.7 * sidew);
+            // Subtle crevice darkening so the relief reads in albedo too, not only in shading.
+            let crev = rock_h(along, wy);
+            let dk = mix(1.0, 0.82 + crev * 0.30, sidew);
+            pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * dk, pbr_input.material.base_color.a);
+        }
+        pbr_input.N = n2;
     }
 
     // Ultra grass sheen: drop roughness a touch on green ground so the sun throws a lush,
