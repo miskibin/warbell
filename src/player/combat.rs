@@ -15,7 +15,7 @@ use crate::orks::Ork;
 use crate::wildlife::Animal;
 
 use super::camera::OrbitCam;
-use super::{Hero, HeroHealth, HeroLimb, HeroPart, PlayMode, PlayerRes};
+use super::{Hero, HeroHealth, PlayMode, PlayerRes};
 
 pub const ATTACK_DURATION: f32 = 0.45;
 const ATTACK_RANGE: f32 = 1.8;
@@ -810,7 +810,7 @@ pub fn hero_blade_trail(
     mut commands: Commands,
     mut last_tip: Local<Option<Vec3>>,
     hero_q: Query<&Hero>,
-    parts: Query<(&HeroPart, &GlobalTransform)>,
+    weapon_q: Query<&GlobalTransform, With<super::HeroWeapon>>,
 ) {
     let Some(fx) = fx else { return };
     let Ok(hero) = hero_q.single() else { return };
@@ -819,8 +819,8 @@ pub fn hero_blade_trail(
         *last_tip = None; // only across the fast sweep, where the blade actually whips through
         return;
     }
-    let Some((_, gt)) = parts.iter().find(|(p, _)| p.limb == HeroLimb::ArmR) else { return };
-    let tip = gt.transform_point(Vec3::new(0.0, -0.5, 0.96));
+    let Ok(gt) = weapon_q.single() else { return };
+    let tip = gt.transform_point(super::model::WEAPON_TIP_LOCAL);
     let prev = last_tip.replace(tip);
     let Some(prev) = prev else { return }; // first sweep frame: just record the anchor
     let seg = tip - prev;

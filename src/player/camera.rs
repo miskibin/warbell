@@ -13,7 +13,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use crate::controls::FlyCam;
 use crate::game_state::{AppState, Modal};
 
-use super::{Hero, HeroLimb, HeroPart, PlayMode};
+use super::{Hero, PlayMode};
 
 /// The "is the cursor interactive / where should the camera frame" inputs, bundled to keep
 /// `player_camera` under Bevy's 16-param system cap. Build mode flips the camera up over the town
@@ -149,21 +149,11 @@ pub fn toggle_first_person(
 /// head + torso + legs but KEEP the arms, the shield, and the weapon (nested under the sword arm) —
 /// so a swing shows your sword and a block shows your shield. Restores everything in third person.
 /// Driven off `fp.blend` (the eased toggle), one frame behind the camera — imperceptible.
-pub fn fp_body_visibility(
-    fp: Res<FirstPerson>,
-    hero_q: Query<&Children, With<Hero>>,
-    mut vis_q: Query<(&mut Visibility, Option<&HeroPart>)>,
-) {
+pub fn fp_body_visibility(fp: Res<FirstPerson>, mut vis_q: Query<(&mut Visibility, &super::HeroMesh)>) {
     let fp_on = fp.blend > 0.5;
-    let Ok(children) = hero_q.single() else { return };
-    for &c in children {
-        let Ok((mut vis, part)) = vis_q.get_mut(c) else { continue };
-        // Keep the arms + shield (the weapon inherits the sword arm); drop the torso/head/legs.
-        let keep = matches!(
-            part.map(|p| p.limb),
-            Some(HeroLimb::ArmR | HeroLimb::ArmL | HeroLimb::Shield)
-        );
-        let want = if fp_on && !keep { Visibility::Hidden } else { Visibility::Inherited };
+    for (mut vis, mesh) in &mut vis_q {
+        // Keep the arm/shield/sword meshes (`fp_keep`); drop the head/torso/hips/legs.
+        let want = if fp_on && !mesh.fp_keep { Visibility::Hidden } else { Visibility::Inherited };
         if *vis != want {
             *vis = want;
         }

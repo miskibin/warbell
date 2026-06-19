@@ -29,27 +29,44 @@ use bevy::prelude::*;
 use crate::inventory::Inventory;
 
 /// Root scale applied to the TS-unit knight so it stands the same height as the orks
-/// (`orks::BASE_SCALE` is 0.7; the knight authors ~1.25u tall → ~0.87u on the ground).
-pub const HERO_SCALE: f32 = 0.612;
+/// (`orks::BASE_SCALE` is 0.7; the knight authors ~1.85u tall → ~0.93u on the ground).
+pub const HERO_SCALE: f32 = 0.5;
 
-/// Which articulated limb a hero child mesh is, so [`anim`] can pose it.
+/// A rig **joint** — a transform-only entity the animator ([`anim`]) poses. Each joint's mesh is a
+/// separate child *leaf* entity ([`HeroMesh`]), so first-person can hide the body meshes without
+/// hiding the arm joints that hang beneath the torso. (Hands / neck / feet are unanimated, so they
+/// carry no `HeroPart`.)
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum HeroLimb {
-    LegR,
-    LegL,
-    ArmR,
-    ArmL,
+pub enum Joint {
+    Hips,
+    Torso,
     Head,
+    Plume,
+    ShoulderL,
+    ShoulderR,
+    ElbowL,
+    ElbowR,
+    HipL,
+    HipR,
+    KneeL,
+    KneeR,
     Shield,
 }
 
 #[derive(Component)]
 pub struct HeroPart {
-    pub limb: HeroLimb,
+    pub joint: Joint,
 }
 
-/// The held weapon mesh — a child of the `ArmR` entity (so it swings with the arm) that can be
-/// toggled `Visibility::Hidden` for weapon-free staged gestures (the Director's "hide weapon").
+/// A body **mesh leaf** (child of a joint). `fp_keep` meshes — the arms, shield and sword — stay
+/// visible in first-person; the rest (head/plume/torso/hips/legs) are hidden by [`camera`].
+#[derive(Component)]
+pub struct HeroMesh {
+    pub fp_keep: bool,
+}
+
+/// The held weapon mesh leaf (under the right hand). Toggled `Visibility::Hidden` for weapon-free
+/// staged gestures (the Director's "hide weapon"), and read by `combat::hero_blade_trail`.
 #[derive(Component)]
 pub struct HeroWeapon;
 
@@ -305,42 +322,97 @@ fn spawn_hero(
     }
 }
 
-/// Spawn the torso + articulated limb meshes as children of the hero `root`, all sharing the
-/// hero material. Shared by [`spawn_hero`] and [`reskin_hero`] so an equip swap rebuilds the
-/// exact same child layout.
+/// Spawn a joint entity (transform-only, optionally `HeroPart`-tagged for the animator), parented
+/// under `parent`, returning it so children can nest beneath. An optional mesh `leaf` is spawned as
+/// a separate child entity (so first-person can toggle body meshes without hiding child joints).
+struct Leaf {
+    mesh: Handle<Mesh>,
+    fp_keep: bool,
+    weapon: bool,
+}
+fn spawn_joint(
+    commands: &mut Commands,
+    parent: Entity,
+    tag: Option<Joint>,
+    xf: Transform,
+    mat: &Handle<crate::creature::CreatureMaterial>,
+    leaf: Option<Leaf>,
+) -> Entity {
+    let mut ec = commands.spawn((xf, Visibility::Visible));
+    if let Some(j) = tag {
+        ec.insert(HeroPart { joint: j });
+    }
+    let joint = ec.id();
+    commands.entity(parent).add_child(joint);
+    if let Some(l) = leaf {
+        let mut le = commands.spawn((
+            Mesh3d(l.mesh),
+            MeshMaterial3d(mat.clone()),
+            Transform::default(),
+            HeroMesh { fp_keep: l.fp_keep },
+        ));
+        if l.weapon {
+            le.insert(HeroWeapon);
+        }
+        let leaf_e = le.id();
+        commands.entity(joint).add_child(leaf_e);
+    }
+    joint
+}
+
+/// Spawn the full articulated knight (hips → torso → neck → head + plume; shoulder → elbow → hand
+/// + weapon/shield; hip → knee → foot) as children of the hero `root`, all sharing the hero
+/// material. Shared by [`spawn_hero`] and [`reskin_hero`] so an equip swap rebuilds the same tree.
 fn spawn_hero_meshes(
     commands: &mut Commands,
     root: Entity,
-    spec: model::KnightSpec,
+    m: model::KnightMeshes,
     meshes: &mut Assets<Mesh>,
     mat: &Handle<crate::creature::CreatureMaterial>,
 ) {
-    let model::KnightSpec { torso, parts, weapon, weapon_xf } = spec;
-    let torso = meshes.add(torso);
-    let weapon = meshes.add(weapon);
-    commands.entity(root).with_children(|p| {
-        p.spawn((Mesh3d(torso), MeshMaterial3d(mat.clone()), Transform::default()));
-        for part in parts {
-            let is_arm_r = part.limb == HeroLimb::ArmR;
-            let mut ec = p.spawn((
-                Mesh3d(meshes.add(part.mesh)),
-                MeshMaterial3d(mat.clone()),
-                Transform { translation: part.pivot, rotation: part.rest, ..default() },
-                HeroPart { limb: part.limb },
-            ));
-            // Nest the weapon under the sword arm so it inherits the swing but can be hidden.
-            if is_arm_r {
-                ec.with_children(|a| {
-                    a.spawn((
-                        Mesh3d(weapon.clone()),
-                        MeshMaterial3d(mat.clone()),
-                        weapon_xf,
-                        HeroWeapon,
-                    ));
-                });
-            }
-        }
-    });
+    use Joint::*;
+    let p = |t: Vec3| Transform::from_translation(t);
+    let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, weapon: false });
+    let arm = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: true, weapon: false });
+
+    // A −0.06 rig offset drops the authored feet (bottom ~+0.06) onto the root's ground plane.
+    let rig = commands.spawn((Transform::from_xyz(0.0, -0.06, 0.0), Visibility::Visible)).id();
+    commands.entity(root).add_child(rig);
+
+    // Spine.
+    let hips = spawn_joint(commands, rig, Some(Hips), p(Vec3::new(0.0, 0.95, 0.0)), mat, body(meshes.add(m.hips)));
+    let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, 0.15, 0.0)), mat, body(meshes.add(m.torso)));
+    let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, 0.35, 0.0)), mat, body(meshes.add(m.neck)));
+    let head = spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, 0.08, 0.0)), mat, body(meshes.add(m.head)));
+    spawn_joint(commands, head, Some(Plume), p(Vec3::new(0.0, 0.14, -0.08)), mat, body(meshes.add(m.plume)));
+
+    // Left arm + lion-emblem heater shield (its own pivot on the forearm).
+    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-0.35, 0.25, 0.0)), mat, arm(meshes.add(m.shoulder_l)));
+    let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, -0.28, 0.0)), mat, arm(meshes.add(m.elbow_l)));
+    let hand_l = spawn_joint(commands, el_l, None, p(Vec3::new(0.0, -0.25, 0.0)), mat, None);
+    let shield = spawn_joint(
+        commands,
+        hand_l,
+        Some(Shield),
+        Transform { translation: Vec3::new(-0.13, 0.03, 0.08), rotation: Quat::from_euler(EulerRot::XYZ, 0.2, -0.6, 0.15), scale: Vec3::splat(0.92) },
+        mat,
+        arm(meshes.add(m.shield)),
+    );
+    spawn_joint(commands, shield, None, p(Vec3::new(0.0, -0.03, 0.033)), mat, arm(meshes.add(m.lion)));
+
+    // Right arm + held weapon.
+    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(0.35, 0.25, 0.0)), mat, arm(meshes.add(m.shoulder_r)));
+    let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, -0.28, 0.0)), mat, arm(meshes.add(m.elbow_r)));
+    let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, -0.25, 0.0)), mat, None);
+    spawn_joint(commands, hand_r, None, m.weapon_xf, mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, weapon: true }));
+
+    // Legs.
+    let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-0.16, -0.05, 0.0)), mat, body(meshes.add(m.hip_l)));
+    let knee_l = spawn_joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.knee_l)));
+    spawn_joint(commands, knee_l, None, p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.foot_l)));
+    let hip_r = spawn_joint(commands, hips, Some(HipR), p(Vec3::new(0.16, -0.05, 0.0)), mat, body(meshes.add(m.hip_r)));
+    let knee_r = spawn_joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.knee_r)));
+    spawn_joint(commands, knee_r, None, p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.foot_r)));
 }
 
 /// Rebuild the hero's limb meshes when the equipped weapon/armor changes (the satchel equips

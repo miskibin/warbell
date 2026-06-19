@@ -1,22 +1,25 @@
-//! Hero limb animation — walk/idle leg + arm swing, idle sway, head scan, the attack-swing
-//! arm override, and the shield raise while blocking. Ported from the animation drivers in
-//! `Character.tsx`. The right arm carries the baked sword, so swinging it swings the blade.
+//! Hero limb animation for the articulated knight rig. The walk/idle base pose is blended by the
+//! hero's `moving_amt` (legs straighten at rest) with the stride driven by `walk_phase` (so the
+//! gait stays locked to actual movement speed); on top sit the combat overrides — the attack slash
+//! and the shield-block brace on the two-bone arms — plus the Director's staged gestures, the
+//! first-person viewmodel raise, and a slack keel-over on death. Ported/adapted from the user's
+//! three.js `updateKnightAnimation` (idle/walk) with game-authored attack/block.
 
 use bevy::prelude::*;
 
 use super::combat::ATTACK_DURATION;
-use super::model::{shield_block_rot, shield_rest_rot, SHIELD_BLOCK_POS, SHIELD_REST_POS};
-use super::{Hero, HeroHealth, HeroLimb, HeroPart};
+use super::{Hero, HeroHealth, HeroPart, Joint};
 
-/// Forward lean of the resting sword arm (negative X) so the blade is presented in front.
-const ARM_FORWARD: f32 = 0.5;
+/// Shield rest rotation under the left hand (matches its spawn pose); block swings it up to brace.
+fn shield_rest() -> Quat {
+    Quat::from_euler(EulerRot::XYZ, 0.2, -0.6, 0.15)
+}
+fn shield_block() -> Quat {
+    Quat::from_euler(EulerRot::XYZ, 0.15, -0.15, 0.35)
+}
 
-/// First-person **viewmodel** hold for the sword arm: raised + canted in so the blade rides up
-/// into the lower-right of the lens (the world rest pose drops the hand to ~0.3u, well below the
-/// eye line, so the weapon would otherwise be off-frame). Blended in by `FirstPerson::blend`; the
-/// swing/gesture overrides still win, so an attack reads normally in FP.
-fn fp_arm_pose() -> Quat {
-    Quat::from_euler(EulerRot::XYZ, -0.8, 0.18, 0.05)
+fn e3(x: f32, y: f32, z: f32) -> Quat {
+    Quat::from_euler(EulerRot::XYZ, x, y, z)
 }
 
 pub fn hero_anim(
@@ -24,155 +27,214 @@ pub fn hero_anim(
     player: Res<super::PlayerRes>,
     dir: Res<crate::cinematic::DirectorState>,
     fp: Res<super::FirstPerson>,
-    hero_q: Query<(&Hero, &HeroHealth, &Children)>,
+    hero_q: Query<(&Hero, &HeroHealth)>,
     mut parts: Query<(&HeroPart, &mut Transform)>,
 ) {
-    let Ok((hero, hh, children)) = hero_q.single() else { return };
-    // Slain: let the limbs go slack (no walk/idle swing) while the body keels over.
+    let Ok((hero, hh)) = hero_q.single() else { return };
+
+    // Slain: let the limbs go slack while the body keels over (root rotation owned by health.rs).
     if !player.0.is_alive() {
-        for &child in children {
-            let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
-            tf.rotation = match part.limb {
-                HeroLimb::ArmR => Quat::from_rotation_x(-ARM_FORWARD * 0.5),
+        for (part, mut tf) in &mut parts {
+            tf.rotation = match part.joint {
+                Joint::Hips => {
+                    tf.translation = Vec3::new(0.0, 0.95, 0.0);
+                    Quat::IDENTITY
+                }
+                Joint::ShoulderL => e3(0.2, 0.0, -0.2),
+                Joint::ShoulderR => e3(0.2, 0.0, 0.2),
+                Joint::ElbowL | Joint::ElbowR => Quat::from_rotation_x(-0.3),
+                Joint::Shield => shield_rest(),
                 _ => Quat::IDENTITY,
             };
         }
         return;
     }
+
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
-    let m = hero.moving_amt;
     let wp = hero.walk_phase;
-    let blocking = hh.blocking;
-
-    let leg_swing = wp.sin() * 0.7 * m;
-    let idle_sway = (t * 1.1).sin() * 0.08 * (1.0 - m);
-    let arm_swing = (wp + std::f32::consts::PI).sin() * 0.55 * m;
-    let head_scan = (t * 0.4).sin() * 0.18 * (1.0 - m);
-
-    // Active swing phase (0..1), if mid-attack.
+    let m = hero.moving_amt;
     let attack_p = hero.attacking.then(|| (hero.attack_t / ATTACK_DURATION).clamp(0.0, 1.0));
-
-    // Staged trailer gesture (F1 Director): when set, it overrides the sword/shield arms with a
-    // posed/looping animation the normal game never plays. `(armR, armL)` — `None` per arm = keep
-    // the default animation for that arm.
-    let gesture_arms = dir.gesture.map(|g| gesture_pose(g, t - dir.gesture_start));
-
-    // Frame-rate-independent damp toward the shield's target pose (~0.25s settle).
+    let gesture = dir.gesture.map(|g| gesture_pose(g, t - dir.gesture_start));
+    let fp_amt = fp.blend.clamp(0.0, 1.0);
+    // Frame-rate-independent damp (~0.25s settle) for the block/shield transitions.
     let damp = 1.0 - 0.004_f32.powf(dt);
 
-    // First-person viewmodel amount (eased): raises the sword arm into the lens. Coupled to the
-    // camera's FP `blend` so the arm lifts in lock-step with the dolly-in (no pop on toggle).
-    let fp_amt = fp.blend.clamp(0.0, 1.0);
+    for (part, mut tf) in &mut parts {
+        let (base_t, base_r) = base_pose(part.joint, t, wp, m);
+        if let Some(p) = base_t {
+            tf.translation = p;
+        }
 
-    for &child in children {
-        let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
-        match part.limb {
-            HeroLimb::LegR => tf.rotation = Quat::from_rotation_x(leg_swing),
-            HeroLimb::LegL => tf.rotation = Quat::from_rotation_x(-leg_swing),
-            HeroLimb::ArmR => {
-                // Gesture override wins; else mid-swing → the slash (begins/ends at the forward
-                // rest pose, so no pop); else the arm rests forward + walk swing + idle sway.
-                tf.rotation = match gesture_arms {
-                    Some((Some(q), _)) => q,
+        let rot = match part.joint {
+            // Right arm (sword): gesture › attack › first-person viewmodel › locomotion.
+            Joint::ShoulderR | Joint::ElbowR => {
+                let elbow = part.joint == Joint::ElbowR;
+                match gesture {
+                    Some((Some((sh, el)), _)) => {
+                        if elbow {
+                            el
+                        } else {
+                            sh
+                        }
+                    }
                     _ => match attack_p {
-                        Some(p) => attack_arm_quat(p),
-                        None => {
-                            // Rest/walk pose, blended toward the FP viewmodel hold while in FP.
-                            let rest = Quat::from_rotation_x(arm_swing + idle_sway - ARM_FORWARD);
-                            if fp_amt > 0.0 {
-                                rest.slerp(fp_arm_pose(), fp_amt)
+                        Some(p) => {
+                            let (sh, el) = attack_arm(p, base_r, elbow_rest(Joint::ElbowR, t, wp, m));
+                            if elbow {
+                                el
                             } else {
-                                rest
+                                sh
                             }
                         }
+                        None if fp_amt > 0.0 => {
+                            let target = if elbow { Quat::from_rotation_x(-1.0) } else { e3(-0.9, 0.2, 0.1) };
+                            base_r.slerp(target, fp_amt)
+                        }
+                        None => base_r,
                     },
-                };
+                }
             }
-            HeroLimb::ArmL => {
-                tf.rotation = match gesture_arms {
-                    Some((_, Some(q))) => q,
-                    _ if blocking => {
-                        // Raise the shield arm across the front to brace behind the plate.
-                        Quat::from_euler(EulerRot::XYZ, -1.25, 0.0, 0.4)
+            // Left arm (shield hand): gesture › block brace › locomotion.
+            Joint::ShoulderL | Joint::ElbowL => {
+                let elbow = part.joint == Joint::ElbowL;
+                match gesture {
+                    Some((_, Some((sh, el)))) => {
+                        if elbow {
+                            el
+                        } else {
+                            sh
+                        }
                     }
-                    _ => Quat::from_rotation_x(-arm_swing - idle_sway),
-                };
+                    _ if hh.blocking => {
+                        let target = if elbow { Quat::from_rotation_x(-1.3) } else { e3(-1.2, 0.4, -0.4) };
+                        tf.rotation.slerp(target, damp)
+                    }
+                    _ => base_r,
+                }
             }
-            HeroLimb::Head => {
-                // Idle breathing pitch (gated off while walking — the gait has its own bob).
-                let (breath, _) = crate::creature_anim::idle_micro(t);
-                tf.rotation = Quat::from_euler(EulerRot::XYZ, breath * (1.0 - m), head_scan, 0.0);
+            // Shield (own pivot under the hand): braces up while blocking, else rests.
+            Joint::Shield => {
+                let target = if hh.blocking { shield_block() } else { shield_rest() };
+                tf.rotation.slerp(target, damp)
             }
-            HeroLimb::Shield => {
-                let (tp, tr) = if blocking {
-                    (SHIELD_BLOCK_POS, shield_block_rot())
-                } else {
-                    (SHIELD_REST_POS, shield_rest_rot())
-                };
-                tf.translation = tf.translation.lerp(tp, damp);
-                tf.rotation = tf.rotation.slerp(tr, damp);
-            }
-        }
+            _ => base_r,
+        };
+        tf.rotation = rot;
     }
 }
 
-/// Staged-gesture arm poses (Director). Returns `(right_arm, left_arm)` rotations; `None` per arm
-/// means "leave that arm on its normal animation". `ph` is seconds since the gesture began (loop
-/// phase). The sword arm is `ArmR`, the shield arm `ArmL`; on this rig a more-negative X pitches
-/// the arm up/forward, +Z splays it outward. Rough by design — eyeball + nudge against a capture.
-fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<Quat>, Option<Quat>) {
-    use crate::cinematic::HeroGesture::*;
-    let e = |x: f32, y: f32, z: f32| Quat::from_euler(EulerRot::XYZ, x, y, z);
-    // Ease-in raise (0→1 over ~0.45s) so a gesture lifts smoothly into place rather than snapping.
-    let raise = (ph / 0.45).clamp(0.0, 1.0);
-    let ease = raise * raise * (3.0 - 2.0 * raise); // smoothstep
-    match g {
-        // Arm raised overhead, hand flicking side to side (weapon auto-hidden for this one).
-        Wave => (Some(e(-2.55 * ease, 0.0, 0.20 + (ph * 5.0).sin() * 0.45 * ease)), None),
-        // Sword arm snapped up in a blade salute (weapon kept — it suits the pose).
-        Salute => (Some(e(-2.6 * ease, 0.0, 0.85 * ease)), None),
-        // Arm thrust out horizontally, commanding (weapon kept — points the blade).
-        Point => (Some(e(-1.6 * ease, 0.0, 0.05)), None),
-        // Both forearms folded across the chest — the "supervise" idle.
-        ArmsCrossed => (
-            Some(e(-1.15 * ease, 0.0, 0.85 * ease)),
-            Some(e(-1.15 * ease, 0.0, -0.85 * ease)),
+/// The locomotion base pose for a joint: idle (breathing, `t`) blended toward walk (stride keyed to
+/// `wp = walk_phase`) by `m = moving_amt`. `Some(translation)` only for the hips (the bob/sway);
+/// every other joint keeps its spawn translation and only rotates.
+fn base_pose(j: Joint, t: f32, wp: f32, m: f32) -> (Option<Vec3>, Quat) {
+    let (it, ir) = idle_pose(j, t);
+    let (wt, wr) = walk_pose(j, wp);
+    let trans = match (it, wt) {
+        (Some(a), Some(b)) => Some(a.lerp(b, m)),
+        _ => None,
+    };
+    (trans, ir.slerp(wr, m))
+}
+
+/// Right elbow's *locomotion* rotation (used so the attack swing eases back to the live rest).
+fn elbow_rest(j: Joint, t: f32, wp: f32, m: f32) -> Quat {
+    base_pose(j, t, wp, m).1
+}
+
+fn idle_pose(j: Joint, t: f32) -> (Option<Vec3>, Quat) {
+    let breath = (t * 2.2).sin();
+    let sway = (t * 1.1).sin();
+    let cos11 = (t * 1.1).cos();
+    match j {
+        Joint::Hips => (Some(Vec3::new(0.0, 0.95 + breath * 0.015, 0.0)), Quat::from_rotation_y(sway * 0.03)),
+        Joint::Torso => (None, e3(breath * 0.01, -sway * 0.02, 0.0)),
+        Joint::Head => (None, e3(-breath * 0.015, 0.0, sway * 0.01)),
+        Joint::Plume => (None, e3(0.0, (t * 1.5).cos() * 0.06, breath * 0.05)),
+        Joint::ShoulderL => (None, e3(breath * 0.05 + 0.1, 0.0, -0.15 + cos11 * 0.02)),
+        Joint::ElbowL => (None, Quat::from_rotation_x(-0.5 - breath * 0.03)),
+        Joint::ShoulderR => (None, e3(breath * 0.05 + 0.12, 0.0, 0.15 - cos11 * 0.02)),
+        Joint::ElbowR => (None, Quat::from_rotation_x(-0.4 - breath * 0.02)),
+        Joint::Shield => (None, shield_rest()),
+        Joint::HipL | Joint::HipR | Joint::KneeL | Joint::KneeR => (None, Quat::IDENTITY),
+    }
+}
+
+fn walk_pose(j: Joint, wp: f32) -> (Option<Vec3>, Quat) {
+    let stride = wp.sin();
+    let torso_y = -wp.sin() * 0.08;
+    match j {
+        Joint::Hips => (
+            Some(Vec3::new(wp.sin() * 0.02, 0.93 + (wp * 2.0).sin().abs() * 0.04, 0.0)),
+            e3(0.0, wp.sin() * 0.12, wp.sin() * 0.03),
         ),
-        // Both arms thrown overhead, a small triumphant pump (weapon auto-hidden).
+        Joint::Torso => (None, e3(0.05 + (wp * 2.0).sin() * 0.02, torso_y, 0.0)),
+        Joint::Head => (None, e3(-0.02 - (wp * 2.0).sin() * 0.01, -torso_y * 1.1, 0.0)),
+        Joint::Plume => (None, e3(0.1 + (wp * 2.0).sin() * 0.15, 0.0, wp.cos() * 0.08)),
+        Joint::HipL => (None, Quat::from_rotation_x(stride * 0.5)),
+        Joint::KneeL => (None, Quat::from_rotation_x(if stride < 0.0 { -stride * 0.8 } else { -stride * 0.15 })),
+        Joint::HipR => (None, Quat::from_rotation_x(-stride * 0.5)),
+        Joint::KneeR => (None, Quat::from_rotation_x(if stride > 0.0 { stride * 0.8 } else { stride * 0.15 })),
+        Joint::ShoulderL => (None, e3(-stride * 0.35 + 0.1, 0.0, -0.1)),
+        Joint::ElbowL => (None, Quat::from_rotation_x(-0.6 - stride.abs() * 0.3)),
+        Joint::ShoulderR => (None, e3(stride * 0.35 + 0.1, 0.0, 0.1)),
+        Joint::ElbowR => (None, Quat::from_rotation_x(-0.5 - stride.abs() * 0.3)),
+        Joint::Shield => (None, shield_rest()),
+    }
+}
+
+/// A diagonal overhead slash on the two-bone sword arm. Eased windup (0–0.35) raises and cocks the
+/// arm; a fast strike (0.35–0.6) sweeps it down/forward and extends the elbow; recovery (0.6–1)
+/// settles back to the live locomotion rest (`sh_rest`/`el_rest`) so the swing blends with no pop.
+fn attack_arm(p: f32, sh_rest: Quat, el_rest: Quat) -> (Quat, Quat) {
+    let cocked_sh = e3(-1.7, -0.3, 0.4);
+    let cocked_el = Quat::from_rotation_x(-1.7);
+    let strike_sh = e3(0.4, 0.6, -0.3);
+    let strike_el = Quat::from_rotation_x(-0.2);
+    if p < 0.35 {
+        let u = p / 0.35;
+        let e = u * u; // accelerate into the cocked top
+        (sh_rest.slerp(cocked_sh, e), el_rest.slerp(cocked_el, e))
+    } else if p < 0.6 {
+        let u = (p - 0.35) / 0.25;
+        let e = 1.0 - (1.0 - u) * (1.0 - u); // ease-out crack
+        (cocked_sh.slerp(strike_sh, e), cocked_el.slerp(strike_el, e))
+    } else {
+        let u = (p - 0.6) / 0.4;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        (strike_sh.slerp(sh_rest, e), strike_el.slerp(el_rest, e))
+    }
+}
+
+/// Staged-gesture arm poses (Director). Returns `(right, left)`, each `Some((shoulder, elbow))` or
+/// `None` to leave that arm on its normal animation. `ph` = seconds since the gesture began. Right
+/// is the sword arm, left the shield arm. Re-authored from the old single-bone gestures onto the
+/// two-bone rig. Rough by design — eyeball + nudge against a capture.
+fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<(Quat, Quat)>, Option<(Quat, Quat)>) {
+    use crate::cinematic::HeroGesture::*;
+    let raise = (ph / 0.45).clamp(0.0, 1.0);
+    let e = raise * raise * (3.0 - 2.0 * raise); // smoothstep
+    match g {
+        // Arm raised overhead, hand flicking side to side (weapon auto-hidden by the Director).
+        Wave => (Some((e3(-2.55 * e, 0.0, 0.20 + (ph * 5.0).sin() * 0.45 * e), Quat::from_rotation_x(-0.5))), None),
+        Salute => (Some((e3(-2.6 * e, 0.0, 0.85 * e), Quat::from_rotation_x(-0.2))), None),
+        Point => (Some((e3(-1.6 * e, 0.0, 0.05), Quat::from_rotation_x(-0.1))), None),
+        ArmsCrossed => (
+            Some((e3(-1.15 * e, 0.0, 0.85 * e), Quat::from_rotation_x(-1.4))),
+            Some((e3(-1.15 * e, 0.0, -0.85 * e), Quat::from_rotation_x(-1.4))),
+        ),
         Cheer => {
             let pump = (ph * 4.0).sin() * 0.15;
             (
-                Some(e((-2.75 + pump) * ease, 0.0, -0.35 * ease)),
-                Some(e((-2.75 + pump) * ease, 0.0, 0.35 * ease)),
+                Some((e3((-2.75 + pump) * e, 0.0, -0.35 * e), Quat::from_rotation_x(-0.3))),
+                Some((e3((-2.75 + pump) * e, 0.0, 0.35 * e), Quat::from_rotation_x(-0.3))),
             )
         }
-        // A repeating chop/hammer swing (reuses the attack arc on a loop) — "at work".
-        // `max(0)`: during the director PRE_ROLL the phase is negative (a negative `fract()`
-        // would walk the swing backwards) — hold the rest pose instead.
-        Work => (Some(attack_arm_quat((ph.max(0.0) * 1.3).fract())), None),
+        // Repeating chop (reuses the attack arc on a loop) — "at work". `max(0)`: the director
+        // PRE_ROLL phase is negative; hold the start of the swing rather than walking it backwards.
+        Work => {
+            let (sh, el) = attack_arm((ph.max(0.0) * 1.3).fract(), e3(0.12, 0.0, 0.1), Quat::from_rotation_x(-0.5));
+            (Some((sh, el)), None)
+        }
     }
-}
-
-/// A horizontal sword slash with snap. Ease-IN windup + raise (0–0.25) for anticipation, an
-/// ease-OUT sweep across the front (0.25–0.55) so the blade *cracks* through at the hit phase
-/// then decelerates, recover (0.55–1). Endpoints equal the forward rest pose `(x=-ARM_FORWARD,
-/// y=0)` so the swing blends in and out with no pop.
-fn attack_arm_quat(p: f32) -> Quat {
-    const LIFT: f32 = 0.7; // extra raise during the swing (bigger arc than the old 0.55)
-    const SWEEP: f32 = 1.45; // half the horizontal arc (was 1.25)
-    let (x, y) = if p < 0.25 {
-        let u = p / 0.25;
-        let e = u * u; // accelerate into the wound-up top
-        (-ARM_FORWARD - LIFT * e, SWEEP * e)
-    } else if p < 0.55 {
-        let u = (p - 0.25) / 0.30;
-        let e = 1.0 - (1.0 - u) * (1.0 - u); // ease-out: fast crack, then settle
-        (-(ARM_FORWARD + LIFT), SWEEP - 2.0 * SWEEP * e)
-    } else {
-        let u = (p - 0.55) / 0.45;
-        let e = 1.0 - (1.0 - u) * (1.0 - u);
-        (-(ARM_FORWARD + LIFT) + LIFT * e, -SWEEP * (1.0 - e))
-    };
-    Quat::from_euler(EulerRot::XYZ, x, y, 0.0)
 }

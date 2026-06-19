@@ -1,76 +1,52 @@
-//! **Knight hero model** — box-mesh humanoid ported 1:1 from the TS `Character.tsx` mesh
-//! tree (plate armour, visored helm, an iron sword baked into the right arm, a cross
-//! shield on its own pivot). Built exactly like `orks.rs` / `critters.rs`: each articulated
-//! part is ONE merged, flat-shaded, vertex-coloured `Mesh` against the shared white hero
-//! material; feet rest at `y = 0` so the root, placed on the ground, plants the knight.
+//! **Knight hero model** — a Bevy port of the user's procedural three.js "Low-Poly Knight Studio"
+//! (`knightBuilder.ts`): a finely-articulated knight (hips → torso → neck → head + helm plume;
+//! shoulder → elbow → hand; hip → knee → foot) in slate plate with bronze trim, a crimson crest
+//! plume, a gold rampant-lion heater shield, and the equipped weapon baked into the right hand.
 //!
-//! Authoring is in TS units (the TS root group is `scale 0.5`, knight ~1.25u tall before
-//! scale); the spawn applies `HERO_SCALE` so the knight stands the same height as the orks.
+//! This builds only the **meshes** (one merged, flat-shaded, vertex-coloured `Mesh` per joint,
+//! against the shared white creature material); [`super`] spawns the actual joint *hierarchy* of
+//! entities from them, and [`super::anim`] poses the joints. Authoring is in the TS units (the
+//! knight stands ~1.85u tall before scale); `HERO_SCALE` brings it down to the orks' height.
 
 use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
+use std::f32::consts::PI;
 
 use crate::creature::{surf, Surf};
 use crate::palette::lin;
 
-use super::HeroLimb;
-
-// ── Palette (sRGB hex, matches Character.tsx) ────────────────────────────────────────
-const ARMOR: u32 = 0xd6d8df;
-const ARMOR_LIGHT: u32 = 0xe6e8ed;
-const ARMOR_DARK: u32 = 0x9aa0aa;
-const VISOR: u32 = 0x1a1a22;
-const BELT: u32 = 0x3a2a1a;
-const BLADE: u32 = 0xc0c6d0;
+// ── Palette (the customizer's defaults + the held-weapon tints, sRGB hex) ─────────────
+const ARMOR: u32 = 0x3a3e4d; // primaryArmor (slate plate)
+const TRIM: u32 = 0xb58a6f; // trimColor (bronze) — hilt/buckle/throat/greave trim
+const PLUME: u32 = 0xb82424; // crimson crest
+const SHIELD_BASE: u32 = 0x2d2f36;
+const EMBLEM: u32 = 0xdbac42; // gold lion
+const GLOW: u32 = 0xffecb3; // eye orbs
+const SKIRT: u32 = 0x5a2b2c; // cloth: tassets, cape, arm/leg under-layers, shoulder sphere
+const BLADE: u32 = 0xc0c6d0; // default iron blade
 const HILT: u32 = 0x3a3a40;
-const GRIP: u32 = 0x5a3a22;
-const SHIELD_FACE: u32 = 0xa8b8d0;
-const SHIELD_RIM: u32 = 0x6a3a22;
-const SHIELD_EMBLEM: u32 = 0xd3b14c;
-const GOLD: u32 = 0xe8b84b; // Golden Blade gilding
-const AXE_STEEL: u32 = 0xaab0bc; // Battle Axe head
-const STONE: u32 = 0x8a8d92; // Stone Maul head
-const FROST: u32 = 0xaad2f0; // Frostfang greatsword (Bevy rim item, no TS mesh)
-const PLUME: u32 = 0xa03028; // crimson helm plume
-const CHAIN: u32 = 0x55585f; // chainmail skirt under the belt
+const GRIP: u32 = 0x4e3b31;
+const BELT: u32 = 0x3d2b20; // belt + pouch leather
+const DARK: u32 = 0x121213; // visor slit + breath holes
+const CORE: u32 = 0x3d3d3d; // sword ridge groove
+const GOLD: u32 = 0xe8b84b; // golden blade gilding
+const AXE_STEEL: u32 = 0xaab0bc;
+const STONE: u32 = 0x8a8d92;
+const FROST: u32 = 0xaad2f0;
 
-/// Shield rest pose (own pivot, decoupled from the left arm): slung on the left flank,
-/// decorated face out (−X). Block (M3) swings it across the front.
-pub const SHIELD_REST_POS: Vec3 = Vec3::new(-0.3, 0.62, 0.06);
-pub fn shield_rest_rot() -> Quat {
-    Quat::from_euler(EulerRot::XYZ, 0.04, -1.3, 0.05)
-}
-/// Block pose: shield swung across the front (face +Z), braced high.
-pub const SHIELD_BLOCK_POS: Vec3 = Vec3::new(-0.12, 0.82, 0.5);
-pub fn shield_block_rot() -> Quat {
-    Quat::from_euler(EulerRot::XYZ, -0.12, 0.05, -0.05)
-}
+/// Tip of the held weapon in **weapon-local** space (the sword cone's point), read by
+/// `combat::hero_blade_trail` off the [`super::HeroWeapon`] global transform.
+pub const WEAPON_TIP_LOCAL: Vec3 = Vec3::new(0.0, -0.90, 0.0);
 
-// ── Articulated part + spec ──────────────────────────────────────────────────────────
-pub struct HeroPartDef {
-    pub limb: HeroLimb,
-    pub pivot: Vec3,
-    /// Rest orientation of the part (identity for limbs; the shield rests rotated).
-    pub rest: Quat,
-    pub mesh: Mesh,
-}
-
-pub struct KnightSpec {
-    pub torso: Mesh,
-    pub parts: Vec<HeroPartDef>,
-    /// The held weapon, as its OWN mesh + sword-group-local transform. Spawned as a child of the
-    /// `ArmR` entity (so it still swings with the arm) but kept separate so it can be *hidden* for
-    /// weapon-free staged gestures (the Director's "hide weapon" toggle).
-    pub weapon: Mesh,
-    pub weapon_xf: Transform,
-}
-
-// ── Mesh helpers (local copies of the orks/critters contract) ────────────────────────
+// ── Mesh helpers (the orks/critters contract: primitives → tint → merge → flat-shade) ──
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
 }
 fn rx(a: f32) -> Quat {
     Quat::from_rotation_x(a)
+}
+fn ry(a: f32) -> Quat {
+    Quat::from_rotation_y(a)
 }
 fn rz(a: f32) -> Quat {
     Quat::from_rotation_z(a)
@@ -83,215 +59,307 @@ fn tinted(mut m: Mesh, c: u32) -> Mesh {
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![lin(c); n]);
     m
 }
-/// Merge + hard flat-shade — the crisp low-poly facets the TS models use.
+/// Merge a joint's parts into ONE flat-shaded, vertex-coloured mesh (duplicate FIRST — the flat
+/// normals pass panics on an indexed mesh), then apply the plate `surf` sheen.
 fn group(parts: Vec<Mesh>) -> Mesh {
     let mut it = parts.into_iter();
     let mut base = it.next().expect("at least one part");
     for p in it {
-        base.merge(&p).expect("hero parts share attributes");
+        base.merge(&p).expect("parts share attributes");
     }
     base.duplicate_vertices();
     base.compute_flat_normals();
-    base
+    surf(base, Surf::Metal)
 }
-fn bx(w: f32, h: f32, d: f32, off: Vec3, c: u32) -> Mesh {
-    tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
+fn cuboid(w: f32, h: f32, d: f32) -> Mesh {
+    Cuboid::new(w, h, d).mesh().build()
 }
-fn bxr(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, c: u32) -> Mesh {
-    tinted(Cuboid::new(w, h, d).mesh().build().rotated_by(rot).translated_by(off), c)
+/// Tapered cylinder = `ConicalFrustum` (`rt==rb` → plain cylinder, `rt==0` → cone). Args mirror
+/// three.js `CylinderGeometry(radiusTop, radiusBottom, height, radialSegments)`.
+fn frustum(rt: f32, rb: f32, h: f32, res: u32) -> Mesh {
+    ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(res).build()
 }
-fn cyl(r: f32, h: f32, off: Vec3, c: u32) -> Mesh {
-    tinted(Cylinder::new(r, h).mesh().resolution(8).build().translated_by(off), c)
+fn cone(r: f32, h: f32, res: u32) -> Mesh {
+    Cone { radius: r, height: h }.mesh().resolution(res).build()
 }
-fn cone(r: f32, h: f32, off: Vec3, rot: Quat, c: u32) -> Mesh {
-    tinted(Cone { radius: r, height: h }.mesh().build().rotated_by(rot).translated_by(off), c)
+fn ball(r: f32) -> Mesh {
+    Sphere::new(r).mesh().ico(1).unwrap()
 }
-fn sphere(r: f32, off: Vec3, c: u32) -> Mesh {
-    tinted(Sphere::new(r).mesh().ico(1).unwrap().translated_by(off), c)
+/// Place a primitive: scale → rotate → translate (matching three.js' `T*R*S`), then tint.
+fn part(mut m: Mesh, scale: Vec3, rot: Quat, off: Vec3, c: u32) -> Mesh {
+    if scale != Vec3::ONE {
+        m = m.scaled_by(scale);
+    }
+    if rot != Quat::IDENTITY {
+        m = m.rotated_by(rot);
+    }
+    tinted(m.translated_by(off), c)
 }
-// ── Equip-driven palette + geometry selectors ────────────────────────────────────────
-/// Lerp an sRGB-hex colour `t` of the way toward `target` (in byte space — close enough for
-/// the "feels the same" parity bar; the TS derives plate light/dark the same way).
+fn at(m: Mesh, off: Vec3, c: u32) -> Mesh {
+    part(m, Vec3::ONE, Quat::IDENTITY, off, c)
+}
+
+// ── Equipped-armor tint ───────────────────────────────────────────────────────────────
+/// Lerp an sRGB-hex colour `t` of the way toward `target` (byte space — the "feels the same" bar).
 fn lerp_hex(c: u32, target: u32, t: f32) -> u32 {
     let ch = |x: u32, s: u32| ((x >> s) & 0xff) as f32;
     let mix = |a: f32, b: f32| (a + (b - a) * t).round().clamp(0.0, 255.0) as u32;
-    let r = mix(ch(c, 16), ch(target, 16));
-    let g = mix(ch(c, 8), ch(target, 8));
-    let b = mix(ch(c, 0), ch(target, 0));
-    (r << 16) | (g << 8) | b
+    (mix(ch(c, 16), ch(target, 16)) << 16) | (mix(ch(c, 8), ch(target, 8)) << 8) | mix(ch(c, 0), ch(target, 0))
 }
 
-/// The plate colour triple `(base, light, dark)` for the worn armor — derived from the tier
-/// tint (light = lerp→white 0.28, dark = lerp→black 0.3), matching `Character.tsx`. `None`
-/// (bare) restores the exact default steel palette. Tints are the TS `armorTint` values.
+/// The plate colour triple `(base, light, dark)` for the worn armor — `None` (bare) is the default
+/// slate plate; a tier lerps light→white / dark→black for facet depth.
 fn armor_palette(armor: Option<&str>) -> (u32, u32, u32) {
     let tint = match armor {
         Some("leather_armor") => 0x7a5230,
         Some("iron_armor") => 0xaeb4c0,
         Some("gold_armor") => 0xe8b84b,
         Some("dragon_plate") => 0x3a6a4a,
-        _ => return (ARMOR, ARMOR_LIGHT, ARMOR_DARK),
+        _ => ARMOR,
     };
-    (tint, lerp_hex(tint, 0xffffff, 0.28), lerp_hex(tint, 0x000000, 0.3))
+    (tint, lerp_hex(tint, 0xffffff, 0.25), lerp_hex(tint, 0x000000, 0.28))
 }
 
-/// Sword-shaped weapon parts (pommel/grip/guard/blade/fuller/tip) with the blade tinted `c`;
-/// shared by the iron sword (default), the golden blade, and the frost greatsword. The fuller
-/// (the darker groove down the blade's spine) is derived from the blade colour.
+// ── Held weapon (kept from the parity port: iron/axe/maul/gold/frost) ─────────────────
 fn sword_parts(blade: u32, pommel: u32) -> Vec<Mesh> {
     let fuller = lerp_hex(blade, 0x000000, 0.35);
     vec![
-        sphere(0.05, v(0.0, 0.14, 0.0), pommel),
-        cyl(0.03, 0.14, v(0.0, 0.06, 0.0), GRIP),
-        bx(0.30, 0.06, 0.08, v(0.0, -0.04, 0.0), pommel),
-        sphere(0.035, v(-0.15, -0.04, 0.0), pommel), // guard finials
-        sphere(0.035, v(0.15, -0.04, 0.0), pommel),
-        bx(0.09, 0.80, 0.03, v(0.0, -0.47, 0.0), blade),
-        bx(0.03, 0.64, 0.034, v(0.0, -0.42, 0.0), fuller), // fuller groove
-        cone(0.05, 0.12, v(0.0, -0.90, 0.0), rx(std::f32::consts::PI), blade),
+        at(ball(0.05), v(0.0, 0.14, 0.0), pommel),
+        at(frustum(0.03, 0.03, 0.14, 6), v(0.0, 0.06, 0.0), GRIP),
+        at(cuboid(0.30, 0.06, 0.08), v(0.0, -0.04, 0.0), pommel),
+        at(ball(0.035), v(-0.15, -0.04, 0.0), pommel),
+        at(ball(0.035), v(0.15, -0.04, 0.0), pommel),
+        at(cuboid(0.09, 0.80, 0.03), v(0.0, -0.47, 0.0), blade),
+        at(cuboid(0.03, 0.64, 0.034), v(0.0, -0.42, 0.0), fuller),
+        part(cone(0.05, 0.12, 6), Vec3::ONE, rx(PI), v(0.0, -0.90, 0.0), blade),
     ]
 }
 
-/// The held-weapon part meshes for the equipped item, in the sword-group local space (the
-/// caller bakes them at the hand). Ported 1:1 from `Character.tsx`; an unknown id falls back to
-/// the iron sword (also the bare-handed default).
+/// The held-weapon mesh for the equipped item, in weapon-local space (an unknown id → iron sword).
 fn weapon_parts(weapon: Option<&str>) -> Vec<Mesh> {
     match weapon {
         Some("axe") => vec![
-            cyl(0.028, 0.8, v(0.0, -0.12, 0.0), GRIP), // haft
-            cyl(0.034, 0.05, v(0.0, -0.27, 0.0), HILT), // haft binding rings
-            cyl(0.034, 0.05, v(0.0, 0.12, 0.0), HILT),
-            sphere(0.04, v(0.0, 0.3, 0.0), HILT),      // pommel cap
-            bx(0.26, 0.22, 0.05, v(0.13, -0.42, 0.0), AXE_STEEL), // head
-            cone(0.11, 0.14, v(0.28, -0.42, 0.0), rz(-std::f32::consts::FRAC_PI_2), AXE_STEEL), // edge
-            cone(0.05, 0.10, v(-0.04, -0.42, 0.0), rz(std::f32::consts::FRAC_PI_2), AXE_STEEL), // back spike
+            at(frustum(0.028, 0.028, 0.8, 6), v(0.0, -0.12, 0.0), GRIP),
+            at(frustum(0.034, 0.034, 0.05, 6), v(0.0, -0.27, 0.0), HILT),
+            at(frustum(0.034, 0.034, 0.05, 6), v(0.0, 0.12, 0.0), HILT),
+            at(ball(0.04), v(0.0, 0.3, 0.0), HILT),
+            at(cuboid(0.26, 0.22, 0.05), v(0.13, -0.42, 0.0), AXE_STEEL),
+            part(cone(0.11, 0.14, 6), Vec3::ONE, rz(-PI / 2.0), v(0.28, -0.42, 0.0), AXE_STEEL),
+            part(cone(0.05, 0.10, 6), Vec3::ONE, rz(PI / 2.0), v(-0.04, -0.42, 0.0), AXE_STEEL),
         ],
         Some("sword_gold") => sword_parts(GOLD, GOLD),
         Some("blade_frost") => sword_parts(FROST, FROST),
         Some("stone_maul") => vec![
-            cyl(0.035, 0.95, v(0.0, -0.1, 0.0), GRIP), // haft
-            cyl(0.042, 0.06, v(0.0, -0.32, 0.0), HILT), // haft binding ring
-            sphere(0.045, v(0.0, 0.36, 0.0), HILT),    // pommel cap
-            bx(0.34, 0.26, 0.26, v(0.0, -0.6, 0.0), STONE), // head
-            bx(0.36, 0.04, 0.27, v(0.0, -0.52, 0.0), HILT), // iron bands
-            bx(0.36, 0.04, 0.27, v(0.0, -0.68, 0.0), HILT),
-            bx(0.06, 0.2, 0.2, v(0.19, -0.6, 0.0), STONE), // striking cap +x
-            bx(0.06, 0.2, 0.2, v(-0.19, -0.6, 0.0), STONE), // striking cap -x
+            at(frustum(0.035, 0.035, 0.95, 6), v(0.0, -0.1, 0.0), GRIP),
+            at(frustum(0.042, 0.042, 0.06, 6), v(0.0, -0.32, 0.0), HILT),
+            at(ball(0.045), v(0.0, 0.36, 0.0), HILT),
+            at(cuboid(0.34, 0.26, 0.26), v(0.0, -0.6, 0.0), STONE),
+            at(cuboid(0.36, 0.04, 0.27), v(0.0, -0.52, 0.0), HILT),
+            at(cuboid(0.36, 0.04, 0.27), v(0.0, -0.68, 0.0), HILT),
+            at(cuboid(0.06, 0.2, 0.2), v(0.19, -0.6, 0.0), STONE),
+            at(cuboid(0.06, 0.2, 0.2), v(-0.19, -0.6, 0.0), STONE),
         ],
-        _ => sword_parts(BLADE, HILT), // iron sword (default + bare-handed)
+        _ => sword_parts(BLADE, HILT),
     }
 }
 
-// ── Build (params: equipped weapon + armor ids; None = bare iron sword + steel plate) ─
-/// Build the knight mesh reflecting the equipped gear: the held weapon swaps geometry
-/// (`weapon_parts`) and the worn armor recolours the plate (`armor_palette`). Re-called by
-/// the render layer whenever the equip slots change (`reskin_hero`).
-pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightSpec {
-    // Plate colour triple for the worn armor (bare = default steel).
-    let (a, al, ad) = armor_palette(armor);
+// ── Per-joint geometry (each in that joint's LOCAL space; `a/al/ad` = worn-armor triple) ──
+fn hips_mesh(a: u32) -> Mesh {
+    group(vec![
+        at(frustum(0.19, 0.15, 0.15, 6), v(0.0, -0.04, 0.0), a),
+        at(frustum(0.24, 0.22, 0.11, 6), v(0.0, 0.04, 0.0), BELT),
+        at(cuboid(0.08, 0.06, 0.03), v(0.0, 0.04, 0.23), TRIM),
+        part(cuboid(0.08, 0.12, 0.06), Vec3::ONE, xyz(0.1, 0.0, -0.1), v(0.2, 0.01, 0.05), BELT),
+        part(cuboid(0.15, 0.2, 0.04), Vec3::ONE, xyz(0.1, 0.0, -0.15), v(0.12, -0.1, 0.05), SKIRT),
+        part(cuboid(0.15, 0.2, 0.04), Vec3::ONE, xyz(0.1, 0.0, 0.15), v(-0.12, -0.1, 0.05), SKIRT),
+        part(cuboid(0.28, 0.35, 0.03), Vec3::ONE, rx(-0.1), v(0.0, -0.15, -0.14), SKIRT),
+    ])
+}
 
-    // Static torso: legs are articulated; belt + body + plate layers are baked in here. The
-    // silhouette (belt/body/breastplate) is the TS one; the gorget, backplate, tassets, mail
-    // skirt and gold trim are Bevy-side dressing that recolours with the worn tier.
-    let torso = group(vec![
-        bx(0.40, 0.10, 0.24, v(0.0, 0.33, 0.0), CHAIN), // mail skirt under the belt
-        bx(0.42, 0.08, 0.22, v(0.0, 0.4, 0.0), BELT), // belt
-        bx(0.10, 0.06, 0.012, v(0.0, 0.4, 0.115), GOLD), // buckle
-        bxr(0.15, 0.14, 0.02, v(-0.17, 0.31, 0.11), xyz(0.15, 0.0, 0.12), ad), // tassets (hip plates)
-        bxr(0.15, 0.14, 0.02, v(0.17, 0.31, 0.11), xyz(0.15, 0.0, -0.12), ad),
-        bx(0.42, 0.46, 0.26, v(0.0, 0.66, 0.0), a), // body
-        bx(0.32, 0.32, 0.02, v(0.0, 0.70, 0.135), al), // breastplate
-        bx(0.05, 0.30, 0.016, v(0.0, 0.70, 0.142), a), // breastplate centre ridge
-        bx(0.32, 0.035, 0.018, v(0.0, 0.875, 0.14), GOLD), // gilded collar trim
-        bx(0.30, 0.34, 0.02, v(0.0, 0.68, -0.135), ad), // backplate
-        bx(0.26, 0.10, 0.30, v(0.0, 0.92, 0.0), ad), // gorget (neck ring)
-    ]);
-    let torso = surf(torso, Surf::Metal); // plate sheen (mail/belt read metal-subtle; hue unchanged)
+fn torso_mesh(a: u32, al: u32) -> Mesh {
+    group(vec![
+        part(frustum(0.26, 0.17, 0.46, 6), v(1.15, 1.0, 0.75), Quat::IDENTITY, v(0.0, 0.13, 0.0), a),
+        part(frustum(0.18, 0.22, 0.06, 6), v(1.15, 1.0, 0.85), Quat::IDENTITY, v(0.0, 0.33, 0.0), TRIM),
+        at(cuboid(0.35, 0.03, 0.06), v(0.0, 0.2, 0.185), TRIM),
+        at(cuboid(0.30, 0.03, 0.06), v(0.0, 0.1, 0.175), TRIM),
+        // a subtle lit breastplate ridge so the worn-tier highlight reads
+        at(cuboid(0.05, 0.30, 0.012), v(0.0, 0.16, 0.205), al),
+    ])
+}
 
-    // Head: helm + stepped crown + visor slit, breath holes, gilded brow band, cheek guards,
-    // the dark crest brim and a crimson plume sweeping back over the crown.
-    let head = group(vec![
-        bx(0.32, 0.3, 0.32, v(0.0, 0.0, 0.0), al),
-        bx(0.28, 0.10, 0.28, v(0.0, 0.18, 0.0), al), // stepped crown
-        bx(0.24, 0.06, 0.01, v(0.0, -0.01, 0.165), VISOR),
-        bx(0.02, 0.025, 0.01, v(-0.045, -0.085, 0.165), VISOR), // breath holes
-        bx(0.02, 0.025, 0.01, v(0.045, -0.085, 0.165), VISOR),
-        bx(0.30, 0.025, 0.014, v(0.0, 0.045, 0.166), GOLD), // gilded brow band
-        bx(0.02, 0.13, 0.18, v(-0.17, -0.075, 0.05), ad), // cheek guards
-        bx(0.02, 0.13, 0.18, v(0.17, -0.075, 0.05), ad),
-        bx(0.34, 0.06, 0.34, v(0.0, 0.135, 0.0), ad), // crest brim
-        bxr(0.05, 0.10, 0.26, v(0.0, 0.27, -0.02), rx(0.22), PLUME), // plume crest
-        bxr(0.04, 0.08, 0.20, v(0.0, 0.24, -0.20), rx(0.75), PLUME), // plume tail
-    ]);
-    let head = surf(head, Surf::Metal); // helm plate (plume keeps its crimson hue)
+fn neck_mesh(a: u32) -> Mesh {
+    group(vec![
+        at(frustum(0.12, 0.14, 0.1, 8), v(0.0, -0.04, 0.0), a),
+        at(cuboid(0.16, 0.1, 0.14), v(0.0, -0.01, 0.06), TRIM),
+    ])
+}
 
-    // Right arm (sword hand): the bare plate arm. The equipped weapon is built as its OWN mesh
-    // ([`KnightSpec::weapon`]) and spawned as a child of the ArmR *entity* at the hand offset, so
-    // it still swings with the arm but can be hidden for weapon-free gestures. Sword sits at
-    // arm-local (0,-0.5,0.06) rotated x=-π/2 so it extends FORWARD (+Z).
-    // Plate-arm dressing shared by both arms (`s` mirrors the pauldron tilt): a two-lame
-    // pauldron, the upper arm, an elbow couter, the wrist cuff and a gauntleted fist.
-    let plate_arm = |s: f32| {
-        vec![
-            bxr(0.20, 0.10, 0.30, v(0.0, -0.02, 0.0), rz(s * 0.10), al), // pauldron cap
-            bxr(0.17, 0.07, 0.26, v(s * 0.02, -0.105, 0.0), rz(s * 0.20), a), // pauldron lame
-            bx(0.12, 0.42, 0.22, v(0.0, -0.21, 0.0), a), // upper
-            sphere(0.075, v(0.0, -0.30, 0.03), ad), // elbow couter
-            bx(0.13, 0.08, 0.23, v(0.0, -0.45, 0.0), ad), // cuff
-            bx(0.11, 0.09, 0.13, v(0.0, -0.51, 0.03), ad), // gauntlet fist
-            bx(0.115, 0.025, 0.10, v(0.0, -0.485, 0.06), al), // knuckle plate
-        ]
-    };
-
-    let sw_rot = rx(-std::f32::consts::FRAC_PI_2);
-    let sw_off = v(0.0, -0.5, 0.06);
-    let arm_r = surf(group(plate_arm(1.0)), Surf::Metal);
-    // The weapon is its own merged mesh (grouped once → no re-merge corruption) placed at the hand.
-    let weapon = surf(group(weapon_parts(weapon)), Surf::Metal);
-    let weapon_xf = Transform { translation: sw_off, rotation: sw_rot, ..default() };
-
-    // Left arm (shield hand): same plate dressing, mirrored (shield is a separate part).
-    let arm_l = surf(group(plate_arm(-1.0)), Surf::Metal);
-
-    // Shield (own pivot): heater plate + raised rim + recessed field + gold cross emblem,
-    // with a rotated-square lower point (reads as the heater taper) and corner rivets.
-    let shield = group(vec![
-        bx(0.42, 0.58, 0.05, v(0.0, 0.0, 0.0), SHIELD_FACE), // plate
-        bxr(0.30, 0.30, 0.05, v(0.0, -0.29, 0.0), rz(std::f32::consts::FRAC_PI_4), SHIELD_FACE), // lower point
-        bxr(0.33, 0.33, 0.014, v(0.0, -0.29, 0.028), rz(std::f32::consts::FRAC_PI_4), SHIELD_RIM), // point rim
-        bx(0.46, 0.62, 0.014, v(0.0, 0.0, 0.028), SHIELD_RIM), // rim
-        bx(0.34, 0.5, 0.014, v(0.0, 0.0, 0.034), SHIELD_FACE), // inset field
-        bx(0.07, 0.4, 0.014, v(0.0, 0.03, 0.04), SHIELD_EMBLEM), // cross vertical
-        bx(0.3, 0.07, 0.014, v(0.0, 0.1, 0.04), SHIELD_EMBLEM), // cross horizontal
-        bx(0.035, 0.035, 0.02, v(-0.17, 0.24, 0.03), SHIELD_EMBLEM), // corner rivets
-        bx(0.035, 0.035, 0.02, v(0.17, 0.24, 0.03), SHIELD_EMBLEM),
-        bx(0.035, 0.035, 0.02, v(-0.17, -0.18, 0.03), SHIELD_EMBLEM),
-        bx(0.035, 0.035, 0.02, v(0.17, -0.18, 0.03), SHIELD_EMBLEM),
-    ]);
-    let shield = surf(shield, Surf::Metal); // heater plate sheen
-
-    // Legs (built top-at-hip so the pivot sits at the hip; foot rests at root y≈0):
-    // cuisse → poleyn (knee) → greave → sabaton, replacing the old single box.
-    let leg = || {
-        surf(
-            group(vec![
-                bx(0.17, 0.17, 0.19, v(0.0, -0.085, 0.0), a), // cuisse (thigh plate)
-                bx(0.10, 0.06, 0.06, v(0.0, -0.175, 0.08), al), // poleyn (knee cap)
-                bx(0.15, 0.17, 0.17, v(0.0, -0.255, 0.0), ad), // greave
-                bx(0.15, 0.05, 0.24, v(0.0, -0.335, 0.04), al), // sabaton (foot)
-            ]),
-            Surf::Metal,
-        )
-    };
-
-    let parts = vec![
-        HeroPartDef { limb: HeroLimb::LegR, pivot: v(0.1, 0.36, 0.0), rest: Quat::IDENTITY, mesh: leg() },
-        HeroPartDef { limb: HeroLimb::LegL, pivot: v(-0.1, 0.36, 0.0), rest: Quat::IDENTITY, mesh: leg() },
-        HeroPartDef { limb: HeroLimb::ArmR, pivot: v(0.27, 0.87, 0.0), rest: Quat::IDENTITY, mesh: arm_r },
-        HeroPartDef { limb: HeroLimb::ArmL, pivot: v(-0.27, 0.87, 0.0), rest: Quat::IDENTITY, mesh: arm_l },
-        HeroPartDef { limb: HeroLimb::Head, pivot: v(0.0, 1.04, 0.0), rest: Quat::IDENTITY, mesh: head },
-        HeroPartDef { limb: HeroLimb::Shield, pivot: SHIELD_REST_POS, rest: shield_rest_rot(), mesh: shield },
+fn head_mesh(a: u32, al: u32) -> Mesh {
+    let mut parts = vec![
+        at(frustum(0.16, 0.17, 0.22, 8), v(0.0, 0.05, 0.0), a),
+        at(ball(0.16), v(0.0, 0.16, 0.0), al),
+        part(frustum(0.162, 0.168, 0.15, 8), v(1.03, 1.0, 1.06), Quat::IDENTITY, v(0.0, 0.05, 0.005), a),
+        at(cuboid(0.22, 0.02, 0.02), v(0.0, 0.08, 0.185), DARK),
+        at(cuboid(0.23, 0.012, 0.015), v(0.0, 0.10, 0.187), TRIM),
+        at(cuboid(0.012, 0.12, 0.015), v(0.0, 0.02, 0.189), TRIM),
+        at(cuboid(0.03, 0.015, 0.01), v(-0.045, 0.08, 0.186), GLOW),
+        at(cuboid(0.03, 0.015, 0.01), v(0.045, 0.08, 0.186), GLOW),
     ];
+    for r in 0..3 {
+        for side in [-1.0_f32, 1.0] {
+            parts.push(part(
+                cuboid(0.015, 0.015, 0.01),
+                Vec3::ONE,
+                ry(-side * 0.5),
+                v(side * (0.035 + r as f32 * 0.018), 0.02 + r as f32 * 0.015, 0.188 - r as f32 * 0.01),
+                DARK,
+            ));
+        }
+    }
+    group(parts)
+}
 
-    KnightSpec { torso, parts, weapon, weapon_xf }
+fn plume_mesh() -> Mesh {
+    let segs: [([f32; 3], [f32; 3], f32); 8] = [
+        ([0.06, 0.16, 0.07], [0.0, 0.12, 0.02], -0.3),
+        ([0.058, 0.15, 0.12], [0.0, 0.22, -0.06], -0.7),
+        ([0.054, 0.12, 0.16], [0.0, 0.24, -0.18], -1.2),
+        ([0.05, 0.10, 0.20], [0.0, 0.15, -0.3], -1.6),
+        ([0.046, 0.09, 0.18], [0.0, 0.02, -0.38], -1.9),
+        ([0.042, 0.08, 0.16], [0.0, -0.12, -0.42], -2.1),
+        ([0.038, 0.07, 0.12], [0.0, -0.25, -0.43], -2.4),
+        ([0.03, 0.05, 0.08], [0.0, -0.33, -0.42], -2.6),
+    ];
+    group(segs.iter().map(|(s, p, rotx)| part(cuboid(s[0], s[1], s[2]), Vec3::ONE, rx(*rotx), v(p[0], p[1], p[2]), PLUME)).collect())
+}
+
+fn shoulder_mesh(sign: f32, a: u32) -> Mesh {
+    group(vec![
+        at(ball(0.08), v(0.0, 0.0, 0.0), SKIRT),
+        part(ball(0.16), v(1.0, 0.8, 1.0), rz(sign * PI / 8.0), v(0.0, 0.05, 0.0), a),
+        part(frustum(0.165, 0.165, 0.04, 6), Vec3::ONE, rz(sign * PI / 8.0), v(0.0, 0.01, 0.0), TRIM),
+        part(cuboid(0.15, 0.1, 0.15), Vec3::ONE, rz(sign * PI / 12.0), v(sign * 0.03, -0.05, 0.0), a),
+        at(cuboid(0.04, 0.03, 0.16), v(0.0, 0.08, 0.0), TRIM),
+        at(frustum(0.09, 0.07, 0.22, 5), v(0.0, -0.14, 0.0), a),
+        at(frustum(0.06, 0.06, 0.26, 4), v(0.0, -0.14, 0.0), SKIRT),
+    ])
+}
+
+fn elbow_mesh(a: u32) -> Mesh {
+    group(vec![
+        part(cuboid(0.09, 0.09, 0.09), Vec3::ONE, xyz(0.7, 0.7, 0.2), Vec3::ZERO, TRIM),
+        at(frustum(0.08, 0.095, 0.24, 6), v(0.0, -0.12, 0.0), a),
+        at(frustum(0.085, 0.1, 0.04, 6), v(0.0, -0.16, 0.0), TRIM),
+        at(cuboid(0.07, 0.07, 0.08), v(0.0, -0.24, 0.0), a),
+    ])
+}
+
+fn hip_mesh(a: u32) -> Mesh {
+    group(vec![
+        at(frustum(0.08, 0.065, 0.36, 4), v(0.0, -0.18, 0.0), SKIRT),
+        at(frustum(0.122, 0.092, 0.32, 6), v(0.0, -0.18, 0.0), a),
+        at(frustum(0.126, 0.11, 0.04, 6), v(0.0, -0.04, 0.0), TRIM),
+    ])
+}
+
+fn knee_mesh(a: u32) -> Mesh {
+    group(vec![
+        part(cuboid(0.10, 0.10, 0.10), Vec3::ONE, xyz(0.7, 0.0, 0.2), Vec3::ZERO, TRIM),
+        part(frustum(0.085, 0.11, 0.35, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.18, 0.0), a),
+        part(frustum(0.09, 0.115, 0.03, 6), v(1.1, 1.0, 0.9), Quat::IDENTITY, v(0.0, -0.06, 0.0), TRIM),
+        part(frustum(0.11, 0.112, 0.03, 6), v(1.105, 1.0, 0.905), Quat::IDENTITY, v(0.0, -0.32, 0.0), TRIM),
+    ])
+}
+
+fn foot_mesh(a: u32) -> Mesh {
+    group(vec![
+        at(cuboid(0.09, 0.08, 0.11), v(0.0, -0.04, -0.02), a),
+        part(cone(0.054, 0.15, 5), v(1.5, 1.0, 0.7), rx(PI / 2.0), v(0.0, -0.065, 0.07), a),
+        at(cuboid(0.10, 0.02, 0.12), v(0.0, -0.005, -0.02), TRIM),
+    ])
+}
+
+fn shield_mesh() -> Mesh {
+    group(vec![
+        at(cuboid(0.52, 0.6, 0.05), v(0.0, 0.08, 0.0), SHIELD_BASE),
+        part(cuboid(0.36, 0.36, 0.05), Vec3::ONE, rz(PI / 4.0), v(0.0, -0.28, 0.0), SHIELD_BASE),
+        at(cuboid(0.58, 0.66, 0.03), v(0.0, 0.06, -0.012), TRIM),
+        part(cuboid(0.40, 0.40, 0.03), Vec3::ONE, rz(PI / 4.0), v(0.0, -0.30, -0.012), TRIM),
+    ])
+}
+
+fn lion_mesh() -> Mesh {
+    let b: [([f32; 3], [f32; 3], f32); 17] = [
+        ([0.10, 0.06, 0.012], [-0.02, -0.05, 0.0], PI / 4.0),
+        ([0.08, 0.14, 0.012], [0.01, 0.02, 0.0], 0.5),
+        ([0.11, 0.09, 0.015], [0.04, 0.08, 0.002], 0.2),
+        ([0.06, 0.06, 0.018], [0.06, 0.14, 0.003], -0.1),
+        ([0.04, 0.025, 0.014], [0.09, 0.15, 0.002], 0.0),
+        ([0.03, 0.012, 0.014], [0.09, 0.12, 0.002], -0.3),
+        ([0.03, 0.08, 0.012], [0.08, 0.05, 0.002], -0.9),
+        ([0.035, 0.035, 0.014], [0.12, 0.08, 0.002], 0.4),
+        ([0.024, 0.08, 0.012], [0.06, -0.02, 0.001], -1.4),
+        ([0.03, 0.03, 0.014], [0.10, -0.03, 0.001], 0.0),
+        ([0.035, 0.08, 0.012], [-0.06, -0.10, 0.002], 0.5),
+        ([0.04, 0.024, 0.014], [-0.09, -0.14, 0.002], 0.0),
+        ([0.03, 0.07, 0.012], [-0.01, -0.11, 0.001], -0.7),
+        ([0.035, 0.02, 0.014], [0.02, -0.14, 0.001], 0.0),
+        ([0.08, 0.02, 0.012], [-0.08, -0.04, 0.001], -0.8),
+        ([0.06, 0.018, 0.012], [-0.11, 0.01, 0.001], 0.8),
+        ([0.03, 0.03, 0.014], [-0.1, 0.05, 0.001], 0.4),
+    ];
+    group(b.iter().map(|(s, p, r)| part(cuboid(s[0], s[1], s[2]), Vec3::ONE, rz(*r), v(p[0], p[1], p[2]), EMBLEM)).collect())
+}
+
+// ── The full build (one mesh per joint + the held weapon) ─────────────────────────────
+/// Every joint mesh + the held-weapon mesh & its hand-local transform. [`super::spawn_hero_meshes`]
+/// spawns the joint hierarchy from this; an equip change rebuilds it (`super::reskin_hero`).
+pub struct KnightMeshes {
+    pub hips: Mesh,
+    pub torso: Mesh,
+    pub neck: Mesh,
+    pub head: Mesh,
+    pub plume: Mesh,
+    pub shoulder_l: Mesh,
+    pub shoulder_r: Mesh,
+    pub elbow_l: Mesh,
+    pub elbow_r: Mesh,
+    pub hip_l: Mesh,
+    pub hip_r: Mesh,
+    pub knee_l: Mesh,
+    pub knee_r: Mesh,
+    pub foot_l: Mesh,
+    pub foot_r: Mesh,
+    pub shield: Mesh,
+    pub lion: Mesh,
+    pub weapon: Mesh,
+    pub weapon_xf: Transform,
+}
+
+/// Build all knight meshes reflecting the equipped gear: the held weapon swaps geometry and the
+/// worn armor recolours the plate (bare = default slate). Re-called by `super::reskin_hero`.
+pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightMeshes {
+    let (a, al, _ad) = armor_palette(armor);
+    KnightMeshes {
+        hips: hips_mesh(a),
+        torso: torso_mesh(a, al),
+        neck: neck_mesh(a),
+        head: head_mesh(a, al),
+        plume: plume_mesh(),
+        shoulder_l: shoulder_mesh(-1.0, a),
+        shoulder_r: shoulder_mesh(1.0, a),
+        elbow_l: elbow_mesh(a),
+        elbow_r: elbow_mesh(a),
+        hip_l: hip_mesh(a),
+        hip_r: hip_mesh(a),
+        knee_l: knee_mesh(a),
+        knee_r: knee_mesh(a),
+        foot_l: foot_mesh(a),
+        foot_r: foot_mesh(a),
+        shield: shield_mesh(),
+        lion: lion_mesh(),
+        weapon: group(weapon_parts(weapon)),
+        // Mount at the right hand: blade rotated forward (+Z) and dropped into the grip.
+        weapon_xf: Transform { translation: v(0.0, -0.04, 0.04), rotation: rx(-PI / 2.0), ..default() },
+    }
 }
