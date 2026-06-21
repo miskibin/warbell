@@ -175,11 +175,48 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
 
 <main class="log">
 
-  <!-- ── v0.8.1 ── -->
+  <!-- ── v0.9.0 ── -->
   <article class="rel latest rv">
     <div class="rel-head">
-      <span class="rel-ver">v0.8.1</span>
+      <span class="rel-ver">v0.9.0</span>
       <span class="rel-badge">Latest</span>
+      <span class="rel-date">June 21, 2026</span>
+    </div>
+    <p class="rel-sum">The Remodel — the entire cast rebuilt on one articulated skeleton with real animation.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">New</span></div>
+        <ul>
+          <li><strong>Completely refined models.</strong> The whole cast — the hero knight, every ork variant, all the townsfolk trades, and the wildlife — was remodeled onto a single shared skeleton with chamfered low-poly parts and per-surface materials, so they read as one family instead of a grab-bag of cubes.</li>
+          <li><strong>Real animation for everyone.</strong> Mobs walk, run, attack, and crumple on the same per-clip animator the hero uses — no more rigid sliding.</li>
+          <li><strong>A bigger, bolder hero.</strong> A thicker stylized knight build with real boots, a cleaner helm, and a wooden kite shield with a gold boss. He can now <strong>jump</strong>, his walk has more punch, and his shield no longer clips through his arm.</li>
+          <li><strong>A second world: the Volcanic Ashlands.</strong> Pick it from the start-screen map selector for a scorched-frontier run (one of its biomes is still flagged "not ready").</li>
+          <li><strong>A loading screen worth watching.</strong> The branded veil now actually shows on boot and New Game, with a sweeping gold progress bar and a fresh rotating lore tip each load.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">Combat &amp; balance</span></div>
+        <ul>
+          <li><strong>Tougher everything.</strong> HP pools across the hero, defenses, and town buildings were raised to stand up to the night damage-ramp, and defense damage was re-derived so a siege stays a fight deeper into the night.</li>
+          <li><strong>Town buildings hold longer</strong> — farms and producers take more punishment before falling.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag perf">Under the hood</span></div>
+        <ul>
+          <li><strong>Smoother, richer terrain</strong> — bump-mapped ground relief, smoothed island edges, and the old repeating-grid tiling artifacts are gone.</li>
+          <li><strong>Performance pass</strong> — terrain frustum-culling, far-scatter distance culling, a cached static IBL, reused separation buffers, and a tightened follow-cam that reads the hero larger.</li>
+          <li><strong>Faster pathfinding</strong> — the night-wave A* was rewritten onto a binary heap.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.9.0">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.8.1 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.8.1</span>
       <span class="rel-date">June 17, 2026</span>
     </div>
     <p class="rel-sum">A small patch that fixes the loading screen — and makes it worth looking at.</p>
