@@ -1551,8 +1551,9 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
         };
 
-    // Like `quad` but with a PER-VERTEX normal, for smoothly-shaded rounded lips: blend the
-    // normal from up (top of the roll) to out (base) and the flat-lit facet reads as a curve.
+    // Like `quad` but with a PER-VERTEX normal — lets the rounded lip shade smoothly (no
+    // flat-facet crease) and, by giving a convex corner's two chamfers the SAME diagonal corner
+    // normal, kills the diagonal fold artifact at terrace corners.
     let quadn =
         |p: [[f32; 3]; 4], n: [[f32; 3]; 4], c: [[f32; 4]; 4], idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
             let b = pos.len() as u32;
@@ -1564,8 +1565,8 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
         };
 
-    // Emit one flat-shaded triangle (terrain material is double-sided, so winding is irrelevant).
-    // Used to cap the dip where a chamfered wall ends into flat same-height ground.
+    // One flat triangle (double-sided material → winding irrelevant). Caps the notch at a
+    // concave corner that drops against a higher neighbour's wall.
     let tri =
         |p: [[f32; 3]; 3], n: [f32; 3], c: [[f32; 4]; 3], idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
             let b = pos.len() as u32;
@@ -1607,7 +1608,7 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             // tile and the hero (whose collision is the tile grid, not this mesh) can't clip into
             // an overhang. `CROWN` = horizontal inset of the rounded lip; it shrinks the visible
             // flat top by ≤CROWN per walled edge (gameplay tops are the tile grid — unaffected).
-            const CROWN: f32 = 0.22;
+            const CROWN: f32 = 0.15;
             let ax0 = wx + if w_w { CROWN } else { 0.0 };
             let ax1 = wx + 1.0 - if w_e { CROWN } else { 0.0 };
             let az0 = wz + if w_s { CROWN } else { 0.0 };
@@ -1666,7 +1667,7 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 if top <= nh + 1e-4 {
                     continue;
                 }
-                let drop = (top - nh).min(0.26); // chamfer dip (never exceeds the wall height)
+                let drop = (top - nh).min(0.18); // chamfer dip (never exceeds the wall height)
                 let cy = top - drop;
                 // Inset top edge (i0→i1) + the matching tile-boundary edge (b0→b1), plus the
                 // PERPENDICULAR direction at each end (p0 at the i0/b0 end, p1 at i1/b1). The inset
@@ -1678,53 +1679,71 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                     (0, 1) => ([ax1, az1], [ax0, az1], [wx + 1.0, wz + 1.0], [wx, wz + 1.0], [0.0, 0.0, 1.0], (1, 0), (-1, 0)),
                     _ => ([ax0, az0], [ax1, az0], [wx, wz], [wx + 1.0, wz], [0.0, 0.0, -1.0], (-1, 0), (1, 0)),
                 };
-                // Chamfer (rounded lip): boundary@cy (dirt) → inset top@top (grass, matches the top
-                // quad colour). Per-vertex normals roll from near-UP at the top edge (blends into
-                // the flat top) to OUT+up at the base (blends into the wall), so the single facet
-                // shades as a smooth rounded lip instead of a flat-lit bevel.
-                let cn_top = nrm3([n[0] * 0.35, 1.0, n[2] * 0.35]);
-                let cn_bot = nrm3([n[0], 0.5, n[2]]);
+                // Per-END dip height. The lip dips to `cy` at exposed ends (a convex corner, or a
+                // continuing wall whose neighbour dips to meet it) but TAPERS back to `top` where
+                // this wall ENDS into flat SAME-height ground (a peninsula tip, or a trench inner
+                // corner closed by a *different* tile's wall). Dipping there would leave a notch —
+                // the "grey triangle" — which once capped read as a green flap; tapering fades the
+                // lip into the flat neighbour instead, so no notch and no flap (and the wall is
+                // full-height there). `continues` = the perpendicular neighbour carries this wall on.
+                let dip = |pk: (i32, i32)| {
+                    let m = nb_top(pk.0, pk.1);
+                    let same = (m - top).abs() < 1e-4;
+                    let continues = m > nb_top(pk.0 + dx, pk.1 + dz) + 1e-4;
+                    if same && !continues { top } else { cy }
+                };
+                let (cy0, cy1) = (dip(p0), dip(p1));
+                // Outward horizontal direction at each end: the edge normal `n` on a straight run,
+                // but the DIAGONAL (n + perpendicular) at a CONVEX corner. Giving the two chamfers
+                // that meet at a convex corner the same diagonal corner normal makes the fold shade
+                // continuously → no diagonal-crease artifact. (A convex corner = the perpendicular
+                // neighbour is also lower, i.e. `top > its height`.)
+                let out_dir = |pk: (i32, i32)| -> [f32; 3] {
+                    if top > nb_top(pk.0, pk.1) + 1e-4 {
+                        nrm3([n[0] + pk.0 as f32, 0.0, n[2] + pk.1 as f32])
+                    } else {
+                        n
+                    }
+                };
+                let (o0, o1) = (out_dir(p0), out_dir(p1));
+                // Chamfer (rounded lip): boundary@cy (dirt) → inset top@top (grass). Per-vertex
+                // normals roll near-UP at the top edge to OUT at the base, using the corner-aware
+                // `out` dir — so the single facet shades as a smooth rounded lip with no flat-facet
+                // crease and no diagonal fold at corners. CROWN stays 0.15 (the size signed off on).
+                let n_top = |o: [f32; 3]| nrm3([o[0] * 0.30, 1.0, o[2] * 0.30]);
+                let n_bot = |o: [f32; 3]| nrm3([o[0], 0.40, o[2]]);
                 quadn(
-                    [[b0[0], cy, b0[1]], [b1[0], cy, b1[1]], [i1[0], top, i1[1]], [i0[0], top, i0[1]]],
-                    [cn_bot, cn_bot, cn_top, cn_top],
+                    [[b0[0], cy0, b0[1]], [b1[0], cy1, b1[1]], [i1[0], top, i1[1]], [i0[0], top, i0[1]]],
+                    [n_bot(o0), n_bot(o1), n_top(o1), n_top(o0)],
                     [wall_top, wall_top, cw(i1[0], i1[1]), cw(i0[0], i0[1])],
                     &mut indices, &mut positions, &mut normals, &mut colors,
                 );
-                // Vertical wall: boundary@nh → boundary@cy, on the tile boundary (no intrusion).
-                // Its top normal matches the chamfer base (`cn_bot`) so the lip→wall seam is smooth.
-                let wn_bot = nrm3([n[0], 0.12, n[2]]);
+                // Vertical wall: boundary@nh → boundary@cy (per-end cy0/cy1 so it shares the chamfer
+                // base; full-height where the lip tapered). Corner-aware normals too, so the wall's
+                // own corner doesn't reintroduce a hard crease under the smoothed lip; top row
+                // matches the chamfer base (`n_bot`) for a seamless lip→wall transition.
                 quadn(
-                    [[b0[0], nh, b0[1]], [b1[0], nh, b1[1]], [b1[0], cy, b1[1]], [b0[0], cy, b0[1]]],
-                    [wn_bot, wn_bot, cn_bot, cn_bot],
+                    [[b0[0], nh, b0[1]], [b1[0], nh, b1[1]], [b1[0], cy1, b1[1]], [b0[0], cy0, b0[1]]],
+                    [nrm3([o0[0], 0.16, o0[2]]), nrm3([o1[0], 0.16, o1[2]]), n_bot(o1), n_bot(o0)],
                     [wall_bot, wall_bot, wall_top, wall_top],
                     &mut indices, &mut positions, &mut normals, &mut colors,
                 );
-                // End-cap: where the wall ENDS into flat same-height ground (the perpendicular
-                // neighbour is NOT walled), the chamfer has dipped its lip to `cy` but that
-                // neighbour's top is still at `top` → a triangular notch (the "corner hole"). At a
-                // CONVEX corner the perpendicular IS walled and the two chamfers self-close, so we
-                // only cap the wall-end case. Triangle: inset-top corner, boundary-top corner,
-                // boundary-cy corner — fills the dip up to the neighbour's top level.
+                // Concave corner against a HIGHER neighbour (common in multi-level terrain): the lip
+                // dipped to `cy`, but the chamfer recedes inward, leaving a notch between it and that
+                // neighbour's wall base (which sits at our `top`). Fill it with a small triangle. This
+                // cap sits flush against a real wall, so it can't read as a flap — unlike the
+                // same-height wall-end case, which the `dip` taper handles instead. Only the
+                // higher-neighbour end is capped (convex self-closes; same-height tapers).
                 for (ik, bk, pk) in [(i0, b0, p0), (i1, b1, p1)] {
-                    let m_top = nb_top(pk.0, pk.1);
-                    if top > m_top + 1e-4 {
-                        continue; // convex corner — the two chamfers self-close
+                    if nb_top(pk.0, pk.1) > top + 1e-4 {
+                        let cap_n = nrm3([n[0] + pk.0 as f32, 0.5, n[2] + pk.1 as f32]);
+                        tri(
+                            [[ik[0], top, ik[1]], [bk[0], top, bk[1]], [bk[0], cy, bk[1]]],
+                            cap_n,
+                            [cw(ik[0], ik[1]), cw(bk[0], bk[1]), wall_top],
+                            &mut indices, &mut positions, &mut normals, &mut colors,
+                        );
                     }
-                    // If the perpendicular neighbour is the SAME height AND CONTINUES this wall
-                    // (it's higher than its own neighbour in our wall direction), its chamfer joins
-                    // ours seamlessly — capping there would leave a triangular FIN poking up above
-                    // the lip. Only cap a true wall-END, or a concave corner against a higher
-                    // neighbour (m_top > top).
-                    if (m_top - top).abs() < 1e-4 && m_top > nb_top(pk.0 + dx, pk.1 + dz) + 1e-4 {
-                        continue;
-                    }
-                    let cap_n = nrm3([n[0] + pk.0 as f32, 0.6, n[2] + pk.1 as f32]);
-                    tri(
-                        [[ik[0], top, ik[1]], [bk[0], top, bk[1]], [bk[0], cy, bk[1]]],
-                        cap_n,
-                        [cw(ik[0], ik[1]), cw(bk[0], bk[1]), wall_top],
-                        &mut indices, &mut positions, &mut normals, &mut colors,
-                    );
                 }
             }
         }

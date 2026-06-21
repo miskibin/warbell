@@ -577,10 +577,10 @@ fn attach_log(
                 .spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mat),
-                    // Slung over the RIGHT shoulder (clear of the head, which y=1.15/x=0 used to
-                    // skewer): drop to shoulder height and tip it so it reads as carried, not glued.
-                    Transform::from_xyz(0.22, 1.0, -0.02)
-                        .with_rotation(Quat::from_rotation_x(0.12) * Quat::from_rotation_z(-0.1)),
+                    // Carried level across the chest in both arms (matches the biped `carry_pose`).
+                    // Child of the root (scale ~0.6); rotated so the log lies across the body (X).
+                    Transform::from_xyz(0.0, 1.05, 0.46)
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(0.05)),
                 ))
                 .id();
         });

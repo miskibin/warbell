@@ -6,7 +6,8 @@
 //! later implements `Grid` over the real tilemap. Returns world-space waypoints
 //! at tile centres (x.5, z.5); empty vec if no path or already at the goal cell.
 
-use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PathPoint {
@@ -66,12 +67,39 @@ fn nearest_walkable(g: &impl Grid, cx: i32, cz: i32, max_r: i32) -> Option<(i32,
     None
 }
 
+/// An entry on the A* open frontier. Ordered as a **min-heap** by `(f, key)` so the cheapest node
+/// pops first, with the same deterministic tie-break the old linear scan used (lowest f, then lowest
+/// key). `BinaryHeap` is a max-heap, so `Ord` is reversed below.
 #[derive(Clone, Copy)]
-struct NodeRec {
+struct OpenEntry {
     f: f64,
     g: f64,
     x: i32,
     z: i32,
+    key: i64,
+}
+
+impl PartialEq for OpenEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.f == other.f && self.key == other.key
+    }
+}
+impl Eq for OpenEntry {}
+impl Ord for OpenEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse both comparisons: BinaryHeap yields the GREATEST element, but we want the
+        // smallest (f, key). `f` is finite here (g + Euclidean h), so `partial_cmp` never None.
+        other
+            .f
+            .partial_cmp(&self.f)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| other.key.cmp(&self.key))
+    }
+}
+impl PartialOrd for OpenEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// A* path on the tile grid. `max_nodes` bounds the search (default 800 in TS).
@@ -99,29 +127,32 @@ pub fn find_path(g: &impl Grid, start: PathPoint, goal: PathPoint, max_nodes: u3
     let key = |x: i32, z: i32| -> i64 { z as i64 * cols + x as i64 };
     let h = |x: i32, z: i32| -> f64 { ((x - gx) as f64).hypot((z - gz) as f64) };
 
-    let mut open: HashMap<i64, NodeRec> = HashMap::new();
+    // Binary-heap open set instead of a linear scan: popping the cheapest node is O(log n) rather
+    // than O(n), so a long or unreachable search (which can grow the frontier into the thousands
+    // before hitting `max_nodes`) no longer costs O(n²). `best_g` holds the cheapest known cost to
+    // each node; the heap may carry stale duplicates (no decrease-key), so a pop whose `g` is worse
+    // than `best_g` (or already closed) is skipped — textbook lazy-deletion A*.
+    let mut open: BinaryHeap<OpenEntry> = BinaryHeap::new();
+    let mut best_g: HashMap<i64, f64> = HashMap::new();
     let mut closed: HashSet<i64> = HashSet::new();
     let mut came_from: HashMap<i64, i64> = HashMap::new();
 
     let start_key = key(sx, sz);
-    open.insert(start_key, NodeRec { f: h(sx, sz), g: 0.0, x: sx, z: sz });
+    open.push(OpenEntry { f: h(sx, sz), g: 0.0, x: sx, z: sz, key: start_key });
+    best_g.insert(start_key, 0.0);
 
     let mut visited: u32 = 0;
-    while !open.is_empty() && visited < max_nodes {
-        visited += 1;
-
-        // Lowest f-score (deterministic: tie-break on lowest key, since Rust's
-        // HashMap iteration order is unspecified — the TS Map used insertion
-        // order, but the tests assert path length/membership, not tie-breaks).
-        let mut best_key: i64 = -1;
-        let mut best_f = f64::INFINITY;
-        for (&k, v) in open.iter() {
-            if v.f < best_f || (v.f == best_f && k < best_key) {
-                best_f = v.f;
-                best_key = k;
-            }
+    while let Some(best) = open.pop() {
+        let best_key = best.key;
+        // Stale heap entry — a cheaper route to this node was found (or it's already expanded)
+        // after this copy was pushed. Skip without spending budget.
+        if closed.contains(&best_key) || best.g > *best_g.get(&best_key).unwrap_or(&f64::INFINITY) {
+            continue;
         }
-        let best = open.remove(&best_key).unwrap();
+        if visited >= max_nodes {
+            break;
+        }
+        visited += 1;
         closed.insert(best_key);
 
         let (cx, cz, gscore) = (best.x, best.z, best.g);
@@ -178,13 +209,14 @@ pub fn find_path(g: &impl Grid, start: PathPoint, goal: PathPoint, max_nodes: u3
             }
             let step = if dx != 0 && dz != 0 { std::f64::consts::SQRT_2 } else { 1.0 };
             let ng = gscore + step;
-            let better = match open.get(&nk) {
-                Some(existing) => ng < existing.g,
+            let better = match best_g.get(&nk) {
+                Some(&existing) => ng < existing,
                 None => true,
             };
             if better {
+                best_g.insert(nk, ng);
                 came_from.insert(nk, best_key);
-                open.insert(nk, NodeRec { f: ng + h(nx, nz), g: ng, x: nx, z: nz });
+                open.push(OpenEntry { f: ng + h(nx, nz), g: ng, x: nx, z: nz, key: nk });
             }
         }
     }
@@ -391,5 +423,44 @@ mod tests {
         // Same layout without the bridge: the water gap is impassable.
         g.set_map(&["~~~~~", "..~..", "~~~~~"]);
         assert!(find_path(&g, p(0.0, 1.0), p(4.0, 1.0), 800).is_empty());
+    }
+
+    /// Fill an `n×n` MockGrid with open height-0 ground (bypasses the string `set_map`).
+    fn open_grid(n: i32) -> MockGrid {
+        let mut g = MockGrid::new();
+        g.cols = n;
+        g.rows = n;
+        for x in 0..n {
+            for z in 0..n {
+                g.heights.insert((x, z), 0);
+            }
+        }
+        g
+    }
+
+    #[test]
+    fn solves_large_open_grid() {
+        // A big open grid grows the frontier into the thousands of open nodes — the war-party-at-the-
+        // ork-base case. Under the old linear-scan open set this was O(n²); the binary heap keeps it
+        // quick. Assert the optimal corner-to-corner route (pure diagonals on an open grid).
+        let n = 120;
+        let g = open_grid(n);
+        let path = find_path(&g, p(0.0, 0.0), p((n - 1) as f64, (n - 1) as f64), 100_000);
+        assert_eq!(*path.last().unwrap(), p(n as f64 - 0.5, n as f64 - 0.5));
+        assert_eq!(path.len(), (n - 1) as usize);
+    }
+
+    #[test]
+    fn unreachable_goal_on_large_grid_terminates() {
+        // Goal sealed behind a full-height cliff wall (the worst case behind the spike: orks behind
+        // the Hold walls). A* must drain the reachable frontier and return empty — the point is that
+        // it TERMINATES cheaply instead of blowing up O(n²) over a huge open set.
+        let n = 80;
+        let mut g = open_grid(n);
+        for z in 0..n {
+            g.heights.insert((40, z), 3); // an impassable cliff column splitting the grid in two
+        }
+        let path = find_path(&g, p(1.0, 1.0), p((n - 1) as f64, (n - 1) as f64), 10_000);
+        assert!(path.is_empty());
     }
 }

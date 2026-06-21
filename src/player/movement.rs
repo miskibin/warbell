@@ -20,8 +20,12 @@ const SPEED: f32 = 3.5;
 const SPRINT_MULT: f32 = 1.75;
 const GRAVITY: f32 = 20.0;
 const JUMP_SPEED: f32 = 6.5;
-const TURN_RATE: f32 = 12.0;
+const TURN_RATE: f32 = 15.0; // snappier facing toward the move direction
 const STEP_FREQ: f32 = 7.0;
+/// Velocity-ramp rates (1/s): the hero accelerates IN fast and slides OUT a touch slower, so he has
+/// momentum/weight instead of snapping to full speed and stopping dead.
+const ACCEL: f32 = 14.0;
+const DECEL: f32 = 9.0;
 const PLAYER_R: f32 = 0.22;
 
 // ── Hazards (ported from Character.tsx) ──
@@ -139,8 +143,9 @@ pub fn player_move(
     // when down so orks stop chasing the corpse.
     if *mode != PlayMode::Play || !player.0.is_alive() || build_mode.active {
         hero.moving = false;
-        let idle_bob = (t * 1.4).sin() * 0.025;
-        tf.translation = Vec3::new(hero.pos.x, hero.y + idle_bob, hero.pos.y);
+        hero.vel = Vec2::ZERO;
+        // The rig (hips joint in `anim`) owns the idle/walk bob — keep the root on the ground.
+        tf.translation = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
         write_state(&mut state, &hero);
         state.alive = player.0.is_alive();
         return;
@@ -186,23 +191,37 @@ pub fn player_move(
     }
     hero.moving = moving;
 
-    let target = if moving { 1.0 } else { 0.0 };
-    hero.moving_amt += (target - hero.moving_amt) * (dt * 10.0).min(1.0);
-
     // ── Horizontal motion with axis-separated terrain + prop collision ──
     let sprinting =
         moving && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
+    // Smooth walk⇄run blend so the run pose eases in/out instead of snapping (anim reads `run_amt`).
+    let run_target = if sprinting { 1.0 } else { 0.0 };
+    hero.run_amt += (run_target - hero.run_amt) * (dt * 8.0).min(1.0);
     let cur_y = footing(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
-    if moving {
-        let haste = buffs.0.speed_mult(t as f64) as f32; // active Haste buff (1.0 = none)
-        let step = SPEED
-            * if sprinting { SPRINT_MULT } else { 1.0 }
-            * player.0.move_speed_mult as f32
-            * haste
-            * if in_swamp { SWAMP_SLOW } else { 1.0 }
-            * dt;
-        let nx = hero.pos.x + move_dir.x * step;
-        let nz = hero.pos.y + move_dir.z * step;
+
+    // ── Velocity ramp (momentum): accelerate toward the input target, slide to a stop on release —
+    // instead of snapping to full speed / dead stop. ──
+    let want_speed = SPEED
+        * if sprinting { SPRINT_MULT } else { 1.0 }
+        * player.0.move_speed_mult as f32
+        * buffs.0.speed_mult(t as f64) as f32 // active Haste buff (1.0 = none)
+        * if in_swamp { SWAMP_SLOW } else { 1.0 };
+    let desired = if moving { Vec2::new(move_dir.x, move_dir.z) * want_speed } else { Vec2::ZERO };
+    let ramp = if moving { ACCEL } else { DECEL }; // faster to start than to stop
+    let new_vel = hero.vel + (desired - hero.vel) * (dt * ramp).min(1.0);
+    hero.vel = new_vel;
+    if hero.vel.length_squared() < 1e-4 {
+        hero.vel = Vec2::ZERO; // settle exactly so a stopped hero doesn't creep
+    }
+
+    // Anim weight tracks ACTUAL speed so the legs keep striding through the stop-slide (no foot-slide
+    // while static, no snap to idle).
+    let speed_frac = (hero.vel.length() / SPEED).clamp(0.0, 1.0);
+    hero.moving_amt += (speed_frac - hero.moving_amt) * (dt * 13.0).min(1.0);
+
+    if hero.vel.length_squared() > 1e-6 {
+        let nx = hero.pos.x + hero.vel.x * dt;
+        let nz = hero.pos.y + hero.vel.y * dt;
         // Collide the hero's whole BODY (radius `PLAYER_R`), not just his centre point: test the
         // blocker margin so he stops with his shoulder at the surface instead of sinking ~0.22u
         // into every wall/stone/prop (the "clip a bit / collision is unreliable" feel).
@@ -213,15 +232,19 @@ pub fn player_move(
             && (escaping || !blockers::any_within(nx, hero.pos.y, PLAYER_R))
         {
             hero.pos.x = nx;
+        } else {
+            hero.vel.x = 0.0; // ran into a wall on X — drop that component (no pushing into it)
         }
         if hero_can_step(hero.pos.x, nz, PLAYER_R, hero.y)
             && (escaping || !blockers::any_within(hero.pos.x, nz, PLAYER_R))
         {
             hero.pos.y = nz;
+        } else {
+            hero.vel.y = 0.0;
         }
-        // In first person the *view* owns facing (set in `player_camera` to the look-yaw) so attacks
-        // fire where you aim while strafing — don't fight it by steering toward the move direction.
-        if !fp.active {
+        // Steer toward the INPUT direction while pressing (hold the last facing through the slide). In
+        // first person the *view* owns facing (set in `player_camera`) so attacks fire where you aim.
+        if moving && !fp.active {
             let want = move_dir.x.atan2(move_dir.z);
             hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
         }
@@ -277,15 +300,15 @@ pub fn player_move(
     }
 
     // ── Walk phase + body bob ──
-    if moving {
-        hero.walk_phase += dt * STEP_FREQ * if sprinting { SPRINT_MULT } else { 1.0 };
+    // Advance the gait by ACTUAL speed so footfalls match the accel/slide (and ease out, not cut).
+    let spd = hero.vel.length();
+    if spd > 0.01 {
+        hero.walk_phase += dt * STEP_FREQ * (spd / SPEED);
     }
-    let m = hero.moving_amt;
-    let idle_bob = (t * 1.4).sin() * 0.025;
-    let walk_bob = hero.walk_phase.sin().abs() * 0.05;
-    let bob = idle_bob * (1.0 - m) + walk_bob * m;
-
-    tf.translation = Vec3::new(hero.pos.x, hero.y + bob, hero.pos.y);
+    // Vertical bob is owned entirely by the rig (the hips joint in `anim`) so it's applied exactly
+    // once — stacking a second bob here (at a different frequency) is what made the gait read
+    // jittery/uncoordinated. The root just tracks the ground.
+    tf.translation = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
     tf.rotation = Quat::from_rotation_y(hero.facing);
 
     write_state(&mut state, &hero);

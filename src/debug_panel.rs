@@ -55,6 +55,14 @@ impl Default for LightOverride {
     }
 }
 
+/// Cheat-section resources bundled into one `SystemParam` — `panel_ui` is already at the
+/// 16-param tuple limit, so the two debug stores ride together here.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Cheats<'w> {
+    bank: ResMut<'w, crate::economy::Bank>,
+    player: ResMut<'w, crate::player::PlayerRes>,
+}
+
 pub struct DebugPanelPlugin;
 
 impl Plugin for DebugPanelPlugin {
@@ -146,6 +154,7 @@ fn panel_ui(
     mut director: ResMut<crate::cinematic::DirectorState>,
     mut scene: ResMut<crate::scenes::SceneState>,
     mut hud_hidden: ResMut<HudHidden>,
+    mut cheats: Cheats,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     // Tell the camera controllers whether egui owns the pointer this frame (cursor over the
@@ -159,6 +168,30 @@ fn panel_ui(
         .default_width(280.0)
         .show(ctx, |ui| {
             ui.label("F1 toggles this panel");
+
+            // ── Cheats: dev shortcuts for testing economy/progression without grinding. ──
+            egui::CollapsingHeader::new("🛠 Cheats").show(ui, |ui| {
+                if ui.button("+5k of every resource").clicked() {
+                    cheats.bank.0.add_stone(5000.0);
+                    cheats.bank.0.add_food(5000.0);
+                    cheats.bank.0.add_wood(5000.0);
+                    cheats.player.0.add_gold(5000);
+                }
+                if ui.button("Level up").clicked() {
+                    // Grant exactly enough xp to cross the next threshold (raises stats + heals).
+                    let p = &mut cheats.player.0;
+                    let need = (p.xp_to_next - p.xp).max(1);
+                    p.add_xp(need);
+                }
+                ui.weak(format!(
+                    "L{}  gold {}  stone {:.0} food {:.0} wood {:.0}",
+                    cheats.player.0.level,
+                    cheats.player.0.gold,
+                    cheats.bank.0.stone,
+                    cheats.bank.0.food,
+                    cheats.bank.0.wood
+                ));
+            });
 
             // ── Trailer Director: staged scenes/animations to film with the free-cam (`). ──
             egui::CollapsingHeader::new("🎬 Director").show(ui, |ui| {

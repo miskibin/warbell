@@ -29,3 +29,11 @@
 /.claude/scheduled_tasks.lock
 
 /target-shot
+
+# Playwright-MCP scratch output (console logs + page snapshots the browser tooling dumps).
+/.playwright-mcp/
+
+# Model-proportion pipeline intermediates — ~22 MB of generated depth sheets / contour PNGs /
+# .npy the turnaround-extraction step writes (tools/ holds the scripts; the proportions are
+# already baked into the Rust model builders, so these are dev-only derived artifacts).
+/model_proportions/

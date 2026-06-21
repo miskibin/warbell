@@ -35,6 +35,9 @@ const BASE_HP: f32 = 4200.0;
 const HP_PER_LEVEL: f32 = 0.12;
 /// Melee damage to the hero (no per-night growth — the warlord is a one-time fight).
 const MELEE_DMG: f32 = 56.0;
+/// Boss cleave vs a town defender — the armour-blunted share (same 0.6 mult ork melee uses on
+/// guards) so a mustered war party bleeds against him but isn't deleted in two swings.
+const MELEE_NPC_DMG: f32 = MELEE_DMG * 0.6;
 const BODY_R: f32 = 0.95;
 /// Faster than a warden (2.4) but **hard-leashed** ([`LEASH`]) so he can't be kited across the mire —
 /// the user's "the boss doesn't chase too much": step out of his courtyard and he breaks off home.
@@ -128,20 +131,49 @@ fn warlord_brain(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut commands: Commands,
-    mut q: Query<(&mut Warlord, &mut Transform, Option<&Slowed>), Without<Dying>>,
+    mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
+    guards: Query<(Entity, &Transform), (With<crate::villagers::NpcHp>, Without<Dying>, Without<Warlord>)>,
+    mut q: Query<(Entity, &mut Warlord, &mut Transform, Option<&Slowed>), Without<Dying>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
     let tw = time.elapsed_secs_wrapped();
-    for (mut w, mut tf, slowed) in &mut q {
+    for (self_e, mut w, mut tf, slowed) in &mut q {
         w.atk_cd -= dt;
         w.crit_cd -= dt;
         let slow = slowed.map(|s| s.factor).unwrap_or(1.0);
         let hero_d = if hero.alive { w.pos.distance(hero.pos) } else { f32::INFINITY };
-        // Engage only within the leash of his hall; otherwise stalk home and wait.
-        let engaged = hero.alive && w.home.distance(hero.pos) <= LEASH;
+        // The hero is a target only inside the leash of his hall.
+        let hero_active = hero.alive && w.home.distance(hero.pos) <= LEASH;
+        // The telegraphed killing blow is hero-only — drop any windup the moment he leaves the fray.
+        if !hero_active {
+            w.crit_at = 0.0;
+        }
+        // The war party that marched on him: nearest town defender inside the leash. He turns on
+        // the militia too (and his swing cleaves every one in reach, below), so a muster can't just
+        // facetank him while the hero plinks — he fights back.
+        let mut npc: Option<(Entity, Vec2, f32)> = None;
+        for (ge, gtf) in &guards {
+            let gp = Vec2::new(gtf.translation.x, gtf.translation.z);
+            if w.home.distance(gp) > LEASH {
+                continue;
+            }
+            let d = w.pos.distance(gp);
+            if npc.is_none_or(|(_, _, bd)| d < bd) {
+                npc = Some((ge, gp, d));
+            }
+        }
+        let engaged = hero_active || npc.is_some();
+        // Movement/melee target: the hero when he's in the fray, else the nearest guard.
+        let (tgt_pos, tgt_d) = if hero_active {
+            (hero.pos, hero_d)
+        } else if let Some((_, gp, gd)) = npc {
+            (gp, gd)
+        } else {
+            (w.home, f32::INFINITY)
+        };
 
-        if engaged && w.crit_at > 0.0 {
+        if hero_active && w.crit_at > 0.0 {
             // Winding up the killing blow: plant, track the hero slowly, drop it on impact.
             w.moving = false;
             let to = hero.pos - w.pos;
@@ -162,9 +194,9 @@ fn warlord_brain(
                 }
             }
         } else if engaged {
-            if hero_d > MELEE_RANGE {
+            if tgt_d > MELEE_RANGE {
                 let cur_y = steer::footing(w.pos.x, w.pos.y).unwrap_or(tf.translation.y);
-                if let Some(s) = steer::advance(w.pos, w.facing, hero.pos, SPEED * slow * dt, BODY_R, cur_y, TURN * dt) {
+                if let Some(s) = steer::advance(w.pos, w.facing, tgt_pos, SPEED * slow * dt, BODY_R, cur_y, TURN * dt) {
                     w.facing = s.facing;
                     w.pos = s.pos;
                     w.moving = s.moving;
@@ -173,19 +205,39 @@ fn warlord_brain(
                 }
             } else {
                 w.moving = false;
-                let to = hero.pos - w.pos;
+                let to = tgt_pos - w.pos;
                 if to.length_squared() > 1e-4 {
                     let want = to.x.atan2(to.y);
                     w.facing += steer::wrap_pi(want - w.facing).clamp(-TURN * 2.0 * dt, TURN * 2.0 * dt);
                 }
-                if w.atk_cd <= 0.0 {
+            }
+            // A swing lands when off cooldown and SOMETHING is within reach — the hero AND every
+            // town defender in melee both eat it (a boss cleave). His own cooldown gates the rate,
+            // so chasing the hero doesn't let him swat the war party for free.
+            if w.atk_cd <= 0.0 {
+                let hero_hit = hero_active && hero_d <= MELEE_RANGE;
+                let mut npc_hits = 0;
+                for (ge, gtf) in &guards {
+                    let gp = Vec2::new(gtf.translation.x, gtf.translation.z);
+                    if w.pos.distance(gp) <= MELEE_RANGE {
+                        npc_dmg.0.push(crate::villagers::NpcHit {
+                            victim: ge,
+                            amount: MELEE_NPC_DMG,
+                            attacker: Some(self_e),
+                        });
+                        npc_hits += 1;
+                    }
+                }
+                if hero_hit || npc_hits > 0 {
                     w.atk_cd = MELEE_CD;
                     w.atk_anim = now;
-                    pending.0 += MELEE_DMG;
+                    if hero_hit {
+                        pending.0 += MELEE_DMG;
+                    }
                 }
             }
-            // Begin a telegraphed critical when off cooldown and the hero is in striking range.
-            if w.crit_cd <= 0.0 && hero_d < CRIT_RANGE {
+            // Begin a telegraphed critical (hero-only) when off cooldown and the hero is in range.
+            if w.crit_cd <= 0.0 && hero_active && hero_d < CRIT_RANGE {
                 w.crit_cd = CRIT_CD;
                 w.crit_at = now + CRIT_TELEGRAPH;
                 let gy = steer::footing(w.pos.x, w.pos.y).unwrap_or(tf.translation.y);

@@ -49,9 +49,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // rotation + uniform-scale instance transforms, no 4x4 inverse.
     let model = mesh_functions::get_world_from_local(in.instance_index);
     let m = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
-    let s2 = max(dot(m[0], m[0]), 1e-5);
     let origin = model[3].xyz;
-    let obj = (transpose(m) * (in.world_position.xyz - origin)) / s2;
+    // Per-axis unscale → true model-space coord even under NON-uniform instance scale (e.g. the
+    // hero's stocky rig scale): divide each local axis by its own length² (uniform scale ⇒ identical
+    // to the old single-divide, so creatures are unaffected). Stops the texture warping/artifacts.
+    let lp = transpose(m) * (in.world_position.xyz - origin);
+    let obj = vec3<f32>(
+        lp.x / max(dot(m[0], m[0]), 1e-5),
+        lp.y / max(dot(m[1], m[1]), 1e-5),
+        lp.z / max(dot(m[2], m[2]), 1e-5),
+    );
 
     let surf = in.color.a;        // surface code (see Surf::surf_code)
     let strength = creature.params.x;
@@ -95,9 +102,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         // (gold/steel) instead of mirroring the white sky; keep roughness moderate so it reads
         // as a soft sheen, not a blown-out mirror.
         let n = vnoise(obj * 30.0) - 0.5;
-        lum = 1.0 + n * strength * 0.4;
-        rough_adj = -0.25; // ~0.45, matches the original hero plate
-        pbr_input.material.metallic = 0.3; // gentle sheen; high metallic mirrors the bright sky white
+        lum = 1.0 + n * strength * 0.55; // a touch more grain so plate reads textured, not plastic
+        rough_adj = -0.18;
+        pbr_input.material.metallic = clamp(spec_lift, 0.0, 1.0); // per-material sheen (params.z); hero stays matte
     } else if (surf < 0.86) {
         // Cloth — fine weave grain.
         let weave = (sin(obj.x * 120.0) * sin(obj.y * 120.0)) * 0.5;

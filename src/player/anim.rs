@@ -1,36 +1,625 @@
-//! Hero limb animation for the articulated knight rig. The walk/idle base pose is blended by the
-//! hero's `moving_amt` (legs straighten at rest) with the stride driven by `walk_phase` (so the
-//! gait stays locked to actual movement speed); on top sit the combat overrides — the attack slash
-//! and the shield-block brace on the two-bone arms — plus the Director's staged gestures, the
-//! first-person viewmodel raise, and a slack keel-over on death. Ported/adapted from the user's
-//! three.js `updateKnightAnimation` (idle/walk) with game-authored attack/block.
+//! Hero limb animation — a faithful 1:1 port of the user's three.js `updateKnightAnimation`
+//! (low-poly-knight-studio). Every studio clip is reproduced verbatim: **idle / walk / run / jump /
+//! defend / attack1 (overhead chop) / attack2 (horizontal slash) / attack3 (forward thrust) /
+//! victory**. The studio builds each frame imperatively — reset every joint to rest, then a `switch`
+//! case sets some — so we mirror that: [`rest`] seeds a full [`Pose`] table and each clip function
+//! mutates the fields it touches. The per-frame system then writes the chosen pose onto the rig
+//! joints.
+//!
+//! Game adaptations (kept minimal so the *poses* stay verbatim):
+//! - **walk/run** read `walk_phase` for their `cycle` (gait locked to real movement speed, not
+//!   wall-clock) and are cross-faded by `moving_amt` (idle→gait) and `run_amt` (walk→run).
+//! - **jump** — the studio faked the hop by sliding `hips.y`; here the **real jump physics own the
+//!   height** (the root's world Y), so the studio `height` (0 launch/landing, 1 apex) is recovered
+//!   from the hero's vertical speed and fed into the studio's exact airtime joint formulas.
+//! - **attack** — our one-shot swing (`attack_t/ATTACK_DURATION`) is split into the studio's
+//!   wind/strike/recovery phases (strike starts at `HIT_PHASE` so the blade meets the damage frame).
+//! - **defend** — eased in/out by a smoothed `block_amt` instead of the studio's `time`-since-block.
+//! On top sit our own layers: the Director's staged gestures (arms), the first-person viewmodel
+//! raise, the touchdown landing-squash, and a slack keel-over on death.
+
+use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
 use super::combat::ATTACK_DURATION;
 use super::{Hero, HeroHealth, HeroPart, Joint};
 
-/// Shield rest rotation under the left hand (matches its spawn pose).
-fn shield_rest() -> Quat {
-    Quat::from_euler(EulerRot::XYZ, 0.2, -0.6, 0.15)
-}
-/// Block stance for the two-bone shield arm: upper arm forward + across the body, forearm bent up,
-/// which brings the hand (and the shield on it) IN FRONT of the chest.
-fn sh_block() -> Quat {
-    e3(-1.25, 0.45, 0.0)
-}
-fn el_block() -> Quat {
-    Quat::from_rotation_x(-1.25)
-}
-/// Shield's own local rotation while blocking. The shield mesh faces +Z (forward) at identity, so
-/// to keep its face pointing squarely forward and the plate upright — IN FRONT of the body, never
-/// tilted up by the head — we cancel the arm's cumulative rotation: `(shoulder·elbow)⁻¹`.
-fn shield_block() -> Quat {
-    (sh_block() * el_block()).inverse()
-}
-
 fn e3(x: f32, y: f32, z: f32) -> Quat {
     Quat::from_euler(EulerRot::XYZ, x, y, z)
+}
+fn rx(a: f32) -> Quat {
+    Quat::from_rotation_x(a)
+}
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+fn ease_out_cubic(t: f32) -> f32 {
+    let c = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - c).powi(3)
+}
+fn smoothstep(t: f32) -> f32 {
+    let c = t.clamp(0.0, 1.0);
+    c * c * (3.0 - 2.0 * c)
+}
+
+/// Shield rest pose — turned EDGE-ON along the forearm when not blocking (previs look); the defend
+/// clip swings it face-forward. (Studio idle was face-out; the user wants it sideways at rest.)
+const SHIELD_REST_T: Vec3 = Vec3::new(-0.07, -0.08, 0.13);
+fn shield_rest_r() -> Quat {
+    e3(0.12, -1.5, 0.0)
+}
+/// Walk/run — held edge-on, a touch closer to the body.
+const SHIELD_GAIT_T: Vec3 = Vec3::new(-0.1, -0.05, 0.15);
+fn shield_gait_r() -> Quat {
+    e3(0.12, -1.45, 0.0)
+}
+/// Sword rest X-rotation — held tip up-forward "at the ready" (was 2.2 = pointing down). Shared by
+/// the rest pose AND the attacks' wind-start / recovery-end so idle⇄attack stays smooth.
+pub(crate) const SWORD_REST_X: f32 = 1.2;
+fn sword_rest_r() -> Quat {
+    e3(SWORD_REST_X, 0.3, 0.0)
+}
+
+/// Landing squash recovery time (a crouch that decays over this many seconds after touchdown).
+const LAND_RECOVER: f32 = 0.20;
+
+/// One joint's target: an optional local translation override (`Some` only for joints the studio
+/// moves — hips always, the shield, the hips-joints in victory) + a local rotation (always applied).
+#[derive(Clone, Copy)]
+pub(crate) struct Jp {
+    pub(crate) t: Option<Vec3>,
+    pub(crate) r: Quat,
+}
+impl Jp {
+    fn r(r: Quat) -> Self {
+        Jp { t: None, r }
+    }
+    fn lerp(self, o: Jp, s: f32) -> Jp {
+        let t = match (self.t, o.t) {
+            (Some(a), Some(b)) => Some(a.lerp(b, s)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        Jp { t, r: self.r.slerp(o.r, s) }
+    }
+}
+
+/// A full rig pose (the studio sets joints imperatively onto one of these each frame).
+#[derive(Clone, Copy)]
+pub(crate) struct Pose {
+    hips: Jp,
+    torso: Jp,
+    head: Jp,
+    sh_l: Jp,
+    sh_r: Jp,
+    el_l: Jp,
+    el_r: Jp,
+    hip_l: Jp,
+    hip_r: Jp,
+    knee_l: Jp,
+    knee_r: Jp,
+    foot_l: Jp,
+    foot_r: Jp,
+    shield: Jp,
+    sword: Jp,
+}
+
+impl Pose {
+    pub(crate) fn get(&self, j: Joint) -> Jp {
+        match j {
+            Joint::Hips => self.hips,
+            Joint::Torso => self.torso,
+            Joint::Head => self.head,
+            Joint::ShoulderL => self.sh_l,
+            Joint::ShoulderR => self.sh_r,
+            Joint::ElbowL => self.el_l,
+            Joint::ElbowR => self.el_r,
+            Joint::HipL => self.hip_l,
+            Joint::HipR => self.hip_r,
+            Joint::KneeL => self.knee_l,
+            Joint::KneeR => self.knee_r,
+            Joint::FootL => self.foot_l,
+            Joint::FootR => self.foot_r,
+            Joint::Shield => self.shield,
+            Joint::Sword => self.sword,
+        }
+    }
+    fn lerp(&self, o: &Pose, s: f32) -> Pose {
+        Pose {
+            hips: self.hips.lerp(o.hips, s),
+            torso: self.torso.lerp(o.torso, s),
+            head: self.head.lerp(o.head, s),
+            sh_l: self.sh_l.lerp(o.sh_l, s),
+            sh_r: self.sh_r.lerp(o.sh_r, s),
+            el_l: self.el_l.lerp(o.el_l, s),
+            el_r: self.el_r.lerp(o.el_r, s),
+            hip_l: self.hip_l.lerp(o.hip_l, s),
+            hip_r: self.hip_r.lerp(o.hip_r, s),
+            knee_l: self.knee_l.lerp(o.knee_l, s),
+            knee_r: self.knee_r.lerp(o.knee_r, s),
+            foot_l: self.foot_l.lerp(o.foot_l, s),
+            foot_r: self.foot_r.lerp(o.foot_r, s),
+            shield: self.shield.lerp(o.shield, s),
+            sword: self.sword.lerp(o.sword, s),
+        }
+    }
+}
+
+/// The studio reset block (every clip starts here): hips at 1.05, all rotations zero, the shield at
+/// its idle pose, the sword at its held rest.
+fn rest() -> Pose {
+    let id = Jp::r(Quat::IDENTITY);
+    Pose {
+        hips: Jp { t: Some(Vec3::new(0.0, 1.05, 0.0)), r: Quat::IDENTITY },
+        torso: id,
+        head: id,
+        sh_l: id,
+        sh_r: id,
+        el_l: id,
+        el_r: id,
+        hip_l: id,
+        hip_r: id,
+        knee_l: id,
+        knee_r: id,
+        foot_l: id,
+        foot_r: id,
+        shield: Jp { t: Some(SHIELD_REST_T), r: shield_rest_r() },
+        sword: Jp::r(sword_rest_r()),
+    }
+}
+
+// ── Locomotion clips ───────────────────────────────────────────────────────────────────
+fn idle_pose(t: f32) -> Pose {
+    let breath = (t * 2.2).sin();
+    let s11 = (t * 1.1).sin();
+    let c11 = (t * 1.1).cos();
+    let mut p = rest();
+    p.hips = Jp { t: Some(Vec3::new(0.0, 1.05 + breath * 0.015, 0.0)), r: e3(0.0, s11 * 0.02, 0.0) };
+    p.torso = Jp::r(e3(breath * 0.01, -s11 * 0.012, 0.0));
+    p.head = Jp::r(e3(-breath * 0.015, 0.0, s11 * 0.006));
+    p.sh_l = Jp::r(e3(breath * 0.05 + 0.1, 0.0, -0.15 + c11 * 0.02));
+    p.el_l = Jp::r(rx(-0.5 - breath * 0.03));
+    p.sh_r = Jp::r(e3(breath * 0.05 + 0.12, 0.0, 0.15 - c11 * 0.02));
+    p.el_r = Jp::r(rx(-0.4 - breath * 0.02));
+    p
+}
+
+fn walk_pose(c: f32) -> Pose {
+    let l = c;
+    let r = c + PI;
+    let torso_x = 0.05 + (c * 2.0).sin() * 0.02;
+    let mut p = rest();
+    // A confident, decisive march — more arm swing and torso commitment than the studio's restrained
+    // values, while the legs carry a solid stride.
+    p.hips = Jp {
+        t: Some(Vec3::new(c.sin() * 0.014, 1.04 + (c * 2.0).sin() * 0.028, 0.0)),
+        r: e3(0.0, c.cos() * 0.08, c.sin() * 0.025),
+    };
+    p.torso = Jp::r(e3(torso_x, -c.cos() * 0.11, -c.sin() * 0.015));
+    p.head = Jp::r(e3(-torso_x * 0.5, c.cos() * 0.035, 0.0));
+    p.hip_l = Jp::r(rx(l.sin() * 0.6));
+    p.hip_r = Jp::r(rx(r.sin() * 0.6));
+    p.knee_l = Jp::r(rx((-l.cos()).max(0.0) * 1.1));
+    p.knee_r = Jp::r(rx((-r.cos()).max(0.0) * 1.1));
+    p.foot_l = Jp::r(rx(-l.sin() * 0.6));
+    p.foot_r = Jp::r(rx(-r.sin() * 0.6));
+    p.sh_l = Jp::r(e3(r.sin() * 0.4 + 0.05, 0.0, -0.38));
+    p.el_l = Jp::r(rx(-0.5 + r.sin() * 0.18));
+    p.sh_r = Jp::r(e3(l.sin() * 0.6 + 0.1, 0.0, 0.15 + c.cos() * 0.02));
+    p.el_r = Jp::r(rx(-0.3 + l.sin() * 0.28));
+    p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
+    p
+}
+
+fn run_pose(c: f32) -> Pose {
+    let l = c;
+    let r = c + PI;
+    let absin = c.sin().abs();
+    let mut p = rest();
+    // A purposeful armored run — bigger, more committed stride than the studio's restrained jog
+    // (but not the old frantic sprint): real lean, driving arms, knees that lift.
+    p.hips = Jp {
+        t: Some(Vec3::new(0.0, 1.0 + absin * 0.06, 0.0)),
+        r: e3(0.0, c.cos() * 0.1, c.sin() * 0.03),
+    };
+    p.torso = Jp::r(e3(0.18 + absin * 0.04, -c.cos() * 0.12, -c.sin() * 0.02));
+    p.head = Jp::r(e3(-0.1 - absin * 0.04, c.cos() * 0.04, 0.0));
+    p.hip_l = Jp::r(e3(l.sin() * 0.8, 0.0, l.sin().max(0.0) * 0.02));
+    p.hip_r = Jp::r(e3(r.sin() * 0.8, 0.0, -r.sin().max(0.0) * 0.02));
+    p.knee_l = Jp::r(rx((-l.cos()).max(0.0) * 1.3 + 0.12));
+    p.knee_r = Jp::r(rx((-r.cos()).max(0.0) * 1.3 + 0.12));
+    p.foot_l = Jp::r(rx(-l.sin() * 0.8 * 0.5 + 0.14));
+    p.foot_r = Jp::r(rx(-r.sin() * 0.8 * 0.5 + 0.14));
+    p.sh_l = Jp::r(e3(r.sin() * 0.38 + 0.08, 0.0, -0.36));
+    p.el_l = Jp::r(rx(-0.65 + r.sin() * 0.14));
+    p.sh_r = Jp::r(e3(l.sin() * 0.62 + 0.15, 0.0, 0.18));
+    p.el_r = Jp::r(rx(-0.6 + l.sin() * 0.22));
+    p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
+    p
+}
+
+/// idle → (walk → run by `run`) → blended toward idle by `m` (moving_amt).
+pub(crate) fn loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
+    let gait = walk_pose(wp).lerp(&run_pose(wp), run);
+    idle_pose(t).lerp(&gait, m)
+}
+
+fn blend_t(a: Option<Vec3>, b: Option<Vec3>, s: f32) -> Option<Vec3> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.lerp(y, s)),
+        (Some(x), None) => Some(x),
+        (None, Some(y)) => Some(y),
+        (None, None) => None,
+    }
+}
+
+/// Shield-block while still mobile: the torso/arms/shield brace by `block`, but the legs (and the
+/// hip bob) only brace as the hero stands still (`1 - moving`) — so blocking *while walking* keeps
+/// the legs striding instead of freezing them and sliding the body across the ground.
+fn brace(loco: &Pose, d: &Pose, block: f32, moving: f32) -> Pose {
+    let leg = block * (1.0 - moving);
+    Pose {
+        hips: Jp { t: blend_t(loco.hips.t, d.hips.t, leg), r: loco.hips.r.slerp(d.hips.r, block) },
+        torso: loco.torso.lerp(d.torso, block),
+        head: loco.head.lerp(d.head, block),
+        sh_l: loco.sh_l.lerp(d.sh_l, block),
+        sh_r: loco.sh_r.lerp(d.sh_r, block),
+        el_l: loco.el_l.lerp(d.el_l, block),
+        el_r: loco.el_r.lerp(d.el_r, block),
+        hip_l: loco.hip_l.lerp(d.hip_l, leg),
+        hip_r: loco.hip_r.lerp(d.hip_r, leg),
+        knee_l: loco.knee_l.lerp(d.knee_l, leg),
+        knee_r: loco.knee_r.lerp(d.knee_r, leg),
+        foot_l: loco.foot_l.lerp(d.foot_l, leg),
+        foot_r: loco.foot_r.lerp(d.foot_r, leg),
+        shield: loco.shield.lerp(d.shield, block),
+        sword: loco.sword.lerp(d.sword, block),
+    }
+}
+
+/// An upper-body action (an attack) laid over locomotion legs: the action drives torso/head/arms/
+/// sword/shield; the legs (and the hip bob) ease toward the walking/running gait by `leg`
+/// (= moving_amt), so swinging mid-run keeps the legs striding (a "running attack") instead of
+/// freezing into the attack's planted stance. Standing still → `leg≈0` → the full attack.
+pub(crate) fn action_over_loco(action: &Pose, loco: &Pose, leg: f32) -> Pose {
+    Pose {
+        hips: Jp { t: blend_t(action.hips.t, loco.hips.t, leg), r: action.hips.r.slerp(loco.hips.r, leg) },
+        torso: action.torso,
+        head: action.head,
+        sh_l: action.sh_l,
+        sh_r: action.sh_r,
+        el_l: action.el_l,
+        el_r: action.el_r,
+        hip_l: action.hip_l.lerp(loco.hip_l, leg),
+        hip_r: action.hip_r.lerp(loco.hip_r, leg),
+        knee_l: action.knee_l.lerp(loco.knee_l, leg),
+        knee_r: action.knee_r.lerp(loco.knee_r, leg),
+        foot_l: action.foot_l.lerp(loco.foot_l, leg),
+        foot_r: action.foot_r.lerp(loco.foot_r, leg),
+        shield: action.shield,
+        sword: action.sword,
+    }
+}
+
+/// A forward running leap (studio `jumpForward` feel) — blended over the plain vertical jump by how
+/// fast the hero is moving: forward lean, lead knee driving up, trail leg extended back, arms
+/// reaching. `h` (apex height, recovered from physics) lifts the lead knee + arms toward the top.
+fn leap_pose(vel_y: f32) -> Pose {
+    let v = (vel_y / 6.5).clamp(-1.0, 1.0);
+    let h = (1.0 - v.abs()).clamp(0.0, 1.0);
+    let mut p = rest();
+    p.torso = Jp::r(rx(0.32));
+    p.head = Jp::r(rx(-0.15));
+    p.hip_l = Jp::r(rx(-0.75 + h * 0.2)); // lead leg drives forward + up
+    p.knee_l = Jp::r(rx(1.0));
+    p.foot_l = Jp::r(rx(-0.3));
+    p.hip_r = Jp::r(rx(0.5 - h * 0.2)); // trail leg extends back
+    p.knee_r = Jp::r(rx(0.35));
+    p.foot_r = Jp::r(rx(0.3));
+    p.sh_l = Jp::r(e3(-0.4 - h * 0.3, 0.0, -0.25));
+    p.el_l = Jp::r(rx(-0.7));
+    p.sh_r = Jp::r(e3(-0.4 - h * 0.3, 0.0, 0.25));
+    p.el_r = Jp::r(rx(-0.7));
+    p
+}
+
+// ── Jump (physics height → studio airtime formulas) ─────────────────────────────────────
+fn jump_pose(vel_y: f32) -> Pose {
+    let v = (vel_y / 6.5).clamp(-1.0, 1.0); // 6.5 = movement::JUMP_SPEED
+    let h = (1.0 - v.abs()).clamp(0.0, 1.0); // studio `height`: 0 at launch/landing, 1 at apex
+    let mut p = rest(); // root owns real height → hips stay at rest
+    p.torso = Jp::r(rx(0.3 - h * 0.4));
+    p.head = Jp::r(rx(-0.2 + h * 0.1));
+    p.hip_l = Jp::r(rx(-0.5 + h * 0.8));
+    p.hip_r = Jp::r(rx(-0.5 + h * 0.4));
+    p.knee_l = Jp::r(rx(1.0 - h * 0.9));
+    p.knee_r = Jp::r(rx(1.0 - h * 0.5));
+    p.foot_l = Jp::r(rx(-0.5 + h * 0.6));
+    p.foot_r = Jp::r(rx(-0.5 + h * 0.8));
+    p.sh_l = Jp::r(e3(0.5 - h * 1.5, 0.0, -h * 0.3));
+    p.el_l = Jp::r(rx(-0.8 + h * 0.5));
+    p.sh_r = Jp::r(e3(0.5 - h * 1.5, 0.0, h * 0.3));
+    p.el_r = Jp::r(rx(-0.8 + h * 0.5));
+    p
+}
+
+// ── Defend (shield block) — full studio depth (ease=1) + idle sway; cross-faded by block_amt. ──
+fn defend_pose(t: f32) -> Pose {
+    let hold = (t * 5.5).sin() * 0.012;
+    let mut p = rest();
+    p.hips = Jp { t: Some(Vec3::new(0.0, 0.96 + hold, 0.05)), r: e3(0.05, 0.15, 0.0) };
+    p.torso = Jp::r(e3(0.1, -0.05, 0.0));
+    p.head = Jp::r(e3(-0.08, -0.1, 0.0));
+    p.hip_l = Jp::r(e3(-0.35, 0.1, -0.08));
+    p.knee_l = Jp::r(rx(0.45));
+    p.foot_l = Jp::r(rx(-0.15));
+    p.hip_r = Jp::r(e3(-0.2, -0.1, 0.15));
+    p.knee_r = Jp::r(rx(0.25));
+    p.foot_r = Jp::r(rx(-0.1));
+    p.sh_l = Jp::r(e3(-0.6, 0.0, -0.4));
+    p.el_l = Jp::r(rx(-0.8));
+    // Shield braced flat in front (studio blockPos/blockRot).
+    p.shield = Jp { t: Some(Vec3::new(0.0, 0.0, 0.1)), r: e3(PI / 2.0, 0.0, 0.0) };
+    p.sh_r = Jp::r(e3(0.15, 0.1, 0.25));
+    p.el_r = Jp::r(rx(-0.5));
+    p.sword = Jp::r(e3(2.4, 0.0, 0.0));
+    p
+}
+
+// ── Attacks (the studio 3-phase wind/strike/recovery functions, verbatim lerp targets) ──
+pub(crate) enum Phase {
+    Wind,
+    Strike,
+    Recovery,
+}
+
+/// Split our one-shot swing progress `ap = attack_t/ATTACK_DURATION` into the studio phases, eased
+/// like the studio's `getAttackPhase`. `WIND_END` aligns the strike start with combat's `HIT_PHASE`.
+pub(crate) fn attack_phase(ap: f32) -> (Phase, f32) {
+    const WIND_END: f32 = 0.30;
+    const STRIKE_END: f32 = 0.55;
+    if ap < WIND_END {
+        (Phase::Wind, ease_out_cubic(ap / WIND_END))
+    } else if ap < STRIKE_END {
+        let t = (ap - WIND_END) / (STRIKE_END - WIND_END);
+        (Phase::Strike, 1.0 - (1.0 - t).powf(2.5))
+    } else {
+        (Phase::Recovery, smoothstep((ap - STRIKE_END) / (1.0 - STRIKE_END)))
+    }
+}
+
+pub(crate) fn attack_pose(variant: u8, phase: &Phase, p: f32) -> Pose {
+    match variant {
+        1 => horizontal_slash(phase, p),
+        2 => forward_thrust(phase, p),
+        _ => overhead_chop(phase, p),
+    }
+}
+
+/// attack1 — diagonal overhead chop (studio `applyOverheadChop`).
+fn overhead_chop(phase: &Phase, p: f32) -> Pose {
+    let mut po = rest();
+    match phase {
+        Phase::Wind => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.05, 0.99, p), lerp(0.0, -0.1, p))), r: e3(lerp(0.0, 0.06, p), lerp(0.0, -0.25, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.0, -0.18, p), lerp(0.0, -0.15, p), 0.0));
+            po.head = Jp::r(e3(0.0, lerp(0.0, 0.2, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(0.12, 0.35, p), lerp(0.0, -0.55, p), lerp(0.15, 0.45, p)));
+            po.el_r = Jp::r(rx(lerp(-0.4, -1.75, p)));
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 0.55, p), lerp(0.3, 0.55, p), lerp(0.0, -0.45, p)));
+            po.sh_l = Jp::r(e3(lerp(0.1, 0.05, p), lerp(0.0, 0.15, p), lerp(-0.15, -0.25, p)));
+            po.el_l = Jp::r(rx(lerp(-0.5, -0.65, p)));
+            po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.16, p))), r: e3(lerp(0.15, 0.25, p), lerp(-0.45, -0.35, p), lerp(0.1, 0.05, p)) };
+            po.hip_l = Jp::r(rx(lerp(0.0, -0.2, p)));
+            po.hip_r = Jp::r(rx(lerp(0.0, -0.25, p)));
+        }
+        Phase::Strike => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, 0.99 + (p * PI).sin() * 0.05, lerp(-0.1, 0.32, p))), r: e3(lerp(0.06, 0.14, p), lerp(-0.25, 0.15, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(-0.18, 0.42, p), lerp(-0.15, 0.1, p), 0.0));
+            po.head = Jp::r(e3(lerp(0.0, 0.08, p), lerp(0.2, -0.05, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(0.35, -1.25, p), lerp(-0.55, 0.2, p), lerp(0.45, -0.15, p)));
+            po.el_r = Jp::r(rx(lerp(-1.75, -0.35, p)));
+            po.sword = Jp::r(e3(lerp(0.55, 2.7, p), lerp(0.55, -0.8, p), lerp(-0.45, -0.8, p)));
+            po.sh_l = Jp::r(e3(lerp(0.05, -0.15, p), lerp(0.15, -0.1, p), lerp(-0.25, -0.35, p)));
+            po.el_l = Jp::r(rx(lerp(-0.65, -0.85, p)));
+            po.hip_l = Jp::r(rx(lerp(-0.2, 0.35, p)));
+            po.knee_l = Jp::r(rx(lerp(0.0, 0.4, p)));
+            po.hip_r = Jp::r(rx(lerp(-0.25, -0.1, p)));
+            po.knee_r = Jp::r(rx(lerp(0.0, 0.3, p)));
+        }
+        Phase::Recovery => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.99, 1.05, p), lerp(0.32, 0.0, p))), r: e3(lerp(0.14, 0.0, p), lerp(0.15, 0.0, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.42, 0.0, p), lerp(0.1, 0.0, p), 0.0));
+            po.head = Jp::r(e3(lerp(0.08, 0.0, p), lerp(-0.05, 0.0, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(-1.25, 0.12, p), lerp(0.2, 0.0, p), lerp(-0.15, 0.15, p)));
+            po.el_r = Jp::r(rx(lerp(-0.35, -0.4, p)));
+            po.sword = Jp::r(e3(lerp(2.7, SWORD_REST_X, p), lerp(-0.8, 0.3, p), lerp(-0.8, 0.0, p)));
+            po.sh_l = Jp::r(e3(lerp(-0.15, 0.1, p), lerp(-0.1, 0.0, p), lerp(-0.35, -0.15, p)));
+            po.el_l = Jp::r(rx(lerp(-0.85, -0.5, p)));
+            po.hip_l = Jp::r(rx(lerp(0.35, 0.0, p)));
+            po.knee_l = Jp::r(rx(lerp(0.4, 0.0, p)));
+            po.hip_r = Jp::r(rx(lerp(-0.1, 0.0, p)));
+            po.knee_r = Jp::r(rx(lerp(0.3, 0.0, p)));
+        }
+    }
+    po
+}
+
+/// attack2 — horizontal slash (studio `applyHorizontalSlash`).
+fn horizontal_slash(phase: &Phase, p: f32) -> Pose {
+    let mut po = rest();
+    match phase {
+        Phase::Wind => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.05, 1.0, p), lerp(0.0, -0.06, p))), r: e3(0.0, lerp(0.0, -0.45, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.0, 0.05, p), lerp(0.0, -0.35, p), 0.0));
+            po.head = Jp::r(e3(0.0, lerp(0.0, -0.3, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(0.12, -0.15, p), lerp(0.0, -0.65, p), lerp(0.15, 0.55, p)));
+            po.el_r = Jp::r(rx(lerp(-0.4, -1.35, p)));
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.35, p), lerp(0.3, 0.75, p), lerp(0.0, -0.6, p)));
+            po.sh_l = Jp::r(e3(lerp(0.1, 0.25, p), lerp(0.0, 0.35, p), lerp(-0.15, -0.1, p)));
+            po.el_l = Jp::r(rx(lerp(-0.5, -0.4, p)));
+            po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.18, p))), r: e3(lerp(0.15, 0.35, p), lerp(-0.45, -0.2, p), lerp(0.1, 0.15, p)) };
+        }
+        Phase::Strike => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, 1.0 + (p * PI).sin() * 0.03, lerp(-0.06, 0.28, p))), r: e3(0.0, lerp(-0.45, 0.55, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.05, 0.18, p), lerp(-0.35, 0.55, p), lerp(0.0, 0.08, p)));
+            po.head = Jp::r(e3(0.0, lerp(-0.3, 0.15, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(-0.15, -1.4, p), lerp(-0.65, 0.0, p), lerp(0.55, -0.4, p)));
+            po.el_r = Jp::r(rx(lerp(-1.35, -0.25, p)));
+            po.sword = Jp::r(e3(lerp(2.35, 2.45, p), lerp(0.75, 0.05, p), lerp(-0.6, 0.25, p)));
+            po.sh_l = Jp::r(e3(lerp(0.25, -0.35, p), lerp(0.35, -0.45, p), lerp(-0.1, -0.4, p)));
+            po.el_l = Jp::r(rx(lerp(-0.4, -0.75, p)));
+            po.hip_l = Jp::r(rx(lerp(0.0, 0.3, p)));
+            po.knee_l = Jp::r(rx(lerp(0.0, 0.25, p)));
+            po.hip_r = Jp::r(rx(lerp(0.0, -0.15, p)));
+            po.knee_r = Jp::r(rx(lerp(0.0, 0.2, p)));
+        }
+        Phase::Recovery => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.0, 1.05, p), lerp(0.28, 0.0, p))), r: e3(0.0, lerp(0.55, 0.0, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.18, 0.0, p), lerp(0.55, 0.0, p), lerp(0.08, 0.0, p)));
+            po.head = Jp::r(e3(0.0, lerp(0.15, 0.0, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(-1.4, 0.12, p), lerp(0.0, 0.0, p), lerp(-0.4, 0.15, p)));
+            po.el_r = Jp::r(rx(lerp(-0.25, -0.4, p)));
+            po.sword = Jp::r(e3(lerp(2.45, SWORD_REST_X, p), lerp(0.05, 0.3, p), lerp(0.25, 0.0, p)));
+            po.sh_l = Jp::r(e3(lerp(-0.35, 0.1, p), lerp(-0.45, 0.0, p), lerp(-0.4, -0.15, p)));
+            po.el_l = Jp::r(rx(lerp(-0.75, -0.5, p)));
+            po.hip_l = Jp::r(rx(lerp(0.3, 0.0, p)));
+            po.knee_l = Jp::r(rx(lerp(0.25, 0.0, p)));
+            po.hip_r = Jp::r(rx(lerp(-0.15, 0.0, p)));
+            po.knee_r = Jp::r(rx(lerp(0.2, 0.0, p)));
+        }
+    }
+    po
+}
+
+/// attack3 — forward thrust (studio `applyForwardThrust`).
+fn forward_thrust(phase: &Phase, p: f32) -> Pose {
+    let mut po = rest();
+    match phase {
+        Phase::Wind => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.05, 0.97, p), lerp(0.0, -0.05, p))), r: e3(lerp(0.0, 0.08, p), lerp(0.0, -0.15, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.0, 0.1, p), lerp(0.0, -0.1, p), 0.0));
+            po.head = Jp::r(e3(0.0, lerp(0.0, 0.1, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(0.12, -0.35, p), lerp(0.0, -0.25, p), lerp(0.15, 0.3, p)));
+            po.el_r = Jp::r(rx(lerp(-0.4, -1.45, p)));
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.4, p), lerp(0.3, 0.2, p), lerp(0.0, 0.3, p)));
+            po.sh_l = Jp::r(e3(lerp(0.1, -0.2, p), lerp(0.0, 0.25, p), lerp(-0.15, -0.3, p)));
+            po.el_l = Jp::r(rx(lerp(-0.5, -0.7, p)));
+            po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.12, p))), r: e3(lerp(0.15, PI / 2.0, p), lerp(-0.45, -0.1, p), lerp(0.1, 0.0, p)) };
+            po.hip_l = Jp::r(rx(lerp(0.0, -0.25, p)));
+            po.hip_r = Jp::r(rx(lerp(0.0, -0.3, p)));
+            po.knee_l = Jp::r(rx(lerp(0.0, 0.35, p)));
+            po.knee_r = Jp::r(rx(lerp(0.0, 0.4, p)));
+        }
+        Phase::Strike => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, 0.97, lerp(-0.05, 0.42, p))), r: e3(lerp(0.08, 0.12, p), lerp(-0.15, 0.05, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.1, 0.28, p), lerp(-0.1, 0.05, p), 0.0));
+            po.head = Jp::r(e3(lerp(0.0, 0.05, p), lerp(0.1, -0.05, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(-0.35, -1.55, p), lerp(-0.25, 0.05, p), lerp(0.3, 0.05, p)));
+            po.el_r = Jp::r(rx(lerp(-1.45, -0.1, p)));
+            po.sword = Jp::r(e3(lerp(2.4, 2.7, p), lerp(0.2, 0.8, p), lerp(0.3, 0.4, p)));
+            po.sh_l = Jp::r(e3(lerp(-0.2, -0.55, p), lerp(0.25, 0.1, p), lerp(-0.3, -0.45, p)));
+            po.el_l = Jp::r(rx(lerp(-0.7, -0.85, p)));
+            po.hip_l = Jp::r(rx(lerp(-0.25, 0.45, p)));
+            po.knee_l = Jp::r(rx(lerp(0.35, 0.15, p)));
+            po.hip_r = Jp::r(rx(lerp(-0.3, 0.1, p)));
+            po.knee_r = Jp::r(rx(lerp(0.4, 0.1, p)));
+        }
+        Phase::Recovery => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.97, 1.05, p), lerp(0.42, 0.0, p))), r: e3(lerp(0.12, 0.0, p), lerp(0.05, 0.0, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.28, 0.0, p), lerp(0.05, 0.0, p), 0.0));
+            po.head = Jp::r(e3(lerp(0.05, 0.0, p), lerp(-0.05, 0.0, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(-1.55, 0.12, p), lerp(0.05, 0.0, p), lerp(0.05, 0.15, p)));
+            po.el_r = Jp::r(rx(lerp(-0.1, -0.4, p)));
+            po.sword = Jp::r(e3(lerp(2.7, SWORD_REST_X, p), lerp(0.8, 0.3, p), lerp(0.4, 0.0, p)));
+            po.sh_l = Jp::r(e3(lerp(-0.55, 0.1, p), lerp(0.1, 0.0, p), lerp(-0.45, -0.15, p)));
+            po.el_l = Jp::r(rx(lerp(-0.85, -0.5, p)));
+            po.hip_l = Jp::r(rx(lerp(0.45, 0.0, p)));
+            po.knee_l = Jp::r(rx(lerp(0.15, 0.0, p)));
+            po.hip_r = Jp::r(rx(lerp(0.1, 0.0, p)));
+            po.knee_r = Jp::r(rx(lerp(0.1, 0.0, p)));
+        }
+    }
+    po
+}
+
+// ── Victory (studio `victory`) ──────────────────────────────────────────────────────────
+fn victory_pose(t: f32) -> Pose {
+    let s = (t * 1.5).sin();
+    let mut p = rest();
+    p.hips = Jp { t: Some(Vec3::new(0.0, 1.07 + (t * 3.5).sin() * 0.02, 0.0)), r: e3(0.0, 0.25 * s, 0.0) };
+    p.torso = Jp::r(e3(-0.12, 0.05 * s, 0.0));
+    p.head = Jp::r(e3(-0.25, 0.25 * s, 0.0));
+    p.sh_l = Jp::r(e3(0.1, 0.2, -0.3));
+    p.el_l = Jp::r(rx(-0.3));
+    p.sh_r = Jp::r(e3(2.8, 0.0, -0.1)); // sword thrust skyward
+    p.el_r = Jp::r(Quat::IDENTITY);
+    p.sword = Jp::r(e3(0.15, 0.3, 0.0));
+    // Wide stance (studio overrides the hip-joint X positions).
+    p.hip_l = Jp { t: Some(Vec3::new(-0.22, -0.05, 0.0)), r: e3(0.0, 0.0, -0.15) };
+    p.hip_r = Jp { t: Some(Vec3::new(0.22, -0.05, 0.0)), r: e3(0.0, 0.0, 0.15) };
+    p
+}
+
+/// Seated rest pose (studio `applySeatedPose` / `SEATED`) — for a mob roosting on a stump: hips
+/// dropped + tipped back, thighs forward with a deep knee bend, feet tucked, hands low. Shared by
+/// the biped animator (orcs sitting on camp stumps); the caller positions the root on the stump.
+pub(crate) fn sit_pose() -> Pose {
+    let mut p = rest();
+    p.hips = Jp { t: Some(Vec3::new(0.0, 0.6725, -0.08)), r: e3(0.10, 0.0, 0.0) };
+    p.torso = Jp::r(e3(0.20, 0.0, 0.0));
+    p.head = Jp::r(e3(-0.10, 0.0, 0.0));
+    p.hip_l = Jp::r(e3(-0.78, 0.38, -0.18));
+    p.hip_r = Jp::r(e3(-0.78, -0.38, 0.18));
+    p.knee_l = Jp::r(rx(1.95));
+    p.knee_r = Jp::r(rx(1.95));
+    p.foot_l = Jp::r(rx(-0.55));
+    p.foot_r = Jp::r(rx(-0.55));
+    p.sh_l = Jp::r(e3(0.15, -0.15, -0.45));
+    p.el_l = Jp::r(rx(-0.9));
+    p.sh_r = Jp::r(e3(0.1, 0.2, 0.3));
+    p.el_r = Jp::r(rx(-1.0));
+    p.shield = Jp { t: Some(Vec3::new(0.0, -0.05, 0.1)), r: e3(0.85, -0.25, 0.12) };
+    p.sword = Jp::r(e3(2.5, 0.25, 0.2));
+    p
+}
+
+/// A posted town worker's repetitive two-handed tool stroke (a Warbell flavour clip, not a studio
+/// one): both arms swing together on X over a fixed elbow grip, legs planted with a tiny
+/// weight-shift, and a small head nod toward the work. `hoe` = a quick forward farmer stroke; else a
+/// slower overhead chop/pick (woodcutter/miner). `t` is the worker's phase-desynced clock.
+pub(crate) fn work_pose(t: f32, hoe: bool) -> Pose {
+    let mut p = rest();
+    let (arm, nod_rate) = if hoe {
+        (0.6 + 0.7 * (t * 4.5).sin(), 4.5) // quick hoe, ~1.4s
+    } else {
+        (-0.2 + 1.3 * (0.5 - 0.5 * (t * 3.0).cos()), 3.0) // overhead → down chop/pick, ~2.1s
+    };
+    // Both arms drive the stroke together; a fixed elbow bend so they read as gripping the haft.
+    p.sh_l = Jp::r(e3(arm, 0.0, -0.12));
+    p.sh_r = Jp::r(e3(arm, 0.0, 0.12));
+    p.el_l = Jp::r(rx(-0.7));
+    p.el_r = Jp::r(rx(-0.7));
+    p.head = Jp::r(rx((t * nod_rate).sin() * 0.06));
+    // A subtle planted weight-shift so they aren't board-stiff while working.
+    let sway = (t * 0.8).sin() * 0.02;
+    p.hip_l = Jp::r(rx(sway));
+    p.hip_r = Jp::r(rx(-sway));
+    p
+}
+
+/// A worker hauling a load home (a log / a handcart): both arms raise forward with a fixed elbow
+/// bend, gripping the load level in front of the chest. The legs come from locomotion (the worker
+/// walks the load home), so the caller layers this over the gait with `action_over_loco`.
+pub(crate) fn carry_pose() -> Pose {
+    let mut p = rest();
+    p.sh_l = Jp::r(e3(-0.55, 0.0, -0.12)); // upper arm raised forward
+    p.sh_r = Jp::r(e3(-0.55, 0.0, 0.12));
+    p.el_l = Jp::r(rx(-0.6)); // forearm up, gripping the load level
+    p.el_r = Jp::r(rx(-0.6));
+    p
 }
 
 pub fn hero_anim(
@@ -40,245 +629,153 @@ pub fn hero_anim(
     fp: Res<super::FirstPerson>,
     hero_q: Query<(&Hero, &HeroHealth)>,
     mut parts: Query<(&HeroPart, &mut Transform)>,
+    // Edge-detect touchdown (was airborne, now grounded) to stamp a short landing-squash window.
+    mut was_air: Local<bool>,
+    mut land_at: Local<f32>,
+    // Smoothed block weight (0 = open, 1 = full defend) so the brace eases in/out.
+    mut block_amt: Local<f32>,
 ) {
     let Ok((hero, hh)) = hero_q.single() else { return };
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+
+    // Touchdown edge → arm the landing squash (before the early-returns so it's always stamped).
+    if *was_air && hero.on_ground {
+        *land_at = now;
+    }
+    *was_air = !hero.on_ground;
 
     // Slain: let the limbs go slack while the body keels over (root rotation owned by health.rs).
     if !player.0.is_alive() {
         for (part, mut tf) in &mut parts {
             tf.rotation = match part.joint {
                 Joint::Hips => {
-                    tf.translation = Vec3::new(0.0, 0.95, 0.0);
+                    tf.translation = Vec3::new(0.0, 1.05, 0.0);
                     Quat::IDENTITY
                 }
                 Joint::ShoulderL => e3(0.2, 0.0, -0.2),
                 Joint::ShoulderR => e3(0.2, 0.0, 0.2),
-                Joint::ElbowL | Joint::ElbowR => Quat::from_rotation_x(-0.3),
-                Joint::Shield => shield_rest(),
+                Joint::ElbowL | Joint::ElbowR => rx(-0.3),
+                Joint::Shield => shield_rest_r(),
+                Joint::Sword => sword_rest_r(),
                 _ => Quat::IDENTITY,
             };
         }
         return;
     }
 
-    // Airborne: a jump pose (legs tuck, arms up for balance) for the whole hop — push-off when
-    // rising, a deeper tuck when falling. Overrides locomotion (root height is the jump physics).
-    if !hero.on_ground {
-        for (part, mut tf) in &mut parts {
-            if part.joint == Joint::Hips {
-                tf.translation = Vec3::new(0.0, 0.95, 0.0);
-            }
-            tf.rotation = jump_pose(part.joint, hero.vel_y);
-        }
-        return;
-    }
+    // Ease the block weight toward its target each frame (≈0.15s settle, ~the studio 0.22 ENTER).
+    let block_target = if hh.blocking { 1.0 } else { 0.0 };
+    *block_amt += (block_target - *block_amt) * (dt * 10.0).min(1.0);
+    let block_amt = block_amt.clamp(0.0, 1.0);
 
-    let t = time.elapsed_secs();
-    let dt = time.delta_secs();
-    let wp = hero.walk_phase;
-    let m = hero.moving_amt;
-    let attack_p = hero.attacking.then(|| (hero.attack_t / ATTACK_DURATION).clamp(0.0, 1.0));
-    let gesture = dir.gesture.map(|g| gesture_pose(g, t - dir.gesture_start));
+    let attack = hero.attacking.then(|| attack_phase((hero.attack_t / ATTACK_DURATION).clamp(0.0, 1.0)));
+    let gesture = dir.gesture.map(|g| gesture_pose(g, now - dir.gesture_start));
     let fp_amt = fp.blend.clamp(0.0, 1.0);
-    // Frame-rate-independent damp (~0.25s settle) for the block/shield transitions.
-    let damp = 1.0 - 0.004_f32.powf(dt);
+
+    // Pick the active clip. Actions now LAYER over locomotion so combined moves read right: swinging
+    // while running keeps the legs striding (a running attack), and a jump taken at speed becomes a
+    // forward leap. (Priority: victory › attack › jump › block-blended locomotion.)
+    let moving = hero.moving_amt.clamp(0.0, 1.0);
+    let loco = loco_pose(now, hero.walk_phase, moving, hero.run_amt.clamp(0.0, 1.0));
+    let pose = if hero.victory {
+        victory_pose(now)
+    } else if let Some((phase, p)) = &attack {
+        let atk = attack_pose(hero.attack_variant, phase, *p);
+        if hero.on_ground && moving > 0.05 {
+            action_over_loco(&atk, &loco, moving) // running / walking attack
+        } else {
+            atk
+        }
+    } else if !hero.on_ground {
+        let j = jump_pose(hero.vel_y);
+        if moving > 0.05 {
+            j.lerp(&leap_pose(hero.vel_y), moving) // running leap
+        } else {
+            j
+        }
+    } else if block_amt > 0.001 {
+        brace(&loco, &defend_pose(now), block_amt, moving)
+    } else {
+        loco
+    };
+
+    // Landing squash: a quick crouch the instant the feet hit, easing back over `LAND_RECOVER`.
+    let landing = {
+        let u = (1.0 - (now - *land_at) / LAND_RECOVER).clamp(0.0, 1.0);
+        u * u
+    };
 
     for (part, mut tf) in &mut parts {
-        let (base_t, base_r) = base_pose(part.joint, t, wp, m);
-        if let Some(p) = base_t {
-            tf.translation = p;
+        let jp = pose.get(part.joint);
+        if let Some(t) = jp.t {
+            tf.translation = t;
         }
+        let mut rot = jp.r;
 
-        let rot = match part.joint {
-            // Right arm (sword): gesture › attack › first-person viewmodel › locomotion.
+        // Arm overrides: the Director's staged gesture wins on the arms; otherwise the first-person
+        // viewmodel raises the sword arm into frame. (Combat/locomotion already in `rot`.)
+        match part.joint {
             Joint::ShoulderR | Joint::ElbowR => {
                 let elbow = part.joint == Joint::ElbowR;
-                match gesture {
-                    Some((Some((sh, el)), _)) => {
-                        if elbow {
-                            el
-                        } else {
-                            sh
-                        }
-                    }
-                    _ => match attack_p {
-                        Some(p) => {
-                            let (sh, el) = attack_arm(p, base_r, elbow_rest(Joint::ElbowR, t, wp, m));
-                            if elbow {
-                                el
-                            } else {
-                                sh
-                            }
-                        }
-                        None if fp_amt > 0.0 => {
-                            let target = if elbow { Quat::from_rotation_x(-1.0) } else { e3(-0.9, 0.2, 0.1) };
-                            base_r.slerp(target, fp_amt)
-                        }
-                        None => base_r,
-                    },
+                if let Some((Some((sh, el)), _)) = gesture {
+                    rot = if elbow { el } else { sh };
+                } else if attack.is_none() && fp_amt > 0.0 {
+                    let target = if elbow { rx(-1.0) } else { e3(-0.9, 0.2, 0.1) };
+                    rot = rot.slerp(target, fp_amt);
                 }
             }
-            // Left arm (shield hand): gesture › block brace › locomotion.
             Joint::ShoulderL | Joint::ElbowL => {
                 let elbow = part.joint == Joint::ElbowL;
-                match gesture {
-                    Some((_, Some((sh, el)))) => {
-                        if elbow {
-                            el
-                        } else {
-                            sh
-                        }
-                    }
-                    _ if hh.blocking => {
-                        // Shield arm braced IN FRONT of the chest (paired with `shield_block`).
-                        let target = if elbow { el_block() } else { sh_block() };
-                        tf.rotation.slerp(target, damp)
-                    }
-                    _ => base_r,
+                if let Some((_, Some((sh, el)))) = gesture {
+                    rot = if elbow { el } else { sh };
                 }
             }
-            // Shield (own pivot under the hand): braces up while blocking, else rests.
-            Joint::Shield => {
-                let target = if hh.blocking { shield_block() } else { shield_rest() };
-                tf.rotation.slerp(target, damp)
-            }
-            _ => base_r,
-        };
+            _ => {}
+        }
         tf.rotation = rot;
-    }
-}
 
-/// The locomotion base pose for a joint: idle (breathing, `t`) blended toward walk (stride keyed to
-/// `wp = walk_phase`) by `m = moving_amt`. `Some(translation)` only for the hips (the bob/sway);
-/// every other joint keeps its spawn translation and only rotates.
-fn base_pose(j: Joint, t: f32, wp: f32, m: f32) -> (Option<Vec3>, Quat) {
-    let (it, ir) = idle_pose(j, t);
-    let (wt, wr) = walk_pose(j, wp);
-    let trans = match (it, wt) {
-        (Some(a), Some(b)) => Some(a.lerp(b, m)),
-        _ => None,
-    };
-    (trans, ir.slerp(wr, m))
-}
-
-/// Right elbow's *locomotion* rotation (used so the attack swing eases back to the live rest).
-fn elbow_rest(j: Joint, t: f32, wp: f32, m: f32) -> Quat {
-    base_pose(j, t, wp, m).1
-}
-
-fn idle_pose(j: Joint, t: f32) -> (Option<Vec3>, Quat) {
-    let breath = (t * 2.2).sin();
-    let sway = (t * 1.1).sin();
-    let cos11 = (t * 1.1).cos();
-    match j {
-        Joint::Hips => (Some(Vec3::new(0.0, 0.95 + breath * 0.015, 0.0)), Quat::from_rotation_y(sway * 0.03)),
-        Joint::Torso => (None, e3(breath * 0.01, -sway * 0.02, 0.0)),
-        Joint::Head => (None, e3(-breath * 0.015, 0.0, sway * 0.01)),
-        Joint::ShoulderL => (None, e3(breath * 0.05 + 0.1, 0.0, -0.15 + cos11 * 0.02)),
-        Joint::ElbowL => (None, Quat::from_rotation_x(-0.5 - breath * 0.03)),
-        Joint::ShoulderR => (None, e3(breath * 0.05 + 0.12, 0.0, 0.15 - cos11 * 0.02)),
-        Joint::ElbowR => (None, Quat::from_rotation_x(-0.4 - breath * 0.02)),
-        Joint::Shield => (None, shield_rest()),
-        Joint::HipL | Joint::HipR | Joint::KneeL | Joint::KneeR => (None, Quat::IDENTITY),
-    }
-}
-
-/// Jump pose. `vel_y > 0` = rising (legs extend into a push-off, arms swing up); falling = a
-/// deeper knee tuck with the arms out, ready to land. Symmetric (both legs together).
-fn jump_pose(j: Joint, vel_y: f32) -> Quat {
-    let rising = vel_y > 0.0;
-    let hip = if rising { 0.15 } else { 0.7 };
-    let knee = if rising { -0.45 } else { -1.15 };
-    match j {
-        Joint::Hips => Quat::IDENTITY,
-        Joint::Torso => e3(0.12, 0.0, 0.0),
-        Joint::Head => e3(-0.05, 0.0, 0.0),
-        Joint::HipL | Joint::HipR => Quat::from_rotation_x(hip),
-        Joint::KneeL | Joint::KneeR => Quat::from_rotation_x(knee),
-        Joint::ShoulderL => e3(if rising { -1.4 } else { -0.7 }, 0.0, -0.35),
-        Joint::ElbowL => Quat::from_rotation_x(-0.7),
-        Joint::ShoulderR => e3(if rising { -1.4 } else { -0.7 }, 0.0, 0.35),
-        Joint::ElbowR => Quat::from_rotation_x(-0.7),
-        Joint::Shield => shield_rest(),
-    }
-}
-
-fn walk_pose(j: Joint, wp: f32) -> (Option<Vec3>, Quat) {
-    let stride = wp.sin();
-    let torso_y = -wp.sin() * 0.11;
-    match j {
-        // A confident march: deep hip/knee swing, a forward-leaning torso with shoulder counter-
-        // twist, a pronounced body bob, and arms pumping hard.
-        Joint::Hips => (
-            Some(Vec3::new(wp.sin() * 0.03, 0.92 + (wp * 2.0).sin().abs() * 0.07, 0.0)),
-            e3(0.0, wp.sin() * 0.18, wp.sin() * 0.05),
-        ),
-        Joint::Torso => (None, e3(0.13 + (wp * 2.0).sin() * 0.03, torso_y, 0.0)),
-        Joint::Head => (None, e3(-0.05 - (wp * 2.0).sin() * 0.015, -torso_y * 1.1, 0.0)),
-        Joint::HipL => (None, Quat::from_rotation_x(stride * 0.8)),
-        Joint::KneeL => (None, Quat::from_rotation_x(if stride < 0.0 { -stride * 1.25 } else { -stride * 0.2 })),
-        Joint::HipR => (None, Quat::from_rotation_x(-stride * 0.8)),
-        Joint::KneeR => (None, Quat::from_rotation_x(if stride > 0.0 { stride * 1.25 } else { stride * 0.2 })),
-        Joint::ShoulderL => (None, e3(-stride * 0.62 + 0.1, 0.0, -0.12)),
-        Joint::ElbowL => (None, Quat::from_rotation_x(-0.55 - stride.abs() * 0.5)),
-        Joint::ShoulderR => (None, e3(stride * 0.62 + 0.1, 0.0, 0.12)),
-        Joint::ElbowR => (None, Quat::from_rotation_x(-0.5 - stride.abs() * 0.5)),
-        Joint::Shield => (None, shield_rest()),
-    }
-}
-
-/// A diagonal overhead slash on the two-bone sword arm. Eased windup (0–0.35) raises and cocks the
-/// arm; a fast strike (0.35–0.6) sweeps it down/forward and extends the elbow; recovery (0.6–1)
-/// settles back to the live locomotion rest (`sh_rest`/`el_rest`) so the swing blends with no pop.
-fn attack_arm(p: f32, sh_rest: Quat, el_rest: Quat) -> (Quat, Quat) {
-    let cocked_sh = e3(-1.7, -0.3, 0.4);
-    let cocked_el = Quat::from_rotation_x(-1.7);
-    let strike_sh = e3(0.4, 0.6, -0.3);
-    let strike_el = Quat::from_rotation_x(-0.2);
-    if p < 0.35 {
-        let u = p / 0.35;
-        let e = u * u; // accelerate into the cocked top
-        (sh_rest.slerp(cocked_sh, e), el_rest.slerp(cocked_el, e))
-    } else if p < 0.6 {
-        let u = (p - 0.35) / 0.25;
-        let e = 1.0 - (1.0 - u) * (1.0 - u); // ease-out crack
-        (cocked_sh.slerp(strike_sh, e), cocked_el.slerp(strike_el, e))
-    } else {
-        let u = (p - 0.6) / 0.4;
-        let e = 1.0 - (1.0 - u) * (1.0 - u);
-        (strike_sh.slerp(sh_rest, e), strike_el.slerp(el_rest, e))
+        // Landing squash folded over the locomotion pose right after touchdown (studio positive-knee
+        // crouch: hips dip, knees bend, thighs settle back, feet flatten, torso leans in).
+        if landing > 0.0 && attack.is_none() && hero.on_ground {
+            match part.joint {
+                Joint::Hips => tf.translation.y -= 0.12 * landing,
+                Joint::KneeL | Joint::KneeR => tf.rotation *= rx(0.9 * landing),
+                Joint::HipL | Joint::HipR => tf.rotation *= rx(-0.35 * landing),
+                Joint::FootL | Joint::FootR => tf.rotation *= rx(0.4 * landing),
+                Joint::Torso => tf.rotation *= rx(0.25 * landing),
+                _ => {}
+            }
+        }
     }
 }
 
 /// Staged-gesture arm poses (Director). Returns `(right, left)`, each `Some((shoulder, elbow))` or
 /// `None` to leave that arm on its normal animation. `ph` = seconds since the gesture began. Right
-/// is the sword arm, left the shield arm. Re-authored from the old single-bone gestures onto the
-/// two-bone rig. Rough by design — eyeball + nudge against a capture.
+/// is the sword arm, left the shield arm. Rough by design — eyeball + nudge against a capture.
 fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<(Quat, Quat)>, Option<(Quat, Quat)>) {
     use crate::cinematic::HeroGesture::*;
     let raise = (ph / 0.45).clamp(0.0, 1.0);
     let e = raise * raise * (3.0 - 2.0 * raise); // smoothstep
     match g {
-        // Arm raised overhead, hand flicking side to side (weapon auto-hidden by the Director).
-        Wave => (Some((e3(-2.55 * e, 0.0, 0.20 + (ph * 5.0).sin() * 0.45 * e), Quat::from_rotation_x(-0.5))), None),
-        Salute => (Some((e3(-2.6 * e, 0.0, 0.85 * e), Quat::from_rotation_x(-0.2))), None),
-        Point => (Some((e3(-1.6 * e, 0.0, 0.05), Quat::from_rotation_x(-0.1))), None),
+        Wave => (Some((e3(-2.55 * e, 0.0, 0.20 + (ph * 5.0).sin() * 0.45 * e), rx(-0.5))), None),
+        Salute => (Some((e3(-2.6 * e, 0.0, 0.85 * e), rx(-0.2))), None),
+        Point => (Some((e3(-1.6 * e, 0.0, 0.05), rx(-0.1))), None),
         ArmsCrossed => (
-            Some((e3(-1.15 * e, 0.0, 0.85 * e), Quat::from_rotation_x(-1.4))),
-            Some((e3(-1.15 * e, 0.0, -0.85 * e), Quat::from_rotation_x(-1.4))),
+            Some((e3(-1.15 * e, 0.0, 0.85 * e), rx(-1.4))),
+            Some((e3(-1.15 * e, 0.0, -0.85 * e), rx(-1.4))),
         ),
         Cheer => {
             let pump = (ph * 4.0).sin() * 0.15;
             (
-                Some((e3((-2.75 + pump) * e, 0.0, -0.35 * e), Quat::from_rotation_x(-0.3))),
-                Some((e3((-2.75 + pump) * e, 0.0, 0.35 * e), Quat::from_rotation_x(-0.3))),
+                Some((e3((-2.75 + pump) * e, 0.0, -0.35 * e), rx(-0.3))),
+                Some((e3((-2.75 + pump) * e, 0.0, 0.35 * e), rx(-0.3))),
             )
         }
-        // Repeating chop (reuses the attack arc on a loop) — "at work". `max(0)`: the director
-        // PRE_ROLL phase is negative; hold the start of the swing rather than walking it backwards.
+        // A looping chop — the "at work" gesture (villager-staging cinematics).
         Work => {
-            let (sh, el) = attack_arm((ph.max(0.0) * 1.3).fract(), e3(0.12, 0.0, 0.1), Quat::from_rotation_x(-0.5));
-            (Some((sh, el)), None)
+            let chop = ((ph.max(0.0) * 1.3).fract() * PI).sin();
+            (Some((e3(-1.2 - chop * 0.5, 0.0, 0.1), rx(-0.6 + chop * 0.3))), None)
         }
     }
 }

@@ -209,6 +209,7 @@ impl Plugin for OrkFortressPlugin {
                     blight_rescue,
                     breach_gate,
                     garrison_respawn,
+                    garrison_reinforce,
                     stage_breach,
                 )
                     .run_if(in_state(Modal::None)),
@@ -2806,6 +2807,51 @@ fn garrison_respawn(
         seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         let g = patrols.armory.spawn(&mut commands, variant, Faction::Red, home, home, seed);
         commands.entity(g).try_insert(FortressGarrison);
+    }
+}
+
+/// While the Warlord lives and the Hold is breached, the garrison keeps trickling back: every
+/// [`REINFORCE_DELAY`]s one fallen roster slot is refilled, so the boss fight has steady adds (the
+/// player's "spawn some orks so the final boss is harder"). Capped by the 14-slot roster, so it
+/// pressures without ever swarming, and phase-independent — the breach can be fought day or night,
+/// unlike [`garrison_respawn`]'s once-a-night full refill.
+const REINFORCE_DELAY: f32 = 8.0;
+
+#[allow(clippy::type_complexity)]
+fn garrison_reinforce(
+    time: Res<Time>,
+    assault: Res<AssaultState>,
+    patrols: Option<Res<BlightPatrols>>,
+    warlord: Query<(), (With<crate::warlord::Warlord>, Without<crate::dying::Dying>)>,
+    garrison: Query<&crate::orks::Ork, (With<FortressGarrison>, Without<crate::dying::Dying>)>,
+    mut commands: Commands,
+    mut acc: Local<f32>,
+    mut seed: Local<u32>,
+) {
+    // Only while the boss is up and the gate's broken; reset the timer otherwise so it doesn't
+    // bank a burst for the next breach.
+    if !assault.breached || warlord.is_empty() {
+        *acc = 0.0;
+        return;
+    }
+    let Some(patrols) = patrols else { return };
+    *acc += time.delta_secs();
+    if *acc < REINFORCE_DELAY {
+        return;
+    }
+    *acc = 0.0;
+    if *seed == 0 {
+        *seed = 0x2545_f491;
+    }
+    // Refill the FIRST empty slot only (a steady trickle, not a burst).
+    for (variant, home) in GARRISON_ROSTER {
+        if garrison.iter().any(|o| o.home().distance(home) < 2.0) {
+            continue; // slot still held
+        }
+        *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let g = patrols.armory.spawn(&mut commands, variant, Faction::Red, home, home, *seed);
+        commands.entity(g).try_insert(FortressGarrison);
+        break;
     }
 }
 

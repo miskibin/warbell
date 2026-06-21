@@ -19,8 +19,30 @@ use bevy::prelude::*;
 
 use crate::biome::{Biome, BiomeEntity};
 use crate::critters::{self, PartKind, Species};
+use crate::quadruped::{quad_meshes, spawn_quad, QuadDrive, QuadHandles, QuadSpecies};
 use crate::steer::{self, footing};
 use crate::worldmap;
+
+/// The studio quadruped rig replaces the old box mesh for the mammals that have a studio model
+/// (`None` keeps the bespoke box rig: the tiny rabbit/cat + the non-mammal monsters golem/scorpion/
+/// croc). Elk reuses the deer (big-antlered), boar the bear, goat a smaller deer.
+fn quad_species_for(s: Species) -> Option<QuadSpecies> {
+    Some(match s {
+        Species::Wolf => QuadSpecies::Wolf,
+        Species::Deer | Species::Goat => QuadSpecies::Deer,
+        Species::Elk => QuadSpecies::Deer,
+        Species::Boar => QuadSpecies::Bear,
+        Species::PolarBear => QuadSpecies::PolarBear,
+        Species::Camel => QuadSpecies::Camel,
+        Species::Dog => QuadSpecies::Dog,
+        _ => return None,
+    })
+}
+
+/// Visual size-up applied to the studio quadruped rig (studio dims are ~half our old box meshes per
+/// unit). Multiplies the per-species `Plan.scale`; the collision `body_r` still tracks `Plan.scale`.
+/// Tuned by `FOREST_WILDLINE` capture.
+const QUAD_SIZE_FIX: f32 = 1.5;
 
 /// Max facing turn rate (rad/s). Caps how fast an animal can rotate so it never snaps
 /// 180° between frames — the cure for the steering-oscillation flicker.
@@ -32,7 +54,9 @@ impl Plugin for WildlifePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RespawnQueue>();
         app.add_message::<PreyEaten>();
-        app.add_systems(Update, animal_limbs); // limb anim keeps running while frozen
+        // `animal_limbs` poses the old box rig; `quad_drive` feeds the studio quad rig (one or the
+        // other applies per species). Both ungated so wildlife stays animated while the world freezes.
+        app.add_systems(Update, (animal_limbs, quad_drive));
         app.add_systems(
             Update,
             (animal_brain, resolve_prey_kills, enqueue_respawn, drain_respawns)
@@ -552,6 +576,32 @@ fn arm_slam_x(p: f32) -> f32 {
 /// smudge by then). Shared by [`animal_limbs`]; orks/villagers carry their own copy.
 const LIMB_CULL2: f32 = 70.0 * 70.0;
 
+/// Map each studio-rigged animal's brain state onto its [`QuadDrive`] each frame (the wildlife
+/// mirror of `ork_drive`/`villager_drive`); [`crate::quadruped::animate_quad`] then poses the rig.
+/// Skips dying animals so their pose freezes mid-stride while `dying.rs` crumples the body.
+fn quad_drive(
+    time: Res<Time>,
+    mut q: Query<(&Animal, &mut QuadDrive), Without<crate::dying::Dying>>,
+) {
+    let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+    for (a, mut d) in &mut q {
+        let target = if a.moving { 1.0 } else { 0.0 };
+        d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
+        // Charging the hero or bolting from the camera → run; relaxed roam → walk.
+        d.run_amt = if matches!(a.mode, Mode::Hunt | Mode::Flee) { 1.0 } else { 0.0 };
+        d.phase = tw + a.phase; // gait clock; `apply_gait` multiplies by the species walk/run speed
+        // A predator's bite/charge swing (only predators stamp `atk_anim`).
+        if let Some(p) = strike_p(a.atk_anim, now, 0.45) {
+            d.attacking = true;
+            d.attack_t = p;
+        } else {
+            d.attacking = false;
+        }
+    }
+}
+
 fn animal_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
@@ -807,9 +857,18 @@ const PLANS: [Plan; 13] = [
     Plan { species: Species::Golem, count: 2, cluster: 1, scale: 0.85, speed: 3.0, wander_speed: 0.7, flee_r: 0.0, wander_r: 12.0, gait: 9.0, swing: 0.45, bob: 0.03, place: Place::Rock },
 ];
 
-/// Per-species uploaded meshes, ready to clone-spawn.
+/// Per-species uploaded meshes, ready to clone-spawn. Exactly one of `box_rig`/`quad` is `Some`.
 #[derive(Clone)]
 struct Template {
+    /// Old bespoke box rig (torso + articulated parts) — `Some` for non-studio species.
+    box_rig: Option<BoxRig>,
+    /// Studio quadruped rig handles + species — `Some` for the swapped mammals.
+    quad: Option<(QuadSpecies, QuadHandles)>,
+}
+
+/// The old box-mesh rig: a merged torso + articulated parts (`AnimPart`, posed by `animal_limbs`).
+#[derive(Clone)]
+struct BoxRig {
     torso: Handle<Mesh>,
     parts: Vec<(PartKind, Vec3, Handle<Mesh>)>,
 }
@@ -851,10 +910,18 @@ pub fn populate(
     let mut templates: Vec<(Species, Template)> = Vec::new();
 
     for plan in PLANS {
-        let spec = critters::build(plan.species);
-        let tmpl = Template {
-            torso: meshes.add(spec.torso),
-            parts: spec.parts.into_iter().map(|p| (p.kind, p.pivot, meshes.add(p.mesh))).collect(),
+        let tmpl = if let Some(q) = quad_species_for(plan.species) {
+            // Studio quadruped rig: upload its per-joint mesh set once, clone-spawn per animal.
+            Template { box_rig: None, quad: Some((q, quad_meshes(q).upload(meshes))) }
+        } else {
+            let spec = critters::build(plan.species);
+            Template {
+                box_rig: Some(BoxRig {
+                    torso: meshes.add(spec.torso),
+                    parts: spec.parts.into_iter().map(|p| (p.kind, p.pivot, meshes.add(p.mesh))).collect(),
+                }),
+                quad: None,
+            }
         };
 
         let mut placed = 0u32;
@@ -933,12 +1000,15 @@ pub fn populate(
     if let Ok(s) = std::env::var("FOREST_WILDLINE") {
         let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
         if p.len() == 2 {
+            // The five studio quadruped archetypes (small→tall), to eyeball relative in-world scale.
+            // All apex/placid here so they idle for the capture; swap in Golem/Scorpion/BogCroc to
+            // inspect the kept-custom Stone/Scale rigs instead.
             let line = [
+                Species::Dog,
                 Species::Wolf,
+                Species::Deer,
                 Species::PolarBear,
-                Species::Golem,
-                Species::Scorpion,
-                Species::BogCroc,
+                Species::Camel,
             ];
             for (i, sp) in line.iter().enumerate() {
                 if let (Some(plan), Some((_, tmpl))) = (
@@ -1005,26 +1075,34 @@ fn spawn_one(
         rng,
     };
 
+    // The studio quad rig stands taller per unit, so size it up; `body_r` still tracks `plan.scale`.
+    let vis_scale = if tmpl.quad.is_some() { plan.scale * QUAD_SIZE_FIX } else { plan.scale };
     let root = commands
         .spawn((
-            Transform { translation: Vec3::new(x, y, z), rotation: Quat::from_rotation_y(facing), scale: Vec3::splat(plan.scale) },
+            Transform { translation: Vec3::new(x, y, z), rotation: Quat::from_rotation_y(facing), scale: Vec3::splat(vis_scale) },
             Visibility::Visible,
             animal,
             BiomeEntity,
         ))
         .id();
 
-    commands.entity(root).with_children(|p| {
-        p.spawn((Mesh3d(tmpl.torso.clone()), MeshMaterial3d(mat.clone()), Transform::default()));
-        for (kind, pivot, mesh) in &tmpl.parts {
-            p.spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(mat.clone()),
-                Transform::from_translation(*pivot),
-                AnimPart { kind: *kind },
-            ));
-        }
-    });
+    if let Some((q, h)) = &tmpl.quad {
+        // Studio quadruped: the joint tree drives off `QuadDrive` (filled by `quad_drive`).
+        commands.entity(root).insert(QuadDrive::new(*q));
+        spawn_quad(commands, root, mat, *q, h.clone());
+    } else if let Some(rig) = &tmpl.box_rig {
+        commands.entity(root).with_children(|p| {
+            p.spawn((Mesh3d(rig.torso.clone()), MeshMaterial3d(mat.clone()), Transform::default()));
+            for (kind, pivot, mesh) in &rig.parts {
+                p.spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::from_translation(*pivot),
+                    AnimPart { kind: *kind },
+                ));
+            }
+        });
+    }
 }
 
 // ── Deterministic mulberry32 RNG (matches the scatter's layout philosophy) ─────────

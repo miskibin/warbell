@@ -17,6 +17,8 @@ pub(crate) use combat::{
     spawn_burst, spawn_chips, spawn_dash_trail, spawn_heal_burst, spawn_motes, spawn_shockwave,
     spawn_sweep_burst, CombatFx, Health,
 };
+/// Swing length (seconds) — exposed so the standalone viewer can loop a preview swing.
+pub use combat::ATTACK_DURATION;
 mod health;
 pub(crate) mod model;
 mod movement;
@@ -31,7 +33,7 @@ use crate::inventory::Inventory;
 /// Root scale applied to the TS-unit knight so it stands the same height as the orks
 /// (`orks::BASE_SCALE` is 0.7; the knight authors ~1.85u tall → ~1.1u on the ground — a deliberately
 /// bigger, sturdier hero).
-pub const HERO_SCALE: f32 = 0.6;
+pub const HERO_SCALE: f32 = 0.47;
 
 /// A rig **joint** — a transform-only entity the animator ([`anim`]) poses. Each joint's mesh is a
 /// separate child *leaf* entity ([`HeroMesh`]), so first-person can hide the body meshes without
@@ -50,7 +52,12 @@ pub enum Joint {
     HipR,
     KneeL,
     KneeR,
+    FootL,
+    FootR,
     Shield,
+    /// The held weapon's own pivot (studio `broadsword` group), so attacks can sweep the blade
+    /// independently of the hand — the studio animates `broadsword.rotation` every attack phase.
+    Sword,
 }
 
 #[derive(Component)]
@@ -77,12 +84,17 @@ pub struct Hero {
     pub pos: Vec2,
     pub y: f32,
     pub facing: f32,
+    /// Horizontal (world XZ) velocity — ramped toward the input target so the hero accelerates in
+    /// and slides to a stop instead of snapping on/off. Transient (not saved).
+    pub vel: Vec2,
     pub vel_y: f32,
     pub on_ground: bool,
     pub air_takeoff_y: f32,
     pub walk_phase: f32,
     /// 0..1 smooth blend tracking `moving` (drives anim weight).
     pub moving_amt: f32,
+    /// 0..1 smooth blend tracking `sprinting` (drives the walk→run pose blend in [`anim`]).
+    pub run_amt: f32,
     pub moving: bool,
     // ── Attack (M2) ──
     pub attacking: bool,
@@ -90,6 +102,12 @@ pub struct Hero {
     pub attack_t: f32,
     /// Whether this swing's cone-damage has already been applied.
     pub hit_dealt: bool,
+    /// Which studio attack clip this swing plays: 0 = overhead chop, 1 = horizontal slash,
+    /// 2 = forward thrust. Rolled per-swing in `combat::player_attack` so attacks vary.
+    pub attack_variant: u8,
+    /// Transient: play the studio **victory** clip (sword raised, proud sway). Set by a win / a
+    /// preview hook; not persisted (derived, like `attacking`).
+    pub victory: bool,
 }
 
 /// Hero **shield/stamina** state — only the block mechanic. HP, gold, XP/level and the combat
@@ -259,19 +277,36 @@ fn debug_grant_boons(mut player: ResMut<PlayerRes>) {
     p.venom = true;
 }
 
-/// Debug/screenshot hook: `FOREST_ANIMTEST=walk|block` forces the hero into that animation each
+/// Debug/screenshot hook: `FOREST_ANIMTEST=walk|run|block|jump` forces the hero into that animation each
 /// frame so a capture can frame it — FreeRoam captures never run `player_move`/`player_block`, so
 /// the rig would otherwise sit idle. No-op unless the env var is set.
 fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
     let Ok(mode) = std::env::var("FOREST_ANIMTEST") else { return };
     let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
+    let dt = time.delta_secs();
+    let swing = |hero: &mut Hero, variant: u8| {
+        hero.attacking = true;
+        hero.attack_variant = variant;
+        hero.attack_t = (hero.attack_t + dt) % ATTACK_DURATION;
+    };
     match mode.as_str() {
         "walk" => {
             hero.moving = true;
             hero.moving_amt = 1.0;
-            hero.walk_phase += time.delta_secs() * 7.0; // = movement::STEP_FREQ
+            hero.run_amt = 0.0;
+            hero.walk_phase += dt * 7.0; // = movement::STEP_FREQ
         }
-        "block" => hh.blocking = true,
+        "run" => {
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.run_amt = 1.0;
+            hero.walk_phase += dt * 7.0 * 1.75; // STEP_FREQ * SPRINT_MULT
+        }
+        "block" | "defend" => hh.blocking = true,
+        "attack" | "attack1" => swing(&mut hero, 0),
+        "attack2" => swing(&mut hero, 1),
+        "attack3" => swing(&mut hero, 2),
+        "victory" => hero.victory = true,
         "jump" => {
             hero.on_ground = false;
             hero.vel_y = 2.0;
@@ -286,9 +321,9 @@ fn spawn_hero(
     mut materials: ResMut<Assets<crate::creature::CreatureMaterial>>,
     inv: Res<Inventory>,
 ) {
-    // One shared creature material; colour lives in the mesh vertex colours and surface texture
-    // comes from the alpha-packed surf code (plate=Metal recreates the old metallic sheen).
-    let mat = crate::creature::make_creature_material(&mut materials);
+    // The hero's own matte creature material; colour lives in the mesh vertex colours and surface
+    // texture comes from the alpha-packed surf code (matte plate/cloth/skin, not shiny plastic).
+    let mat = crate::creature::make_hero_material(&mut materials);
     commands.insert_resource(HeroMaterial(mat.clone()));
 
     // Spawn just outside the north gate, facing into the courtyard (+Z toward origin).
@@ -315,15 +350,19 @@ fn spawn_hero(
                 pos,
                 y,
                 facing,
+                vel: Vec2::ZERO,
                 vel_y: 0.0,
                 on_ground: true,
                 air_takeoff_y: y,
                 walk_phase: 0.0,
                 moving_amt: 0.0,
+                run_amt: 0.0,
                 moving: false,
                 attacking: false,
                 attack_t: 0.0,
                 hit_dealt: false,
+                attack_variant: 0,
+                victory: false,
             },
             HeroHealth::default(),
         ))
@@ -397,43 +436,48 @@ pub(crate) fn spawn_hero_meshes(
     let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, weapon: false });
     let arm = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: true, weapon: false });
 
-    // A −0.06 rig offset drops the authored feet (bottom ~+0.06) onto the root's ground plane.
-    let rig = commands.spawn((Transform::from_xyz(0.0, -0.06, 0.0), Visibility::Visible)).id();
+    use model::{HIP_DX, O_ELBOW, O_FOOT, O_HAND, O_HEAD, O_HIP_Y, O_KNEE, O_NECK, O_SHOULDER_Y, O_TORSO, SHOULDER_DX, Y_HIPS};
+
+    // Rig at the feet (y=0); proportions are HH-derived (see model::PROPORTIONS). Feet rest on the
+    // ground because the boot mesh bottoms at the ankle joint's height below it.
+    let rig = commands
+        .spawn((Transform::from_xyz(0.0, 0.0, 0.0), Visibility::Visible))
+        .id();
     commands.entity(root).add_child(rig);
 
-    // Spine.
-    let hips = spawn_joint(commands, rig, Some(Hips), p(Vec3::new(0.0, 0.95, 0.0)), mat, body(meshes.add(m.hips)));
-    let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, 0.15, 0.0)), mat, body(meshes.add(m.torso)));
-    let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, 0.35, 0.0)), mat, body(meshes.add(m.neck)));
-    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, 0.08, 0.0)), mat, body(meshes.add(m.head)));
+    // Spine: hips (anim-fixed Y_HIPS) → torso → neck → head.
+    let hips = spawn_joint(commands, rig, Some(Hips), p(Vec3::new(0.0, Y_HIPS, 0.0)), mat, body(meshes.add(m.hips)));
+    let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, O_TORSO, 0.0)), mat, body(meshes.add(m.torso)));
+    let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, O_NECK, 0.0)), mat, body(meshes.add(m.neck)));
+    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, body(meshes.add(m.head)));
 
-    // Left arm + lion-emblem heater shield (its own pivot on the forearm).
-    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-0.35, 0.25, 0.0)), mat, arm(meshes.add(m.shoulder_l)));
-    let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, -0.28, 0.0)), mat, arm(meshes.add(m.elbow_l)));
-    let hand_l = spawn_joint(commands, el_l, None, p(Vec3::new(0.0, -0.25, 0.0)), mat, None);
+    // Left arm + heater shield on the hand pivot (`anim` rewrites the shield pose every frame).
+    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, arm(meshes.add(m.shoulder_l)));
+    let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, arm(meshes.add(m.elbow_l)));
+    let hand_l = spawn_joint(commands, el_l, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
     let shield = spawn_joint(
         commands,
         hand_l,
         Some(Shield),
-        Transform { translation: Vec3::new(-0.16, -0.02, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.2, -0.6, 0.15), scale: Vec3::splat(0.92) },
+        Transform { translation: Vec3::new(-0.07, -0.08, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.12, -1.5, 0.0), scale: Vec3::ONE },
         mat,
         arm(meshes.add(m.shield)),
     );
     spawn_joint(commands, shield, None, p(Vec3::new(0.0, -0.03, 0.033)), mat, arm(meshes.add(m.lion)));
 
-    // Right arm + held weapon.
-    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(0.35, 0.25, 0.0)), mat, arm(meshes.add(m.shoulder_r)));
-    let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, -0.28, 0.0)), mat, arm(meshes.add(m.elbow_r)));
-    let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, -0.25, 0.0)), mat, None);
-    spawn_joint(commands, hand_r, None, m.weapon_xf, mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, weapon: true }));
+    // Right arm + held weapon on its own `Sword` pivot (attacks sweep it).
+    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, arm(meshes.add(m.shoulder_r)));
+    let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, arm(meshes.add(m.elbow_r)));
+    let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
+    spawn_joint(commands, hand_r, Some(Sword), Transform::default(), mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, weapon: true }));
 
-    // Legs.
-    let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-0.16, -0.05, 0.0)), mat, body(meshes.add(m.hip_l)));
-    let knee_l = spawn_joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.knee_l)));
-    spawn_joint(commands, knee_l, None, p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.foot_l)));
-    let hip_r = spawn_joint(commands, hips, Some(HipR), p(Vec3::new(0.16, -0.05, 0.0)), mat, body(meshes.add(m.hip_r)));
-    let knee_r = spawn_joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.knee_r)));
-    spawn_joint(commands, knee_r, None, p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.foot_r)));
+    // Legs: hip joint → knee → ankle (HH-derived; feet land on the ground).
+    let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-HIP_DX, O_HIP_Y, 0.0)), mat, body(meshes.add(m.hip_l)));
+    let knee_l = spawn_joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, O_KNEE, 0.0)), mat, body(meshes.add(m.knee_l)));
+    spawn_joint(commands, knee_l, Some(FootL), p(Vec3::new(0.0, O_FOOT, 0.0)), mat, body(meshes.add(m.foot_l)));
+    let hip_r = spawn_joint(commands, hips, Some(HipR), p(Vec3::new(HIP_DX, O_HIP_Y, 0.0)), mat, body(meshes.add(m.hip_r)));
+    let knee_r = spawn_joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, O_KNEE, 0.0)), mat, body(meshes.add(m.knee_r)));
+    spawn_joint(commands, knee_r, Some(FootR), p(Vec3::new(0.0, O_FOOT, 0.0)), mat, body(meshes.add(m.foot_r)));
 }
 
 /// Rebuild the hero's limb meshes when the equipped weapon/armor changes (the satchel equips
@@ -496,15 +540,19 @@ fn reset_player(
         pos,
         y,
         facing: 0.0,
+        vel: Vec2::ZERO,
         vel_y: 0.0,
         on_ground: true,
         air_takeoff_y: y,
         walk_phase: 0.0,
         moving_amt: 0.0,
+        run_amt: 0.0,
         moving: false,
         attacking: false,
         attack_t: 0.0,
         hit_dealt: false,
+        attack_variant: 0,
+        victory: false,
     };
     tf.translation = Vec3::new(pos.x, y, pos.y);
     tf.rotation = Quat::from_rotation_y(0.0);

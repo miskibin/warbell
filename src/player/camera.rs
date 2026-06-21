@@ -75,13 +75,34 @@ pub struct OrbitCam {
     pub pitch: f32,
     pub dist: f32,
     pub locked: bool,
+    /// Low-passed look-ahead lead (world XZ), eased toward the hero's heading×moving so a direction
+    /// change slides the framing instead of snapping. Kept here (not a new system `Local`) because the
+    /// camera system is already at Bevy's 16-param ceiling.
+    pub lead: Vec3,
+    /// Smoothed follow anchor (world, eye-height) — eased toward the hero so the rig glides behind him
+    /// instead of rigidly tracking his exact position every frame. Snaps on a big jump (spawn/load).
+    pub anchor: Vec3,
 }
 
 impl Default for OrbitCam {
     fn default() -> Self {
-        OrbitCam { azimuth: std::f32::consts::PI * 0.85, pitch: 0.42, dist: 4.2, locked: false }
+        OrbitCam {
+            azimuth: std::f32::consts::PI * 0.85,
+            pitch: 0.42,
+            dist: 4.2,
+            locked: false,
+            lead: Vec3::ZERO,
+            anchor: Vec3::ZERO,
+        }
     }
 }
+
+/// Camera-glide ease rate (1/s) for the follow anchor — subtle (flows behind him, not laggy).
+const GLIDE_RATE: f32 = 13.0;
+/// Sprint "speed feel": how far the camera dollies back (world units) + how much the FOV widens
+/// (degrees) at full run, eased by `hero.run_amt`.
+const SPRINT_DOLLY: f32 = 0.7;
+const SPRINT_FOV_DEG: f32 = 5.0;
 
 /// First-person sub-mode of [`PlayMode::Play`] (you still drive the knight). Toggled by the HUD
 /// eye button / **V** key. `blend` eases the third⇄first transition (a smooth dolly-in, never a
@@ -235,8 +256,27 @@ pub fn player_camera(
     *tension_blend += (want_tension - *tension_blend) * (1.0 - (-time.delta_secs() * 3.2).exp());
     let r_tension = (*tension_blend).clamp(0.0, 1.0) * CRIT_ZOOM_OUT;
 
-    let follow_target = Vec3::new(hero.pos.x, hero.y + EYE_H, hero.pos.y);
-    let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist + r_tension);
+    // Look-ahead lead: shift the framing slightly in the hero's heading while moving, so the camera
+    // shows more of where you're going. Subtle — keeps him near centre. The target is low-passed
+    // (lead_smooth) so a direction change (e.g. starting a diagonal) eases sideways instead of
+    // snapping — an instant facing read jerks the camera the moment you press a strafe key.
+    let lead_target =
+        Vec3::new(hero.facing.sin(), 0.0, hero.facing.cos()) * (0.22 * hero.moving_amt.clamp(0.0, 1.0));
+    let new_lead = orbit.lead + (lead_target - orbit.lead) * (1.0 - (-time.delta_secs() * 4.5).exp());
+    orbit.lead = new_lead;
+    // Camera glide: ease the followed anchor toward the hero. Snap on a big jump (spawn/respawn/load)
+    // so it doesn't sail in from the old position.
+    let raw_anchor = Vec3::new(hero.pos.x, hero.y + EYE_H, hero.pos.y);
+    if orbit.anchor.distance(raw_anchor) > 5.0 {
+        orbit.anchor = raw_anchor;
+    } else {
+        let na = orbit.anchor + (raw_anchor - orbit.anchor) * (1.0 - (-time.delta_secs() * GLIDE_RATE).exp());
+        orbit.anchor = na;
+    }
+    let follow_target = orbit.anchor + orbit.lead;
+    // Speed feel: sprinting dollies the camera back a touch (eased by `run_amt`).
+    let r_speed = hero.run_amt.clamp(0.0, 1.0) * SPRINT_DOLLY;
+    let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist + r_tension + r_speed);
     let follow_eye =
         follow_target + Vec3::new(a.sin() * p.cos() * r, p.sin() * r, a.cos() * p.cos() * r);
 
@@ -286,18 +326,21 @@ pub fn player_camera(
     // Damped by ~75% in first person: at eye-scale the raw high-frequency jitter would fill the
     // whole view (a motion-sickness + photosensitive-oscillation hazard) — damped, not removed, so
     // a hit still reads as a hit. `damp` scales with the FP blend so the transition is seamless.
-    if let Some(fb) = feedback {
-        let damp = 1.0 - 0.75 * fpb;
+    let damp = 1.0 - 0.75 * fpb;
+    if let Some(fb) = &feedback {
         let s = crate::combat_fx::SHAKE_MAX * fb.trauma * fb.trauma * damp;
         if s > 0.0 {
             let t = time.elapsed_secs();
             let jitter = Vec3::new((t * 47.0).sin(), (t * 59.0).sin(), (t * 41.0).sin());
             cam_tf.translation += jitter * s;
         }
-        // FOV punch: widen the lens off the rest FOV (captured once) by the decaying kick.
-        if let Projection::Perspective(p) = &mut *cam_proj {
-            let base = *base_fov.get_or_insert(p.fov);
-            p.fov = base + fb.fov_kick.to_radians() * damp;
-        }
+    }
+    // FOV = rest (captured once) + decaying combat punch (damped in FP) + a gentle sprint widen for a
+    // sense of speed.
+    if let Projection::Perspective(p) = &mut *cam_proj {
+        let base = *base_fov.get_or_insert(p.fov);
+        let kick = feedback.as_deref().map_or(0.0, |fb| fb.fov_kick) * damp;
+        let speed_fov = hero.run_amt.clamp(0.0, 1.0) * SPRINT_FOV_DEG;
+        p.fov = base + (kick + speed_fov).to_radians();
     }
 }

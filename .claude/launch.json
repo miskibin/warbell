@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["serve", "-l", "5500", "site"],
       "port": 5500
+    },
+    {
+      "name": "knight-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "-d", "tools", "8754"],
+      "port": 8754
     }
   ]
 }

@@ -1,0 +1,212 @@
+<!doctype html><html><head><meta charset=utf8><title>Knight</title>
+<style>body{margin:0;background:#1f232b;overflow:hidden;font:13px monospace;color:#cdd3da}
+#hud{position:fixed;top:8px;left:8px;z-index:9;background:#0009;padding:8px 10px;border-radius:6px;line-height:1.8}
+button{background:#333;color:#ddd;border:1px solid #555;border-radius:4px;padding:2px 8px;cursor:pointer;margin-right:3px}
+button.on{background:#5a6;color:#000}</style>
+</head><body><div id=hud>
+<b>Knight</b> · keys 1 front / 2 side / 3 persp<br>
+<span id=clips></span><br>
+<button onclick="W()">wireframe</button><button onclick="window.spin=!window.spin">spin</button></div>
+<script type="importmap">{"imports":{
+"three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+"three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {RoundedBoxGeometry} from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+const C={ steel:0x8a96a6, steelLt:0x9fabba, steelDk:0x4c5562, steelDimer:0x6e7886,
+  leather:0x5d4836, leatherDk:0x3b2e21, tabard:0x9a6438, tabardDk:0x6f4626,
+  glove:0x282320, gold:0xb8902f, dark:0x191c22, blade:0xc3c7cd, grip:0x6a4a2e, shieldFace:0x2b2723 };
+const M=(c,r=0.62)=>new THREE.MeshStandardMaterial({color:c,flatShading:true,roughness:r,metalness:0.18,side:THREE.DoubleSide});
+
+function plate(w,h,d, topW, topD, mat, r=0.07){
+  r=Math.max(0.02,Math.min(r, w/2-0.01, h/2-0.01, d/2-0.01));
+  const g=new RoundedBoxGeometry(w,h,d,3,r), p=g.attributes.position;
+  for(let i=0;i<p.count;i++){const f=(p.getY(i)+h/2)/h, sx=1+(topW-1)*f, sz=1+(topD-1)*f;
+    p.setX(i,p.getX(i)*sx); p.setZ(i,p.getZ(i)*sz);}
+  g.translate(0,h/2,0); g.computeVertexNormals(); return new THREE.Mesh(g,mat);
+}
+const rb=(w,h,d,mat,r=0.07)=>plate(w,h,d,1,1,mat,r);
+function rev(pts,mat,seg=16){
+  const g=new THREE.LatheGeometry(pts.map(p=>new THREE.Vector2(p[0],p[1])),seg);
+  g.computeVertexNormals(); return new THREE.Mesh(g,mat);
+}
+const at=(m,x,y,z,rot)=>{m.position.set(x,y,z); if(rot)m.rotation.set(...rot); return m;};
+const grp=(x,y,z)=>{const g=new THREE.Group(); g.position.set(x,y,z); return g;};
+// sword: grip at origin, blade +y, tapering to a point
+function sword(){const g=new THREE.Group();
+  g.add(at(rb(0.08,0.5,0.1,M(C.grip,0.85),0.03), 0,0,0));
+  g.add(at(rb(0.5,0.12,0.16,M(C.gold,0.5),0.04), 0,0.3,0));
+  g.add(at(plate(0.18,2.4,0.06, 0.18,0.5, M(C.blade,0.35),0.02), 0,0.36,0));
+  g.add(at(rev([[0,0.11],[0.11,0.07],[0.11,-0.05],[0,-0.09]],M(C.gold,0.5),8), 0,-0.29,0));
+  return g;}
+// heater shield: dark face + gold rim, faces +z
+function shield(){const s=new THREE.Shape();
+  s.moveTo(-0.5,0.72); s.lineTo(0.5,0.72); s.lineTo(0.53,0.05);
+  s.quadraticCurveTo(0.46,-0.42,0,-0.84); s.quadraticCurveTo(-0.46,-0.42,-0.53,0.05); s.closePath();
+  const face=new THREE.Mesh(new THREE.ExtrudeGeometry(s,{depth:0.1,bevelEnabled:true,bevelThickness:0.05,bevelSize:0.05,bevelSegments:1,steps:1}),M(C.shieldFace,0.5));
+  const rim=new THREE.Mesh(new THREE.ExtrudeGeometry(s,{depth:0.07,bevelEnabled:true,bevelThickness:0.1,bevelSize:0.1,bevelSegments:1,steps:1}),M(C.gold,0.5));
+  rim.position.z=-0.03; rim.scale.set(1.08,1.08,1);
+  const g=new THREE.Group(); g.add(rim); face.position.z=0.03; g.add(face);
+  const fz=0.14;                                                   // emblem on the face: gold cross + boss + studs
+  g.add(at(rb(0.1,0.5,0.04,M(C.gold,0.45),0.02), 0,0.05,fz));
+  g.add(at(rb(0.34,0.1,0.04,M(C.gold,0.45),0.02), 0,0.16,fz));
+  g.add(at(rev([[0,0.08],[0.09,0.05],[0.09,-0.03],[0,-0.05]],M(C.gold,0.4),8), 0,0.16,fz,[Math.PI/2,0,0]));
+  for(const p of [[0,0.64],[-0.43,0.18],[0.43,0.18],[-0.28,-0.5],[0.28,-0.5]])
+    g.add(at(rev([[0,0.035],[0.05,0.02],[0,-0.015]],M(C.gold,0.4),6), p[0],p[1],0.1,[Math.PI/2,0,0]));
+  return g;}
+
+// ---------- scene ----------
+const VW=()=>innerWidth||1100, VH=()=>innerHeight||760;
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x1f232b);
+const cam=new THREE.PerspectiveCamera(33,VW()/VH(),0.1,100); cam.position.set(5.5,4.6,13.5);
+const r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true}); r.outputColorSpace=THREE.SRGBColorSpace;
+r.setSize(VW(),VH()); r.setPixelRatio(devicePixelRatio); document.body.appendChild(r.domElement);
+function fit(){const w=VW(),h=VH(); if(r.domElement.clientWidth!==w||r.domElement.clientHeight!==h){r.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix();}}
+const ctl=new OrbitControls(cam,r.domElement); ctl.target.set(0,3.0,0);
+scene.add(new THREE.HemisphereLight(0xeaf1ff,0x4a4339,1.5));
+const k=new THREE.DirectionalLight(0xfff4e6,1.7); k.position.set(5,9,7); scene.add(k);
+const f1=new THREE.DirectionalLight(0xd2dcff,1.0); f1.position.set(-5,4,9); scene.add(f1);
+const f2=new THREE.DirectionalLight(0x9fb2ff,0.45); f2.position.set(-6,3,-6); scene.add(f2);
+scene.add(new THREE.GridHelper(18,18,0x444,0x2c2f36));
+
+// ---------- rig pivots (world heights) ----------
+const HIP=2.55, KNEE=1.40, SHO=3.84, ELB=2.86, NECK=4.10, legX=0.46, pX=0.92;
+const Wrap=new THREE.Group(); scene.add(Wrap);          // spin wrapper
+const root=grp(0,0,0); Wrap.add(root);                  // whole body (bob/lean)
+const torso=grp(0,0,0); root.add(torso);                // upper body (twist)
+const P={root,torso};
+
+// ---------- TORSO (static within torso group) ----------
+torso.add(at(plate(1.0,0.4,1.04, 1.12,1.1, M(C.steel),0.08), 0,2.32,0));            // fauld
+// tabard: front + back cloth on pivots at the belt so they can sway (shorter, tapered hem)
+const TABH=0.92;
+const tabF=grp(0,2.46,0.42); torso.add(tabF); tabF.add(at(plate(0.54,TABH,0.06, 1.35,1, M(C.tabard),0.03), 0,-TABH,0)); P.tabF=tabF;
+const tabB=grp(0,2.46,-0.42); torso.add(tabB); tabB.add(at(plate(0.54,TABH,0.06, 1.35,1, M(C.tabardDk),0.03), 0,-TABH,0)); P.tabB=tabB;
+torso.add(at(rb(1.08,0.2,1.02, M(C.leatherDk),0.05), 0,2.42,0));                    // belt
+torso.add(at(rev([[0,0.13],[0.16,0.1],[0.16,-0.02],[0,-0.05]], M(C.gold),10), 0,2.5,0.55,[Math.PI/2,0,0])); // buckle
+torso.add(at(plate(1.12,1.55,1.06, 1.18,1.12, M(C.leather),0.16), 0,2.5,0));        // gambeson
+torso.add(at(plate(0.22,1.24,0.12, 0.5,1, M(C.leather),0.05), 0,2.66,0.5));         // chest keel
+torso.add(at(rev([[0,0.34],[0.5,0.3],[0.56,0.08],[0.5,0],[0,0]], M(C.steelLt),16), 0,3.95,0)); // gorget
+
+// ---------- HEAD (neck pivot) ----------
+const neck=grp(0,NECK,0); torso.add(neck); P.neck=neck;
+neck.add(at(rb(0.42,0.26,0.42,M(C.steelDk),0.08), 0,-0.0,0));
+neck.add(at(rev([[0,1.28],[0.3,1.2],[0.5,0.98],[0.56,0.62],[0.57,0.06],[0.5,0],[0,0]], M(C.steel),18), 0,0.2,0));
+neck.add(at(plate(0.12,1.0,0.16, 0.6,1, M(C.steelDimer),0.04), 0,0.35,0.5));
+neck.add(at(rb(0.3,0.08,0.06,M(C.dark),0.02), 0.17,0.94,0.49));
+neck.add(at(rb(0.3,0.08,0.06,M(C.dark),0.02), -0.17,0.94,0.49));
+for(const hx of [-0.18,-0.06,0.06,0.18]) neck.add(at(rb(0.05,0.05,0.05,M(C.dark),0.02), hx,0.52,0.52));
+
+// ---------- ARMS (shoulder + elbow pivots) ----------
+function arm(label,s){
+  const sh=grp(s*pX,SHO,0); torso.add(sh);
+  sh.add(at(rev([[0,0.32],[0.22,0.29],[0.4,0.18],[0.5,0.03],[0.5,-0.14],[0.4,-0.22],[0.2,-0.24],[0,-0.24]], M(C.steelLt),16), 0,3.66-SHO,0.02,[0.05,0,-s*0.12]));
+  sh.add(at(plate(0.46,0.78,0.5, 0.92,0.94, M(C.steel),0.08), 0,2.95-SHO,0));        // rerebrace
+  const el=grp(0,ELB-SHO,0); sh.add(el);
+  el.add(at(rev([[0,0.26],[0.2,0.22],[0.28,0.08],[0.28,0],[0,0]], M(C.steelLt),14), 0,2.86-ELB,0.04));
+  el.add(at(plate(0.44,0.84,0.48, 0.78,0.82, M(C.steel),0.08), 0,2.0-ELB,0));        // vambrace
+  el.add(at(plate(0.46,0.4,0.52, 0.8,0.86, M(C.glove),0.06), 0,1.56-ELB,0));         // gauntlet
+  el.add(at(rb(0.42,0.16,0.46,M(C.steelDk),0.05), 0,1.62-ELB,0.16));
+  if(label=='R'){const g=grp(0,1.5-ELB,0.04); g.add(sword()); el.add(g); P.sword=g;}     // sword in right fist
+  if(label=='L'){const g=grp(0.18,1.5-ELB,-0.04); g.add(shield()); el.add(g); P.shield=g;} // shield on left forearm (outboard, clears the leg)
+  P['sh'+label]=sh; P['el'+label]=el;
+}
+arm('L',1); arm('R',-1);
+
+// ---------- LEGS (hip + knee pivots) ----------
+function leg(label,s){
+  const hip=grp(s*legX,HIP,0); root.add(hip);
+  hip.add(at(plate(0.52,1.18,0.62, 1.18,1.12, M(C.steel),0.1), 0,1.42-HIP,0));       // cuisse
+  const kn=grp(0,KNEE-HIP,0); hip.add(kn);
+  kn.add(at(rev([[0,0.34],[0.18,0.3],[0.33,0.16],[0.36,0],[0,0]], M(C.steelLt),14), 0,1.2-KNEE,0.16)); // poleyn
+  kn.add(at(plate(0.5,1.12,0.58, 0.78,0.84, M(C.steel),0.09), 0,0.26-KNEE,0));       // greave
+  kn.add(at(rb(0.5,0.26,0.66,M(C.steelDk),0.06), 0,0.0-KNEE,-0.02));                 // sabaton
+  kn.add(at(plate(0.46,0.22,0.5, 0.6,0.7, M(C.steel),0.05), 0,0.04-KNEE,0.42));      // toe
+  P['hip'+label]=hip; P['kn'+label]=kn;
+}
+leg('L',1); leg('R',-1);
+
+// ---------- animation ----------
+const lerp=(a,b,t)=>a+(b-a)*t, sm=t=>t*t*(3-2*t);
+function reset(){
+  root.position.set(0,0,0); root.rotation.set(0,0,0); torso.rotation.set(0,0,0); neck.rotation.set(0,0,0);
+  P.shL.rotation.set(0,0,0.14); P.shR.rotation.set(0,0,-0.14);   // outward splay so arms clear the torso
+  for(const k of ['elL','elR','hipL','hipR','knL','knR']) P[k].rotation.set(0,0,0);
+  P.sword.rotation.set(1.0,0,0.12); P.shield.rotation.set(0.05,-1.5,0);   // sword tip up-forward (at the ready); shield EDGE-ON at side
+  P.tabF.rotation.set(0,0,0); P.tabB.rotation.set(0,0,0);
+}
+const CL={
+  idle(t){const b=Math.sin(t*1.6); root.position.y=b*0.03; P.shL.rotation.x=b*0.04; P.shR.rotation.x=b*0.04; P.elL.rotation.x=P.elR.rotation.x=-0.12;
+    P.tabF.rotation.x=Math.sin(t*1.5)*0.05; P.tabB.rotation.x=Math.sin(t*1.5+0.6)*0.04;},
+  walk(t){const w=t*5,A=0.55;
+    P.hipL.rotation.x=Math.sin(w)*A; P.hipR.rotation.x=Math.sin(w+Math.PI)*A;
+    P.knL.rotation.x=Math.max(0,Math.sin(w-1.1))*1.0; P.knR.rotation.x=Math.max(0,Math.sin(w+Math.PI-1.1))*1.0;
+    P.shL.rotation.x=Math.sin(w+Math.PI)*A*0.7; P.shR.rotation.x=Math.sin(w)*A*0.7;
+    P.elL.rotation.x=P.elR.rotation.x=-0.35;
+    root.position.y=Math.abs(Math.sin(w))*0.07; torso.rotation.y=Math.sin(w)*0.06;
+    P.tabF.rotation.x=-0.1+Math.sin(w*2)*0.1; P.tabB.rotation.x=0.08+Math.sin(w*2+1)*0.07;},
+  run(t){const w=t*8.5,A=0.95;
+    root.rotation.x=0.2;
+    P.hipL.rotation.x=Math.sin(w)*A; P.hipR.rotation.x=Math.sin(w+Math.PI)*A;
+    P.knL.rotation.x=0.6+Math.max(0,Math.sin(w-0.9))*1.1; P.knR.rotation.x=0.6+Math.max(0,Math.sin(w+Math.PI-0.9))*1.1;
+    P.shL.rotation.x=Math.sin(w+Math.PI)*A*0.8; P.shR.rotation.x=Math.sin(w)*A*0.8;
+    P.elL.rotation.x=P.elR.rotation.x=-1.5;
+    root.position.y=Math.abs(Math.sin(w))*0.12; torso.rotation.y=Math.sin(w)*0.1;
+    P.tabF.rotation.x=-0.22+Math.sin(w*2)*0.14; P.tabB.rotation.x=0.16+Math.sin(w*2+1)*0.1;},
+  chop(t){const c=(t%1.3)/1.3;                        // attack 1 — diagonal overhead chop
+    let sx,tw,el;
+    if(c<0.35){const u=sm(c/0.35); sx=lerp(0,-2.5,u); tw=lerp(0,-0.45,u); el=lerp(-0.3,-1.6,u);}
+    else if(c<0.55){const u=1-Math.pow(1-(c-0.35)/0.2,2.5); sx=lerp(-2.5,0.8,u); tw=lerp(-0.45,0.4,u); el=lerp(-1.6,-0.1,u);}
+    else{const u=sm((c-0.55)/0.45); sx=lerp(0.8,0,u); tw=lerp(0.4,0,u); el=lerp(-0.1,-0.3,u);}
+    P.shR.rotation.x=sx; P.elR.rotation.x=el; torso.rotation.y=tw;
+    P.shL.rotation.x=-0.4; P.elL.rotation.x=-0.9;
+    P.hipL.rotation.x=0.1; P.hipR.rotation.x=-0.1;},
+  slash(t){const c=(t%1.1)/1.1;                        // attack 2 — horizontal slash sweep
+    let shx,shy,shz,el,tw;
+    if(c<0.3){const u=sm(c/0.3); shx=lerp(0,-0.5,u); shy=lerp(0,0.9,u); shz=lerp(0,0.4,u); el=lerp(-0.3,-1.4,u); tw=lerp(0,0.45,u);}      // wind across to the right
+    else if(c<0.5){const u=1-Math.pow(1-(c-0.3)/0.2,2.5); shx=lerp(-0.5,-0.6,u); shy=lerp(0.9,-1.1,u); shz=lerp(0.4,-0.2,u); el=lerp(-1.4,-0.25,u); tw=lerp(0.45,-0.5,u);} // sweep across left
+    else{const u=sm((c-0.5)/0.5); shx=lerp(-0.6,0,u); shy=lerp(-1.1,0,u); shz=lerp(-0.2,0,u); el=lerp(-0.25,-0.3,u); tw=lerp(-0.5,0,u);}
+    P.shR.rotation.set(shx,shy,shz); P.elR.rotation.x=el; torso.rotation.y=tw;
+    P.sword.rotation.set(1.6,0,0);                     // blade held horizontal (forward)
+    P.shL.rotation.x=-0.3; P.elL.rotation.x=-0.8;
+    P.hipL.rotation.x=0.1; P.hipR.rotation.x=-0.12; root.position.y=-0.03;},
+  thrust(t){const c=(t%1.0)/1.0;                       // attack 3 — forward lunge stab
+    let shx,el,lean,hipL,knL;
+    if(c<0.32){const u=sm(c/0.32); shx=lerp(0,-0.55,u); el=lerp(-0.3,-1.9,u); lean=lerp(0,-0.06,u); hipL=lerp(0,0.1,u); knL=lerp(0,0.15,u);}   // coil back
+    else if(c<0.5){const u=1-Math.pow(1-(c-0.32)/0.18,2.5); shx=lerp(-0.55,-1.35,u); el=lerp(-1.9,-0.1,u); lean=lerp(-0.06,0.28,u); hipL=lerp(0.1,0.5,u); knL=lerp(0.15,0.45,u);}  // extend + lunge
+    else{const u=sm((c-0.5)/0.5); shx=lerp(-1.35,0,u); el=lerp(-0.1,-0.3,u); lean=lerp(0.28,0,u); hipL=lerp(0.5,0,u); knL=lerp(0.45,0,u);}
+    P.shR.rotation.x=shx; P.elR.rotation.x=el; torso.rotation.x=lean;
+    P.sword.rotation.set(1.55,0,0);                    // blade points forward
+    P.shL.rotation.x=-0.3; P.elL.rotation.x=-0.9;
+    P.hipL.rotation.x=hipL; P.knL.rotation.x=knL; P.hipR.rotation.x=-0.2; root.position.y=-0.04;},
+  block(t){const h=Math.sin(t*4)*0.015;               // braced behind the shield (calibration pass)
+    P.hipL.rotation.x=0.12; P.knL.rotation.x=0.35;
+    P.hipR.rotation.x=-0.1; P.knR.rotation.x=0.45;
+    root.position.y=-0.13+h;
+    P.shL.rotation.set(-1.0,0,0.2); P.elL.rotation.x=-1.0;  // left arm up to chest height, slight across
+    P.shield.rotation.set(2.0,0,0);                   // counter-rotate so face points forward
+    P.shR.rotation.x=-0.25; P.elR.rotation.x=-0.9;    // sword tucked back
+    P.sword.rotation.set(2.6,0,0); torso.rotation.y=-0.15;},
+  jump(t){const c=(t%1.7)/1.7; let y,kn,hp,sh,el;
+    if(c<0.22){const u=sm(c/0.22); y=lerp(0,-0.35,u); kn=lerp(0,1.35,u); hp=lerp(0,0.6,u); sh=lerp(0,0.7,u); el=lerp(-0.2,-0.5,u);}        // crouch, arms back
+    else if(c<0.40){const u=sm((c-0.22)/0.18); y=lerp(-0.35,1.0,u); kn=lerp(1.35,0.05,u); hp=lerp(0.6,-0.1,u); sh=lerp(0.7,-2.3,u); el=lerp(-0.5,-0.2,u);} // launch, arms up
+    else if(c<0.58){const u=sm((c-0.40)/0.18); y=lerp(1.0,1.3,u); kn=lerp(0.05,1.0,u); hp=lerp(-0.1,0.6,u); sh=lerp(-2.3,-1.7,u); el=lerp(-0.2,-1.1,u);} // apex, tuck
+    else if(c<0.80){const u=sm((c-0.58)/0.22); y=lerp(1.3,-0.15,u); kn=lerp(1.0,0.3,u); hp=lerp(0.6,0.12,u); sh=lerp(-1.7,0.2,u); el=lerp(-1.1,-0.3,u);} // fall, reach for ground
+    else{const u=sm((c-0.80)/0.20); y=lerp(-0.15,0,u); kn=lerp(0.3,0,u); hp=lerp(0.12,0,u); sh=lerp(0.2,0,u); el=lerp(-0.3,-0.15,u);}     // land
+    root.position.y=y; P.hipL.rotation.x=hp; P.hipR.rotation.x=hp; P.knL.rotation.x=kn; P.knR.rotation.x=kn;
+    P.shL.rotation.x=sh; P.shR.rotation.x=sh; P.elL.rotation.x=el; P.elR.rotation.x=el;},
+};
+let clip='walk'; const clock=new THREE.Clock();
+const clipsEl=document.getElementById('clips');
+function setClip(n){clip=n; [...clipsEl.children].forEach(b=>b.classList.toggle('on',b.dataset.c===n));}
+['idle','walk','run','chop','slash','thrust','block','jump'].forEach(n=>{const b=document.createElement('button'); b.textContent=n; b.dataset.c=n; b.onclick=()=>setClip(n); clipsEl.appendChild(b);});
+setClip('walk');
+
+let wire=false; window.W=()=>{wire=!wire; Wrap.traverse(o=>o.material&&(o.material.wireframe=wire));};
+window.spin=false;
+window.view=(p)=>{const d=13.5; if(p=='front')cam.position.set(0,3.3,d); else if(p=='side')cam.position.set(d,3.3,0.001); else cam.position.set(5.5,4.6,d); ctl.target.set(0,3.3,0); ctl.update();};
+addEventListener('keydown',e=>{if(e.key=='1')view('front'); if(e.key=='2')view('side'); if(e.key=='3')view('persp');});
+(function loop(){requestAnimationFrame(loop); fit(); reset(); CL[clip](clock.getElapsedTime()); if(window.spin)Wrap.rotation.y+=0.006; ctl.update(); r.render(scene,cam);})();
+</script></body></html>

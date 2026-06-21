@@ -1,0 +1,90 @@
+<!doctype html><html><head><meta charset=utf8><title>Knight (loft)</title>
+<style>body{margin:0;background:#202329;overflow:hidden;font:13px monospace;color:#ccc}
+#hud{position:fixed;top:8px;left:8px;z-index:9;background:#0009;padding:8px 10px;border-radius:6px;line-height:1.7}
+button{background:#333;color:#ddd;border:1px solid #555;border-radius:4px;padding:2px 8px;cursor:pointer;margin-right:4px}</style>
+</head><body><div id=hud>
+<b>Knight</b> &mdash; loft from front&times;side &middot; drag orbit, scroll zoom<br>
+<button onclick="W()">wireframe</button><button onclick="X()">explode</button>
+<button onclick="window.spin=!window.spin">spin</button><span id=info></span></div>
+<script type="importmap">{"imports":{
+"three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+"three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+const SPEC={"unit": "head", "U_px": 83.7, "N": 16, "parts": {"helm": {"h": 1.542, "halfW": [0.173, 0.484, 0.49, 0.49, 0.502, 0.502, 0.514, 0.526, 0.526, 0.532, 0.538, 0.538, 0.55, 0.556, 0.347, 0.018], "halfD": [0.137, 0.532, 0.538, 0.544, 0.556, 0.562, 0.574, 0.574, 0.592, 0.598, 0.598, 0.604, 0.616, 0.424, 0.215, 0.012], "rgb": [92, 100, 108], "mirror": false, "bulge": [0.747, 0.889, 0.898, 0.9, 0.901, 0.906, 0.903, 0.882, 0.875, 0.874, 0.871, 0.868, 0.859, 0.85, 0.87, 0.893]}, "cuirass": {"h": 1.841, "halfW": [0.616, 0.849, 0.825, 0.801, 0.789, 0.789, 0.825, 0.885, 0.897, 0.873, 0.867, 0.867, 0.813, 0.861, 0.849, 0.783], "halfD": [0.078, 0.311, 0.424, 0.52, 0.562, 0.598, 0.616, 0.634, 0.628, 0.616, 0.598, 0.586, 0.568, 0.55, 0.538, 0.143], "rgb": [73, 58, 48], "mirror": false, "bulge": [0.677, 0.802, 0.828, 0.888, 0.924, 0.938, 0.942, 0.935, 0.93, 0.921, 0.91, 0.892, 0.879, 0.853, 0.83, 0.793]}, "tabard": {"h": 1.733, "halfW": [0.64, 0.669, 0.681, 0.681, 0.711, 0.735, 0.753, 0.777, 0.795, 0.819, 0.843, 0.861, 0.885, 0.759, 0.305, 0.024], "halfD": [0.03, 0.406, 0.412, 0.394, 0.412, 0.424, 0.436, 0.448, 0.46, 0.472, 0.484, 0.502, 0.508, 0.52, 0.538, 0.03], "rgb": [114, 83, 54], "mirror": false, "bulge": [0.734, 0.88, 0.884, 0.867, 0.86, 0.86, 0.862, 0.86, 0.86, 0.857, 0.851, 0.84, 0.827, 0.823, 0.848, 0.859]}, "pauldron": {"h": 0.98, "halfW": [0.018, 0.161, 0.281, 0.389, 0.454, 0.49, 0.52, 0.55, 0.58, 0.598, 0.616, 0.592, 0.592, 0.61, 0.46, 0.108], "halfD": [0.012, 0.126, 0.227, 0.323, 0.377, 0.4, 0.442, 0.472, 0.496, 0.526, 0.544, 0.532, 0.502, 0.52, 0.436, 0.191], "rgb": [112, 121, 129], "mirror": true, "bulge": [0.695, 0.782, 0.846, 0.847, 0.866, 0.883, 0.887, 0.888, 0.887, 0.884, 0.87, 0.857, 0.85, 0.812, 0.849, 0.86]}, "arm": {"h": 1.506, "halfW": [0.209, 0.341, 0.371, 0.424, 0.406, 0.353, 0.329, 0.311, 0.299, 0.281, 0.311, 0.305, 0.257, 0.233, 0.257, 0.048], "halfD": [0.012, 0.311, 0.347, 0.371, 0.353, 0.329, 0.311, 0.293, 0.281, 0.263, 0.293, 0.287, 0.251, 0.227, 0.245, 0.239], "rgb": [93, 99, 105], "mirror": true, "bulge": [0.756, 0.875, 0.87, 0.88, 0.901, 0.916, 0.925, 0.925, 0.925, 0.915, 0.883, 0.883, 0.877, 0.845, 0.83, 0.818]}, "gauntlet": {"h": 1.076, "halfW": [0.108, 0.233, 0.251, 0.287, 0.323, 0.347, 0.359, 0.371, 0.371, 0.377, 0.365, 0.263, 0.251, 0.239, 0.173, 0.03], "halfD": [0.084, 0.197, 0.215, 0.251, 0.281, 0.299, 0.311, 0.329, 0.335, 0.329, 0.329, 0.215, 0.203, 0.185, 0.149, 0.036], "rgb": [87, 94, 100], "mirror": true, "bulge": [0.727, 0.823, 0.83, 0.825, 0.826, 0.835, 0.841, 0.84, 0.839, 0.814, 0.814, 0.847, 0.84, 0.821, 0.798, 0.724]}, "thigh": {"h": 1.303, "halfW": [0.108, 0.377, 0.383, 0.389, 0.4, 0.412, 0.394, 0.383, 0.371, 0.359, 0.394, 0.383, 0.323, 0.299, 0.281, 0.06], "halfD": [0.137, 0.293, 0.329, 0.341, 0.347, 0.353, 0.353, 0.341, 0.335, 0.323, 0.359, 0.353, 0.293, 0.275, 0.269, 0.06], "rgb": [80, 87, 94], "mirror": true, "bulge": [0.625, 0.841, 0.87, 0.88, 0.879, 0.868, 0.882, 0.881, 0.881, 0.871, 0.854, 0.853, 0.843, 0.818, 0.798, 0.766]}, "shin": {"h": 1.793, "halfW": [0.006, 0.185, 0.293, 0.305, 0.305, 0.281, 0.257, 0.233, 0.221, 0.209, 0.197, 0.227, 0.197, 0.227, 0.245, 0.006], "halfD": [0.024, 0.203, 0.281, 0.293, 0.287, 0.263, 0.239, 0.221, 0.209, 0.203, 0.215, 0.257, 0.305, 0.412, 0.526, 0.227], "rgb": [85, 94, 102], "mirror": true, "bulge": [0.61, 0.763, 0.838, 0.871, 0.891, 0.913, 0.928, 0.925, 0.904, 0.894, 0.872, 0.829, 0.822, 0.823, 0.811, 0.818]}, "boot": {"h": 0.801, "halfW": [0.03, 0.215, 0.215, 0.239, 0.263, 0.287, 0.299, 0.299, 0.305, 0.329, 0.335, 0.335, 0.341, 0.347, 0.275, 0.036], "halfD": [0.018, 0.227, 0.245, 0.257, 0.287, 0.341, 0.377, 0.436, 0.472, 0.526, 0.562, 0.574, 0.586, 0.592, 0.436, 0.066], "rgb": [90, 100, 109], "mirror": true, "bulge": [0.559, 0.795, 0.82, 0.81, 0.811, 0.823, 0.816, 0.837, 0.853, 0.831, 0.825, 0.819, 0.797, 0.763, 0.748, 0.755]}, "shield": {"h": 2.415, "halfW": [0.03, 0.657, 0.807, 0.819, 0.825, 0.819, 0.807, 0.789, 0.759, 0.711, 0.652, 0.58, 0.496, 0.377, 0.227, 0.006], "halfD": [0.066, 0.143, 0.185, 0.191, 0.209, 0.233, 0.275, 0.275, 0.269, 0.263, 0.251, 0.167, 0.143, 0.114, 0.078, 0.03], "rgb": [89, 78, 57], "mirror": false, "bulge": [0.701, 0.859, 0.906, 0.915, 0.92, 0.926, 0.925, 0.923, 0.916, 0.907, 0.897, 0.883, 0.871, 0.862, 0.849, 0.81]}, "sword": {"h": 4.447, "halfW": [0.018, 0.096, 0.084, 0.102, 0.514, 0.149, 0.143, 0.131, 0.131, 0.126, 0.12, 0.114, 0.108, 0.102, 0.096, 0.006], "halfD": [0.042, 0.066, 0.066, 0.066, 0.09, 0.054, 0.054, 0.054, 0.042, 0.042, 0.042, 0.042, 0.042, 0.03, 0.03, 0.006], "rgb": [142, 138, 130], "mirror": false, "bulge": [0.767, 0.807, 0.788, 0.764, 0.88, 0.921, 0.902, 0.906, 0.901, 0.872, 0.836, 0.825, 0.828, 0.825, 0.794, 0.779]}}}, P=SPEC.parts, SEG=12, BOX=0.62, BULGE=0.45;
+const sp=(t,p)=>Math.sign(t)*Math.pow(Math.abs(t),p);   // superellipse term (boxy<1)
+
+function loft(part){
+  const hw=part.halfW, hd=part.halfD, bg=part.bulge||[], N=hw.length, h=part.h, v=[], idx=[];
+  const ring=i=>{const y=h*(1-i/(N-1)), b=bg[i]||0;
+    for(let s=0;s<SEG;s++){const a=s/SEG*Math.PI*2, cs=Math.cos(a), sn=Math.sin(a);
+      const X=sp(cs,BOX)*Math.max(hw[i],0.02);
+      let Z=sp(sn,BOX)*Math.max(hd[i],0.02);
+      if(sn>0) Z += sn*Math.max(hd[i],0.02)*b*BULGE;     // round the front face
+      v.push(X,y,Z);}};
+  for(let i=0;i<N;i++) ring(i);
+  for(let i=0;i<N-1;i++)for(let s=0;s<SEG;s++){
+    const a=i*SEG+s,b=i*SEG+(s+1)%SEG,c=(i+1)*SEG+(s+1)%SEG,d=(i+1)*SEG+s;
+    idx.push(a,b,d,b,c,d);}
+  const top=v.length/3; v.push(0,h,0); const bot=v.length/3; v.push(0,0,0);
+  for(let s=0;s<SEG;s++){idx.push(top,(s+1)%SEG,s); idx.push(bot,(N-1)*SEG+s,(N-1)*SEG+(s+1)%SEG);}
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(v,3));
+  g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x202329);
+const cam=new THREE.PerspectiveCamera(38,innerWidth/innerHeight,0.1,100); cam.position.set(7,5.2,14);
+const r=new THREE.WebGLRenderer({antialias:true}); r.outputColorSpace=THREE.SRGBColorSpace;
+r.setSize(innerWidth,innerHeight); r.setPixelRatio(devicePixelRatio); document.body.appendChild(r.domElement);
+const ctl=new OrbitControls(cam,r.domElement); ctl.target.set(0,3,0);
+scene.add(new THREE.HemisphereLight(0xdfe8ff,0x4a4338,2.0));
+const k=new THREE.DirectionalLight(0xfff6ea,2.0); k.position.set(5,9,7); scene.add(k);
+const f=new THREE.DirectionalLight(0xcdd8ff,1.3); f.position.set(-5,4,9); scene.add(f);   // front fill
+const b2=new THREE.DirectionalLight(0xaab8ff,0.6); b2.position.set(-6,3,-6); scene.add(b2);
+scene.add(new THREE.GridHelper(16,16,0x444,0x2c2f36));
+
+const mat=name=>{const c=P[name].rgb; return new THREE.MeshStandardMaterial({
+  color:new THREE.Color(`rgb(${c[0]},${c[1]},${c[2]})`),flatShading:true,roughness:0.85,metalness:0.0});};
+const G=new THREE.Group();
+function add(name,x,yBottom,opt={}){
+  const m=new THREE.Mesh(loft(P[name]),mat(name)); m.position.set(x,yBottom,opt.z||0);
+  if(opt.rot)m.rotation.set(...opt.rot); m.userData.y0=yBottom; G.add(m); return m;}
+
+// ---- assemble bottom-up (head units, ground=0) ----
+const b=P.boot.h*0.55, s=b+P.shin.h*0.92, t=s+P.thigh.h*0.92, hip=t+P.thigh.h*0.0+ P.thigh.h*0.0;
+const HIP=t+P.thigh.h*0.85;
+const cuiB=HIP-0.12, shoulder=cuiB+P.cuirass.h*0.92;
+const legX=0.46, armX=P.cuirass.halfW.reduce((a,c)=>Math.max(a,c),0)+0.18;
+for(const sg of [1,-1]){
+  add('boot', sg*legX, 0, {});
+  add('shin', sg*legX, b);
+  add('thigh',sg*legX, s);
+  add('pauldron', sg*(armX-0.05), shoulder-P.pauldron.h*0.55);
+  add('arm', sg*armX, shoulder-P.pauldron.h*0.35-P.arm.h);
+  add('gauntlet', sg*armX, shoulder-P.pauldron.h*0.35-P.arm.h-P.gauntlet.h*0.75);
+}
+add('tabard',0, HIP-P.tabard.h*0.72);
+add('cuirass',0, cuiB);
+// neck stub so the helm doesn't sink into the shoulders
+const neckGap=0.10, neckH=P.helm.h*0.12+neckGap, neckY=shoulder-0.04;
+const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.26,neckH,10),
+  new THREE.MeshStandardMaterial({color:0x2c2f35,flatShading:true,roughness:0.9}));
+neck.position.set(0,neckY+neckH/2,0); neck.userData.y0=neck.position.y; G.add(neck);
+add('helm',0, neckY+neckH-0.02);
+add('shield', -(armX+0.30), cuiB+0.15, {rot:[0,0.18,0]});
+add('sword',  (armX+0.40), b, {});
+scene.add(G);
+document.getElementById('info').textContent=' | '+Object.keys(P).length+' parts';
+let wire=false; window.W=()=>{wire=!wire;G.traverse(o=>o.material&&(o.material.wireframe=wire));};
+let exp=false; window.X=()=>{exp=!exp;G.children.forEach(m=>m.position.y=m.userData.y0*(exp?1.3:1));};
+window.spin=false;
+window.view=(p)=>{const d=14;
+  if(p=='front')cam.position.set(0,3.4,d);
+  else if(p=='side')cam.position.set(d,3.4,0.001);
+  else cam.position.set(7,5.2,d);
+  ctl.target.set(0,3.4,0); ctl.update();};
+addEventListener('keydown',e=>{if(e.key=='1')view('front');if(e.key=='2')view('side');if(e.key=='3')view('persp');});
+addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();r.setSize(innerWidth,innerHeight);});
+(function loop(){requestAnimationFrame(loop); if(window.spin)G.rotation.y+=0.01; ctl.update(); r.render(scene,cam);})();
+</script></body></html>

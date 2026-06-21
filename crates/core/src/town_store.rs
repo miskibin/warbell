@@ -111,13 +111,14 @@ impl BuildKind {
     }
 
     pub fn max_hp(self) -> f64 {
-        // Raised ~+80% (Farm 60→110, producers 55→100): defender HP is FLAT but the night
-        // `dmg_scale` ramp steepens hard (1.0→2.35+), so the old pools melted in seconds on
-        // later nights. The bigger pools let you reach a burning plot in time even at night 4+.
+        // Raised ~+80% (Farm 60→110, producers 55→100), then a further ×1.5 (Farm 110→165,
+        // producers 100→150): defender HP is FLAT but the night `dmg_scale` ramp steepens hard
+        // (1.0→2.35+), so the old pools still melted on later nights. The bigger pools let you
+        // reach a burning plot in time even at night 4+.
         match self {
-            BuildKind::Farm => 110.0,
-            BuildKind::Lumber => 100.0,
-            BuildKind::Mine => 100.0,
+            BuildKind::Farm => 165.0,
+            BuildKind::Lumber => 150.0,
+            BuildKind::Mine => 150.0,
         }
     }
 
@@ -632,7 +633,7 @@ mod tests {
         t.build(0, BuildKind::Farm, &mut bank);
         t.damage(0, 30.0); // burning
         t.repair(100.0); // heals to max, clears burning
-        assert_eq!(t.plots[0].state, PlotState::Built { hp: 110.0, burning: false });
+        assert_eq!(t.plots[0].state, PlotState::Built { hp: 165.0, burning: false });
     }
 
     #[test]

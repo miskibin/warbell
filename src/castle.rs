@@ -185,6 +185,50 @@ impl Canvas {
             }
         }
     }
+    /// Separable box blur with toroidal wrap, so a Repeat-tiled texture stays seamless.
+    /// Softens hard rect/grout edges → quieter, less shimmery at a distance.
+    fn blur(&mut self, radius: usize) {
+        if radius == 0 {
+            return;
+        }
+        let n = TN;
+        let win = (radius * 2 + 1) as f32;
+        let src = self.px.clone();
+        let mut tmp = vec![0u8; n * n * 4];
+        for y in 0..n {
+            for x in 0..n {
+                let mut acc = [0f32; 3];
+                for k in 0..=radius * 2 {
+                    let sx = (x + n + k - radius) % n;
+                    let i = (y * n + sx) * 4;
+                    for c in 0..3 {
+                        acc[c] += src[i + c] as f32;
+                    }
+                }
+                let o = (y * n + x) * 4;
+                for c in 0..3 {
+                    tmp[o + c] = (acc[c] / win) as u8;
+                }
+                tmp[o + 3] = 255;
+            }
+        }
+        for y in 0..n {
+            for x in 0..n {
+                let mut acc = [0f32; 3];
+                for k in 0..=radius * 2 {
+                    let sy = (y + n + k - radius) % n;
+                    let i = (sy * n + x) * 4;
+                    for c in 0..3 {
+                        acc[c] += tmp[i + c] as f32;
+                    }
+                }
+                let o = (y * n + x) * 4;
+                for c in 0..3 {
+                    self.px[o + c] = (acc[c] / win) as u8;
+                }
+            }
+        }
+    }
     fn into_image(self) -> Image {
         let mut img = Image::new(
             Extent3d { width: TN as u32, height: TN as u32, depth_or_array_layers: 1 },
@@ -306,10 +350,13 @@ fn tex_thatch(hex: u32) -> Image {
     cv.into_image()
 }
 
-/// Cobbles — courtyard paving (jittered running-bond stones + bevels).
+/// Cobbles — courtyard paving (jittered running-bond stones + bevels). Deliberately LOW
+/// contrast: lighter grout (faint joints, not black brick-grid lines), gentle per-stone value
+/// drift, soft thin bevels, then a small blur — so the paving reads as a quiet stone surface
+/// against the grass instead of a busy tiled brick pattern.
 fn tex_cobble(hex: u32) -> Image {
     let c = rgb(hex);
-    let mut cv = Canvas::new(shade(c, -0.18));
+    let mut cv = Canvas::new(shade(c, -0.09)); // grout: only slightly darker than the stone
     let mut r = Rng(0xc0b ^ hex);
     let cells = 5usize;
     let cs = TN as f32 / cells as f32;
@@ -318,16 +365,17 @@ fn tex_cobble(hex: u32) -> Image {
         for rx in -1..=cells as i32 {
             let jx = (r.f() - 0.5) * 4.0;
             let jy = (r.f() - 0.5) * 4.0;
-            let x = rx as f32 * cs + off + 2.0 + jx;
-            let y = ry as f32 * cs + 2.0 + jy;
-            let (w, h) = (cs - 4.0, cs - 4.0);
-            cv.rect(x, y, w, h, shade(c, (r.f() - 0.5) * 0.18));
-            cv.rect(x, y, w, 1.5, shade(c, 0.08)); // top sheen
-            cv.rect(x, y, 1.5, h, shade(c, 0.08));
-            cv.rect(x, y + h - 1.5, w, 1.5, shade(c, -0.12)); // bottom shadow
+            let x = rx as f32 * cs + off + 1.5 + jx;
+            let y = ry as f32 * cs + 1.5 + jy;
+            let (w, h) = (cs - 3.0, cs - 3.0); // wider stones → thinner joints
+            cv.rect(x, y, w, h, shade(c, (r.f() - 0.5) * 0.09));
+            cv.rect(x, y, w, 1.0, shade(c, 0.04)); // faint top sheen
+            cv.rect(x, y, 1.0, h, shade(c, 0.04));
+            cv.rect(x, y + h - 1.0, w, 1.0, shade(c, -0.06)); // faint bottom shadow
         }
     }
-    speckle(&mut cv, &mut r, 400, c);
+    speckle(&mut cv, &mut r, 220, c);
+    cv.blur(2); // soften the hard rect/joint edges
     cv.into_image()
 }
 

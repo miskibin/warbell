@@ -17,6 +17,7 @@
 mod aftermath;
 mod audio;
 mod banner;
+mod biped;
 mod biome;
 mod bridges;
 mod biome_desert;
@@ -72,9 +73,12 @@ mod orks;
 mod outline;
 mod palette;
 mod particles;
+mod previs_knight;
+mod peasant_model;
 mod player;
 mod projectile;
 mod props;
+mod quadruped;
 mod quality;
 mod quest;
 mod roads;
@@ -216,6 +220,8 @@ fn main() {
         .add_plugins((
             scenes::ScenesPlugin, // hand-staged looped trailer tableaus (F1 Director → Scenes)
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
+            biped::BipedPlugin, // shared studio rig+animator for non-hero bipeds (orcs/peasants)
+            quadruped::QuadrupedPlugin, // shared studio quadruped rig+animator (wildlife mammals)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog
             warlord::WarlordPlugin, // the Warlord of Gnashfang Hold: the final boss + win condition

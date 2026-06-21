@@ -32,6 +32,8 @@ pub fn run() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
         .add_plugins(crate::creature::CreaturePlugin) // the shared CreatureMaterial + its shader
+        .add_plugins(crate::quadruped::QuadrupedPlugin) // poses any previewed quadruped from its QuadDrive
+        .add_plugins(crate::biped::BipedPlugin) // poses any previewed ork/peasant biped from its BipedDrive
         .add_plugins(crate::capture::CapturePlugin) // FOREST_SHOT / FOREST_CLIP (+ _ORBIT turntable)
         .insert_resource(GlobalAmbientLight { brightness: 160.0, ..default() })
         .insert_resource(ClearColor(Color::srgb(0.16, 0.17, 0.20)))
@@ -44,7 +46,9 @@ pub fn run() {
         app.init_resource::<crate::player::PlayerRes>()
             .init_resource::<crate::cinematic::DirectorState>()
             .init_resource::<crate::player::FirstPerson>()
-            .add_systems(Update, (anim_drive, crate::player::anim::hero_anim).chain());
+            .add_systems(Update, (anim_drive, crate::player::anim::hero_anim).chain())
+            // Animal / biped models read their own driver; inert for the hero.
+            .add_systems(Update, (quad_anim_drive, biped_anim_drive));
     }
     app.run();
 }
@@ -55,18 +59,124 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
     let dt = time.delta_secs();
     hero.moving = false;
     hero.moving_amt = 0.0;
+    hero.run_amt = 0.0;
+    hero.on_ground = true;
+    hero.attacking = false;
+    hero.victory = false;
     hh.blocking = false;
+    // Loop a one-shot swing of the given studio attack variant for the preview.
+    let swing = |hero: &mut crate::player::Hero, variant: u8| {
+        hero.attacking = true;
+        hero.attack_variant = variant;
+        hero.attack_t = (hero.attack_t + dt) % crate::player::ATTACK_DURATION;
+    };
     match std::env::var("FOREST_VIEW_ANIM").unwrap_or_default().as_str() {
         "walk" => {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.walk_phase += dt * 7.0; // = movement::STEP_FREQ
         }
-        "block" => hh.blocking = true,
-        "jump" => {
-            hero.on_ground = false;
-            hero.vel_y = if (time.elapsed_secs() * 1.5).sin() > 0.0 { 2.0 } else { -2.0 };
+        "run" => {
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.run_amt = 1.0;
+            hero.walk_phase += dt * 7.0 * 1.75; // STEP_FREQ * SPRINT_MULT
         }
+        "block" | "defend" => hh.blocking = true,
+        "blockwalk" => {
+            hh.blocking = true;
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.walk_phase += dt * 7.0;
+        }
+        "attack" | "attack1" => swing(&mut hero, 0),
+        "attack2" => swing(&mut hero, 1),
+        "attack3" => swing(&mut hero, 2),
+        // Combined moves: a swing / a leap taken mid-run.
+        "runattack" => {
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.run_amt = 1.0;
+            hero.walk_phase += dt * 7.0 * 1.75;
+            swing(&mut hero, 1);
+        }
+        "runjump" => {
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.run_amt = 1.0;
+            hero.walk_phase += dt * 7.0 * 1.75;
+            hero.on_ground = false;
+            hero.vel_y = (time.elapsed_secs() * 1.2).cos() * 6.5;
+        }
+        "victory" => hero.victory = true,
+        "jump" => {
+            // Sweep vel_y smoothly +JUMP_SPEED → −JUMP_SPEED so the continuous arc (and the landing
+            // squash, when it touches back down at v≈0) is exercised through a turntable/clip.
+            hero.on_ground = false;
+            hero.vel_y = (time.elapsed_secs() * 1.2).cos() * 6.5; // 6.5 = movement::JUMP_SPEED
+        }
+        _ => {} // idle
+    }
+}
+
+/// Drive a previewed quadruped's [`crate::quadruped::QuadDrive`] from `FOREST_VIEW_ANIM`
+/// (walk/run/attack/sit/lie; anything else = idle) so a clip shows its gait. Inert for the hero.
+fn quad_anim_drive(time: Res<Time>, mut q: Query<&mut crate::quadruped::QuadDrive>) {
+    let Ok(mut d) = q.single_mut() else { return };
+    let now = time.elapsed_secs();
+    d.moving_amt = 0.0;
+    d.run_amt = 0.0;
+    d.sit_amt = 0.0;
+    d.lie_amt = 0.0;
+    d.attacking = false;
+    match std::env::var("FOREST_VIEW_ANIM").unwrap_or_default().as_str() {
+        "walk" => {
+            d.moving_amt = 1.0;
+            d.phase = now;
+        }
+        "run" => {
+            d.moving_amt = 1.0;
+            d.run_amt = 1.0;
+            d.phase = now;
+        }
+        "attack" | "attack1" => {
+            d.attacking = true;
+            d.attack_t = now % 1.0; // loop the strike for the preview
+        }
+        "sit" => d.sit_amt = 1.0,
+        "lie" => d.lie_amt = 1.0,
+        _ => {} // idle
+    }
+}
+
+/// Drive a previewed ork/peasant biped's [`crate::biped::BipedDrive`] from `FOREST_VIEW_ANIM`
+/// (walk/run/carry/hoe/chop/attack/sit; else idle). Inert for the hero/quad models.
+fn biped_anim_drive(time: Res<Time>, mut q: Query<&mut crate::biped::BipedDrive>) {
+    let Ok(mut d) = q.single_mut() else { return };
+    let now = time.elapsed_secs();
+    *d = crate::biped::BipedDrive::default();
+    match std::env::var("FOREST_VIEW_ANIM").unwrap_or_default().as_str() {
+        "walk" => {
+            d.moving_amt = 1.0;
+            d.walk_phase = now * 8.0;
+        }
+        "run" => {
+            d.moving_amt = 1.0;
+            d.run_amt = 1.0;
+            d.walk_phase = now * 14.0;
+        }
+        "carry" => {
+            d.carrying = true;
+            d.moving_amt = 1.0;
+            d.walk_phase = now * 8.0;
+        }
+        "hoe" | "work" => d.work = 1,
+        "chop" | "pick" => d.work = 2,
+        "attack" | "attack1" => {
+            d.attacking = true;
+            d.attack_t = (now % 1.0) * crate::player::ATTACK_DURATION;
+        }
+        "sit" => d.sitting = true,
         _ => {} // idle
     }
 }
@@ -116,7 +226,7 @@ fn setup(
 
     // The model itself, on the shared creature material. The root also carries `Hero`/`HeroHealth`
     // so the optional `hero_anim` preview (FOREST_VIEW_ANIM) has state to read; inert otherwise.
-    let mat = crate::creature::make_creature_material(&mut creature_mats);
+    let mat = crate::creature::make_hero_material(&mut creature_mats);
     let root = commands
         .spawn((
             Transform::default(),
@@ -125,15 +235,19 @@ fn setup(
                 pos: Vec2::ZERO,
                 y: 0.0,
                 facing: 0.0,
+                vel: Vec2::ZERO,
                 vel_y: 0.0,
                 on_ground: true,
                 air_takeoff_y: 0.0,
                 walk_phase: 0.0,
                 moving_amt: 0.0,
+                run_amt: 0.0,
                 moving: false,
                 attacking: false,
                 attack_t: 0.0,
                 hit_dealt: false,
+                attack_variant: 0,
+                victory: false,
             },
             crate::player::HeroHealth::default(),
         ))
@@ -148,8 +262,69 @@ fn spawn_model(
     meshes: &mut Assets<Mesh>,
     mat: &Handle<crate::creature::CreatureMaterial>,
 ) {
-    match std::env::var("FOREST_VIEW").unwrap_or_default().as_str() {
-        // Future: "ork", "ork:berserker", "wolf", … dispatch to their builders here.
+    let view = std::env::var("FOREST_VIEW").unwrap_or_default();
+    match view.as_str() {
+        // The ork on the shared studio biped skeleton (Phase 2 re-rig verification). Rest pose
+        // unless `FOREST_VIEW_ANIM` is wired for bipeds; geometry/proportions read true here.
+        // `FOREST_VIEW=ork:scout|berserker|shaman` picks the variant (default grunt).
+        s if s.starts_with("ork") || s.starts_with("orc") => {
+            use crate::orks::OrkVariant::*;
+            let variant = match s.rsplit(':').next() {
+                Some("scout") => Scout,
+                Some("berserker") => Berserker,
+                Some("shaman") => Shaman,
+                _ => Grunt,
+            };
+            let shield_xf = Transform {
+                translation: Vec3::new(0.0, 0.0, 0.14),
+                rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
+                scale: Vec3::ONE,
+            };
+            let h = crate::orks::ork_biped_meshes(variant, crate::orks::Faction::Red).upload(meshes);
+            commands.entity(root).insert(crate::biped::BipedDrive::default());
+            crate::biped::spawn_biped(commands, root, mat, h, 1.22, 1.0, 0.17, 0.38, -0.05, Some(shield_xf));
+        }
+        // The peasant worker types on the shared skeleton (Phase 3). `FOREST_VIEW=peasant:farmer|
+        // miner|unemployed|guard` picks the type (default woodcutter).
+        s if s.starts_with("peasant") => {
+            use crate::peasant_model::PeasantKind::*;
+            let kind = match s.rsplit(':').next() {
+                Some("farmer") => Farmer,
+                Some("miner") => Miner,
+                Some("unemployed") => Unemployed,
+                Some("guard") => Guard,
+                _ => Woodcutter,
+            };
+            let m = crate::peasant_model::peasant_biped_meshes(kind, 0xd8a06a, 0x6a4a2a, 0x3a2a18);
+            let h = m.upload(meshes);
+            let shield_xf = Transform {
+                translation: Vec3::new(0.0, 0.0, 0.14),
+                rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
+                scale: Vec3::ONE,
+            };
+            commands.entity(root).insert(crate::biped::BipedDrive::default());
+            crate::biped::spawn_biped(commands, root, mat, h, 1.06, 1.0, 0.1, 0.2, -0.06, Some(shield_xf));
+        }
+        // The studio quadruped animals on the shared quad skeleton (Phase 4). `FOREST_VIEW=
+        // animal:wolf|dog|horse|deer|camel|bear|polar` picks the species (default wolf). Rest/idle
+        // stance (the viewer runs no animator).
+        s if s.starts_with("animal") => {
+            use crate::quadruped::QuadSpecies::*;
+            let species = match s.rsplit(':').next() {
+                Some("dog") => Dog,
+                Some("horse") => Horse,
+                Some("deer") => Deer,
+                Some("camel") => Camel,
+                Some("bear") => Bear,
+                Some("polar") | Some("polarbear") => PolarBear,
+                _ => Wolf,
+            };
+            let h = crate::quadruped::quad_meshes(species).upload(meshes);
+            commands.entity(root).insert(crate::quadruped::QuadDrive::new(species));
+            crate::quadruped::spawn_quad(commands, root, mat, species, h);
+        }
+        // Isolated 1:1 transcription of the three.js previs knight (static rest pose).
+        "knight2" => crate::previs_knight::spawn(commands, root, meshes, mat.clone()),
         _ => {
             // Default: the player knight in rest pose. `FOREST_EQUIP="weapon,armor"` swaps gear.
             let (weapon, armor) = parse_equip();

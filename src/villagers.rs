@@ -20,17 +20,24 @@ use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
+use crate::biped::{BipedDrive, BipedMeshes, BipedRig};
 use crate::creature::{surf, Surf};
 use crate::critters::PartKind;
 use crate::palette::{lin, lin_scaled};
+use crate::peasant_model::{peasant_biped_meshes, PeasantKind};
 use crate::steer;
 use crate::worldmap;
 
 /// Townsfolk turn at a relaxed rate. rad/s.
 const VIL_MAX_TURN: f32 = 3.0;
-const SCALE: f32 = 0.63; // the TS villager group scale, ×1.15 (townsfolk read a bit bigger now)
+/// Root scale of a townsperson on the shared studio biped rig (`biped.rs`). The studio skeleton is
+/// ~1.8u tall at scale 1.0; this keeps adults a touch shorter than the hero (close to the orks'
+/// in-world height). Tuned by `FOREST_VILLINE` capture.
+const SCALE: f32 = 0.6;
 /// Child villagers — the same rig scaled right down, so the suburbs have kids underfoot.
 const KID_SCALE: f32 = SCALE * 0.6;
+/// Drop the biped rig so the feet sit on the ground (matches the `peasant` model-viewer offset).
+const VIL_RIG_OFF: f32 = -0.06;
 
 // Palette (sRGB hex, from Villager.tsx) — widened for per-villager cosmetic variety.
 const SKIN: [u32; 6] = [0xe8c4a0, 0xdca78a, 0xc89070, 0xc08866, 0xa36b4a, 0x8a5638];
@@ -264,7 +271,7 @@ const GUARD_LEASH: f32 = 25.0;
 /// wolf pack back-to-back stays wounded for a while, and a dead one stays dead.
 const GUARD_REGEN: f32 = 3.0;
 const GUARD_MELEE: f32 = 1.6;
-const GUARD_SPEED: f32 = 2.4;
+const GUARD_SPEED: f32 = 2.9; // a touch quicker so the muster keeps pace with the hero (was 2.4)
 const GUARD_ATTACK_CD: f32 = 1.0;
 /// A passive townsperson's self-defence swing: weak (a hoe, an axe haft) but real. −30% off the old 6.
 const NPC_DEFEND_DMG: f32 = 4.2;
@@ -288,6 +295,10 @@ const RALLY_BASE_R: f32 = 2.6;
 const RALLY_SPREAD: f32 = 0.9;
 /// Golden angle (rad) — successive rally slots step by this so the blob fills evenly, not in spokes.
 const RALLY_GOLDEN: f32 = 2.399_963_2;
+/// How near the hero a hostile must be for a RALLIED guard to peel off and fight it. Generous
+/// (covers the loose blob + a little reach) so the war party engages the hero's foe — wave ork,
+/// Hold garrison, or the Warlord — without chasing distant fights it can't see.
+const RALLY_ENGAGE_RADIUS: f32 = 30.0;
 
 /// One blow landed on a townsperson this frame. `attacker` lets the victim retaliate
 /// ([`FightBack`] for passive folk) — `None` only for source-less damage.
@@ -326,7 +337,12 @@ impl Plugin for VillagersPlugin {
         app.init_resource::<RescuedCamps>()
             .init_resource::<NpcDamage>()
             .init_resource::<TownSpots>()
-            .add_systems(Update, villager_limbs) // limb anim keeps running while frozen
+            // `villager_drive` maps each townsperson's brain state → its `BipedDrive`; the shared
+            // `biped::animate_biped` then poses the studio skeleton (locomotion/attack/work strokes).
+            // `villager_limbs` no longer poses limbs (the biped does), but still runs to keep the
+            // head-greeting/idle-fidget bookkeeping warm for a future biped head-track. Both ungated
+            // so a frozen/paused world still draws the town animated.
+            .add_systems(Update, (villager_drive, villager_limbs))
             // Ungated so they fire on the day↔night edge even if the world is frozen (panel open):
             .add_systems(Update, (townsfolk_curfew, muster_townsfolk))
             // Ungated: disband a leftover war party on any load (fires off `GameLoaded`). Ordered
@@ -464,7 +480,7 @@ pub fn spawn_courtyard_guard(
     let half = crate::castle::courtyard_half();
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
-    spawn(commands, meshes, &mat, kind, home, home, 2.3, 1.4, SCALE, next_u32(&mut rng));
+    spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng)); // peasant base walk a touch quicker (was 2.3)
 }
 
 /// Spawn a plain **peasant** for a staged trailer scene at `pos`/`facing`, tagged
@@ -668,6 +684,7 @@ fn villager_brain(
 fn worker_steer(
     time: Res<Time>,
     spots: Res<crate::town::PlotSpots>,
+    town: Res<crate::town::TownRes>,
     mut q: Query<
         (Entity, &mut crate::town::Worker, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
         (
@@ -686,29 +703,42 @@ fn worker_steer(
     let now = time.elapsed_secs();
     for (self_e, mut worker, mut v, mut tf, mut path) in &mut q {
         let Some(post) = spots.0.get(worker.idx).copied() else { continue };
-        let to = post - v.pos;
+        // A farmer works ON the tilled field, which `town_meshes::farm_parts` always lays on the
+        // +X side of the plot (the barn is −X). So a farmer's work spot is offset onto the field and
+        // they face back across the rows toward the barn — never standing off-plot, back to the farm.
+        // (Woodcutters/miners leave for trees/rocks, so their plot-centre post is fine.)
+        let is_farm = town.0.plots.get(worker.idx).and_then(|p| p.kind)
+            == Some(tileworld_core::town_store::BuildKind::Farm);
+        let work_pos = if is_farm { post + Vec2::new(1.1, 0.0) } else { post };
+        let reach = if is_farm { 0.8 } else { 1.6 };
+        let to = work_pos - v.pos;
         let dist = to.length();
-        if dist < 1.6 {
+        if dist < reach {
             worker.at_post = true;
             v.moving = false;
-            // Turn to face the building/field so the hoeing reads (villager_limbs swings
-            // the arms once `at_post`). `to` points from the worker to the plot centre.
-            if to.length_squared() > 1e-4 {
+            if is_farm {
+                // Face back across the field toward the barn so the hoeing reads over the crop rows.
+                let f = post - v.pos;
+                if f.length_squared() > 1e-4 {
+                    v.facing = f.x.atan2(f.y);
+                }
+            } else if to.length_squared() > 1e-4 {
+                // Turn to face the building/field so the work stroke reads.
                 v.facing = to.x.atan2(to.y);
             }
         } else {
             worker.at_post = false;
-            v.target = post;
+            v.target = work_pos;
             // Far from the post: follow the A* route (threads the wall gates). Close in:
             // cheap direct steer, no pathing churn — same split as the guard post-march.
             let step_target = if dist > GUARD_PATH_RANGE {
                 if path.cursor >= path.waypoints.len()
                     || now >= path.next_replan
-                    || path.goal_cached.distance(post) > 2.0
+                    || path.goal_cached.distance(work_pos) > 2.0
                 {
-                    path.waypoints = crate::navgrid::path_to(v.pos, post);
+                    path.waypoints = crate::navgrid::path_to(v.pos, work_pos);
                     path.cursor = 0;
-                    path.goal_cached = post;
+                    path.goal_cached = work_pos;
                     // Stagger replans so a dawn shift-change doesn't path everyone on one frame.
                     path.next_replan = now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05;
                 }
@@ -717,11 +747,11 @@ fn worker_steer(
                 {
                     path.cursor += 1;
                 }
-                path.waypoints.get(path.cursor).copied().unwrap_or(post)
+                path.waypoints.get(path.cursor).copied().unwrap_or(work_pos)
             } else {
                 path.waypoints.clear();
                 path.cursor = 0;
-                post
+                work_pos
             };
             let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
             if let Some(s) = steer::advance(v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
@@ -1143,7 +1173,7 @@ fn guard_combat(
     mut kills: MessageWriter<crate::verbs::AnimalKilled>,
     hero: Query<&crate::player::Hero>,
     mut guards: Query<
-        (Entity, &mut Guard, &mut NpcHp, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
+        (Entity, &mut Guard, &mut NpcHp, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath, Has<Rallied>),
         Without<crate::dying::Dying>,
     >,
     mut hostiles: Query<
@@ -1155,7 +1185,12 @@ fn guard_combat(
             Option<&crate::wildlife::Animal>,
         ),
         (
-            Or<(With<crate::orks::Ork>, With<crate::wildlife::Animal>)>,
+            // The Warlord joins the set so a mustered war party can pile onto the boss — he carries
+            // neither `Ork` nor `Animal` (a standalone `Warlord`+`Health` entity), so without this
+            // he'd be invisible to guard targeting. Only RALLIED guards ever reach him (he stands far
+            // off in the Hold, past every non-rallied detect/hunt ring), so this doesn't pull the
+            // standing militia south.
+            Or<(With<crate::orks::Ork>, With<crate::wildlife::Animal>, With<crate::warlord::Warlord>)>,
             Without<Guard>,
             Without<crate::dying::Dying>,
         ),
@@ -1188,7 +1223,7 @@ fn guard_combat(
         .collect();
     let mut dealt: Vec<(Entity, Entity, f32)> = Vec::new(); // (target, guard, dmg)
 
-    for (self_e, mut g, mut hp, mut v, mut tf, mut path) in &mut guards {
+    for (self_e, mut g, mut hp, mut v, mut tf, mut path, rallied) in &mut guards {
         g.atk_cd -= dt;
         if !in_wave {
             // Peacetime mend — slow, so a mauling leaves a mark (no more instant dawn heal).
@@ -1200,7 +1235,15 @@ fn guard_combat(
         let mut best: Option<(Entity, Vec2, f32)> = None;
         for (e, p, invader) in &inv {
             let d = v.pos.distance(*p);
-            if in_wave {
+            if rallied {
+                // War party (mustered with `K`): fight WHATEVER is near the hero — a wave ork, the
+                // woken Hold garrison, or the Warlord himself — with no invader-only filter and no
+                // post leash. The post tracks the hero (`rally_follow`), so gating on distance from
+                // the guard keeps the blob piling onto the hero's fight, boss included.
+                if d >= RALLY_ENGAGE_RADIUS {
+                    continue;
+                }
+            } else if in_wave {
                 if !*invader || d >= GUARD_HUNT_RADIUS {
                     continue;
                 }
@@ -1419,6 +1462,60 @@ fn idle_fidget(tw: f32, seed: f32) -> Fidget {
     f
 }
 
+/// Map every townsperson's brain state onto its [`BipedDrive`] each frame — the town's mirror of
+/// `orks::ork_drive`. `biped::animate_biped` then turns the drive into the studio clips (idle/walk,
+/// a melee swing on a stamped `atk_anim`, a posted worker's tool stroke). Ungated so the town stays
+/// animated through pauses/panels.
+#[allow(clippy::type_complexity)]
+fn villager_drive(
+    time: Res<Time>,
+    mut q: Query<(
+        &Villager,
+        Option<&crate::town::Worker>,
+        Option<&Role>,
+        &mut BipedDrive,
+        Has<crate::lumberjack::Hauling>,
+        Has<crate::miner::Carting>,
+    )>,
+) {
+    let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+    for (v, worker, role, mut d, hauling, carting) in &mut q {
+        // Ease the idle↔gait blend so starts/stops aren't a snap.
+        let target = if v.moving { 1.0 } else { 0.0 };
+        d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
+        d.run_amt = 0.0; // townsfolk walk (no jog)
+        d.walk_phase = (tw + v.phase) * v.gait;
+        d.phase = v.phase;
+
+        // Hauling a log / carting stone home → both arms grip the load forward (carry pose).
+        d.carrying = hauling || carting;
+
+        // A posted worker plies their trade while standing at post; walking falls through to loco.
+        let working = worker.is_some_and(|w| w.at_post) && !v.moving;
+        d.work = if working {
+            match role {
+                Some(Role::Working(Trade::Farmer)) => 1,                    // quick hoe
+                Some(Role::Working(Trade::Woodcutter | Trade::Miner)) => 2, // overhead chop/pick
+                _ => 0,
+            }
+        } else {
+            0
+        };
+
+        // A live strike (stamped by guard_combat / npc_fight_back) drives an overhead swing.
+        if let Some(p) = strike_p(v.atk_anim, now) {
+            d.attacking = true;
+            d.attack_t = p * crate::player::ATTACK_DURATION;
+            d.attack_variant = 0;
+        } else {
+            d.attacking = false;
+        }
+        d.sitting = false;
+    }
+}
+
 fn villager_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
@@ -1628,6 +1725,8 @@ struct VSpec {
 /// COSMETIC rng stream `cr` that NEVER touches the gameplay `Villager.rng`. Every roll is drawn
 /// UP FRONT in a fixed, append-only order, so a guard and the worker they're re-skinned into (same
 /// seed, different `kind`) get the identical face. `kid` forces a child look (no beard, simple hair).
+/// (Legacy box-mesh villager builder, superseded by [`vil_biped_meshes`]; kept for reference.)
+#[allow(dead_code)]
 fn spec(kind: Kind, seed: u32, kid: bool) -> VSpec {
     let (id_skin, id_tunic) = match kind {
         Kind::Peasant { skin, tunic, .. } => (skin, tunic),
@@ -2138,11 +2237,12 @@ fn spawn(
             Transform { translation: Vec3::new(pos.x, y, pos.y), rotation: Quat::from_rotation_y(facing), scale: Vec3::splat(scale) },
             Visibility::Visible,
             vil,
+            BipedDrive { phase, ..default() },
             BiomeEntity,
         ))
         .id();
-    // Kids pass KID_SCALE (< SCALE) — detect that here so spec() gives them a child look.
-    build_body(&mut commands.entity(root), spec(kind, seed, scale < SCALE), mat, meshes);
+    // Kids pass KID_SCALE (< SCALE) — detect that here so they get the childlike build.
+    build_biped_body(commands, root, kind, seed, scale < SCALE, mat, meshes);
 
     // Armoured townsfolk double as town guards — they fight invaders at night and can be pulled to
     // staff a producer by day (the `Townsfolk` pool). They carry their identity colours [`Folk`] +
@@ -2162,8 +2262,58 @@ fn spawn(
     root
 }
 
+/// The villager belt-pouch transform on the **left hand** (the studio peasant's "shield" slot) —
+/// matches the `peasant` model-viewer framing so it hangs at the hip.
+fn pouch_xf() -> Transform {
+    Transform {
+        translation: Vec3::new(0.0, 0.0, 0.14),
+        rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
+        scale: Vec3::ONE,
+    }
+}
+
+/// Map a villager [`Kind`] (+ cosmetic `seed`) to a studio peasant biped mesh set. The town keeps
+/// its per-villager skin/tunic variety; the trouser tone is picked deterministically from the seed.
+fn vil_biped_meshes(kind: Kind, seed: u32) -> BipedMeshes {
+    let trouser = PANT_TONES[(seed as usize) % PANT_TONES.len()];
+    let (pk, skin, tunic) = match kind {
+        Kind::Guard { skin, tunic } => (PeasantKind::Guard, skin, tunic),
+        Kind::Worker { trade, skin, tunic } => (
+            match trade {
+                Trade::Farmer => PeasantKind::Farmer,
+                Trade::Woodcutter => PeasantKind::Woodcutter,
+                Trade::Miner => PeasantKind::Miner,
+            },
+            skin,
+            tunic,
+        ),
+        Kind::Peasant { skin, tunic, .. } => (PeasantKind::Unemployed, skin, tunic),
+    };
+    peasant_biped_meshes(pk, skin, tunic, trouser)
+}
+
+/// Build a townsperson's body on the shared studio biped skeleton (`biped.rs`): one [`spawn_biped`]
+/// call whose `rig` child carries [`BipedRig`] so a re-skin can drop + rebuild the whole skeleton in
+/// place. Shared by [`spawn`] (fresh) + [`reskin_townsfolk`] (job change). `kid` bumps the head a
+/// touch for a childlike build (the root scale already shrinks them).
+fn build_biped_body(
+    commands: &mut Commands,
+    root: Entity,
+    kind: Kind,
+    seed: u32,
+    kid: bool,
+    mat: &Handle<crate::creature::CreatureMaterial>,
+    meshes: &mut Assets<Mesh>,
+) {
+    let h = vil_biped_meshes(kind, seed).upload(meshes);
+    let head_scale = if kid { 1.25 } else { 1.06 };
+    crate::biped::spawn_biped(commands, root, mat, h, head_scale, 1.0, 0.1, 0.2, VIL_RIG_OFF, Some(pouch_xf()));
+}
+
 /// Spawn a villager's body (torso + limbs + head) as children of `root`, each tagged
-/// [`VilBodyPart`] so a re-skin can despawn exactly the body. Shared by [`spawn`] + [`reskin_townsfolk`].
+/// [`VilBodyPart`] so a re-skin can despawn exactly the body. (Legacy box-mesh rig, superseded by
+/// [`build_biped_body`]; kept for reference / the staged-scene mime path.)
+#[allow(dead_code)]
 fn build_body(root: &mut bevy::ecs::system::EntityCommands, s: VSpec, mat: &Handle<crate::creature::CreatureMaterial>, meshes: &mut Assets<Mesh>) {
     let torso = meshes.add(s.torso);
     let parts: Vec<(PartKind, Vec3, Handle<Mesh>)> =
@@ -2191,7 +2341,7 @@ fn reskin_townsfolk(
     town: Res<crate::town::TownRes>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    body_parts: Query<(), With<VilBodyPart>>,
+    rigs: Query<(), With<BipedRig>>,
     mut folk: Query<(Entity, &Folk, &mut Role, &BodyMat, &Children, Option<&crate::town::Worker>), With<Townsfolk>>,
 ) {
     use tileworld_core::town_store::BuildKind;
@@ -2205,8 +2355,10 @@ fn reskin_townsfolk(
         if *role == desired {
             continue;
         }
+        // Drop the whole studio skeleton (the `rig` child carries `BipedRig`) and rebuild it in the
+        // new outfit, reusing the same identity + material — the same person in new work clothes.
         for &c in children {
-            if body_parts.get(c).is_ok() {
+            if rigs.get(c).is_ok() {
                 commands.entity(c).try_despawn();
             }
         }
@@ -2214,7 +2366,7 @@ fn reskin_townsfolk(
             Role::Guard => Kind::Guard { skin: f.skin, tunic: f.tunic },
             Role::Working(trade) => Kind::Worker { trade, skin: f.skin, tunic: f.tunic },
         };
-        build_body(&mut commands.entity(e), spec(kind, f.seed, false), &body_mat.0, &mut meshes);
+        build_biped_body(&mut commands, e, kind, f.seed, false, &body_mat.0, &mut meshes);
         *role = desired;
     }
 }

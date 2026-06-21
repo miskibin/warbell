@@ -479,8 +479,10 @@ impl HitSquash {
 
 /// How long the squash rings (s) — under the 0.45s swing so spam-clicks read as separate pops.
 const SQUASH_DUR: f32 = 0.34;
-/// Peak vertical compression (fraction of rest height) at the moment of impact.
-const SQUASH_AMP: f32 = 0.24;
+/// Peak vertical compression (fraction of rest height) at the moment of impact. Kept SMALL — on the
+/// tall armoured biped/ork models a big cartoon squash-stretch reads wrong (they already lean back
+/// via `orks::recoil_tilt`); this is just a subtle impact pop layered under the lean.
+const SQUASH_AMP: f32 = 0.09;
 /// Ring frequency (rad/s). Kept LOW on purpose: hit-stop freezes virtual time for the first
 /// 0.05–0.09s of the squash, so the post-freeze compression has to last several more frames to
 /// read — at the old 26 rad/s it decayed within ~2 frames and the effect was invisible.

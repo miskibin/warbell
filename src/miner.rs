@@ -506,7 +506,8 @@ fn attach_cart(
         let mut cart = Entity::PLACEHOLDER;
         commands.entity(e).with_children(|p| {
             cart = p
-                .spawn((Transform::from_xyz(0.0, 0.0, -0.72), Visibility::Visible))
+                // Pushed in FRONT like a wheelbarrow (matches the biped `carry_pose` hands-forward).
+                .spawn((Transform::from_xyz(0.0, 0.0, 0.6), Visibility::Visible))
                 .with_children(|c| {
                     c.spawn((
                         Mesh3d(a.bed_mesh.clone()),

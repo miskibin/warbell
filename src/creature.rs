@@ -76,20 +76,36 @@ pub fn surf(mut mesh: Mesh, s: Surf) -> Mesh {
     mesh
 }
 
-/// Build the shared creature material. All rigs call this; combat_fx then clones it per-entity
-/// for the hurt-flash (unchanged behaviour, now on this type).
-pub fn make_creature_material(mats: &mut Assets<CreatureMaterial>) -> Handle<CreatureMaterial> {
+/// Build a creature material with explicit knobs: `params` = (texture strength, micro-relief,
+/// metal sheen/metallic via the shader's `spec_lift`, spare) and the base `roughness`.
+pub fn make_creature_material_with(
+    mats: &mut Assets<CreatureMaterial>,
+    params: Vec4,
+    roughness: f32,
+) -> Handle<CreatureMaterial> {
     mats.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE, // vertex colour rgb carries the hue
-            perceptual_roughness: 0.7, // per-surface response is applied in the shader
+            perceptual_roughness: roughness, // per-surface response is applied in the shader
             ..default()
         },
-        extension: CreatureExt {
-            // strength 0.22 (subtle-moderate grain), relief 0.25, spec-lift 0.35.
-            params: CreatureParams { params: Vec4::new(0.22, 0.25, 0.35, 0.0) },
-        },
+        extension: CreatureExt { params: CreatureParams { params } },
     })
+}
+
+/// The shared creature material (orks / wildlife). combat_fx clones it per-entity for the hurt-flash.
+/// strength 0.22 (subtle grain), relief 0.25, metal sheen 0.35.
+pub fn make_creature_material(mats: &mut Assets<CreatureMaterial>) -> Handle<CreatureMaterial> {
+    make_creature_material_with(mats, Vec4::new(0.22, 0.25, 0.35, 0.0), 0.7)
+}
+
+/// The hero's own material — grainy worked-steel + matte cloth. Per the v2.0 reference the **armour**
+/// is semi-gloss (a modest `spec_lift` 0.26 lifts only the Metal surfaces) while the surcoat/straps/
+/// gloves (Cloth surf) stay matte; base roughness 0.86 keeps it grounded, not shiny plastic.
+pub fn make_hero_material(mats: &mut Assets<CreatureMaterial>) -> Handle<CreatureMaterial> {
+    // Flat solid colours to match the previs (texture-strength 0 ⇒ no weave/grain/noise; relief 0 ⇒
+    // no normal perturb). A whisper of metal sheen (spec_lift) keeps steel from going dead-matte.
+    make_creature_material_with(mats, Vec4::new(0.0, 0.0, 0.12, 0.0), 0.7)
 }
 
 pub struct CreaturePlugin;

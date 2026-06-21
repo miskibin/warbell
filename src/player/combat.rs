@@ -383,6 +383,9 @@ pub fn player_attack(
         hero.attacking = true;
         hero.attack_t = 0.0;
         hero.hit_dealt = false;
+        // Roll a random studio attack clip (0 overhead chop / 1 horizontal slash / 2 forward thrust)
+        // so successive swings vary instead of replaying one canned slash.
+        hero.attack_variant = (rng.unit() * 3.0).floor().clamp(0.0, 2.0) as u8;
         // Only the exertion grunt fires on the wind-up (and only ~34% of the time — voice gates
         // it). The whoosh is DEFERRED to hit resolution so a connecting blow plays its impact
         // alone and a whiff plays the whoosh alone — never both (Character.tsx).

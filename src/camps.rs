@@ -292,6 +292,10 @@ pub fn build(
                 let pos = Vec2::new(p[0] + i as f32 * 1.8 - 2.7, p[1]);
                 armory.spawn(commands, *variant, Faction::Red, pos, pos, 11 + i as u32);
             }
+            // + one seated ork at the end of the line (verifies the sit pose on a stump).
+            let (sx, sz) = (p[0] + 4.0 * 1.8 - 2.7, p[1]);
+            let sy = worldmap::ground_at_world(sx, sz).unwrap_or(0.0);
+            armory.spawn_seated(commands, crate::orks::OrkVariant::Grunt, Faction::Red, Vec3::new(sx, sy, sz), 0.0);
         }
     }
 
@@ -349,6 +353,27 @@ pub fn build(
             BiomeEntity,
         ));
         crate::blockers::add(totem_world.x, totem_world.z, 0.3);
+
+        // Log sit-stumps ringing the fire (fire is at local (0.2,0,0)) — orks roost on these
+        // between musters. Small footprint blockers so the hero bumps them but they don't wall
+        // the camp.
+        for (i, local) in [v(1.25, 0.0, 0.5), v(-0.5, 0.0, 0.95), v(0.45, 0.0, -1.05)].into_iter().enumerate() {
+            let w = place(local);
+            let seed = site.seed.wrapping_add(i as u32 * 37).wrapping_add(7) | 1;
+            commands.spawn((
+                Mesh3d(meshes.add(sit_stump_mesh(seed))),
+                MeshMaterial3d(prop_mat.clone()),
+                Transform { translation: w, rotation: ry((seed % 628) as f32 / 100.0), scale: Vec3::ONE },
+                BiomeEntity,
+            ));
+            crate::blockers::add(w.x, w.z, 0.26);
+        }
+        // One ork roosting on the first stump — decorative camp dressing, facing the fire.
+        let stump0 = place(v(1.25, 0.0, 0.5));
+        let fire_w = place(v(0.2, 0.0, 0.0));
+        let face = (fire_w.x - stump0.x).atan2(fire_w.z - stump0.z);
+        let svar = VARIANTS[(site.seed as usize) % VARIANTS.len()];
+        armory.spawn_seated(commands, svar, site.faction, stump0, face);
 
         // The banner's cloth — a fluttering faction flag on the pole `banner_mesh` left bare.
         let flag = crate::banner::spawn_flag(
@@ -590,6 +615,19 @@ fn fire_base_mesh() -> Mesh {
     p.push(cyl(0.045, 0.72, v(0.0, 0.08, 0.0), xyz(FRAC_PI_2, 0.0, FRAC_PI_2 / 2.0), lin(LOG_LIGHT)));
     p.push(cyl(0.045, 0.72, v(0.0, 0.13, 0.0), xyz(FRAC_PI_2, 0.0, -FRAC_PI_2 / 2.0), lin(LOG_DARK)));
     group(p)
+}
+
+/// A rough log stool ringing the campfire — orks roost on these between musters (the "sit-stumps").
+/// A short tapered trunk with a lighter sawn top + heartwood ring and a low root flare; `seed`
+/// jitters the height so a ring of them doesn't read as clones.
+fn sit_stump_mesh(mut seed: u32) -> Mesh {
+    let h = 0.36 + (next_u32(&mut seed) % 110) as f32 / 1000.0; // 0.36..0.47
+    group(vec![
+        cyl(0.25, h, v(0.0, h * 0.5, 0.0), Quat::IDENTITY, lin(LOG_DARK)), // trunk
+        cyl(0.30, 0.09, v(0.0, 0.045, 0.0), Quat::IDENTITY, lin(LOG_DARK)), // root flare
+        cyl(0.235, 0.05, v(0.0, h, 0.0), Quat::IDENTITY, lin(LOG_LIGHT)), // sawn top (lighter heartwood)
+        cyl(0.12, 0.055, v(0.0, h + 0.004, 0.0), Quat::IDENTITY, lin(LOG_DARK)), // inner growth ring
+    ])
 }
 
 /// Flame cones (untinted — the emissive flame material colours them). Built about y≈0 so the

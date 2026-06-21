@@ -402,12 +402,21 @@ fn production_system(time: Res<Time>, mut town: ResMut<TownRes>, mut bank: ResMu
 fn population_system(
     time: Res<Time>,
     siege: Option<Res<crate::siege::Siege>>,
+    rallied: Query<(), With<crate::villagers::Rallied>>,
     mut town: ResMut<TownRes>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
 ) {
     // Growing a new peasant is a daytime thing: while the night wave is on, the food→population
     // flow pauses entirely — losses to the horde can't be replaced until dawn.
     if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
+        return;
+    }
+    // Muster freeze: while ANY townsperson is rallied to the war party (`K`), the farms go
+    // unstaffed and food runs a deficit — but the militia is off fighting *because* the player
+    // ordered it, so don't punish that with starvation. Pause the whole settle/starve meter until
+    // they stand down (then auto-staffing refills the farms and the flow resumes). Transient, like
+    // the wave pause above — nothing to persist.
+    if !rallied.is_empty() {
         return;
     }
     let dt = time.delta_secs() as f64;
