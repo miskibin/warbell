@@ -101,7 +101,7 @@ impl Default for OrbitCam {
 const GLIDE_RATE: f32 = 13.0;
 /// Sprint "speed feel": how far the camera dollies back (world units) + how much the FOV widens
 /// (degrees) at full run, eased by `hero.run_amt`.
-const SPRINT_DOLLY: f32 = 0.7;
+const SPRINT_DOLLY: f32 = 0.38;
 const SPRINT_FOV_DEG: f32 = 5.0;
 
 /// First-person sub-mode of [`PlayMode::Play`] (you still drive the knight). Toggled by the HUD

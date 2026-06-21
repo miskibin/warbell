@@ -243,7 +243,7 @@ pub fn build(
 
     // The orks draw against the shared creature material (per-surface texture from the surf code).
     let mat = crate::creature::make_creature_material(creature_mats);
-    // The structural props (tents, cage, totem, banner, fire ring) carry a FAINT grime-grain
+    // The structural props (tents, cage, banner, fire ring) carry a FAINT grime-grain
     // detail texture multiplied over their vertex colours — same trick as Gnashfang Hold, but
     // kept subtle (`strength` 0.3) so the camps don't read over-textured against the other
     // biomes' clean flat-shaded props. One extra batch.
@@ -342,18 +342,6 @@ pub fn build(
             }
         }
 
-        // A carved war-totem GLARING AT THE CASTLE — wherever you meet a camp, its totem's
-        // gaze points home, making the warband's intent legible without a word of UI.
-        let totem_world = place(v(2.4, 0.0, -1.6));
-        let totem_yaw = (-totem_world.x).atan2(-totem_world.z);
-        commands.spawn((
-            Mesh3d(meshes.add(totem_mesh(site.faction))),
-            MeshMaterial3d(prop_mat.clone()),
-            Transform { translation: totem_world, rotation: ry(totem_yaw), scale: Vec3::ONE },
-            BiomeEntity,
-        ));
-        crate::blockers::add(totem_world.x, totem_world.z, 0.3);
-
         // Log sit-stumps ringing the fire (fire is at local (0.2,0,0)) — orks roost on these
         // between musters. Small footprint blockers so the hero bumps them but they don't wall
         // the camp.
@@ -368,13 +356,6 @@ pub fn build(
             ));
             crate::blockers::add(w.x, w.z, 0.26);
         }
-        // One ork roosting on the first stump — decorative camp dressing, facing the fire.
-        let stump0 = place(v(1.25, 0.0, 0.5));
-        let fire_w = place(v(0.2, 0.0, 0.0));
-        let face = (fire_w.x - stump0.x).atan2(fire_w.z - stump0.z);
-        let svar = VARIANTS[(site.seed as usize) % VARIANTS.len()];
-        armory.spawn_seated(commands, svar, site.faction, stump0, face);
-
         // The banner's cloth — a fluttering faction flag on the pole `banner_mesh` left bare.
         let flag = crate::banner::spawn_flag(
             commands,
@@ -496,52 +477,13 @@ const LOG_LIGHT: u32 = 0x7a4a26;
 const LOG_DARK: u32 = 0x3a2a1a;
 
 // (The camps' bespoke A-frame tent + faction tent colours are gone — every warband now
-//  pitches the fortress hide tent, `ork_fortress::tent_mesh`; the banner + totem carry the
+//  pitches the fortress hide tent, `ork_fortress::tent_mesh`; the banner carries the
 //  faction colour instead.)
 
 /// Warband banner pole — the faction-coloured flag itself is a fluttering cloth entity
 /// (banner.rs), spawned alongside the solids in [`build`].
 fn banner_mesh(_f: Faction) -> Mesh {
     group(vec![cyl(0.03, 3.0, v(0.0, 1.5, -1.4), Quat::IDENTITY, lin(POLE))])
-}
-
-/// War totem — three stacked carved heads on a stump, banded in the warband's paint, horns
-/// and a skull on top. Authored facing +Z (the build yaws it toward the castle). Each head
-/// twists a little off the one below so the column reads hand-hewn, not lathed.
-fn totem_mesh(f: Faction) -> Mesh {
-    let paint = lin(f.hex());
-    let eye = lin(0x16130f);
-    let mut p: Vec<Mesh> = Vec::new();
-    // Base stump.
-    p.push(cyl(0.15, 0.25, v(0.0, 0.125, 0.0), Quat::IDENTITY, lin(POLE)));
-    // A carved head: block + brow ridge + two sunken eyes + a mouth slit, twisted by `yaw`.
-    let head = |p: &mut Vec<Mesh>, w: f32, y0: f32, h: f32, yaw: f32, c: u32| {
-        let q = ry(yaw);
-        let cy = y0 + h / 2.0;
-        p.push(bxr(w, h, w * 0.9, v(0.0, cy, 0.0), q, lin(c)));
-        p.push(bxr(w * 0.92, 0.07, w * 0.2, q * v(0.0, 0.0, w * 0.40) + v(0.0, y0 + h * 0.78, 0.0), q, lin(WOOD_DARK)));
-        for sx in [-1.0_f32, 1.0] {
-            p.push(bxr(0.09, 0.09, 0.06, q * v(sx * w * 0.22, 0.0, w * 0.45) + v(0.0, y0 + h * 0.62, 0.0), q, eye));
-        }
-        p.push(bxr(w * 0.5, 0.05, 0.06, q * v(0.0, 0.0, w * 0.45) + v(0.0, y0 + h * 0.25, 0.0), q, eye));
-    };
-    head(&mut p, 0.52, 0.25, 0.46, 0.10, WOOD);
-    p.push(bx(0.50, 0.08, 0.46, v(0.0, 0.75, 0.0), paint)); // paint band
-    head(&mut p, 0.46, 0.79, 0.42, -0.14, WOOD_DARK);
-    p.push(bx(0.44, 0.08, 0.40, v(0.0, 1.25, 0.0), paint)); // paint band
-    head(&mut p, 0.40, 1.29, 0.38, 0.07, WOOD);
-    // Horns flaring off the top head + the skull crowning it.
-    for sx in [-1.0_f32, 1.0] {
-        let horn = Cone { radius: 0.05, height: 0.28 }
-            .mesh()
-            .build()
-            .translated_by(v(0.0, 0.14, 0.0))
-            .rotated_by(rz(sx * 1.1))
-            .translated_by(v(sx * 0.22, 1.60, 0.0));
-        p.push(tinted(horn, lin(SKULL)));
-    }
-    p.push(bx(0.18, 0.17, 0.17, v(0.0, 1.78, 0.0), lin(SKULL)));
-    group(p)
 }
 
 /// Two skull-topped spikes (decorative; no blocker).
@@ -647,14 +589,8 @@ fn flame_mesh() -> Mesh {
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
 }
-fn rx(a: f32) -> Quat {
-    Quat::from_rotation_x(a)
-}
 fn ry(a: f32) -> Quat {
     Quat::from_rotation_y(a)
-}
-fn rz(a: f32) -> Quat {
-    Quat::from_rotation_z(a)
 }
 fn xyz(x: f32, y: f32, z: f32) -> Quat {
     Quat::from_euler(EulerRot::XYZ, x, y, z)

@@ -225,9 +225,19 @@ pub fn player_move(
         // Collide the hero's whole BODY (radius `PLAYER_R`), not just his centre point: test the
         // blocker margin so he stops with his shoulder at the surface instead of sinking ~0.22u
         // into every wall/stone/prop (the "clip a bit / collision is unreliable" feel).
-        // `escaping` stays the STRICT centre test (truly sealed inside a solid — e.g. a cottage box
-        // raised over his build spot), so the body-margin can't be abused to push through a wall.
-        let escaping = blockers::is_blocked(hero.pos.x, hero.pos.y);
+        // `escaping` lets a hero who is ALREADY overlapping a solid slide back out. Normal
+        // locomotion halts him at the surface — an accepted step always leaves his centre
+        // ≥ PLAYER_R from every face (where `any_within` reads false) — so this only trips when a
+        // blocker was *registered on top of a stationary hero*: a wall/tower/ballista bought at the
+        // War Table, or (the common case) a producer building raised in build mode on the very plot
+        // he's standing on. The old test was `is_blocked` — centre strictly INSIDE a box — which
+        // missed the penetration SHELL: centre just outside a face but within PLAYER_R of it. There
+        // `is_blocked` is false, every axis move is rejected by `any_within`, and `vel.{x,y}=0` on
+        // each rejection stops him ever building the single-frame displacement needed to clear the
+        // inflated box — permanently wedged "inside the structure". Testing body-overlap frees him
+        // from the shell too, and still can't be abused to clip a wall in play (he never legally
+        // rests overlapping one, so it stays false except when a solid materialised around him).
+        let escaping = blockers::any_within(hero.pos.x, hero.pos.y, PLAYER_R);
         if hero_can_step(nx, hero.pos.y, PLAYER_R, hero.y)
             && (escaping || !blockers::any_within(nx, hero.pos.y, PLAYER_R))
         {

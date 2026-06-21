@@ -363,15 +363,45 @@ fn lerp_hex(c: u32, target: u32, t: f32) -> u32 {
 
 /// The plate colour triple `(base, light, dark)` for the worn armor — `None` (bare) is the default
 /// steel plate; a tier lerps light→white / dark→black for facet depth.
-fn armor_palette(armor: Option<&str>) -> (u32, u32, u32) {
-    let tint = match armor {
-        Some("leather_armor") => 0x7a5230,
-        Some("iron_armor") => 0xaeb4c0,
-        Some("gold_armor") => 0xe8b84b,
-        Some("dragon_plate") => 0x3a6a4a,
-        _ => ARMOR,
+/// A worn armor's look. The whole STEEL plate (helm/pauldrons/arms/legs/boots/gorget) recolours to
+/// `metal*`, accents (rivets/buckles/crest) to `trim`, and `style` adds signature geometry (dragon
+/// spikes, a gold crest…). The cloth gambeson/tabard + dark gauntlets stay constant under it. Bare =
+/// the default steel knight. (Previously armor only fed an unused colour — the hero never changed.)
+#[derive(Clone, Copy, PartialEq)]
+enum ArmorStyle {
+    Steel,
+    Leather,
+    Iron,
+    Gold,
+    Dragon,
+}
+
+#[derive(Clone, Copy)]
+struct Skin {
+    style: ArmorStyle,
+    metal: u32,
+    metal_lt: u32,
+    metal_dk: u32,
+    metal_dim: u32,
+    trim: u32,
+}
+
+fn skin_for(armor: Option<&str>) -> Skin {
+    let (style, metal, trim) = match armor {
+        Some("leather_armor") => (ArmorStyle::Leather, 0x6e4a2c, 0x8a6a3a), // brown hide + bronze
+        Some("iron_armor") => (ArmorStyle::Iron, 0xb7bfca, 0x808b99), // bright steel
+        Some("gold_armor") => (ArmorStyle::Gold, 0xc8a23a, 0xffe9a0), // gilded
+        Some("dragon_plate") => (ArmorStyle::Dragon, 0x356b48, 0xd2bf92), // dragon green + bone
+        _ => (ArmorStyle::Steel, PSTEEL, PGOLD), // bare / iron sword starter
     };
-    (tint, lerp_hex(tint, 0xffffff, 0.25), lerp_hex(tint, 0x000000, 0.28))
+    Skin {
+        style,
+        metal,
+        metal_lt: lerp_hex(metal, 0xffffff, 0.22),
+        metal_dk: lerp_hex(metal, 0x000000, 0.32),
+        metal_dim: lerp_hex(metal, 0x000000, 0.14),
+        trim,
+    }
 }
 
 // ── Held weapon (broadsword + the parity-port variants: iron/axe/maul/gold/frost) ─────
@@ -398,8 +428,24 @@ fn weapon_parts(weapon: Option<&str>) -> Vec<Mesh> {
             part(cone(0.11, 0.14, 6), Vec3::ONE, rz(-PI / 2.0), v(0.28, 0.42, 0.0), AXE_STEEL),
             part(cone(0.05, 0.10, 6), Vec3::ONE, rz(PI / 2.0), v(-0.04, 0.42, 0.0), AXE_STEEL),
         ],
-        Some("sword_gold") => sword_parts(GOLD),
-        Some("blade_frost") => sword_parts(FROST),
+        // Ornate gilded sword: winged crossguard + a fullered gold blade + a fat pommel.
+        Some("sword_gold") => vec![
+            at(rbx(0.08, 0.5, 0.1, 0.03), v(0.0, 0.0, 0.0), PGRIP), // grip
+            at(rbx(0.66, 0.12, 0.16, 0.04), v(0.0, 0.3, 0.0), GOLD), // wide crossguard
+            part(cone(0.07, 0.2, 6), Vec3::ONE, rz(-PI / 2.0), v(0.3, 0.3, 0.0), GOLD), // wing R
+            part(cone(0.07, 0.2, 6), Vec3::ONE, rz(PI / 2.0), v(-0.3, 0.3, 0.0), GOLD), // wing L
+            at(tplate(0.22, 2.5, 0.06, 0.16, 0.5, 0.02), v(0.0, 0.36, 0.0), GOLD), // blade
+            at(tplate(0.05, 2.0, 0.018, 0.5, 0.6, 0.01), v(0.0, 0.5, 0.045), lerp_hex(GOLD, 0xffffff, 0.4)), // fuller
+            at(lathe(&[[0.0, 0.13], [0.13, 0.08], [0.13, -0.05], [0.0, -0.11]], 8), v(0.0, -0.31, 0.0), GOLD), // pommel
+        ],
+        // Frostfang GREATSWORD (top tier): a long, wide two-hander with an icy fuller.
+        Some("blade_frost") => vec![
+            at(rbx(0.08, 0.62, 0.1, 0.03), v(0.0, -0.06, 0.0), PGRIP), // long two-hand grip
+            at(rbx(0.66, 0.13, 0.18, 0.04), v(0.0, 0.32, 0.0), lerp_hex(FROST, 0xffffff, 0.3)), // wide crossguard
+            at(tplate(0.3, 3.1, 0.07, 0.16, 0.5, 0.02), v(0.0, 0.38, 0.0), FROST), // long wide blade
+            at(tplate(0.06, 2.6, 0.02, 0.4, 0.6, 0.01), v(0.0, 0.5, 0.05), lerp_hex(FROST, 0xffffff, 0.45)), // icy fuller
+            at(lathe(&[[0.0, 0.12], [0.12, 0.08], [0.12, -0.05], [0.0, -0.1]], 8), v(0.0, -0.4, 0.0), lerp_hex(FROST, 0xffffff, 0.3)), // pommel
+        ],
         Some("stone_maul") => vec![
             at(frustum(0.035, 0.035, 0.95, 6), v(0.0, 0.1, 0.0), GRIP),
             at(frustum(0.042, 0.042, 0.06, 6), v(0.0, 0.32, 0.0), HILT),
@@ -522,11 +568,11 @@ fn gk(parts: Vec<Mesh>) -> Mesh {
 // BELT, dark gauntlets/boots = GLOVE, brown shield = SHIELD_BASE + gold trim.
 
 /// Hips: a slim gambeson pelvis, the brown belt, and the pale gambeson skirt hanging to mid-thigh.
-fn hips_mesh(_a: u32) -> Mesh {
+fn hips_mesh(s: &Skin) -> Mesh {
     gk(vec![
-        at(tplate(1.0, 0.4, 1.04, 1.12, 1.1, 0.08), v(0.0, -0.18, 0.0), PSTEEL), // fauld
+        at(tplate(1.0, 0.4, 1.04, 1.12, 1.1, 0.08), v(0.0, -0.18, 0.0), s.metal), // fauld
         at(rbx(1.08, 0.2, 1.02, 0.05), v(0.0, -0.08, 0.0), PLEATHER_DK), // belt
-        part(lathe(&[[0.0, 0.13], [0.16, 0.1], [0.16, -0.02], [0.0, -0.05]], 10), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.0, 0.55), PGOLD), // buckle
+        part(lathe(&[[0.0, 0.13], [0.16, 0.1], [0.16, -0.02], [0.0, -0.05]], 10), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.0, 0.55), s.trim), // buckle
         at(tplate(0.5, 0.6, 0.06, 1.4, 1.0, 0.03), v(0.0, -0.64, 0.42), PTABARD), // tabard front (shorter — a flap, not a belly)
         at(tplate(0.5, 0.6, 0.06, 1.4, 1.0, 0.03), v(0.0, -0.64, -0.42), PTABARD_DK), // tabard back
     ])
@@ -534,85 +580,120 @@ fn hips_mesh(_a: u32) -> Mesh {
 
 /// Torso: a grey gambeson body (chest tapering to the waist, wide in X / shallow in Z) under a brown
 /// sleeveless tabard (front + back panels — the grey sides show), per the reference.
-fn torso_mesh(_a: u32) -> Mesh {
-    gk(vec![
+fn torso_mesh(s: &Skin) -> Mesh {
+    let mut parts = vec![
         at(tplate(1.12, 1.55, 1.06, 1.18, 1.12, 0.16), v(0.0, 0.0, 0.0), PLEATHER), // gambeson chest
         at(tplate(0.22, 1.24, 0.12, 0.5, 1.0, 0.05), v(0.0, 0.16, 0.5), PLEATHER), // chest keel
-        at(lathe(&[[0.0, 0.34], [0.5, 0.3], [0.56, 0.08], [0.5, 0.0], [0.0, 0.0]], 16), v(0.0, 1.45, 0.0), PSTEEL_LT), // gorget
+        at(lathe(&[[0.0, 0.34], [0.5, 0.3], [0.56, 0.08], [0.5, 0.0], [0.0, 0.0]], 16), v(0.0, 1.45, 0.0), s.metal_lt), // gorget
         // ── back detail (the 3rd-person camera sees this most) ──
-        at(tplate(0.9, 0.66, 0.1, 0.92, 1.0, 0.05), v(0.0, 0.9, -0.5), PSTEEL), // steel shoulder-blade backplate
-        at(tplate(0.14, 1.36, 0.1, 0.5, 1.0, 0.04), v(0.0, 0.1, -0.5), PSTEEL_DK), // spine ridge
+        at(tplate(0.9, 0.66, 0.1, 0.92, 1.0, 0.05), v(0.0, 0.9, -0.5), s.metal), // shoulder-blade backplate
+        at(tplate(0.14, 1.36, 0.1, 0.5, 1.0, 0.04), v(0.0, 0.1, -0.5), s.metal_dk), // spine ridge
         at(rbx(1.06, 0.13, 0.08, 0.03), v(0.0, 1.02, -0.5), PLEATHER_DK), // upper back strap
         at(rbx(1.06, 0.13, 0.08, 0.03), v(0.0, 0.42, -0.5), PLEATHER_DK), // lower back strap
-        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.42, 1.02, -0.52), PGOLD), // strap buckle (upper)
-        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.42, 0.42, -0.52), PGOLD), // strap buckle (lower)
-        at(rbx(0.13, 0.13, 0.06, 0.02), v(0.5, 0.95, 0.46), PGOLD), // side cuirass buckle R
-        at(rbx(0.13, 0.13, 0.06, 0.02), v(-0.5, 0.95, 0.46), PGOLD), // side cuirass buckle L
-    ])
+        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.42, 1.02, -0.52), s.trim), // strap buckle (upper)
+        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.42, 0.42, -0.52), s.trim), // strap buckle (lower)
+        at(rbx(0.13, 0.13, 0.06, 0.02), v(0.5, 0.95, 0.46), s.trim), // side cuirass buckle R
+        at(rbx(0.13, 0.13, 0.06, 0.02), v(-0.5, 0.95, 0.46), s.trim), // side cuirass buckle L
+    ];
+    // Signature chest device per armor (silhouette/identity beyond the recolour).
+    match s.style {
+        ArmorStyle::Gold => {
+            // Gilded chest boss + a rivet ring.
+            parts.push(part(lathe(&[[0.0, 0.2], [0.13, 0.13], [0.17, 0.0], [0.0, -0.03]], 12), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.55, 0.53), s.trim));
+        }
+        ArmorStyle::Dragon => {
+            // A row of bone scale-spikes up the chest centre.
+            for i in 0..3 {
+                parts.push(part(cone(0.08, 0.2, 5), Vec3::ONE, rx(-PI / 2.0), v(0.0, 0.35 + i as f32 * 0.34, 0.52), s.trim));
+            }
+        }
+        _ => {}
+    }
+    gk(parts)
 }
 
 /// Neck: the short steel collar stub (helm rides the Head joint above).
-fn neck_mesh(_a: u32) -> Mesh {
-    gk(vec![at(rbx(0.42, 0.26, 0.42, 0.08), v(0.0, 0.0, 0.0), PSTEEL_DK)])
+fn neck_mesh(s: &Skin) -> Mesh {
+    gk(vec![at(rbx(0.42, 0.26, 0.42, 0.08), v(0.0, 0.0, 0.0), s.metal_dk)])
 }
 
 /// Helm: a plain closed rounded bascinet — a steel box face + a domed top, with a subtle dark visor
 /// line. No plume / gold / etching yet (silhouette stage). Spans 1 HH (5.5→6.5).
-fn head_mesh(_a: u32) -> Mesh {
-    gk(vec![
-        at(lathe(&[[0.0, 1.28], [0.3, 1.2], [0.5, 0.98], [0.56, 0.62], [0.57, 0.06], [0.5, 0.0], [0.0, 0.0]], 18), v(0.0, 0.2, 0.0), PSTEEL), // sugarloaf helm
-        at(tplate(0.12, 1.0, 0.16, 0.6, 1.0, 0.04), v(0.0, 0.35, 0.5), PSTEEL_DIM), // brow keel
+fn head_mesh(s: &Skin) -> Mesh {
+    let mut parts = vec![
+        at(lathe(&[[0.0, 1.28], [0.3, 1.2], [0.5, 0.98], [0.56, 0.62], [0.57, 0.06], [0.5, 0.0], [0.0, 0.0]], 18), v(0.0, 0.2, 0.0), s.metal), // sugarloaf helm
+        at(tplate(0.12, 1.0, 0.16, 0.6, 1.0, 0.04), v(0.0, 0.35, 0.5), s.metal_dim), // brow keel
         at(rbx(0.3, 0.08, 0.06, 0.02), v(0.17, 0.94, 0.49), PDARK), // eye slit R
         at(rbx(0.3, 0.08, 0.06, 0.02), v(-0.17, 0.94, 0.49), PDARK), // eye slit L
         at(rbx(0.05, 0.05, 0.05, 0.02), v(-0.18, 0.52, 0.52), PDARK), // breath holes
         at(rbx(0.05, 0.05, 0.05, 0.02), v(-0.06, 0.52, 0.52), PDARK),
         at(rbx(0.05, 0.05, 0.05, 0.02), v(0.06, 0.52, 0.52), PDARK),
         at(rbx(0.05, 0.05, 0.05, 0.02), v(0.18, 0.52, 0.52), PDARK),
-        at(tplate(0.1, 0.8, 0.1, 0.5, 1.0, 0.03), v(0.0, 0.5, -0.46), PSTEEL_DK), // helm back ridge
-        at(rbx(0.06, 0.06, 0.05, 0.02), v(0.48, 0.3, 0.24), PGOLD), // helm rivets
-        at(rbx(0.06, 0.06, 0.05, 0.02), v(-0.48, 0.3, 0.24), PGOLD),
-        at(rbx(0.06, 0.06, 0.05, 0.02), v(0.42, 0.3, -0.3), PGOLD),
-        at(rbx(0.06, 0.06, 0.05, 0.02), v(-0.42, 0.3, -0.3), PGOLD),
-    ])
-    .scaled_by(Vec3::splat(0.85)) // shrink the head (was reading too big)
+        at(tplate(0.1, 0.8, 0.1, 0.5, 1.0, 0.03), v(0.0, 0.5, -0.46), s.metal_dk), // helm back ridge
+        at(rbx(0.06, 0.06, 0.05, 0.02), v(0.48, 0.3, 0.24), s.trim), // helm rivets
+        at(rbx(0.06, 0.06, 0.05, 0.02), v(-0.48, 0.3, 0.24), s.trim),
+        at(rbx(0.06, 0.06, 0.05, 0.02), v(0.42, 0.3, -0.3), s.trim),
+        at(rbx(0.06, 0.06, 0.05, 0.02), v(-0.42, 0.3, -0.3), s.trim),
+    ];
+    // Signature helm crest per armor.
+    match s.style {
+        ArmorStyle::Gold => {
+            // A tall gilded fin crest running front-to-back over the dome.
+            parts.push(at(tplate(0.08, 0.5, 1.0, 1.0, 0.2, 0.02), v(0.0, 1.5, 0.0), s.trim));
+        }
+        ArmorStyle::Dragon => {
+            // A row of bone horn-spikes over the crown.
+            for i in 0..4 {
+                parts.push(part(cone(0.1, 0.34, 5), Vec3::ONE, rx(-0.25), v(0.0, 1.3, 0.34 - i as f32 * 0.22), s.trim));
+            }
+        }
+        _ => {}
+    }
+    gk(parts).scaled_by(Vec3::splat(0.85)) // shrink the head (was reading too big)
 }
 
 /// Shoulder: a rounded steel pauldron cap + the upper arm (steel, tapering to the elbow). 1.3 HH.
-fn shoulder_mesh(sign: f32, _a: u32) -> Mesh {
-    gk(vec![
-        part(lathe(&[[0.0, 0.32], [0.22, 0.29], [0.4, 0.18], [0.5, 0.03], [0.5, -0.14], [0.4, -0.22], [0.2, -0.24], [0.0, -0.24]], 16), Vec3::ONE, xyz(0.05, 0.0, sign * 0.12), v(0.0, -0.18, 0.02), PSTEEL_LT), // draping pauldron
-        at(tplate(0.46, 0.68, 0.5, 0.92, 0.94, 0.08), v(0.0, -0.77, 0.0), PSTEEL), // rerebrace (shortened)
-    ])
+fn shoulder_mesh(sign: f32, s: &Skin) -> Mesh {
+    let mut parts = vec![
+        part(lathe(&[[0.0, 0.32], [0.22, 0.29], [0.4, 0.18], [0.5, 0.03], [0.5, -0.14], [0.4, -0.22], [0.2, -0.24], [0.0, -0.24]], 16), Vec3::ONE, xyz(0.05, 0.0, sign * 0.12), v(0.0, -0.18, 0.02), s.metal_lt), // draping pauldron
+        at(tplate(0.46, 0.68, 0.5, 0.92, 0.94, 0.08), v(0.0, -0.77, 0.0), s.metal), // rerebrace (shortened)
+    ];
+    // Dragon plate: two bone spikes jut out the top of each pauldron.
+    if s.style == ArmorStyle::Dragon {
+        parts.push(part(cone(0.11, 0.4, 5), Vec3::ONE, xyz(0.0, 0.0, sign * 0.7), v(sign * 0.34, 0.02, 0.04), s.trim));
+        parts.push(part(cone(0.08, 0.28, 5), Vec3::ONE, xyz(0.0, 0.0, sign * 0.5), v(sign * 0.2, 0.1, -0.18), s.trim));
+    }
+    gk(parts)
 }
 
 /// Elbow: the forearm vambrace (steel) + a dark gauntlet fist at the wrist. Forearm 1.2 HH.
-fn elbow_mesh(_sign: f32, _a: u32) -> Mesh {
+fn elbow_mesh(_sign: f32, s: &Skin) -> Mesh {
     gk(vec![
-        at(lathe(&[[0.0, 0.26], [0.2, 0.22], [0.28, 0.08], [0.28, 0.0], [0.0, 0.0]], 14), v(0.0, 0.0, 0.04), PSTEEL_LT), // couter
-        at(tplate(0.44, 0.73, 0.48, 0.78, 0.82, 0.08), v(0.0, -0.75, 0.0), PSTEEL), // vambrace (shortened)
+        at(lathe(&[[0.0, 0.26], [0.2, 0.22], [0.28, 0.08], [0.28, 0.0], [0.0, 0.0]], 14), v(0.0, 0.0, 0.04), s.metal_lt), // couter
+        at(tplate(0.44, 0.73, 0.48, 0.78, 0.82, 0.08), v(0.0, -0.75, 0.0), s.metal), // vambrace (shortened)
         at(tplate(0.46, 0.4, 0.52, 0.8, 0.86, 0.06), v(0.0, -1.13, 0.0), PGLOVE), // gauntlet
-        at(rbx(0.42, 0.16, 0.46, 0.05), v(0.0, -1.08, 0.16), PSTEEL_DK), // knuckle
+        at(rbx(0.42, 0.16, 0.46, 0.05), v(0.0, -1.08, 0.16), s.metal_dk), // knuckle
     ])
 }
 
 /// Thigh: a steel cuisse tapering toward the knee. 1.4 HH.
-fn hip_mesh(_sign: f32, a: u32) -> Mesh {
-    gk(vec![at(tplate(0.52, 1.18, 0.62, 1.18, 1.12, 0.1), v(0.0, -1.13, 0.0), PSTEEL)]) // cuisse
+fn hip_mesh(_sign: f32, s: &Skin) -> Mesh {
+    gk(vec![at(tplate(0.52, 1.18, 0.62, 1.18, 1.12, 0.1), v(0.0, -1.13, 0.0), s.metal)]) // cuisse
 }
 
 /// Knee + shin: a steel poleyn cap + the greave column. 1.5 HH.
-fn knee_mesh(_a: u32) -> Mesh {
+fn knee_mesh(s: &Skin) -> Mesh {
     gk(vec![
-        at(lathe(&[[0.0, 0.34], [0.18, 0.3], [0.33, 0.16], [0.36, 0.0], [0.0, 0.0]], 14), v(0.0, -0.2, 0.16), PSTEEL_LT), // poleyn
-        at(tplate(0.5, 1.12, 0.58, 0.78, 0.84, 0.09), v(0.0, -1.14, 0.0), PSTEEL), // greave
+        at(lathe(&[[0.0, 0.34], [0.18, 0.3], [0.33, 0.16], [0.36, 0.0], [0.0, 0.0]], 14), v(0.0, -0.2, 0.16), s.metal_lt), // poleyn
+        at(tplate(0.5, 1.12, 0.58, 0.78, 0.84, 0.09), v(0.0, -1.14, 0.0), s.metal), // greave
     ])
 }
 
 /// Boot: a dark steel sabaton (ankle + a short forward foot), bottoming on the ground (0.4 HH tall).
-fn foot_mesh(_a: u32) -> Mesh {
+fn foot_mesh(s: &Skin) -> Mesh {
     gk(vec![
-        at(rbx(0.5, 0.26, 0.66, 0.06), v(0.0, 0.0, -0.02), PSTEEL_DK), // sabaton
-        at(tplate(0.46, 0.22, 0.5, 0.6, 0.7, 0.05), v(0.0, 0.04, 0.42), PSTEEL), // toe
+        at(rbx(0.5, 0.26, 0.66, 0.06), v(0.0, 0.0, -0.02), s.metal_dk), // sabaton
+        at(tplate(0.46, 0.22, 0.5, 0.6, 0.7, 0.05), v(0.0, 0.04, 0.42), s.metal), // toe
     ])
 }
 
@@ -675,22 +756,22 @@ pub struct KnightMeshes {
 /// Build all knight meshes reflecting the equipped gear: the held weapon swaps geometry and the
 /// worn armor recolours the plate (bare = default steel). Re-called by `super::reskin_hero`.
 pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightMeshes {
-    let (a, _al, _ad) = armor_palette(armor);
+    let s = skin_for(armor);
     KnightMeshes {
-        hips: hips_mesh(a),
-        torso: torso_mesh(a),
-        neck: neck_mesh(a),
-        head: head_mesh(a),
-        shoulder_l: shoulder_mesh(-1.0, a),
-        shoulder_r: shoulder_mesh(1.0, a),
-        elbow_l: elbow_mesh(-1.0, a),
-        elbow_r: elbow_mesh(1.0, a),
-        hip_l: hip_mesh(-1.0, a),
-        hip_r: hip_mesh(1.0, a),
-        knee_l: knee_mesh(a),
-        knee_r: knee_mesh(a),
-        foot_l: foot_mesh(a),
-        foot_r: foot_mesh(a),
+        hips: hips_mesh(&s),
+        torso: torso_mesh(&s),
+        neck: neck_mesh(&s),
+        head: head_mesh(&s),
+        shoulder_l: shoulder_mesh(-1.0, &s),
+        shoulder_r: shoulder_mesh(1.0, &s),
+        elbow_l: elbow_mesh(-1.0, &s),
+        elbow_r: elbow_mesh(1.0, &s),
+        hip_l: hip_mesh(-1.0, &s),
+        hip_r: hip_mesh(1.0, &s),
+        knee_l: knee_mesh(&s),
+        knee_r: knee_mesh(&s),
+        foot_l: foot_mesh(&s),
+        foot_r: foot_mesh(&s),
         shield: shield_mesh(),
         lion: lion_mesh(),
         weapon: gk(weapon_parts(weapon)),

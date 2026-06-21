@@ -915,7 +915,9 @@ pub fn config() -> BiomeConfig {
         sky: 0xbcc2c2,
         fog_density: 0.004, // BELOW the island baseline → fog pushes OUT; the swamp reads open, not hazy
         sun_color: 0xdadbce, // near-neutral, faintly cool (no green cast)
-        sun_illuminance: 7_000.0,
+        // 7000 (≈0.70× the island key) read a touch too dim/murky in the marsh (player feedback);
+        // 9000 ≈ 0.85× keeps the swamp dimmer than the open island without crushing visibility.
+        sun_illuminance: 9_000.0,
         ambient_color: 0xb6bdbc, // neutral cool-grey fill
         ambient_brightness: 68.0,
         sun_pos: Vec3::new(12.0, 30.0, 14.0),

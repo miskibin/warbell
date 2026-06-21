@@ -152,3 +152,30 @@ pub fn is_blocked(wx: f32, wz: f32) -> bool {
         lx.abs() <= b[2] && lz.abs() <= b[3]
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A blocker raised on top of a stationary hero (a build-mode producer building, or a
+    /// War-Table wall/tower/ballista) can leave his CENTRE in the "penetration shell": outside the
+    /// box itself, yet within `PLAYER_R` of a face so his body overlaps it. The hero's un-stick
+    /// path (`player::movement`) keys off this distinction — `is_blocked` (centre strictly inside)
+    /// reads FALSE in the shell, so the escape must test `any_within(.., PLAYER_R)`, which reads
+    /// TRUE. Guards the "stuck inside a just-built structure" fix.
+    #[test]
+    fn penetration_shell_reads_overlapping_but_not_inside() {
+        const PLAYER_R: f32 = 0.22; // mirror player::movement::PLAYER_R
+        reset();
+        // A box spanning x∈[-1,1], z∈[-1,1] centred at the origin.
+        add_box(0.0, 0.0, 1.0, 1.0);
+        // 0.1 east of the east face (x=1.0): centre is OUTSIDE the box, but the 0.22 body overlaps.
+        assert!(!is_blocked(1.1, 0.0), "shell centre must read outside the box");
+        assert!(any_within(1.1, 0.0, PLAYER_R), "shell centre must read as body-overlapping");
+        // A hero at rest sits ≥ PLAYER_R from the face (collision never lets him penetrate): both
+        // read false there, so the broadened escape can't be abused to clip through a wall in play.
+        assert!(!is_blocked(1.0 + PLAYER_R + 0.01, 0.0));
+        assert!(!any_within(1.0 + PLAYER_R + 0.01, 0.0, PLAYER_R));
+        reset();
+    }
+}

@@ -115,12 +115,20 @@ pub fn in_blight_world(wx: f32, wz: f32) -> bool {
 pub fn blight_ambience() -> BiomeAmbience {
     BiomeAmbience {
         atmo: AtmoSample::from_raw(
-            0x5a2418, // sky: sooty blood-red → reddens the daytime fog horizon
+            // sky: sooty blood-red → tints the daytime fog horizon. This is the colour the fog
+            // fades distant geometry TO, so the near-black 0x5a2418 turned the mire into a black
+            // void in broad daylight (player: zero visibility). Lifted to a brighter rust so it
+            // still reads grim red but you can see ACROSS the Blight, not into a wall.
+            0xa85f42,
             0xa8895a, // sun: dim sickly amber-bronze
-            6000.0,   // illuminance: oppressively dim
-            0x6a6048, // ambient: murky ash-green-grey fill
+            // illuminance: still the dimmest daytime biome, but 6000 (≈0.63× the island key) left
+            // even the foreground murky. 9000 ≈ 0.85× — oppressive, not unplayable.
+            9000.0,
+            0x8a7a5c, // ambient: warm murky ash fill (lightened off the old dark olive 0x6a6048)
             58.0,
-            0.036, // fog: thickest on the map (fog wall pulls in to ~42–115 tiles)
+            // fog: still the thickest on the map, but eased 0.036→0.028 so the wall sits a touch
+            // further out (≈67–162 tiles vs ≈59–150) instead of crowding the camera.
+            0.028,
         ),
         particle: ParticleKind::Ash,
     }

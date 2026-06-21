@@ -350,32 +350,68 @@ fn tex_thatch(hex: u32) -> Image {
     cv.into_image()
 }
 
-/// Cobbles — courtyard paving (jittered running-bond stones + bevels). Deliberately LOW
-/// contrast: lighter grout (faint joints, not black brick-grid lines), gentle per-stone value
-/// drift, soft thin bevels, then a small blur — so the paving reads as a quiet stone surface
-/// against the grass instead of a busy tiled brick pattern.
+/// Cobbles — courtyard paving as IRREGULAR Voronoi flagstones, NOT a brick grid (a regular
+/// running-bond pattern read as cheap stamped bricks). One jittered seed per cell → organic
+/// stone shapes; the nearest seed gives each stone its own colour drift; the gap between the
+/// nearest and 2nd-nearest seed is the mortar joint, so joints wind naturally around the stones.
+/// Seeds wrap toroidally so the texture still tiles seamlessly, and a faint per-stone dome +
+/// light blur keep it reading as worn stone instead of flat tiles.
 fn tex_cobble(hex: u32) -> Image {
     let c = rgb(hex);
-    let mut cv = Canvas::new(shade(c, -0.09)); // grout: only slightly darker than the stone
+    let mut cv = Canvas::new(shade(c, 0.0));
     let mut r = Rng(0xc0b ^ hex);
-    let cells = 5usize;
-    let cs = TN as f32 / cells as f32;
-    for ry in 0..cells {
-        let off = (ry % 2) as f32 * (cs / 2.0);
-        for rx in -1..=cells as i32 {
-            let jx = (r.f() - 0.5) * 4.0;
-            let jy = (r.f() - 0.5) * 4.0;
-            let x = rx as f32 * cs + off + 1.5 + jx;
-            let y = ry as f32 * cs + 1.5 + jy;
-            let (w, h) = (cs - 3.0, cs - 3.0); // wider stones → thinner joints
-            cv.rect(x, y, w, h, shade(c, (r.f() - 0.5) * 0.09));
-            cv.rect(x, y, w, 1.0, shade(c, 0.04)); // faint top sheen
-            cv.rect(x, y, 1.0, h, shade(c, 0.04));
-            cv.rect(x, y + h - 1.0, w, 1.0, shade(c, -0.06)); // faint bottom shadow
+    const CELLS: usize = 4; // stones per axis (~0.37 world-unit flagstones at TILE 1.5)
+    let cw = TN as f32 / CELLS as f32;
+    // Jittered seed position + per-stone value drift, one per cell.
+    let mut sx = [[0f32; CELLS]; CELLS];
+    let mut sy = [[0f32; CELLS]; CELLS];
+    let mut sh = [[0f32; CELLS]; CELLS];
+    for gy in 0..CELLS {
+        for gx in 0..CELLS {
+            sx[gy][gx] = (gx as f32 + 0.18 + r.f() * 0.64) * cw;
+            sy[gy][gx] = (gy as f32 + 0.18 + r.f() * 0.64) * cw;
+            sh[gy][gx] = (r.f() - 0.5) * 0.15; // light vs dark stone
         }
     }
-    speckle(&mut cv, &mut r, 220, c);
-    cv.blur(2); // soften the hard rect/joint edges
+    let n = CELLS as i32;
+    const MORTAR_W: f32 = 2.6; // joint half-width in px
+    for py in 0..TN {
+        for px in 0..TN {
+            let (fx, fy) = (px as f32 + 0.5, py as f32 + 0.5);
+            let gx0 = (fx / cw).floor() as i32;
+            let gy0 = (fy / cw).floor() as i32;
+            let (mut d1, mut d2, mut best) = (1e9f32, 1e9f32, 0f32);
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let (gi, gj) = (gx0 + dx, gy0 + dy);
+                    let (wi, wj) = (gi.rem_euclid(n), gj.rem_euclid(n));
+                    let ex = sx[wj as usize][wi as usize] + ((gi - wi) / n) as f32 * TN as f32;
+                    let ey = sy[wj as usize][wi as usize] + ((gj - wj) / n) as f32 * TN as f32;
+                    let d = ((fx - ex).powi(2) + (fy - ey).powi(2)).sqrt();
+                    if d < d1 {
+                        d2 = d1;
+                        d1 = d;
+                        best = sh[wj as usize][wi as usize];
+                    } else if d < d2 {
+                        d2 = d;
+                    }
+                }
+            }
+            // Mortar where the nearest two cells are nearly equidistant (the stone border).
+            let edge = ((d2 - d1) / MORTAR_W).clamp(0.0, 1.0);
+            // Faint dome: a touch brighter at the stone centre, darker toward its rim.
+            let dome = (0.06 - d1 / cw * 0.10).clamp(-0.06, 0.06);
+            let grit = (((px * 131 + py * 197) & 31) as f32 / 31.0 - 0.5) * 0.02;
+            let amt = -0.17 * (1.0 - edge) + (best + dome + grit) * edge;
+            let col = shade(c, amt);
+            let i = (py * TN + px) * 4;
+            cv.px[i] = col[0];
+            cv.px[i + 1] = col[1];
+            cv.px[i + 2] = col[2];
+        }
+    }
+    speckle(&mut cv, &mut r, 120, c);
+    cv.blur(1); // take the hard aliased edge off the mortar
     cv.into_image()
 }
 
