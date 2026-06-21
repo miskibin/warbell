@@ -99,9 +99,9 @@ pub fn make_creature_material(mats: &mut Assets<CreatureMaterial>) -> Handle<Cre
     make_creature_material_with(mats, Vec4::new(0.22, 0.25, 0.35, 0.0), 0.7)
 }
 
-/// The hero's own material — grainy worked-steel + matte cloth. Per the v2.0 reference the **armour**
-/// is semi-gloss (a modest `spec_lift` 0.26 lifts only the Metal surfaces) while the surcoat/straps/
-/// gloves (Cloth surf) stay matte; base roughness 0.86 keeps it grounded, not shiny plastic.
+/// The hero's own material — flat worked-steel + matte cloth. Per the v2.0 reference the **armour**
+/// is semi-gloss (a modest `spec_lift` 0.12 lifts only the Metal surfaces) while the surcoat/straps/
+/// gloves (Cloth surf) stay matte; base roughness 0.7 keeps it grounded, not shiny plastic.
 pub fn make_hero_material(mats: &mut Assets<CreatureMaterial>) -> Handle<CreatureMaterial> {
     // Flat solid colours to match the previs (texture-strength 0 ⇒ no weave/grain/noise; relief 0 ⇒
     // no normal perturb). A whisper of metal sheen (spec_lift) keeps steel from going dead-matte.

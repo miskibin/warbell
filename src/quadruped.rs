@@ -554,10 +554,12 @@ pub fn animate_quad(
     time: Res<Time>,
     drives: Query<(Entity, &QuadDrive)>,
     mut parts: Query<(&QuadPart, &mut Transform)>,
+    // Reused across frames so a herd's worth of animals doesn't heap-alloc a fresh map every frame.
+    mut poses: Local<HashMap<Entity, QuadPose>>,
 ) {
     let now = time.elapsed_secs();
-    let poses: HashMap<Entity, QuadPose> =
-        drives.iter().map(|(e, d)| (e, quad_pose(&quad_config(d.species), d, now).finish())).collect();
+    poses.clear();
+    poses.extend(drives.iter().map(|(e, d)| (e, quad_pose(&quad_config(d.species), d, now).finish())));
     for (part, mut tf) in &mut parts {
         if let Some(pose) = poses.get(&part.root) {
             let (rot, t) = pose.get(part.joint);

@@ -95,9 +95,13 @@ pub fn animate_biped(
     time: Res<Time>,
     drives: Query<(Entity, &BipedDrive)>,
     mut parts: Query<(&BipedPart, &mut Transform)>,
+    // Reused across frames so a full siege+town's worth of bipeds doesn't heap-alloc a fresh map
+    // every frame (clear keeps the capacity).
+    mut poses: Local<HashMap<Entity, Pose>>,
 ) {
     let now = time.elapsed_secs();
-    let poses: HashMap<Entity, Pose> = drives.iter().map(|(e, d)| (e, biped_pose(d, now))).collect();
+    poses.clear();
+    poses.extend(drives.iter().map(|(e, d)| (e, biped_pose(d, now))));
     for (part, mut tf) in &mut parts {
         if let Some(pose) = poses.get(&part.root) {
             let jp = pose.get(part.joint);

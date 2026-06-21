@@ -701,7 +701,9 @@ pub fn hero_anim(
     };
 
     // Landing squash: a quick crouch the instant the feet hit, easing back over `LAND_RECOVER`.
-    let landing = {
+    let landing = if *land_at <= 0.0 {
+        0.0 // no touchdown yet (fresh boot) — don't play an unearned landing crouch
+    } else {
         let u = (1.0 - (now - *land_at) / LAND_RECOVER).clamp(0.0, 1.0);
         u * u
     };

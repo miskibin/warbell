@@ -178,6 +178,10 @@ pub struct Ork {
     phase: f32,
     pub(crate) moving: bool,
     mode: OrkMode,
+    /// A camp "rooster": spawned seated on a stump and held in the sit pose while idle; it STANDS
+    /// and fights the instant the hero comes within [`ORK_SIGHT`], then behaves like any warband
+    /// ork. Cleared to `false` on first engage so it never re-roosts mid-fight. Default `false`.
+    seated_rest: bool,
     timer: f32,
     /// Strike cooldown (s) — counts down; a hit fires at ≤ 0 and resets it.
     pub(crate) atk_cd: f32,
@@ -384,12 +388,15 @@ fn ork_brain(
         }
         if now_engaged {
             fighting = true;
+            // A roosting guard gets to its feet for good on its first engage — never sits back down.
+            o.seated_rest = false;
         }
 
         match o.mode {
             OrkMode::Idle => {
                 o.moving = false;
-                if o.timer <= 0.0 {
+                // A roosting guard stays put on its stump (no idle patrol) until something wakes it.
+                if o.timer <= 0.0 && !o.seated_rest {
                     pick_patrol(&mut o);
                 }
             }
@@ -582,7 +589,10 @@ fn ork_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     hero: Res<crate::player::HeroState>,
-    orks: Query<(&Ork, &Children, &GlobalTransform)>,
+    // Only the box-rig orks (fortress decor + the Warlord) still carry `OrkPart` and need posing
+    // here; camp/patrol/wave orks are on the studio biped (`BipedDrive` → `ork_drive`/`animate_biped`),
+    // so skip them or this scans the whole horde every frame for child lookups that always miss.
+    orks: Query<(&Ork, &Children, &GlobalTransform), Without<crate::biped::BipedDrive>>,
     mut parts: Query<(&OrkPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();
@@ -663,11 +673,14 @@ fn ork_shield_xf() -> Transform {
 /// the studio clips. Mirrors the old `ork_limbs` gait/strike timing (gait `(t+phase)*gait`, the
 /// `strike_p` window → an overhead chop). Camp/patrol/wave orks use this; fortress decorative orks
 /// and the Warlord (no `BipedDrive`) still use `ork_limbs`/`OrkPart`.
-fn ork_drive(time: Res<Time>, mut q: Query<(&Ork, &mut crate::biped::BipedDrive)>) {
+fn ork_drive(time: Res<Time>, mut q: Query<(&Ork, &mut crate::biped::BipedDrive), Without<crate::dying::Dying>>) {
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
     for (o, mut d) in &mut q {
+        // A roosting guard sits while idle; the brain clears `seated_rest` the moment it engages,
+        // so this stands it up to fight (and, once woken, it never re-roosts).
+        d.sitting = o.seated_rest && matches!(o.mode, OrkMode::Idle);
         let target = if o.moving { 1.0 } else { 0.0 };
         d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
         d.run_amt = if matches!(o.mode, OrkMode::Hunt) { 0.55 } else { 0.0 }; // charging = run-ish
@@ -1309,11 +1322,50 @@ impl Armory {
         pos: Vec2,
         seed: u32,
     ) -> Entity {
+        self.spawn_inner(commands, variant, faction, home, pos, seed, None, false)
+    }
+
+    /// Spawn a real fighting warband ork that starts **roosting** on a stump — seated (facing
+    /// `facing`) and held in the sit pose while idle — and STANDS to fight the instant the hero
+    /// strays within [`ORK_SIGHT`]. Unlike [`spawn_seated`](Self::spawn_seated) (a pure prop) it
+    /// carries the [`Ork`] brain + (via `ensure_combat_health`) `Health`, so it can be hit, killed
+    /// and counts toward clearing the camp. Home-anchored at `home` like the rest of the warband.
+    pub fn spawn_rooster(
+        &self,
+        commands: &mut Commands,
+        variant: OrkVariant,
+        faction: Faction,
+        home: Vec2,
+        pos: Vec2,
+        facing: f32,
+        seed: u32,
+    ) -> Entity {
+        self.spawn_inner(commands, variant, faction, home, pos, seed, Some(facing), true)
+    }
+
+    /// Shared body for [`spawn`](Self::spawn) / [`spawn_rooster`](Self::spawn_rooster). A
+    /// `facing_override` of `None` randomises the facing from the seed (preserving the old
+    /// `spawn` rng sequence); `seated_rest` starts the ork roosting (sit pose) until it engages.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_inner(
+        &self,
+        commands: &mut Commands,
+        variant: OrkVariant,
+        faction: Faction,
+        home: Vec2,
+        pos: Vec2,
+        seed: u32,
+        facing_override: Option<f32>,
+        seated_rest: bool,
+    ) -> Entity {
         let t = self.template(variant, faction);
         let st = t.st;
         let mut rng = seed | 1;
         let phase = rng01(&mut rng) * TAU;
-        let facing = rng01(&mut rng) * TAU;
+        // Draw the random facing unconditionally so `spawn` (override `None`) keeps its exact rng
+        // sequence; a rooster discards the draw and faces where it was placed (toward the fire).
+        let rand_facing = rng01(&mut rng) * TAU;
+        let facing = facing_override.unwrap_or(rand_facing);
         let y = worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
 
         let ork = Ork {
@@ -1331,6 +1383,7 @@ impl Armory {
             phase,
             moving: false,
             mode: OrkMode::Idle,
+            seated_rest,
             timer: rng_range(&mut rng, 0.5, 4.0),
             atk_cd: 0.0,
             atk_anim: 0.0,
@@ -1353,12 +1406,13 @@ impl Armory {
         // (via `ork_drive`) which `animate_biped` turns into the studio clips (idle/walk/run/attack).
         // `BIPED_SIZE_FIX` keeps the taller studio rig at the old ork's in-world height.
         let scale = BASE_SCALE * st.scale * BIPED_SIZE_FIX;
+        let drive = crate::biped::BipedDrive { sitting: seated_rest, ..default() };
         let root = commands
             .spawn((
                 Transform { translation: Vec3::new(pos.x, y, pos.y), rotation: Quat::from_rotation_y(facing), scale: Vec3::splat(scale) },
                 Visibility::Visible,
                 ork,
-                crate::biped::BipedDrive::default(),
+                drive,
                 BiomeEntity,
             ))
             .id();

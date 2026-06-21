@@ -606,7 +606,10 @@ fn animal_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     hero: Res<crate::player::HeroState>,
-    animals: Query<(&Animal, &Children, &GlobalTransform), Without<crate::dying::Dying>>,
+    // Only box-rig animals carry `AnimPart`; the studio-rigged mammals are on the quad skeleton
+    // (`QuadDrive` → `quad_drive`/`animate_quad`), so exclude them or this scans most of the island's
+    // wildlife every frame for child lookups that always miss.
+    animals: Query<(&Animal, &Children, &GlobalTransform), (Without<crate::dying::Dying>, Without<QuadDrive>)>,
     mut parts: Query<(&AnimPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();

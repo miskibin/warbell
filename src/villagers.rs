@@ -1469,14 +1469,17 @@ fn idle_fidget(tw: f32, seed: f32) -> Fidget {
 #[allow(clippy::type_complexity)]
 fn villager_drive(
     time: Res<Time>,
-    mut q: Query<(
-        &Villager,
-        Option<&crate::town::Worker>,
-        Option<&Role>,
-        &mut BipedDrive,
-        Has<crate::lumberjack::Hauling>,
-        Has<crate::miner::Carting>,
-    )>,
+    mut q: Query<
+        (
+            &Villager,
+            Option<&crate::town::Worker>,
+            Option<&Role>,
+            &mut BipedDrive,
+            Has<crate::lumberjack::Hauling>,
+            Has<crate::miner::Carting>,
+        ),
+        Without<crate::dying::Dying>,
+    >,
 ) {
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
@@ -1522,9 +1525,13 @@ fn villager_limbs(
     hero: Query<&crate::player::Hero>,
     // The staged mason mime owns its WHOLE rig (scenes::drive_scene_mason) — skip it here or the
     // two writers fight over the limb transforms every frame.
+    // Live townsfolk are on the studio biped (`BipedDrive` → `villager_drive`/`animate_biped`) and
+    // carry no `VilPart`, so this only does real work for any box-rig villager. Excluding `BipedDrive`
+    // keeps it from running the greeting/yaw/fidget pass over every biped townsperson each frame for
+    // a child lookup that always misses. The mason mime owns its whole rig — skip it too.
     mut vils: Query<
         (&mut Villager, &Children, &GlobalTransform, Option<&crate::town::Worker>, Option<&Role>),
-        Without<crate::scenes::SceneMason>,
+        (Without<crate::scenes::SceneMason>, Without<BipedDrive>),
     >,
     mut parts: Query<(&VilPart, &mut Transform)>,
 ) {
