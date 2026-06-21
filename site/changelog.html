@@ -190,6 +190,7 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
           <li><strong>Completely refined models.</strong> The whole cast — the hero knight, every ork variant, all the townsfolk trades, and the wildlife — was remodeled onto a single shared skeleton with chamfered low-poly parts and per-surface materials, so they read as one family instead of a grab-bag of cubes.</li>
           <li><strong>Real animation for everyone.</strong> Mobs walk, run, attack, and crumple on the same per-clip animator the hero uses — no more rigid sliding.</li>
           <li><strong>A bigger, bolder hero.</strong> A thicker stylized knight build with real boots, a cleaner helm, and a wooden kite shield with a gold boss. He can now <strong>jump</strong>, his walk has more punch, and his shield no longer clips through his arm.</li>
+          <li><strong>Armor you can see.</strong> Equipping armor now actually re-skins the knight — the whole plate recolours and each set adds its own signature look (dragon spikes, a gold crest, a chest device) instead of leaving the hero unchanged.</li>
           <li><strong>A second world: the Volcanic Ashlands.</strong> Pick it from the start-screen map selector for a scorched-frontier run (one of its biomes is still flagged "not ready").</li>
           <li><strong>A loading screen worth watching.</strong> The branded veil now actually shows on boot and New Game, with a sweeping gold progress bar and a fresh rotating lore tip each load.</li>
         </ul>
@@ -202,9 +203,17 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
         </ul>
       </div>
       <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed</span></div>
+        <ul>
+          <li><strong>No more getting trapped in your own buildings.</strong> Raising a producer or a War-Table wall/tower/ballista on the spot you're standing used to wedge the knight inside it — he now steps clear.</li>
+          <li>The hero no longer plays a tiny unearned landing-crouch on the first instant of a run.</li>
+        </ul>
+      </div>
+      <div class="grp">
         <div class="grp-h"><span class="tag perf">Under the hood</span></div>
         <ul>
           <li><strong>Smoother, richer terrain</strong> — bump-mapped ground relief, smoothed island edges, and the old repeating-grid tiling artifacts are gone.</li>
+          <li><strong>A worn-stone courtyard</strong> — the castle paving was reworked from a brick grid into irregular flagstones.</li>
           <li><strong>Performance pass</strong> — terrain frustum-culling, far-scatter distance culling, a cached static IBL, reused separation buffers, and a tightened follow-cam that reads the hero larger.</li>
           <li><strong>Faster pathfinding</strong> — the night-wave A* was rewritten onto a binary heap.</li>
         </ul>
