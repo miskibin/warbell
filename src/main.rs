@@ -74,6 +74,7 @@ mod orks;
 mod outline;
 mod palette;
 mod particles;
+mod perftest;
 mod previs_knight;
 mod peasant_model;
 mod player;
@@ -233,6 +234,7 @@ fn main() {
             quest::QuestPlugin, // tutorial quest chain: right-center tracker + J explainer card
             groundtest::GroundTestPlugin, // debug: FOREST_GROUNDTEST=1 floating ground-shader test plane
             compass::CompassPlugin, // top-centre strip compass: heading + keep/Gnashfang landmark pips
+            perftest::PerftestPlugin, // FOREST_PERFTEST=<secs>: headless leak instrumentation (off otherwise)
         ))
         .run();
 }

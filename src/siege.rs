@@ -518,8 +518,10 @@ impl Plugin for SiegePlugin {
             )
             // HUD keeps drawing while frozen.
             .add_systems(Update, update_siege_hud);
-        // Clip-capture only: sustain the assault for a long siege recording (see `siege_clip_refill`).
-        if std::env::var("FOREST_CLIP").is_ok() && std::env::var("FOREST_WAVE").is_ok() {
+        // Clip-capture (or the perf harness): sustain the assault for a long recording / leak test.
+        if (std::env::var("FOREST_CLIP").is_ok() || std::env::var("FOREST_PERFTEST").is_ok())
+            && std::env::var("FOREST_WAVE").is_ok()
+        {
             app.add_systems(
                 Update,
                 siege_clip_refill.after(invader_brain).run_if(in_state(Modal::None)),

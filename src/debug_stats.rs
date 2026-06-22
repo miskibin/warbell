@@ -9,9 +9,11 @@
 
 use bevy::diagnostic::{
     DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin,
+    SystemInformationDiagnosticsPlugin,
 };
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
+use bevy::text::FontAtlasSet;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 use crate::economy::Bank;
@@ -39,6 +41,9 @@ impl Plugin for DebugStatsPlugin {
             // Per-render-pass GPU timings (shadow / prepass / main / bloom / SSAO / SMAA / …).
             // Needs the GPU's TIMESTAMP_QUERY feature; falls back to CPU span times without it.
             RenderDiagnosticsPlugin,
+            // Process RSS — so the overlay can show whether memory is climbing over a long session
+            // (a leak) vs. holding flat (then a late-session FPS drop is GPU/driver/thermal, not us).
+            SystemInformationDiagnosticsPlugin,
         ))
         .init_resource::<StatsPanel>()
         .add_systems(Update, toggle_panel)
@@ -68,6 +73,13 @@ fn stats_ui(
     orks_q: Query<(), (With<Ork>, Without<WaveInvader>, Without<crate::dying::Dying>)>,
     invaders_q: Query<(), (With<WaveInvader>, Without<crate::dying::Dying>)>,
     animals_q: Query<(), (With<Animal>, Without<crate::dying::Dying>)>,
+    // Grouped into one tuple param — the system is already near Bevy's 16-param ceiling.
+    assets: (
+        Res<Assets<Mesh>>,
+        Res<Assets<StandardMaterial>>,
+        Res<Assets<Image>>,
+        Option<Res<FontAtlasSet>>,
+    ),
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     if !panel.open {
@@ -131,6 +143,40 @@ fn stats_ui(
                 ui.end_row();
                 ui.label("wildlife");
                 ui.label(format!("{}", animals_q.iter().count()));
+                ui.end_row();
+            });
+
+            ui.separator();
+
+            // ── Memory / assets (leak watch) ──────────────────────────────────────────
+            // These are the quantities an over-time leak grows. If FPS sags after a long session,
+            // open this: a CLIMBING number names the leak (entities → entity leak; images / font
+            // atlases → texture/font leak; RSS → anything). If they're all FLAT while FPS drops, the
+            // slowdown is GPU/driver/thermal, not a leak. (Verified flat over long combat/roam/panel
+            // stress via the `FOREST_PERFTEST` harness — see `perftest.rs`.)
+            let (meshes, materials, images, font_atlas) = &assets;
+            egui::Grid::new("mem").num_columns(2).striped(true).show(ui, |ui| {
+                let rss = diags
+                    .get(&SystemInformationDiagnosticsPlugin::PROCESS_MEM_USAGE)
+                    .and_then(|d| d.value())
+                    .unwrap_or(0.0);
+                ui.label("RSS");
+                ui.label(format!("{rss:.2} GiB"));
+                ui.end_row();
+                ui.label("meshes");
+                ui.label(format!("{}", meshes.len()));
+                ui.end_row();
+                ui.label("materials");
+                ui.label(format!("{}", materials.len()));
+                ui.end_row();
+                ui.label("images");
+                ui.label(format!("{}", images.len()));
+                ui.end_row();
+                ui.label("font atlases");
+                let (keys, pages) = font_atlas
+                    .as_ref()
+                    .map_or((0, 0), |fa| (fa.len(), fa.values().map(|v| v.len()).sum::<usize>()));
+                ui.label(format!("{keys} sizes / {pages} pages"));
                 ui.end_row();
             });
 
