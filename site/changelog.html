@@ -175,11 +175,47 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
 
 <main class="log">
 
-  <!-- ── v0.9.0 ── -->
+  <!-- ── v0.10.0 ── -->
   <article class="rel latest rv">
     <div class="rel-head">
-      <span class="rel-ver">v0.9.0</span>
+      <span class="rel-ver">v0.10.0</span>
       <span class="rel-badge">Latest</span>
+      <span class="rel-date">June 22, 2026</span>
+    </div>
+    <p class="rel-sum">Eyes Up — a strip compass and a clean, glanceable night HUD, on a Bevy 0.19 engine upgrade.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">New</span></div>
+        <ul>
+          <li><strong>A strip compass across the top.</strong> A thin heading bar with N/E/S/W that slides as you turn, plus a <strong>gold house</strong> marker for your keep and a <strong>red axe</strong> for Gnashfang Hold — they swing into view only when you face their way, so a glance tells you where home (or the fight) is.</li>
+          <li><strong>Redesigned objective readout, top-right.</strong> No panel — just an icon + the number that matters: by day a sun + the countdown to nightfall (it <strong>pulses red in the final 10 seconds</strong>); by night a red axe + the <strong>orks remaining</strong> and a shield + your <strong>keep's HP %</strong> (blue while healthy, reddening as it takes damage).</li>
+          <li><strong>Settings moved into the pause menu.</strong> First-person view, graphics preset, sound, and fullscreen now live in the Esc menu, clearing the play-screen corner. The M / F10 / F11 / V shortcuts still toggle them directly.</li>
+          <li><strong>Wildlife shows health bars</strong> in combat now, just like orks.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed &amp; polish</span></div>
+        <ul>
+          <li><strong>Ork lunge attacks no longer clip through the hero.</strong></li>
+          <li><strong>Buildings sit at a corrected scale</strong>, with castle window shutters realigned and props settling at the right size when they pop in.</li>
+          <li>Townsfolk behaviour and look polish.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag perf">Under the hood</span></div>
+        <ul>
+          <li><strong>Upgraded to Bevy 0.19</strong> — GPU clustering (free performance) and contact shadows on the High/Ultra presets; also fixed a post-processing flicker that crept in during the port.</li>
+          <li><strong>Performance hunt</strong> — added profiling instrumentation and stress-tested the core loop: combat, roaming, and menus are leak-free (no unbounded entity/asset/memory growth).</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.10.0">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.9.0 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.9.0</span>
       <span class="rel-date">June 21, 2026</span>
     </div>
     <p class="rel-sum">The Remodel — the entire cast rebuilt on one articulated skeleton with real animation.</p>

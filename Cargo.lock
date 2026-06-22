@@ -5235,7 +5235,7 @@ dependencies = [
 
 [[package]]
 name = "tileworld_bevy_forest"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "bevy",
  "bevy_egui",
