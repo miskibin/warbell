@@ -929,7 +929,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.034,
                 scale: (0.6, 1.5),
                 tree: false,
-                block_radius: 0.28, // big frost boulders block; small ones walk-through
+                block_radius: 0.28, // only big frost boulders block (scale ≳1.07 clears the 0.30 floor); small ones walk-through
             },
             // Snowman (bałwan) — a rare charming centrepiece, sprinkled sparsely (~10 per
             // patch). Kept LAST so it never becomes the tree-too-close fallback.
@@ -938,7 +938,8 @@ pub fn config() -> BiomeConfig {
                 chance: 0.007,
                 scale: (0.9, 1.2),
                 tree: false,
-                block_radius: 0.3, // a snowman is a solid body-sized figure — don't walk through
+                block_radius: 0.34, // a snowman is a solid body-sized figure — don't walk through
+                                    // (≥ the 0.30 blocker floor even at min scale 0.9, so every one blocks)
             },
         ],
         cover: vec![

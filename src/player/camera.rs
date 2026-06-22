@@ -38,17 +38,15 @@ const ZOOM_SENS: f32 = 0.55;
 /// Extra follow distance pulled back (smoothly) while a warden winds up its killing blow — a slow
 /// dolly-out that builds tension across the telegraph, then eases back in once the blow resolves.
 const CRIT_ZOOM_OUT: f32 = 4.5;
-/// Look-target height above the hero's feet. The knight is only ~0.765u tall (1.25u TS ×
-/// `HERO_SCALE`), so this aims at his chest, NOT above the helm — an above-the-head target shoves
-/// the (already small) hero toward the bottom of frame and makes him read as a distant speck.
-/// Framing the torso keeps him centred and prominent.
-const EYE_H: f32 = 0.55;
+/// Look-target height above the hero's feet. Aims at the knight's chest, NOT above the helm — an
+/// above-the-head target shoves the hero toward the bottom of frame. Framing the torso keeps him
+/// centred and prominent. (Tracks the `HERO_SCALE` bump — original 0.55 × 1.35.)
+const EYE_H: f32 = 0.7425;
 
-/// First-person eye height above the hero's feet. The knight stands ~0.765u tall (1.25u TS ×
-/// `HERO_SCALE`), so this sits right at the helm/eye line — earlier it was 1.3u, which floated the
-/// camera a half-unit ABOVE the knight's own head (felt "too tall" and dropped the sword-hand,
-/// at ~0.3u, clean off the bottom of frame). Verified against a staged `FOREST_FP` shot.
-const FP_EYE_H: f32 = 0.74;
+/// First-person eye height above the hero's feet — sits right at the helm/eye line. (Scaled ×1.5
+/// alongside the `HERO_SCALE` bump; an eye floating above the helm reads as "too tall" and drops the
+/// sword-hand off the bottom of frame.) Original 0.74 × 1.35. Verify with `FOREST_FP`.
+const FP_EYE_H: f32 = 0.999;
 /// First-person forward eye offset (world units along the look direction). Eyes sit at the FRONT
 /// of the head, not the body centre — this nudges the viewpoint toward what you're aiming at so a
 /// tree/ork at swing reach (`verbs::SWING_RANGE` = 1.9u) reads as reachable instead of "hug it".

@@ -813,7 +813,9 @@ pub fn scatter_region(
                         // (capped ≤ the blockers neighbour-scan bound) so you can walk under
                         // the canopy and brush past, but not through the bole. Small props
                         // (bushes/rocks/barrel cacti/ground cover) register nothing.
-                        let trunk_r = (0.16 * s).min(0.8);
+                        // 0.20 (not the old 0.16): leafy boles read wider than their thin
+                        // blocker — nudged up a touch so you bump the trunk, not stand in it.
+                        let trunk_r = (0.20 * s).min(0.8);
                         crate::blockers::add(cx, cz, trunk_r);
                         let base = cardinal(&mut r);
                         // Trees stay individual entities (chop HP + wind sway) sharing one
@@ -856,8 +858,9 @@ pub fn scatter_region(
                 } else {
                     // Big non-tree props (boulders) block, scaled with the instance and capped at
                     // the blockers neighbour-scan bound. Small clutter has block_radius 0 → nothing.
-                    // A floor drops the small end of a mixed class (a knee-high cobble stays
-                    // walk-through even though its big siblings block).
+                    // A floor drops the small end of a mixed class — only clearly-big boulders block;
+                    // the smaller/medium rocks of a class stay walk-through (you step over them, not
+                    // bump an invisible wall around a knee-high stone).
                     if c.block_radius > 0.0 {
                         let rad = c.block_radius * s;
                         if rad > 1.0 {
@@ -867,7 +870,7 @@ pub fn scatter_region(
                             // over-block a round-ish boulder) — solid near the edges, not a thin core.
                             let hb = rad * 0.85;
                             crate::blockers::add_box(cx, cz, hb, hb);
-                        } else if rad >= 0.22 {
+                        } else if rad >= 0.30 {
                             crate::blockers::add(cx, cz, rad);
                         }
                     }

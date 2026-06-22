@@ -36,10 +36,13 @@ pub const SHAKE_MAX: f32 = 0.35;
 /// HP-bar quad size (world units), at the ork's baked scale.
 const HP_BAR_W: f32 = 0.6;
 const HP_BAR_H: f32 = 0.085;
-/// Height above the ork root the bar floats at.
+/// Height above the ork root the bar floats at — at the creature's BASE rig scale. Orks and town
+/// NPCs were enlarged by `castle::WORLD_BUMP`, so their bars are spawned at this × that bump (see
+/// `ensure_hp_bars`); animals (left at their original scale) use this value as-is. Because the rig
+/// base sits at y=0 and scales about it, the head height scales linearly — so the bar tracks it.
 const HP_BAR_Y: f32 = 1.9;
-/// Lower float for town NPCs — the townsfolk rig is scaled down (~0.63), so its head-top sits
-/// near ~0.95 world; a bar at the ork height would float a full unit over their heads.
+/// Lower float for town NPCs — the townsfolk rig is shorter than an ork's. Also ×`WORLD_BUMP` at
+/// spawn (the townsfolk were enlarged with everything else).
 const HP_BAR_Y_NPC: f32 = 1.2;
 /// Beyond this camera distance a bar is hidden — keeps far-off damaged enemies from floating
 /// bars across the sky (they read as detached when the body's behind trees / off-screen).
@@ -269,20 +272,25 @@ fn ensure_hp_bars(
     // filter a bar could be born a frame before `Health`, then `drive_hp_bars` (whose query
     // *requires* the vitals) would fail its lookup and despawn the bar for good (`HasHpBar`
     // lingers, so it never respawns). That silently killed every enemy's bar spawned at startup.
-    creatures: Query<
-        Entity,
-        (Or<(With<Ork>, With<crate::wildlife::Animal>)>, With<Health>, Without<HasHpBar>),
-    >,
+    // Split so the enlarged orks get the bumped float while same-scale animals keep the base height.
+    orks: Query<Entity, (With<Ork>, With<Health>, Without<HasHpBar>)>,
+    animals: Query<Entity, (With<crate::wildlife::Animal>, With<Health>, Without<HasHpBar>)>,
     // Town NPCs carry their HP in `NpcHp` (the whole `Townsfolk` pool — guards + workers), so they
-    // float the same bar as any creature, just lower (their rig is scaled down). It only shows
-    // when wounded, exactly like the orks'.
+    // float the same bar as any creature, just lower (their rig is shorter). It only shows when
+    // wounded, exactly like the orks'.
     folk: Query<Entity, (With<crate::villagers::NpcHp>, Without<HasHpBar>)>,
 ) {
-    for e in &creatures {
+    // Orks + townsfolk were enlarged by WORLD_BUMP (animals were not), so lift their bars to match
+    // the taller heads. The base sits at y=0 and scales about it, so head height scales by the bump.
+    let bump = crate::castle::WORLD_BUMP;
+    for e in &orks {
+        spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y * bump);
+    }
+    for e in &animals {
         spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y);
     }
     for e in &folk {
-        spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y_NPC);
+        spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y_NPC * bump);
     }
 }
 

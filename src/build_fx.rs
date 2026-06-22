@@ -35,23 +35,34 @@ pub struct BuildPop {
     dur: f32,
     /// `true`: animate `scale.y` only (baked world-space parts); `false`: uniform scale-in.
     rise: bool,
+    /// Resting (settled) scale for the `rise == false` pop path — lets a structure settle at
+    /// something other than `Vec3::ONE` (town buildings rest at the world-bump scale, with a taller
+    /// Y). Ignored for the `rise` path, which only touches `scale.y`.
+    rest: Vec3,
 }
 
 impl BuildPop {
     /// Uniform pop with a small overshoot — for a structure parented at its own ground position.
+    /// Settles at `Vec3::ONE`.
     pub fn pop() -> Self {
-        Self { age: 0.0, dur: 0.45, rise: false }
+        Self::pop_to(Vec3::ONE)
+    }
+
+    /// Like [`pop`](Self::pop) but settles at scale `rest` instead of `Vec3::ONE` (may be
+    /// non-uniform, e.g. a taller-than-wide building).
+    pub fn pop_to(rest: Vec3) -> Self {
+        Self { age: 0.0, dur: 0.45, rise: false, rest }
     }
 
     /// Y-only rise out of the ground — for meshes baked in world space on identity transforms.
     pub fn rise() -> Self {
-        Self { age: 0.0, dur: 0.55, rise: true }
+        Self { age: 0.0, dur: 0.55, rise: true, rest: Vec3::ONE }
     }
 
     /// The starting scale. The *inserter* applies this to the transform in the same frame it
     /// reveals the entity, so the structure never flashes full-size before the first anim tick.
     pub fn scale0(&self) -> Vec3 {
-        if self.rise { Vec3::new(1.0, SCALE0, 1.0) } else { Vec3::splat(SCALE0) }
+        if self.rise { Vec3::new(1.0, SCALE0, 1.0) } else { self.rest * SCALE0 }
     }
 }
 
@@ -105,10 +116,10 @@ fn animate_pops(
         if p.rise {
             tf.scale.y = s;
         } else {
-            tf.scale = Vec3::splat(s);
+            tf.scale = p.rest * s;
         }
         if t >= 1.0 {
-            tf.scale = if p.rise { Vec3::new(tf.scale.x, 1.0, tf.scale.z) } else { Vec3::ONE };
+            tf.scale = if p.rise { Vec3::new(tf.scale.x, 1.0, tf.scale.z) } else { p.rest };
             commands.entity(e).try_remove::<BuildPop>();
         }
     }

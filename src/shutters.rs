@@ -71,14 +71,21 @@ pub fn spawn_house_shutters(
     kind: CastleKind,
     window_local: Vec3,
 ) {
-    // Window centre in world: the archetype's local window × the house scale (0.9, 0.74, 0.9),
-    // nudged proud of the glass, then oriented to the house front.
+    // Window centre in world: the archetype's local window × the house scale (`castle::HOUSE_SCALE`),
+    // nudged proud of the glass, then oriented to the house front. The pair itself is scaled by the
+    // world bump so the world-size leaves (and their ±hinge offsets) grow with the enlarged window.
+    let hs = crate::castle::HOUSE_SCALE;
     let rot = Quat::from_rotation_y(face);
     let centre = Vec3::new(x, 0.0, z)
-        + rot * Vec3::new(window_local.x * 0.9, window_local.y * 0.74, window_local.z * 0.9 + 0.05);
+        + rot * Vec3::new(window_local.x * hs.x, window_local.y * hs.y, window_local.z * hs.z + 0.05);
     let vis = if matches!(kind, CastleKind::Always) { Visibility::Inherited } else { Visibility::Hidden };
     let parent = commands
-        .spawn((Transform { translation: centre, rotation: rot, scale: Vec3::ONE }, vis, CastlePart { kind }, BiomeEntity))
+        .spawn((
+            Transform { translation: centre, rotation: rot, scale: Vec3::splat(crate::castle::WORLD_BUMP) },
+            vis,
+            CastlePart { kind },
+            BiomeEntity,
+        ))
         .id();
     // Hinge each leaf at its outer edge (± the window half-width, 0.21 × 0.9) so it covers its half
     // when shut and folds out past it when open.

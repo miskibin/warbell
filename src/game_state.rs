@@ -464,6 +464,9 @@ struct StartResumeButton;
 /// The "Credits" button on the start screen — opens the credits overlay ([`mainmenu::CreditsOpen`]).
 #[derive(Component)]
 struct CreditsButton;
+/// The "Quit" button on the start screen — closes the game (sends `AppExit::Success`).
+#[derive(Component)]
+struct QuitButton;
 /// The "Main Menu" button on the pause screen — returns to the start screen, run kept live.
 #[derive(Component)]
 struct PauseMenuBtn;
@@ -828,6 +831,35 @@ fn spawn_start_screen(
                 ))
                 .with_children(|b| {
                     b.spawn(label(&fonts.bold, "CREDITS", 14.0, GOLD));
+                });
+                // Quit — closes the game entirely (sends AppExit). Secondary, bottom of the column.
+                m.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(24.0), Val::Px(9.0)),
+                        border: widgets::border(1.0),
+                        border_radius: radius(R_BTN),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                    Button,
+                    Interaction::default(),
+                    BackgroundColor(BTN_BG),
+                    BorderColor::all(GOLD_HAIRLINE),
+                    crate::ui::anim::Hoverable {
+                        rest_bg: BTN_BG,
+                        hover_bg: BTN_BG_HOVER,
+                        rest_border: GOLD_HAIRLINE,
+                        hover_border: GOLD_NOTCH,
+                        lift: 2.0,
+                    },
+                    UiTransform::IDENTITY,
+                    QuitButton,
+                    anim_btn(AnimKind::Rise, 0.42, 0.7),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.bold, "QUIT", 14.0, GOLD));
                 });
             });
 
@@ -1236,6 +1268,7 @@ fn start_click(
             Option<&CreditsButton>,
             Option<&SegButton>,
             Option<&MapSeg>,
+            Option<&QuitButton>,
         ),
         Changed<Interaction>,
     >,
@@ -1248,15 +1281,19 @@ fn start_click(
     mut fresh: ResMut<FreshRunPending>,
     mut credits: ResMut<crate::mainmenu::CreditsOpen>,
     mut active_map: ResMut<crate::worldmap::ActiveMap>,
+    mut exit: MessageWriter<AppExit>,
 ) {
     if confirm.0.is_some() {
         return; // dialog up — the scrim already blocks these, but be explicit
     }
     let mut siege = siege;
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, play, cont, resume, cred, seg, mapseg) in &q {
+    for (interaction, play, cont, resume, cred, seg, mapseg, quit) in &q {
         if *interaction != Interaction::Pressed {
             continue;
+        }
+        if quit.is_some() {
+            exit.write(AppExit::Success);
         }
         // Pick a map segment first, so a New Game in the same click batch sees the new choice.
         if let Some(ms) = mapseg {

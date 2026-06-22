@@ -32,10 +32,11 @@ use crate::worldmap;
 const VIL_MAX_TURN: f32 = 3.0;
 /// Root scale of a townsperson on the shared studio biped rig (`biped.rs`). The studio skeleton is
 /// ~1.8u tall at scale 1.0; this keeps adults a touch shorter than the hero (close to the orks'
-/// in-world height). Tuned by `FOREST_VILLINE` capture.
-const SCALE: f32 = 0.6;
-/// Child villagers — the same rig scaled right down, so the suburbs have kids underfoot.
-const KID_SCALE: f32 = SCALE * 0.6;
+/// in-world height). Bumped ×1.35 (was 0.6) alongside the hero/ork/house rescale. `FOREST_VILLINE`.
+const SCALE: f32 = 0.81;
+/// Child villagers — the same rig scaled right down (+ a bigger head, see [`build_biped_body`]) so
+/// the suburbs have visibly childlike kids underfoot.
+const KID_SCALE: f32 = SCALE * 0.55;
 /// Drop the biped rig so the feet sit on the ground (matches the `peasant` model-viewer offset).
 const VIL_RIG_OFF: f32 = -0.06;
 
@@ -124,11 +125,16 @@ pub(crate) struct VilPart {
     pub(crate) kind: PartKind,
 }
 
-/// A child villager — wanders fast in short bursts around a small play patch (and skips the
-/// adults' gathering/chore behaviour). Otherwise a normal villager (same rig, smaller scale),
-/// so the night curfew and [`villager_brain`] handle it for free.
+/// A child villager — by day wanders fast in short bursts around a play patch ([`Villager::home`],
+/// just inside the south gate) and skips the adults' gathering/chore behaviour ([`villager_brain`]
+/// special-cases `Has<Kid>`). At dusk it stops playing and runs to its courtyard `home` near the
+/// keep, then tucks indoors (hidden) for the night, reappearing at the play patch at dawn — see
+/// [`kid_curfew`] (kids are excluded from the adults' instant [`townsfolk_curfew`]).
 #[derive(Component)]
-pub(crate) struct Kid;
+pub(crate) struct Kid {
+    /// The child's night home — a safe courtyard spot near the keep it scurries to as dusk falls.
+    home: Vec2,
+}
 
 /// Town "gathering spots" — the well, woodpile, market, keep steps. Idle adults occasionally
 /// drift to one and linger, so the suburbs cluster into little knots instead of all wandering
@@ -359,6 +365,8 @@ impl Plugin for VillagersPlugin {
                 Update,
                 (
                     villager_brain,
+                    // Override the kids' play-wander to run them home at dusk (must win each frame).
+                    kid_curfew.after(villager_brain),
                     worker_steer,
                     pilgrim_brain,
                     pilgrim_hint,
@@ -386,14 +394,16 @@ impl Plugin for VillagersPlugin {
 }
 
 /// Night curfew: while a wave is on, the pure **non-combatant** ambient NPCs — gate-folk, market
-/// traders, courtyard peasants, pilgrims, kids — clear off the streets and reappear at dawn. The
-/// `Townsfolk` pool is exempt (`Without<Townsfolk>`): they muster and fight instead of fleeing.
-/// Only the root visibility flips, on the phase edge; their wander brains idle on, invisibly, until
-/// morning. Ungated so it also holds while the world is frozen (paused / a panel open) mid-wave.
+/// traders, courtyard peasants, pilgrims — clear off the streets and reappear at dawn. The
+/// `Townsfolk` pool is exempt (`Without<Townsfolk>`): they muster and fight instead of fleeing; the
+/// **kids** are exempt too (`Without<Kid>`) — they get the gentler [`kid_curfew`] that runs them
+/// home and tucks them indoors rather than blinking out. Only the root visibility flips, on the
+/// phase edge; their wander brains idle on, invisibly, until morning. Ungated so it also holds while
+/// the world is frozen (paused / a panel open) mid-wave.
 fn townsfolk_curfew(
     siege: Option<Res<crate::siege::Siege>>,
     mut last: Local<Option<bool>>,
-    mut q: Query<&mut Visibility, (With<Villager>, Without<Guard>, Without<Townsfolk>)>,
+    mut q: Query<&mut Visibility, (With<Villager>, Without<Guard>, Without<Townsfolk>, Without<Kid>)>,
 ) {
     let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
     if *last == Some(wave) {
@@ -403,6 +413,54 @@ fn townsfolk_curfew(
     let vis = if wave { Visibility::Hidden } else { Visibility::Visible };
     for mut v in &mut q {
         *v = vis;
+    }
+}
+
+/// Lead-in (seconds) before night when the kids stop playing and head home — they bolt for it in
+/// the last sliver of the prep day, so they're indoors by the time the warband marches.
+const KID_BEDTIME_LEAD: f32 = 10.0;
+/// How close to its night `home` a kid must get before it counts as "indoors" and hides.
+const KID_HOME_R: f32 = 0.9;
+
+/// Child curfew: as dusk falls (the last [`KID_BEDTIME_LEAD`] seconds of prep) — and through the
+/// night wave — each kid drops its play and runs to its courtyard `home` near the keep, then tucks
+/// indoors (hidden) for the night, popping back out at the play patch at dawn. Unlike the adults'
+/// instant [`townsfolk_curfew`] flip, the children visibly run home first. Runs **after**
+/// [`villager_brain`] so it overrides the play-wander target each frame while heading to bed.
+fn kid_curfew(
+    siege: Option<Res<crate::siege::Siege>>,
+    mut q: Query<(&mut Villager, &mut Visibility, &Kid)>,
+) {
+    use crate::siege::GamePhase;
+    let Some(siege) = siege else { return };
+    let to_bed = match siege.phase {
+        GamePhase::Wave => true,
+        // `> 0.0` skips the one-frame boot window before the prep timer is armed.
+        GamePhase::Prep => siege.prep_seconds_left > 0.0 && siege.prep_seconds_left <= KID_BEDTIME_LEAD,
+        GamePhase::Victory | GamePhase::Defeat => false,
+    };
+    for (mut v, mut vis, kid) in &mut q {
+        if to_bed {
+            if (kid.home - v.pos).length() <= KID_HOME_R {
+                // Home — tuck indoors for the night.
+                *vis = Visibility::Hidden;
+                v.moving = false;
+                v.mode = Mode::Idle;
+            } else {
+                // Still out — bolt for home (overrides the play-wander brain set this frame).
+                *vis = Visibility::Visible;
+                v.target = kid.home;
+                v.gathering = false;
+                v.mode = Mode::Walk;
+                v.timer = v.timer.max(2.0); // don't let the brain idle-flip mid-route
+            }
+        } else if *vis == Visibility::Hidden {
+            // Dawn — pop back out at the play patch and resume playing.
+            *vis = Visibility::Visible;
+            v.pos = v.home;
+            v.mode = Mode::Idle;
+            v.timer = 0.0; // brain picks a fresh play target immediately
+        }
     }
 }
 
@@ -2064,15 +2122,19 @@ pub fn populate(
     }
     commands.insert_resource(TownSpots(spots));
 
-    // ── Kids: a few small villagers scampering around a play patch just outside the south gate.
+    // ── Kids: a few small villagers scampering around a play patch just inside the south gate.
     // High speed + tiny wander radius + the `Kid` marker → short darting bursts that read as play
-    // (they skip the adults' gathering behaviour). Curfew hides them at night like any townsfolk. ──
+    // (they skip the adults' gathering behaviour). At dusk `kid_curfew` runs them to a courtyard
+    // "home" a few steps further in toward the keep and tucks them indoors for the night. ──
     let play = gates[0] + (-gates[0]).normalize_or_zero() * 3.0;
+    // The kids' night-home anchor: deeper into the courtyard, toward the keep.
+    let bed = play + (-play).normalize_or_zero() * 4.5;
     for i in 0..4 {
         let home = play + Vec2::new(rng_range(&mut rng, -1.6, 1.6), rng_range(&mut rng, -1.6, 1.6));
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: TUNIC[(i + 1) % TUNIC.len()], hat: i % 2 == 0 };
         let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.8, 1.7, KID_SCALE, next_u32(&mut rng));
-        commands.entity(e).insert(Kid);
+        let bed = bed + Vec2::new(rng_range(&mut rng, -1.0, 1.0), rng_range(&mut rng, -1.0, 1.0));
+        commands.entity(e).insert(Kid { home: bed });
     }
 
     // Screenshot hook: `FOREST_VILLINE="x,z"` parks one of each townsperson look in a line at the
@@ -2281,7 +2343,7 @@ fn pouch_xf() -> Transform {
 
 /// Map a villager [`Kind`] (+ cosmetic `seed`) to a studio peasant biped mesh set. The town keeps
 /// its per-villager skin/tunic variety; the trouser tone is picked deterministically from the seed.
-fn vil_biped_meshes(kind: Kind, seed: u32) -> BipedMeshes {
+fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool) -> BipedMeshes {
     let trouser = PANT_TONES[(seed as usize) % PANT_TONES.len()];
     let (pk, skin, tunic) = match kind {
         Kind::Guard { skin, tunic } => (PeasantKind::Guard, skin, tunic),
@@ -2296,7 +2358,7 @@ fn vil_biped_meshes(kind: Kind, seed: u32) -> BipedMeshes {
         ),
         Kind::Peasant { skin, tunic, .. } => (PeasantKind::Unemployed, skin, tunic),
     };
-    peasant_biped_meshes(pk, skin, tunic, trouser)
+    peasant_biped_meshes(pk, skin, tunic, trouser, kid)
 }
 
 /// Build a townsperson's body on the shared studio biped skeleton (`biped.rs`): one [`spawn_biped`]
@@ -2312,8 +2374,10 @@ fn build_biped_body(
     mat: &Handle<crate::creature::CreatureMaterial>,
     meshes: &mut Assets<Mesh>,
 ) {
-    let h = vil_biped_meshes(kind, seed).upload(meshes);
-    let head_scale = if kid { 1.25 } else { 1.06 };
+    let h = vil_biped_meshes(kind, seed, kid).upload(meshes);
+    // Kids get an oversized head on a downscaled body (chibi proportions) so they read as children,
+    // not just small adults.
+    let head_scale = if kid { 1.55 } else { 1.06 };
     crate::biped::spawn_biped(commands, root, mat, h, head_scale, 1.0, 0.1, 0.2, VIL_RIG_OFF, Some(pouch_xf()));
 }
 

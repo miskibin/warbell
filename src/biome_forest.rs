@@ -131,7 +131,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.03,
                 scale: (0.6, 1.6),
                 tree: false,
-                block_radius: 0.24, // big rocks block; small (scale ≲1.0) stay walk-through
+                block_radius: 0.24, // only big rocks block (scale ≳1.25 clears the 0.30 floor); smaller ones walk-through
             },
             // Sawn stumps — sparse walkable ground detail (a felled-tree remnant), warm
             // bark + pale cut face. Tinted with the same hue spread so they don't all match.

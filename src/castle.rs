@@ -927,6 +927,24 @@ const HH: f32 = 1.15;
 const HD: f32 = 2.0;
 const H_FOUND: f32 = 0.18;
 
+/// Factor the human-scale world (hero/orks/townsfolk/houses) was enlarged by — see
+/// `player::HERO_SCALE`. Keeps the courtyard dwellings in proportion with the rescaled hero.
+pub(crate) const WORLD_BUMP: f32 = 1.35;
+/// Vertical-only stretch applied to every building (houses, keep, towers, town producer buildings)
+/// — base sits at y=0 so this raises the roofline without touching the footprint (so pathfinding /
+/// collision are unaffected). Bump this one number to make all buildings taller/shorter.
+pub(crate) const BUILDING_TALLER: f32 = 1.15;
+/// Per-dwelling root scale: the original squat (0.9, 0.74, 0.9) × [`WORLD_BUMP`], with the Y also
+/// ×[`BUILDING_TALLER`]. Shared by the spawn transform, the shutter window placement
+/// (`shutters.rs`), the collision blocker and the chimney-smoke anchors so they never desync.
+pub(crate) const HOUSE_SCALE: Vec3 =
+    Vec3::new(0.9 * WORLD_BUMP, 0.74 * WORLD_BUMP * BUILDING_TALLER, 0.9 * WORLD_BUMP);
+/// Keep root scale (shared by the keep + both grandeur tiers so their parts stay registered). Y is
+/// ×[`BUILDING_TALLER`]; footprint unchanged.
+const KEEP_SCALE: Vec3 = Vec3::new(0.88, 0.7 * BUILDING_TALLER, 0.88);
+/// Corner-tower root scale. Y is ×[`BUILDING_TALLER`]; footprint unchanged.
+const TOWER_SCALE: Vec3 = Vec3::new(0.92, 0.74 * BUILDING_TALLER, 0.92);
+
 /// Four dwelling silhouettes spread across the twelve slots (3 huts, 4 cottages, 3 townhouses,
 /// 2 longhouses) so the rows read as a grown village instead of barracks. All archetypes keep
 /// the shared conventions: local origin, base at y=0, FRONT facing +Z, spawned at the same
@@ -1413,20 +1431,20 @@ pub fn build(
     // Keep (centre) — always present, then two grandeur tiers that reveal as you fortify (corner
     // turrets with the Walls, the grand spire + banners with the Reinforced Keep). Same transform as
     // the keep so the parts sit exactly on it.
-    spawn(keep_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88), CastleKind::Always);
-    spawn(keep_tier1_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88), CastleKind::KeepTier1);
-    spawn(keep_tier2_parts(), Vec3::ZERO, 0.0, Vec3::new(0.88, 0.7, 0.88), CastleKind::KeepTier2);
+    spawn(keep_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::Always);
+    spawn(keep_tier1_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::KeepTier1);
+    spawn(keep_tier2_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::KeepTier2);
     for (x, z, rot, len) in wall_segments() {
         spawn(wall_parts(len), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.78, 1.0), CastleKind::Walls);
     }
     for (x, z) in towers() {
-        spawn(tower_parts(), Vec3::new(x, 0.0, z), 0.0, Vec3::new(0.92, 0.74, 0.92), CastleKind::Towers);
+        spawn(tower_parts(), Vec3::new(x, 0.0, z), 0.0, TOWER_SCALE, CastleKind::Towers);
     }
     for (x, z, rot) in gates() {
         spawn(gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.8, 1.0), CastleKind::Gate);
     }
     for (i, (x, z)) in houses().into_iter().enumerate() {
-        spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_center(x, z), Vec3::new(0.9, 0.74, 0.9), CastleKind::House(i as u8));
+        spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_center(x, z), HOUSE_SCALE, CastleKind::House(i as u8));
     }
     spawn(bell_parts(), Vec3::new(0.0, 0.0, 6.0), 0.0, Vec3::ONE, CastleKind::Always);
 
@@ -1600,9 +1618,9 @@ pub fn build(
         // Smoke rises from the archetype's own stack; huts have none (they vent through thatch).
         let Some((ch, ch_top)) = house_chimney(HOUSE_STYLES[hi]) else { continue };
         let rot = face_center(hx, hz);
-        let local = Quat::from_rotation_y(rot) * Vec3::new(ch.x * 0.9, 0.0, ch.y * 0.9);
+        let local = Quat::from_rotation_y(rot) * Vec3::new(ch.x * HOUSE_SCALE.x, 0.0, ch.y * HOUSE_SCALE.z);
         let (cx, cz) = (hx + local.x, hz + local.z);
-        let base_y = ch_top * 0.74 + 0.2;
+        let base_y = ch_top * HOUSE_SCALE.y + 0.2;
         for i in 0..3 {
             commands.spawn((
                 Mesh3d(puff.clone()),
@@ -1691,7 +1709,7 @@ fn register_house_blocker(i: usize) {
     let p = COLLISION_PAD;
     let (x, z) = houses()[i];
     let (w, d) = house_dims(HOUSE_STYLES[i]);
-    let (hx, hz) = (w * 0.9 / 2.0 + p, d * 0.9 / 2.0 + p);
+    let (hx, hz) = (w * HOUSE_SCALE.x / 2.0 + p, d * HOUSE_SCALE.z / 2.0 + p);
     let (hw, hd) = if (face_center(x, z).abs() - HALF_PI).abs() < 0.1 { (hz, hx) } else { (hx, hz) };
     crate::blockers::add_box(x, z, hw, hd);
 }

@@ -143,7 +143,7 @@ fn cone(r: f32, h: f32, off: Vec3, rot: Quat, scale: Vec3, c: u32, s: Surf) -> M
 }
 
 /// Build the per-joint peasant meshes for `kind` with the given body colours.
-pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32) -> BipedMeshes {
+pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, kid: bool) -> BipedMeshes {
     use PeasantKind::*;
     // Surfaces: leather/wood-trim/straw/hair/patches read as matte Cloth; iron + the brass lamp as
     // Metal; skin/eyes/mouth as Skin. (WOOD here is a pale trim hue on tool hafts — flat Skin avoids
@@ -199,8 +199,8 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         head_parts.push(bxr(0.042, 0.012, 0.012, v(side * 0.055, 0.12, 0.13), rz(side * if miner { -0.2 } else { 0.12 }), HAIR, Surf::Cloth)); // brow
         head_parts.push(bxr(0.035, 0.055, 0.035, v(side * 0.13, 0.055, 0.0), rz(side * 0.18), skin, Surf::Skin)); // ear
     }
-    if woodcutter || unemployed {
-        head_parts.push(bxr(0.14, 0.07, 0.028, v(0.0, -0.035, 0.12), rx(0.15), HAIR, Surf::Cloth)); // beard
+    if (woodcutter || unemployed) && !kid {
+        head_parts.push(bxr(0.14, 0.07, 0.028, v(0.0, -0.035, 0.12), rx(0.15), HAIR, Surf::Cloth)); // beard (never on kids — they read as children)
     }
     if farmer {
         head_parts.push(frustum_s(0.2, 0.22, 0.022, v(1.15, 1.0, 0.82), v(0.0, 0.17, 0.0), STRAW, Surf::Cloth)); // brim

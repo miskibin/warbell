@@ -754,8 +754,8 @@ pub fn config() -> BiomeConfig {
                     (build_boulder_mesh(2), 1.05),
                     (build_boulder_mesh(3), 0.3), // cairns stay a rare waymarker treat
                 ],
-                // Thinned (0.085→0.055→0.042) + lighter blockers (0.3→0.24, so only s≳0.9
-                // instances pass the ≥0.22 floor): keeps the crag look but leaves walking lanes for
+                // Thinned (0.085→0.055→0.042) + lighter blockers (0.3→0.24, so only s≳1.25
+                // instances pass the ≥0.30 floor): keeps the crag look but leaves walking lanes for
                 // the hero + the stone miners' A* — and lets the taller mountain bulk read, not a
                 // crag carpet.
                 chance: 0.042,

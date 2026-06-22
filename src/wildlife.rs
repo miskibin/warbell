@@ -448,7 +448,11 @@ fn animal_brain(
         let lunge = strike_p(a.atk_anim, now, arch_dur(strike_arch(a.species)))
             .map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.4);
         let fwd = Vec2::new(a.facing.sin(), a.facing.cos());
-        let lp = a.pos + fwd * lunge;
+        let mut lp = a.pos + fwd * lunge;
+        // Don't let the lunge slide the body into the knight (the shove only pushes him off `pos`).
+        if hero.alive {
+            lp = crate::orks::lunge_clear_of_hero(lp, hero.pos, a.body_r + crate::orks::HERO_R);
+        }
         tf.translation = Vec3::new(lp.x, gy + bob, lp.y);
         // Springy recoil-wobble on a blow taken (reuses the orks' / dummies' shape).
         tf.rotation = Quat::from_rotation_y(a.facing) * Quat::from_rotation_x(crate::orks::recoil_tilt(a.hit_recoil, now));

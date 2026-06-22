@@ -26,8 +26,9 @@ use crate::palette::{lin, lin_scaled};
 use crate::steer;
 use crate::worldmap;
 
-/// Base root scale (the TS group scale before the per-variant `cfg.scale`).
-pub(crate) const BASE_SCALE: f32 = 0.7;
+/// Base root scale (the TS group scale before the per-variant `cfg.scale`). Was 0.7, bumped ×1.35
+/// with the hero/house rescale, then cut 15% (×0.85) so orks read a touch shorter than the hero.
+pub(crate) const BASE_SCALE: f32 = 0.80325;
 /// Orks turn slower than wildlife — a lumbering pivot. rad/s.
 pub(crate) const ORK_MAX_TURN: f32 = 2.5;
 
@@ -501,7 +502,11 @@ fn ork_brain(
             strike_p(o.atk_anim, now).map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.35)
         };
         let fwd = Vec2::new(o.facing.sin(), o.facing.cos());
-        let lp = o.pos + fwd * lunge;
+        let mut lp = o.pos + fwd * lunge;
+        // Don't let the lunge slide the body into the knight (the shove only pushes him off `pos`).
+        if hero.alive {
+            lp = lunge_clear_of_hero(lp, hero.pos, o.body_r + HERO_R);
+        }
         tf.translation = Vec3::new(lp.x, gy + bob, lp.y);
         // Springy recoil-wobble on a blow taken (composes with the facing yaw).
         tf.rotation = Quat::from_rotation_y(o.facing) * Quat::from_rotation_x(recoil_tilt(o.hit_recoil, now));
@@ -543,6 +548,28 @@ pub(crate) fn recoil_tilt(hit_recoil: f32, now: f32) -> f32 {
     }
     let k = 1.0 - r / RECOIL_DUR;
     -(r * 17.0).cos() * 0.3 * k * k
+}
+
+/// Hero body half-width — mirrors the private `player::movement::PLAYER_R` (kept in sync by hand).
+/// Used to keep an attacker's lunge from clipping into the knight.
+pub(crate) const HERO_R: f32 = 0.22;
+
+/// Keep an attacker's forward strike *lunge* — a visual-only mesh slide over the strike beat —
+/// from clipping into the knight. The hero shove (`player::movement::shove_out_of`) pushes him
+/// off the body's locomotion `pos`, NOT this lunged draw position, so an un-clamped lunge slides
+/// the rendered body straight through him (worst right at melee range, exactly when he's fighting
+/// it). Project the lunged point `lp` back out of the hero's keep-out cylinder of radius `keep`
+/// (= the body's `body_r + HERO_R`, so the skins just touch). Purely cosmetic — `pos`/gameplay are
+/// untouched, and the radial projection works whatever the attacker faces (hero or a rival brawl).
+/// Shared by the ork + wildlife strike renders.
+pub(crate) fn lunge_clear_of_hero(lp: Vec2, hero_pos: Vec2, keep: f32) -> Vec2 {
+    let to_h = lp - hero_pos;
+    let dh = to_h.length();
+    if dh > 1e-4 && dh < keep {
+        hero_pos + to_h / dh * keep
+    } else {
+        lp
+    }
 }
 
 /// Strike progress `0..1` since `atk_anim`, or `None` when not currently striking.

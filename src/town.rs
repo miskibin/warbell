@@ -1525,7 +1525,11 @@ fn spawn_building(
     // Construction feedback: the fresh building pops up out of its plot on a kick of dust
     // (build_fx). Re-insert the parent transform pre-shrunk so it never flashes full-size.
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
-    let pop = crate::build_fx::BuildPop::pop();
+    // Settle at the world-bump scale (Y also ×BUILDING_TALLER) so the town buildings stay in
+    // proportion with the rescaled hero/townsfolk/houses and share the taller roofline (the
+    // collision box below stays at the base footprint — eaves overhang).
+    let b = crate::castle::WORLD_BUMP;
+    let pop = crate::build_fx::BuildPop::pop_to(Vec3::new(b, b * crate::castle::BUILDING_TALLER, b));
     commands
         .entity(parent)
         .try_insert((Transform::from_xyz(pos.x, y, pos.y).with_scale(pop.scale0()), pop));

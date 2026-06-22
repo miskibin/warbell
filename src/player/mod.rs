@@ -30,10 +30,12 @@ use bevy::prelude::*;
 
 use crate::inventory::Inventory;
 
-/// Root scale applied to the TS-unit knight so it stands the same height as the orks
-/// (`orks::BASE_SCALE` is 0.7; the knight authors ~1.85u tall → ~1.1u on the ground — a deliberately
-/// bigger, sturdier hero).
-pub const HERO_SCALE: f32 = 0.47;
+/// Root scale applied to the TS-unit knight. Was 0.47 (≈ ork height); now ~1.35× that (0.47 × 1.5,
+/// then dialled back 10%) so the hero reads clearly in the third-person frame without towering as a
+/// giant. The rest of the human-scale world (orks, townsfolk, castle houses, town buildings) is
+/// scaled by the SAME 1.35× so proportions stay consistent; animals are deliberately left small.
+/// Camera `EYE_H`/`FP_EYE_H` (player/camera.rs) track this height.
+pub const HERO_SCALE: f32 = 0.6345;
 
 /// A rig **joint** — a transform-only entity the animator ([`anim`]) poses. Each joint's mesh is a
 /// separate child *leaf* entity ([`HeroMesh`]), so first-person can hide the body meshes without

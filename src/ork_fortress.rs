@@ -119,16 +119,19 @@ pub fn blight_ambience() -> BiomeAmbience {
             // fades distant geometry TO, so the near-black 0x5a2418 turned the mire into a black
             // void in broad daylight (player: zero visibility). Lifted to a brighter rust so it
             // still reads grim red but you can see ACROSS the Blight, not into a wall.
-            0xa85f42,
-            0xa8895a, // sun: dim sickly amber-bronze
-            // illuminance: still the dimmest daytime biome, but 6000 (≈0.63× the island key) left
-            // even the foreground murky. 9000 ≈ 0.85× — oppressive, not unplayable.
-            9000.0,
-            0x8a7a5c, // ambient: warm murky ash fill (lightened off the old dark olive 0x6a6048)
+            0xc07a58,
+            // sun: warm amber-bronze. `advance_sky` lerps the day key light 82% toward THIS colour,
+            // so the old dim 0xa8895a dragged every lit surface dark-brown — a huge part of why the
+            // mire read murky. Brightened so the key light stays strong while keeping the bronze cast.
+            0xe6cda0,
+            // illuminance: was 6000 (≈0.63× the island key) → murky even up close, then 9000 (still
+            // too dark, player). 13000 ≈ 1.15× — the Blight now reads as a fully-lit-but-grim day.
+            13000.0,
+            0x9a8a68, // ambient: warm murky ash fill (lightened off the old dark olive 0x6a6048)
             58.0,
-            // fog: still the thickest on the map, but eased 0.036→0.028 so the wall sits a touch
-            // further out (≈67–162 tiles vs ≈59–150) instead of crowding the camera.
-            0.028,
+            // fog: was the thickest on the map (0.036 → black wall ~59 tiles). 0.024 pushes the wall
+            // out to ≈70–166 tiles so you can see across the mire; still the haziest biome.
+            0.024,
         ),
         particle: ParticleKind::Ash,
     }
