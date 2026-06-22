@@ -21,9 +21,8 @@ use crate::player::{Health, HeroState, PendingHeroDamage};
 use crate::projectile::{BoltSpawn, BoltSpawns};
 use crate::steer;
 use crate::ui::anim::{anim, AnimKind};
-use crate::ui::fonts::{label, UiFonts, FONT_CAPTION, FONT_LABEL};
+use crate::ui::fonts::{label, UiFonts, FONT_LABEL};
 use crate::ui::theme::*;
-use crate::ui::widgets::{self, border};
 use crate::worldmap::ground_at_world;
 
 // ── Tuning (ported from waveStore.ts) ──────────────────────────────────────────────
@@ -1113,160 +1112,85 @@ fn siege_controls(keys: Res<ButtonInput<KeyCode>>, mut siege: ResMut<Siege>) {
     }
 }
 
-// ── Objective banner (top-centre), ported from the 3js `Objective` ───────────────────
+// ── Objective readout (top-right) ────────────────────────────────────────────────────
+// A bare, background-less corner glance: one tinted icon + the single ticking number that
+// matters this phase — the clock to nightfall by day (sun), the orks-left tally by night (axe).
 
+/// Loaded once so the readout can swap its icon between phases without re-hitting the asset server.
+#[derive(Resource)]
+struct ObjectiveIcons {
+    sun: Handle<Image>,
+    axe: Handle<Image>,
+}
 #[derive(Component)]
-struct KeepHpFill;
-#[derive(Component)]
-struct PhaseFill;
-#[derive(Component)]
-struct PhaseText;
+struct ObjIcon;
 #[derive(Component)]
 struct SubText;
-/// The thin keep-HP sliver — toggled visible only while a wave is live.
-#[derive(Component)]
-struct KeepHpWrap;
 
-fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>) {
-    // Full-width wrapper centres the banner card horizontally.
+fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<AssetServer>) {
+    let icons = ObjectiveIcons {
+        sun: assets.load("icons/gameicons/sym_sun.png"),
+        axe: assets.load("icons/gameicons/axe.png"),
+    };
+    let mut icon = ImageNode::new(icons.sun.clone());
+    icon.color = GOLD;
+    commands.insert_resource(icons);
+
+    // No panel, no border, no progress bars — just the icon + number, pinned top-right. A soft text
+    // shadow keeps the number legible over a bright sky without any background chrome.
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(48.0), // sits just below the top-centre strip compass
-            left: Val::Px(0.0),
-            width: Val::Percent(100.0),
-            flex_direction: FlexDirection::Row,
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
-        .with_children(|wrap| {
-            wrap.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: Val::Px(4.0),
-                    padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
-                    border: border(1.0),
-                    border_radius: radius(R_CARD),
-                    ..default()
-                },
-                BackgroundColor(PANEL_HUD),
-                BorderColor::all(BORDER_SOFT),
-                shadow_hud(),
-                anim(AnimKind::SlideDown, 0.0, 0.36),
-            ))
-            .with_children(|card| {
-                // One line: a small phase tag + the single number that matters this phase
-                // (day → clock to nightfall, night → orks left). Colour cues the phase.
-                card.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(9.0), ..default() })
-                    .with_children(|row| {
-                        row.spawn((label(&fonts.semibold, "NIGHT 1", FONT_CAPTION, GREY), PhaseText));
-                        row.spawn((label(&fonts.display, "", FONT_LABEL, GOLD), SubText));
-                    });
-                // Hairline progress: prep day drains gold to zero / night = horde remaining (red).
-                card.spawn((
-                    Node { width: Val::Px(150.0), height: Val::Px(3.0), border_radius: radius(2.0), overflow: Overflow::clip(), ..default() },
-                    BackgroundColor(rgba(0, 0, 0, 0.4)),
-                ))
-                .with_children(|t| {
-                    t.spawn((
-                        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                        BackgroundColor(GOLD_DEEP),
-                        PhaseFill,
-                    ));
-                });
-                // Keep-HP sliver — hidden by default, surfaced only once the assault is live.
-                card.spawn((
-                    Node {
-                        width: Val::Px(150.0),
-                        height: Val::Px(4.0),
-                        border_radius: radius(2.0),
-                        overflow: Overflow::clip(),
-                        display: Display::None,
-                        ..default()
-                    },
-                    BackgroundColor(rgba(0, 0, 0, 0.4)),
-                    KeepHpWrap,
-                ))
-                .with_children(|t| {
-                    t.spawn((
-                        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                        widgets::vgrad(rgb(111, 208, 255), rgb(42, 143, 214)),
-                        KeepHpFill,
-                    ));
-                });
-            });
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(14.0),
+                right: Val::Px(16.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(7.0),
+                ..default()
+            },
+            anim(AnimKind::SlideDown, 0.0, 0.36),
+        ))
+        .with_children(|row| {
+            row.spawn((Node { width: Val::Px(18.0), height: Val::Px(18.0), ..default() }, icon, ObjIcon));
+            row.spawn((
+                label(&fonts.display, "", FONT_LABEL, GOLD),
+                TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.75) },
+                SubText,
+            ));
         });
 }
 
-#[allow(clippy::type_complexity)]
 fn update_siege_hud(
     siege: Res<Siege>,
-    keep: Res<KeepHp>,
+    icons: Res<ObjectiveIcons>,
     invaders: Query<&WaveInvader, Without<crate::dying::Dying>>,
-    mut keep_q: Query<&mut Node, (With<KeepHpFill>, Without<PhaseFill>, Without<KeepHpWrap>)>,
-    mut keepwrap_q: Query<&mut Node, (With<KeepHpWrap>, Without<PhaseFill>, Without<KeepHpFill>)>,
-    mut phase_q: Query<(&mut Node, &mut BackgroundColor), (With<PhaseFill>, Without<KeepHpFill>, Without<KeepHpWrap>)>,
-    mut ptext: Query<&mut Text, (With<PhaseText>, Without<SubText>)>,
-    mut stext: Query<(&mut Text, &mut TextColor), (With<SubText>, Without<PhaseText>)>,
+    mut icon_q: Query<&mut ImageNode, With<ObjIcon>>,
+    mut stext: Query<(&mut Text, &mut TextColor), With<SubText>>,
 ) {
-    let in_wave = matches!(siege.phase, GamePhase::Wave);
-    if let Ok(mut n) = keep_q.single_mut() {
-        n.width = Val::Percent((keep.hp / keep.max * 100.0).clamp(0.0, 100.0));
-    }
-    // The keep sliver only matters while the assault is live — hidden the rest of the time.
-    if let Ok(mut n) = keepwrap_q.single_mut() {
-        n.display = if in_wave { Display::Flex } else { Display::None };
-    }
-    // Nights loop forever now (the win is breaking the Hold, not surviving a fixed count), so the
-    // banner shows the climbing night number with no "/ N" ceiling. One number per phase: the
-    // clock to nightfall by day, the orks-left tally by night; colour carries the phase mood.
-    let (tag, value, value_col) = match siege.phase {
+    // One icon + one number per phase; colour carries the phase mood. Nights loop forever, so no
+    // "/ N" ceiling — the clock counts the day down, the tally counts the horde down.
+    let (icon, value, col) = match siege.phase {
         GamePhase::Prep => {
-            let night = (siege.wave_index + 2).max(1);
             let secs = siege.prep_seconds_left.max(0.0) as i64;
-            (format!("NIGHT {night}"), format!("{}:{:02}", secs / 60, secs % 60), GOLD)
+            (icons.sun.clone(), format!("{}:{:02}", secs / 60, secs % 60), GOLD)
         }
         GamePhase::Wave => {
-            let night = (siege.wave_index + 1).max(1);
             let alive = invaders.iter().count();
-            (format!("NIGHT {night}"), format!("{alive} orks"), rgb(255, 158, 120))
+            (icons.axe.clone(), format!("{alive}"), rgb(255, 158, 120))
         }
-        // End states put the whole message in the big slot; the small tag goes quiet.
-        GamePhase::Victory => (String::new(), "VICTORY".into(), rgb(120, 224, 120)),
-        GamePhase::Defeat => (String::new(), "THE KEEP HAS FALLEN".into(), rgb(214, 90, 90)),
+        GamePhase::Victory => (icons.sun.clone(), "VICTORY".into(), rgb(120, 224, 120)),
+        GamePhase::Defeat => (icons.axe.clone(), "FALLEN".into(), rgb(214, 90, 90)),
     };
-    if let Ok(mut t) = ptext.single_mut() {
-        **t = tag;
+    if let Ok(mut img) = icon_q.single_mut() {
+        if img.image != icon {
+            img.image = icon;
+        }
+        img.color = col;
     }
     if let Ok((mut t, mut c)) = stext.single_mut() {
         **t = value;
-        c.0 = value_col;
-    }
-
-    let Ok((mut n, mut col)) = phase_q.single_mut() else { return };
-    match siege.phase {
-        GamePhase::Prep => {
-            let p = prep_progress(siege.prep_seconds_left, mods_for(siege.difficulty));
-            n.width = Val::Percent(((1.0 - p) * 100.0).clamp(0.0, 100.0)); // full day → drains to night
-            col.0 = GOLD_DEEP;
-        }
-        GamePhase::Wave => {
-            // Clamp like the director — nights loop past the table, so the index must not run off it.
-            let wi = (siege.wave_index.max(0) as usize).min(WAVES.len() - 1);
-            let count = effective_count(wi, mods_for(siege.difficulty));
-            let alive = invaders.iter().count() as u32;
-            n.width = Val::Percent((alive as f32 / count as f32 * 100.0).clamp(0.0, 100.0));
-            col.0 = RED;
-        }
-        GamePhase::Victory => {
-            n.width = Val::Percent(100.0);
-            col.0 = rgb(102, 217, 102);
-        }
-        GamePhase::Defeat => {
-            n.width = Val::Percent(100.0);
-            col.0 = rgb(77, 77, 77);
-        }
+        c.0 = col;
     }
 }
 
