@@ -63,6 +63,21 @@ impl Plugin for PerftestPlugin {
         if std::env::var("FOREST_PERFPANELS").is_ok() {
             app.add_systems(Update, perf_panels);
         }
+        // FOREST_PERFFREEZE=1: hold a panel open so the whole world-sim freezes (gated on Modal::None)
+        // while rendering keeps running — isolates render-pipeline CPU (visibility/extraction of all
+        // ~10k entities) from the sim systems (AI / wind sway / separation / particles).
+        if std::env::var("FOREST_PERFFREEZE").is_ok() {
+            app.add_systems(Update, perf_freeze);
+        }
+    }
+}
+
+fn perf_freeze(
+    app_state: Res<State<crate::game_state::AppState>>,
+    mut next: ResMut<NextState<crate::game_state::Modal>>,
+) {
+    if *app_state.get() == crate::game_state::AppState::Playing {
+        next.set(crate::game_state::Modal::Inventory);
     }
 }
 

@@ -137,6 +137,11 @@ fn main() {
         window.resolution =
             bevy::window::WindowResolution::new(1280, 720).with_scale_factor_override(1.0);
     }
+    // FOREST_NOVSYNC=1: uncap the frame rate (default is Fifo / vsync, which pins frame time to the
+    // monitor refresh and masks how fast the low-poly scene actually renders). Profiling only.
+    if std::env::var("FOREST_NOVSYNC").is_ok() {
+        window.present_mode = bevy::window::PresentMode::AutoNoVsync;
+    }
     App::new()
         .add_plugins(
             DefaultPlugins
