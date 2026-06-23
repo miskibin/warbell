@@ -137,13 +137,21 @@ pub enum TerrainDetail {
 }
 
 impl ShadowLevel {
-    /// `(atlas_size, cascade_count, cascade_far)` for the on path; `None` when shadows are off.
-    fn params(self) -> Option<(usize, usize, f32)> {
+    /// `(atlas_size, cascade_far)` for the on path; `None` when shadows are off.
+    ///
+    /// The cascade **count** is deliberately NOT varied between levels. Changing `num_cascades` on a
+    /// live `CascadeShadowConfig` panics Bevy's `check_dir_light_mesh_visibility`: that system's
+    /// thread-local parallel queues (`view_visible_entities_queue`) are only resized for worker
+    /// threads that get a task on the current run, so when the count GROWS, a thread that ran last
+    /// frame at the smaller size but is idle this frame keeps its stale length and the collection
+    /// loop indexes past it (an out-of-bounds in bevy_light). So every level keeps the authored
+    /// count and varies only atlas resolution + shadow reach (both safe to change at runtime).
+    fn params(self) -> Option<(usize, f32)> {
         match self {
             ShadowLevel::Off => None,
-            ShadowLevel::Low => Some((1024, 2, 100.0)),
-            ShadowLevel::Medium => Some((2048, 3, 150.0)),
-            ShadowLevel::High => Some((4096, 4, 190.0)),
+            ShadowLevel::Low => Some((1024, 100.0)),
+            ShadowLevel::Medium => Some((2048, 150.0)),
+            ShadowLevel::High => Some((4096, 190.0)),
         }
     }
 }
@@ -299,6 +307,7 @@ impl Plugin for QualityPlugin {
             // inserted RenderAdapterInfo into the main world. Overwrites the default only when no
             // env override / saved config locked the preset and the adapter is a weak device type.
             .add_systems(Startup, detect_adapter_quality)
+            .add_systems(Update, debug_qswitch) // FOREST_QSWITCH=<preset>: flip preset at t≈4s (crash repro)
             .add_systems(
                 Update,
                 (
@@ -316,6 +325,33 @@ impl Plugin for QualityPlugin {
             .add_systems(Update, apply_render_scale)
             // Window mode / vsync / resolution → primary window. Self-gated.
             .add_systems(Update, apply_window_settings);
+    }
+}
+
+/// Debug repro: `FOREST_QSWITCH=<high|ultra|low>` flips the preset once at ~4 s of wall-clock, to
+/// reproduce a runtime preset-change crash (e.g. Low→High re-inserting all the post passes + shadow
+/// atlas resize). Inert without the env var.
+fn debug_qswitch(
+    time: Res<Time>,
+    mut quality: ResMut<GraphicsQuality>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    let Some(target) = std::env::var("FOREST_QSWITCH").ok().and_then(|s| match s.trim().to_ascii_lowercase().as_str() {
+        "high" => Some(GraphicsQuality::High),
+        "ultra" => Some(GraphicsQuality::Ultra),
+        "low" => Some(GraphicsQuality::Low),
+        _ => None,
+    }) else {
+        *done = true;
+        return;
+    };
+    if time.elapsed_secs() >= 4.0 {
+        info!("FOREST_QSWITCH: switching preset to {:?}", target);
+        *quality = target;
+        *done = true;
     }
 }
 
@@ -463,14 +499,15 @@ fn apply_quality(
             dl.shadow_maps_enabled = want;
         }
     }
-    if let Some((size, count, far)) = shadow {
+    if let Some((size, far)) = shadow {
         for mut c in cascades.iter_mut() {
             let Some(auth) = defaults.cascades.as_ref() else { continue };
-            // Re-derive the split layout from the authored config with only the count + far bound
-            // moved: the first cascade keeps its authored near reach (texel density unchanged), the
-            // in-between splits re-space exponentially toward the new horizon.
+            // Re-derive the split layout from the authored config with only the far bound moved: the
+            // first cascade keeps its authored near reach (texel density unchanged), the in-between
+            // splits re-space exponentially toward the new horizon. `num_cascades` is ALWAYS the
+            // authored count — see `ShadowLevel::params` for why changing it at runtime crashes.
             *c = bevy::light::CascadeShadowConfigBuilder {
-                num_cascades: count,
+                num_cascades: auth.bounds.len(),
                 minimum_distance: auth.minimum_distance,
                 maximum_distance: far,
                 first_cascade_far_bound: auth.bounds.first().copied().unwrap_or(12.0),
