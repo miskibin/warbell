@@ -10,7 +10,7 @@
 
 use bevy::audio::{AudioSink, AudioSinkPlayback, SpatialAudioSink};
 use bevy::prelude::*;
-use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
+use bevy::window::PrimaryWindow;
 
 use crate::economy::Bank;
 use crate::player::PlayerRes;
@@ -21,14 +21,39 @@ use super::notice::Notice;
 use super::theme::*;
 use super::widgets::border;
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct AudioSettings {
-    /// Player's manual mute (M key / the pause-menu **Sound** toggle).
+    /// Player's manual mute (M key / the Settings **Mute** toggle).
     pub muted: bool,
     /// Background mute: true while the game window isn't focused (CS2-style). Driven by
     /// [`track_window_focus`], kept separate from `muted` so refocusing restores the player's own
     /// mute choice and the pause-menu label never flips on an alt-tab. `sync_mute` ORs the two.
     pub unfocused: bool,
+    /// User volume multipliers (`0.0..=1.0`), applied ON TOP of the authored [`AudioConfig`] mix by
+    /// [`apply_audio_volumes`]. `1.0` == the authored balance. `master` scales everything; `music`
+    /// and `sfx` scale their channels (sfx also covers voice / narration / ambience).
+    pub master: f32,
+    pub music: f32,
+    pub sfx: f32,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self { muted: false, unfocused: false, master: 1.0, music: 1.0, sfx: 1.0 }
+    }
+}
+
+/// The authored `AudioConfig` mix levels, snapshotted once so the user volume sliders scale FROM the
+/// tuned balance instead of overwriting it (otherwise a slider at 100% would clobber the careful
+/// per-channel mix). Captured on the first run of [`apply_audio_volumes`].
+#[derive(Resource, Default)]
+struct AudioBaseVols {
+    captured: bool,
+    sfx: f32,
+    music: f32,
+    voice: f32,
+    narration: f32,
+    ambience: f32,
 }
 
 /// Debug cheat: grants 1000 of every resource (gold + stone + food + wood) on click.
@@ -41,9 +66,29 @@ struct DebugBoons;
 pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<AudioSettings>()
+        // Seed audio prefs from the saved settings config (master/music/sfx volume + mute).
+        let prefs = crate::quality::load_audio_prefs();
+        app.insert_resource(AudioSettings {
+            muted: prefs.muted,
+            unfocused: false,
+            master: prefs.master,
+            music: prefs.music,
+            sfx: prefs.sfx,
+        })
+            .init_resource::<AudioBaseVols>()
             .add_systems(Startup, setup_cheats)
-            .add_systems(Update, (cheat_click, keys, track_window_focus, sync_mute));
+            .add_systems(
+                Update,
+                (
+                    cheat_click,
+                    keys,
+                    track_window_focus,
+                    sync_mute,
+                    // Push the user volume multipliers onto the live AudioConfig mix (every audio
+                    // system already reads those fields, so this is the single wiring point).
+                    apply_audio_volumes.run_if(resource_changed::<AudioSettings>),
+                ),
+            );
     }
 }
 
@@ -136,11 +181,13 @@ fn grant_debug_resources(bank: &mut Bank, player: &mut PlayerRes, notice: &mut N
 }
 
 /// M = mute, F11 = fullscreen, F10 = graphics preset. (V / first-person lives in `player::camera`.)
+/// F11 flips [`WindowSettings::fullscreen`] (the single source of truth that the Display settings tab
+/// also drives) rather than the live `Window` directly, so the key and the menu never desync.
 fn keys(
     input: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<AudioSettings>,
     mut quality: ResMut<GraphicsQuality>,
-    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut window: ResMut<crate::quality::WindowSettings>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
 ) {
@@ -149,7 +196,8 @@ fn keys(
         toggle_mute(&mut settings, &mut notice, now);
     }
     if input.just_pressed(KeyCode::F11) {
-        toggle_fullscreen(&mut windows, &mut notice, now);
+        window.fullscreen = !window.fullscreen;
+        notice.push(if window.fullscreen { "Fullscreen" } else { "Windowed" }, now);
     }
     if input.just_pressed(KeyCode::F10) {
         toggle_quality(&mut quality, &mut notice, now);
@@ -214,17 +262,29 @@ fn sync_mute(
     }
 }
 
-pub(crate) fn toggle_fullscreen(
-    windows: &mut Query<&mut Window, With<PrimaryWindow>>,
-    notice: &mut Notice,
-    now: f64,
+/// Scale the live [`AudioConfig`] mix levels by the user's `master × channel` multipliers. Every
+/// audio system (`music`/`sfx`/`director`/`ambience`) reads `AudioConfig.*_vol` live, so writing the
+/// scaled values here is the single point that makes the Audio settings sliders audible. The
+/// authored mix is snapshotted once into [`AudioBaseVols`] so the sliders scale FROM the balance.
+/// `sfx` covers voice + narration + ambience too (everything that isn't music).
+fn apply_audio_volumes(
+    settings: Res<AudioSettings>,
+    mut cfg: ResMut<crate::audio::AudioConfig>,
+    mut base: ResMut<AudioBaseVols>,
 ) {
-    let Ok(mut window) = windows.single_mut() else { return };
-    let to_full = matches!(window.mode, WindowMode::Windowed);
-    window.mode = if to_full {
-        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-    } else {
-        WindowMode::Windowed
-    };
-    notice.push(if to_full { "Fullscreen" } else { "Windowed" }, now);
+    if !base.captured {
+        base.sfx = cfg.sfx_vol;
+        base.music = cfg.music_vol;
+        base.voice = cfg.voice_vol;
+        base.narration = cfg.narration_vol;
+        base.ambience = cfg.ambience_vol;
+        base.captured = true;
+    }
+    let master = settings.master.clamp(0.0, 1.0);
+    let sfx = master * settings.sfx.clamp(0.0, 1.0);
+    cfg.music_vol = base.music * master * settings.music.clamp(0.0, 1.0);
+    cfg.sfx_vol = base.sfx * sfx;
+    cfg.voice_vol = base.voice * sfx;
+    cfg.narration_vol = base.narration * sfx;
+    cfg.ambience_vol = base.ambience * sfx;
 }

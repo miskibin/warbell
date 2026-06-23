@@ -725,13 +725,32 @@ fn apply_window_settings(
     }
 }
 
-/// Everything the Settings page persists, so the player's choices survive a relaunch.
+/// Player audio preferences persisted with the rest of the settings (0..=1 volume multipliers +
+/// mute). The live resource is `ui::settings::AudioSettings`; this is its serialisable subset
+/// (`unfocused` is transient and not stored). Kept here so the whole Settings menu writes one file.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub struct AudioPrefs {
+    pub master: f32,
+    pub music: f32,
+    pub sfx: f32,
+    pub muted: bool,
+}
+
+impl Default for AudioPrefs {
+    fn default() -> Self {
+        Self { master: 1.0, music: 1.0, sfx: 1.0, muted: false }
+    }
+}
+
+/// Everything the Settings menu persists, so the player's choices survive a relaunch.
 #[derive(Serialize, Deserialize)]
 struct GraphicsConfig {
     quality: GraphicsQuality,
     settings: GraphicsSettings,
     #[serde(default)]
     window: WindowSettings,
+    #[serde(default)]
+    audio: AudioPrefs,
 }
 
 /// `graphics.json` next to the save file (same OS data-dir resolution as `savegame::save_path`).
@@ -758,14 +777,26 @@ fn load_config() -> Option<GraphicsConfig> {
     serde_json::from_str(&text).ok()
 }
 
-/// Persist the current graphics choices. Best-effort: a write failure is logged, never fatal. Call
-/// at natural commit points (settings-page close, preset click) rather than on every slider tick.
+/// The saved audio preferences (or defaults). Lets `SettingsPlugin` seed `AudioSettings` at startup
+/// from the same one config file the Settings menu writes.
+pub fn load_audio_prefs() -> AudioPrefs {
+    load_config().map(|c| c.audio).unwrap_or_default()
+}
+
+/// Persist the current settings. Best-effort: a write failure is logged, never fatal. Call at natural
+/// commit points (Settings-menu close, preset click) rather than on every slider tick.
 pub fn save_graphics_config(
     quality: &GraphicsQuality,
     settings: &GraphicsSettings,
     window: &WindowSettings,
+    audio: &AudioPrefs,
 ) {
-    let cfg = GraphicsConfig { quality: *quality, settings: settings.clone(), window: window.clone() };
+    let cfg = GraphicsConfig {
+        quality: *quality,
+        settings: settings.clone(),
+        window: window.clone(),
+        audio: *audio,
+    };
     let path = config_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);

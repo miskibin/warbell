@@ -272,6 +272,8 @@ pub fn close_button(
         marker,
     ))
     .with_children(|b| {
-        b.spawn(super::fonts::label(font, "\u{2715}", 13.0, fg));
+        // U+00D7 (×, multiplication sign) — a Latin-1 glyph the body font actually ships, unlike the
+        // Dingbats ✕ (U+2715) which renders as tofu in Inter.
+        b.spawn(super::fonts::label(font, "\u{00D7}", 16.0, fg));
     });
 }
