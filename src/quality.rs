@@ -33,6 +33,7 @@
 //! hardware-aware default.
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
+use bevy::camera::MainPassResolutionOverride;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::light::{
     CascadeShadowConfig, DirectionalLightShadowMap, FogVolume, VolumetricFog, VolumetricLight,
@@ -116,7 +117,10 @@ impl Plugin for QualityPlugin {
             .add_systems(Startup, detect_adapter_quality)
             // Applies once at startup (the resource counts as "changed" when added) and again on
             // every Settings toggle — never per-frame.
-            .add_systems(Update, apply_quality.run_if(resource_changed::<GraphicsQuality>));
+            .add_systems(Update, apply_quality.run_if(resource_changed::<GraphicsQuality>))
+            // Render-scale follows the preset AND the window size; self-gates internally, so it stays
+            // ungated (it must catch window resizes, not just preset toggles).
+            .add_systems(Update, apply_render_scale);
     }
 }
 
@@ -481,5 +485,59 @@ fn apply_quality(
     // preset change — so the ground reacts to the live toggle without a per-frame cost.
     for (_, m) in terrain_mats.iter_mut() {
         m.extension.params.params2 = Vec4::new(p.ground_bump, p.ground_quality, p.ground_variety, 0.0);
+    }
+}
+
+/// Per-preset render-scale factor. On a weak GPU the main 3D pass (rasterising the whole scene) IS
+/// the frame — a Radeon 840M iGPU spends ~30 ms in `main_opaque_pass_3d` alone at native res. So on
+/// Low (the iGPU default) we render the 3D at a fraction of the window resolution. `FOREST_RENDERSCALE`
+/// overrides it for A/B tuning on the target machine.
+fn render_scale_for(quality: GraphicsQuality) -> f32 {
+    if let Some(v) =
+        std::env::var("FOREST_RENDERSCALE").ok().and_then(|s| s.trim().parse::<f32>().ok())
+    {
+        return v.clamp(0.3, 1.0);
+    }
+    match quality {
+        GraphicsQuality::Low => 0.6,
+        _ => 1.0,
+    }
+}
+
+/// Drive Bevy's [`MainPassResolutionOverride`] from the window size × the preset's render-scale: the
+/// opaque/transparent/prepass render at the lower resolution (Bevy upscales the result; the cheap
+/// post passes — SMAA/tonemapping/UI — stay full-res), cutting the dominant fragment cost by ~scale²
+/// on fragment-bound GPUs. Self-gating via `Local` so it only touches the camera when the preset or
+/// window size actually changes (re-inserting every frame would mark the camera `Changed`).
+fn apply_render_scale(
+    quality: Res<GraphicsQuality>,
+    windows: Query<&Window>,
+    cam: Query<Entity, With<Camera3d>>,
+    mut commands: Commands,
+    mut last: Local<Option<UVec2>>,
+) {
+    let scale = render_scale_for(*quality);
+    let Ok(win) = windows.single() else {
+        return;
+    };
+    let want = (scale < 0.999).then(|| {
+        UVec2::new(
+            (win.physical_width() as f32 * scale).round().max(64.0) as u32,
+            (win.physical_height() as f32 * scale).round().max(64.0) as u32,
+        )
+    });
+    if *last == want {
+        return;
+    }
+    *last = want;
+    for cam_e in cam.iter() {
+        match want {
+            Some(res) => {
+                commands.entity(cam_e).insert(MainPassResolutionOverride(res));
+            }
+            None => {
+                commands.entity(cam_e).remove::<MainPassResolutionOverride>();
+            }
+        }
     }
 }
