@@ -63,6 +63,8 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
     hero.on_ground = true;
     hero.attacking = false;
     hero.victory = false;
+    hero.heavy = false;
+    hero.charge_t = -1.0;
     hh.blocking = false;
     // Loop a one-shot swing of the given studio attack variant for the preview.
     let swing = |hero: &mut crate::player::Hero, variant: u8| {
@@ -92,6 +94,14 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
         "attack" | "attack1" => swing(&mut hero, 0),
         "attack2" => swing(&mut hero, 1),
         "attack3" => swing(&mut hero, 2),
+        // The charged Heavy Strike: variant 3 = `combat::HEAVY_VARIANT`, with the heavy flag set.
+        "heavy" => {
+            hero.heavy = true;
+            swing(&mut hero, 3);
+        }
+        // The held charge-stance coil: set absolutely from wall-clock (the per-frame reset above
+        // would otherwise defeat an accumulating ramp). Ramps to `combat::CHARGE_THRESHOLD` = 0.8.
+        "charge" => hero.charge_t = (time.elapsed_secs() * 0.25).min(0.8),
         // Combined moves: a swing / a leap taken mid-run.
         "runattack" => {
             hero.moving = true;
@@ -248,6 +258,8 @@ fn setup(
                 hit_dealt: false,
                 attack_variant: 0,
                 victory: false,
+                charge_t: -1.0,
+                heavy: false,
             },
             crate::player::HeroHealth::default(),
         ))

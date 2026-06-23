@@ -205,7 +205,9 @@ pub fn player_move(
         * if sprinting { SPRINT_MULT } else { 1.0 }
         * player.0.move_speed_mult as f32
         * buffs.0.speed_mult(t as f64) as f32 // active Haste buff (1.0 = none)
-        * if in_swamp { SWAMP_SLOW } else { 1.0 };
+        * if in_swamp { SWAMP_SLOW } else { 1.0 }
+        // Winding up a Heavy Strike commits you: slowed feet while the charge builds.
+        * if hero.charge_t > super::combat::CHARGE_GRACE { super::combat::CHARGE_MOVE_MULT } else { 1.0 };
     let desired = if moving { Vec2::new(move_dir.x, move_dir.z) * want_speed } else { Vec2::ZERO };
     let ramp = if moving { ACCEL } else { DECEL }; // faster to start than to stop
     let new_vel = hero.vel + (desired - hero.vel) * (dt * ramp).min(1.0);

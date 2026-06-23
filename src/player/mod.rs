@@ -11,6 +11,7 @@ pub(crate) mod anim;
 mod arts;
 mod block;
 mod camera;
+mod charge;
 mod combat;
 
 pub(crate) use combat::{
@@ -110,6 +111,16 @@ pub struct Hero {
     /// Transient: play the studio **victory** clip (sword raised, proud sway). Set by a win / a
     /// preview hook; not persisted (derived, like `attacking`).
     pub victory: bool,
+    // ── Charged Heavy Strike ──
+    /// Seconds the attack button has been held since the last press, or **`-1.0` when not charging**
+    /// (the sentinel — `>= 0.0` means a charge is armed/building). Set by `combat::player_attack`;
+    /// drives the charge bar, the move-slow ([`movement`]) and the charge stance ([`anim`]).
+    /// Transient (derived, like `attacking`) — not saved; reset to `-1.0` on a fresh run.
+    pub charge_t: f32,
+    /// Whether the *current* swing is the charged Heavy Strike (guaranteed crit, ×3 damage, max
+    /// juice) rather than a normal tap — drives the heavy pose ([`anim`]) + damage ([`combat`]).
+    /// Set on release of a full charge; cleared when the swing ends. Transient.
+    pub heavy: bool,
 }
 
 /// Hero **shield/stamina** state — only the block mechanic. HP, gold, XP/level and the combat
@@ -219,7 +230,7 @@ impl Plugin for PlayerPlugin {
             .insert_resource(camera::OrbitCam::default())
             .insert_resource(camera::FirstPerson { active: fp_boot, ..default() })
             .add_systems(Startup, combat::setup_combat_fx)
-            .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, debug_grant_boons))
+            .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, charge::spawn_charge_bar, debug_grant_boons))
             // Fresh run: wipe progression + revive the hero on a new run (NOT on un-pause).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
@@ -244,6 +255,8 @@ impl Plugin for PlayerPlugin {
                     combat::drive_hit_stop, // ungated: must resume the clock after the freeze
                     arts::apply_knock, // ungated: fold queued slam knockbacks into ork kb
                     arts::sync_arts_hud, // ability-chip HUD (show/dim per readiness)
+                    charge::sync_charge_bar, // heavy-strike charge bar (show/fill per hold)
+                    charge::heavy_tip, // one-time "Hold LMB" hint near the first enemy
                 ),
             )
             // World-sim — gated on the freeze condition (`Modal::None` ⇒ Playing, no panel).
@@ -308,6 +321,15 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
         "attack" | "attack1" => swing(&mut hero, 0),
         "attack2" => swing(&mut hero, 1),
         "attack3" => swing(&mut hero, 2),
+        "heavy" => {
+            hero.heavy = true;
+            swing(&mut hero, combat::HEAVY_VARIANT); // the charged Heavy Strike chop
+        }
+        "charge" => {
+            // Force the hold from wall-clock (absolute, so nothing resets it between frames): the
+            // charge-stance coil deepens then holds at full.
+            hero.charge_t = (time.elapsed_secs() * 0.25).min(combat::CHARGE_THRESHOLD);
+        }
         "victory" => hero.victory = true,
         "jump" => {
             hero.on_ground = false;
@@ -365,6 +387,8 @@ fn spawn_hero(
                 hit_dealt: false,
                 attack_variant: 0,
                 victory: false,
+                charge_t: -1.0,
+                heavy: false,
             },
             HeroHealth::default(),
         ))
@@ -555,6 +579,8 @@ fn reset_player(
         hit_dealt: false,
         attack_variant: 0,
         victory: false,
+        charge_t: -1.0,
+        heavy: false,
     };
     tf.translation = Vec3::new(pos.x, y, pos.y);
     tf.rotation = Quat::from_rotation_y(0.0);

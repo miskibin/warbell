@@ -22,7 +22,7 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
-use super::combat::ATTACK_DURATION;
+use super::combat::{ATTACK_DURATION, CHARGE_GRACE, CHARGE_THRESHOLD};
 use super::{Hero, HeroHealth, HeroPart, Joint};
 
 fn e3(x: f32, y: f32, z: f32) -> Quat {
@@ -394,8 +394,87 @@ pub(crate) fn attack_pose(variant: u8, phase: &Phase, p: f32) -> Pose {
     match variant {
         1 => horizontal_slash(phase, p),
         2 => forward_thrust(phase, p),
+        v if v == super::combat::HEAVY_VARIANT => heavy_chop(phase, p),
         _ => overhead_chop(phase, p),
     }
+}
+
+/// The charged **Heavy Strike** — a bigger, weightier overhead chop: a deeper coiled wind-up, a
+/// harder full-body strike that steps in, and a planted follow-through. Same 3-phase shape as
+/// [`overhead_chop`] so it blends cleanly, just driven further (a two-fisted haymaker, not a flick).
+fn heavy_chop(phase: &Phase, p: f32) -> Pose {
+    let mut po = rest();
+    match phase {
+        Phase::Wind => {
+            // Coil back and down, sword cocked high over the shoulder — both hands on the haft.
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.05, 0.92, p), lerp(0.0, -0.16, p))), r: e3(lerp(0.0, 0.12, p), lerp(0.0, -0.4, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.0, -0.34, p), lerp(0.0, -0.28, p), 0.0));
+            po.head = Jp::r(e3(lerp(0.0, -0.1, p), lerp(0.0, 0.3, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(0.12, 0.55, p), lerp(0.0, -0.7, p), lerp(0.15, 0.6, p)));
+            po.el_r = Jp::r(rx(lerp(-0.4, -2.2, p)));
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 0.4, p), lerp(0.3, 0.7, p), lerp(0.0, -0.6, p)));
+            po.sh_l = Jp::r(e3(lerp(0.1, 0.45, p), lerp(0.0, 0.45, p), lerp(-0.15, -0.45, p)));
+            po.el_l = Jp::r(rx(lerp(-0.5, -1.5, p))); // off hand grips the haft up high too
+            po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.16, p))), r: e3(lerp(0.15, 0.3, p), lerp(-0.45, -0.3, p), lerp(0.1, 0.0, p)) };
+            po.hip_l = Jp::r(rx(lerp(0.0, -0.3, p)));
+            po.hip_r = Jp::r(rx(lerp(0.0, -0.38, p)));
+            po.knee_l = Jp::r(rx(lerp(0.0, 0.3, p)));
+            po.knee_r = Jp::r(rx(lerp(0.0, 0.34, p)));
+        }
+        Phase::Strike => {
+            // Explosive downward chop — torso whips forward, the whole body drives the blade through.
+            po.hips = Jp { t: Some(Vec3::new(0.0, 0.92 + (p * PI).sin() * 0.06, lerp(-0.16, 0.34, p))), r: e3(lerp(0.12, 0.22, p), lerp(-0.4, 0.22, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(-0.34, 0.42, p), lerp(-0.28, 0.18, p), 0.0));
+            po.head = Jp::r(e3(lerp(-0.1, 0.14, p), lerp(0.3, -0.08, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(0.55, -1.5, p), lerp(-0.7, 0.25, p), lerp(0.6, -0.2, p)));
+            po.el_r = Jp::r(rx(lerp(-2.2, -0.3, p)));
+            po.sword = Jp::r(e3(lerp(0.4, 2.9, p), lerp(0.7, -0.9, p), lerp(-0.6, -0.9, p)));
+            po.sh_l = Jp::r(e3(lerp(0.45, -0.2, p), lerp(0.45, -0.15, p), lerp(-0.45, -0.4, p)));
+            po.el_l = Jp::r(rx(lerp(-1.5, -0.9, p)));
+            po.hip_l = Jp::r(rx(lerp(-0.3, 0.5, p)));
+            po.knee_l = Jp::r(rx(lerp(0.3, 0.6, p))); // drop into a planted lunge
+            po.hip_r = Jp::r(rx(lerp(-0.38, -0.18, p)));
+            po.knee_r = Jp::r(rx(lerp(0.34, 0.45, p)));
+        }
+        Phase::Recovery => {
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.92, 1.05, p), lerp(0.34, 0.0, p))), r: e3(lerp(0.22, 0.0, p), lerp(0.22, 0.0, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.42, 0.0, p), lerp(0.18, 0.0, p), 0.0));
+            po.head = Jp::r(e3(lerp(0.14, 0.0, p), lerp(-0.08, 0.0, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(-1.5, 0.12, p), lerp(0.25, 0.0, p), lerp(-0.2, 0.15, p)));
+            po.el_r = Jp::r(rx(lerp(-0.3, -0.4, p)));
+            po.sword = Jp::r(e3(lerp(2.9, SWORD_REST_X, p), lerp(-0.9, 0.3, p), lerp(-0.9, 0.0, p)));
+            po.sh_l = Jp::r(e3(lerp(-0.2, 0.1, p), lerp(-0.15, 0.0, p), lerp(-0.4, -0.15, p)));
+            po.el_l = Jp::r(rx(lerp(-0.9, -0.5, p)));
+            po.hip_l = Jp::r(rx(lerp(0.5, 0.0, p)));
+            po.knee_l = Jp::r(rx(lerp(0.6, 0.0, p)));
+            po.hip_r = Jp::r(rx(lerp(-0.18, 0.0, p)));
+            po.knee_r = Jp::r(rx(lerp(0.45, 0.0, p)));
+        }
+    }
+    po
+}
+
+/// The held **charge stance** while winding up a Heavy Strike (after the light swing, before
+/// release): the hero hauls the blade back over the shoulder, two-handed, coiling deeper as the
+/// charge fills (`frac` 0→1). Read in [`hero_anim`] as its own clip; `release` flows into
+/// [`heavy_chop`]'s strike from roughly here.
+fn charge_stance(frac: f32) -> Pose {
+    let f = frac.clamp(0.0, 1.0);
+    let mut po = rest();
+    // Coil deepens with the charge; a faint tremble of effort at the top end.
+    po.hips = Jp { t: Some(Vec3::new(0.0, 1.05 - 0.1 * f, -0.08 * f)), r: e3(0.08 * f, -0.3 * f, 0.0) };
+    po.torso = Jp::r(e3(-0.26 * f, -0.22 * f, 0.0));
+    po.head = Jp::r(e3(-0.06 * f, 0.22 * f, 0.0));
+    po.sh_r = Jp::r(e3(0.12 + 0.4 * f, -0.55 * f, 0.15 + 0.4 * f));
+    po.el_r = Jp::r(rx(-0.4 - 1.6 * f));
+    po.sword = Jp::r(e3(SWORD_REST_X + (0.45 - SWORD_REST_X) * f, 0.3 + 0.35 * f, -0.45 * f));
+    po.sh_l = Jp::r(e3(0.1 + 0.32 * f, 0.35 * f, -0.15 - 0.28 * f));
+    po.el_l = Jp::r(rx(-0.5 - 0.95 * f));
+    po.hip_l = Jp::r(rx(-0.22 * f));
+    po.hip_r = Jp::r(rx(-0.28 * f));
+    po.knee_l = Jp::r(rx(0.24 * f));
+    po.knee_r = Jp::r(rx(0.26 * f));
+    po
 }
 
 /// attack1 — diagonal overhead chop (studio `applyOverheadChop`).
@@ -686,6 +765,15 @@ pub fn hero_anim(
             action_over_loco(&atk, &loco, moving) // running / walking attack
         } else {
             atk
+        }
+    } else if hero.charge_t > CHARGE_GRACE && hero.on_ground {
+        // Holding a Heavy Strike (the light swing has finished): coil into the charge stance,
+        // deepening as the bar fills. Layers over locomotion so you can creep while charging.
+        let st = charge_stance((hero.charge_t / CHARGE_THRESHOLD).clamp(0.0, 1.0));
+        if moving > 0.05 {
+            action_over_loco(&st, &loco, moving)
+        } else {
+            st
         }
     } else if !hero.on_ground {
         let j = jump_pose(hero.vel_y);
