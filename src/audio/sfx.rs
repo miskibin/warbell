@@ -112,9 +112,12 @@ pub(crate) struct SfxBank {
     war_horn: Handle<AudioSource>,
     /// Warp-bolt release (`warp-cast.ogg`) — shaman staff casts + fortress tower fire.
     warp_cast: Handle<AudioSource>,
-    /// Aggressive beast snarls played when a wild predator bites the hero (Wolf/Boar/Scorpion/
-    /// BogCroc have no recorded voice, so they share these). Pitch-jittered per bite.
+    /// Aggressive bite SFX played when a *light* wild predator bites the hero (Wolf/Boar/Scorpion
+    /// share this — only the wolf has a real recording). `wolf-bite.ogg` = a sharp canine snarl,
+    /// trimmed to the punchy snap. Pitch-jittered per bite.
     beast_snarls: Vec<Handle<AudioSource>>,
+    /// Heavy-beast bite SFX (bear/croc/golem). Two trimmed bear attack-impact roars
+    /// (`bear-bite-1/2.ogg`) — deeper + louder than the snarls, picked at random per bite.
     beast_roars: Vec<Handle<AudioSource>>,
 }
 
@@ -158,11 +161,8 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
         boss_windup: asset.load("audio/ability-cast.ogg"),
         war_horn: asset.load("audio/war-horn.ogg"),
         warp_cast: asset.load("audio/warp-cast.ogg"),
-        beast_snarls: ["audio/monster-snarl.ogg", "audio/monster-growl.ogg", "audio/bear-growl.ogg"]
-            .iter()
-            .map(|f| asset.load(*f))
-            .collect(),
-        beast_roars: ["audio/bear-roar.ogg", "audio/monster-growl.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        beast_snarls: ["audio/wolf-bite.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        beast_roars: ["audio/bear-bite-1.ogg", "audio/bear-bite-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
     });
 }
 
