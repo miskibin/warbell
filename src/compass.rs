@@ -12,10 +12,15 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
+use crate::boss::Boss;
+use crate::chest::Chest;
+use crate::dying::Dying;
 use crate::game_state::AppState;
+use crate::orks::Ork;
 use crate::player::Hero;
 use crate::ui::fonts::{label, UiFonts, FONT_CAPTION};
 use crate::ui::theme::*;
+use crate::warlord::Warlord;
 
 // ── Layout (px) ──────────────────────────────────────────────────────────────────────
 const STRIP_W: f32 = 440.0;
@@ -30,6 +35,44 @@ const TICK_STEP_DEG: f32 = 22.5;
 /// Landmark icon size + how far below the baseline it sits.
 const PIP: f32 = 15.0;
 const PIP_TOP: f32 = 20.0;
+
+// ── Live radar blips (enemies + loot) ────────────────────────────────────────────────
+// Three kinds of moving/discoverable target ride the same scale as the fixed landmarks, but
+// only when the hero is within range — so the strip stays a heading bar that lights up with
+// what's actually near. Each kind has a small pool of pre-spawned nodes refilled every frame
+// from the nearest N targets; spare pool nodes hide.
+/// Orks (camp warbands + night-wave invaders) show as red dots within this range (world units).
+const ORK_RANGE: f32 = 46.0;
+/// Bosses (biome wardens + the Warlord) show as a danger mark — only once you're this close.
+const BOSS_RANGE: f32 = 78.0;
+/// Unopened loot chests show as a gold coin within this range.
+const CHEST_RANGE: f32 = 50.0;
+/// Pool sizes (max blips drawn per kind — the nearest ones win; the rest are silently dropped).
+const ORK_POOL: usize = 14;
+const BOSS_POOL: usize = 5;
+const CHEST_POOL: usize = 6;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Blip {
+    Ork,
+    Boss,
+    Chest,
+}
+impl Blip {
+    fn range(self) -> f32 {
+        match self {
+            Blip::Ork => ORK_RANGE,
+            Blip::Boss => BOSS_RANGE,
+            Blip::Chest => CHEST_RANGE,
+        }
+    }
+}
+
+/// A pooled live-radar blip: its `kind` decides which target list fills it each frame.
+#[derive(Component)]
+struct CompassBlip {
+    kind: Blip,
+}
 
 #[derive(Component)]
 struct CompassRoot;
@@ -48,7 +91,8 @@ struct CompassPip {
 pub struct CompassPlugin;
 impl Plugin for CompassPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_compass).add_systems(Update, update_compass);
+        app.add_systems(Startup, setup_compass)
+            .add_systems(Update, (update_compass, update_blips));
     }
 }
 
@@ -72,6 +116,8 @@ fn setup_compass(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<AssetS
     // Tintable game-icon silhouettes (solid colour → high contrast over any scene behind the strip).
     let home_icon = assets.load("icons/gameicons/stat_pop.png"); // a house → the home keep
     let ork_icon = assets.load("icons/gameicons/axe.png"); // an axe → Gnashfang Hold (the orks)
+    let boss_icon = assets.load("icons/gameicons/sym_warn.png"); // a warning mark → a nearby boss
+    let coin_icon = assets.load("icons/gameicons/stat_gold.png"); // coins → an unopened loot chest
     // Full-width wrapper centres the fixed-width strip on screen.
     commands
         .spawn(Node {
@@ -161,6 +207,58 @@ fn setup_compass(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<AssetS
                         CompassPip { home },
                     ));
                 }
+
+                // ── Live-radar blip pools (start hidden; `update_blips` shows the nearest few) ──
+                // Orks: small red dots straddling the baseline.
+                for _ in 0..ORK_POOL {
+                    s.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(BASELINE_Y - 3.0),
+                            width: Val::Px(7.0),
+                            height: Val::Px(7.0),
+                            border_radius: BorderRadius::all(Val::Percent(50.0)),
+                            display: Display::None,
+                            ..default()
+                        },
+                        BackgroundColor(RED),
+                        CompassBlip { kind: Blip::Ork },
+                    ));
+                }
+                // Bosses: a danger mark below the line, larger so it reads over the dots.
+                for _ in 0..BOSS_POOL {
+                    let mut img = ImageNode::new(boss_icon.clone());
+                    img.color = RED;
+                    s.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(PIP_TOP - 2.0),
+                            width: Val::Px(18.0),
+                            height: Val::Px(18.0),
+                            display: Display::None,
+                            ..default()
+                        },
+                        img,
+                        CompassBlip { kind: Blip::Boss },
+                    ));
+                }
+                // Chests: a gold coin below the line.
+                for _ in 0..CHEST_POOL {
+                    let mut img = ImageNode::new(coin_icon.clone());
+                    img.color = GOLD;
+                    s.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(PIP_TOP + 1.0),
+                            width: Val::Px(13.0),
+                            height: Val::Px(13.0),
+                            display: Display::None,
+                            ..default()
+                        },
+                        img,
+                        CompassBlip { kind: Blip::Chest },
+                    ));
+                }
             });
         });
 }
@@ -203,5 +301,88 @@ fn update_compass(
             continue;
         }
         node.left = Val::Px(place(bearing_of(d)) - PIP / 2.0);
+    }
+}
+
+/// Nearest `cap` targets within `range` of `hero`, each as `(distance, bearing)`, closest first.
+fn nearest(
+    targets: impl Iterator<Item = Vec2>,
+    hero: Vec2,
+    range: f32,
+    cap: usize,
+) -> Vec<(f32, f32)> {
+    let mut v: Vec<(f32, f32)> = targets
+        .filter_map(|p| {
+            let d = p - hero;
+            let dist = d.length();
+            // Skip anything on top of the hero (no meaningful heading) or out of range.
+            (dist > 0.5 && dist < range).then_some((dist, bearing_of(d)))
+        })
+        .collect();
+    v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    v.truncate(cap);
+    v
+}
+
+/// Fills the live-radar blip pools each frame from the nearest orks / bosses / loot chests, so the
+/// compass lights up with what's actually near and goes quiet when nothing is. Spare pool nodes hide.
+#[allow(clippy::type_complexity)]
+fn update_blips(
+    state: Res<State<AppState>>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    hero_q: Query<&GlobalTransform, With<Hero>>,
+    ork_q: Query<&GlobalTransform, (With<Ork>, Without<Dying>)>,
+    boss_q: Query<&GlobalTransform, (With<Boss>, Without<Dying>)>,
+    warlord_q: Query<&GlobalTransform, (With<Warlord>, Without<Dying>)>,
+    chest_q: Query<(&GlobalTransform, &Chest)>,
+    mut blips: Query<(&CompassBlip, &mut Node, Option<&mut BackgroundColor>)>,
+) {
+    if *state.get() != AppState::Playing {
+        return; // the pool nodes are children of the strip, which `update_compass` already hides.
+    }
+    let (Ok(cam), Ok(hero)) = (cam_q.single(), hero_q.single()) else { return };
+    let hero_xz = hero.translation().xz();
+
+    let fwd = cam.forward();
+    let cam_bearing = bearing_of(Vec2::new(fwd.x, fwd.z));
+    let place = |bearing: f32| CENTER_X + wrap_pi(bearing - cam_bearing).to_degrees() * PX_PER_DEG;
+
+    let orks = nearest(ork_q.iter().map(|t| t.translation().xz()), hero_xz, ORK_RANGE, ORK_POOL);
+    let bosses = nearest(
+        boss_q.iter().chain(warlord_q.iter()).map(|t| t.translation().xz()),
+        hero_xz,
+        BOSS_RANGE,
+        BOSS_POOL,
+    );
+    let chests = nearest(
+        chest_q.iter().filter(|(_, c)| !c.opened).map(|(t, _)| t.translation().xz()),
+        hero_xz,
+        CHEST_RANGE,
+        CHEST_POOL,
+    );
+
+    let (mut oi, mut bi, mut ci) = (0usize, 0usize, 0usize);
+    for (blip, mut node, bg) in &mut blips {
+        let (list, idx, half) = match blip.kind {
+            Blip::Ork => (&orks, &mut oi, 3.5),
+            Blip::Boss => (&bosses, &mut bi, 9.0),
+            Blip::Chest => (&chests, &mut ci, 6.5),
+        };
+        let i = *idx;
+        *idx += 1;
+        match list.get(i) {
+            Some(&(dist, bearing)) => {
+                node.display = Display::Flex;
+                node.left = Val::Px(place(bearing) - half);
+                // Ork dots fade with distance so a far-off camp reads fainter than one on your heels.
+                if blip.kind == Blip::Ork {
+                    if let Some(mut c) = bg {
+                        let a = 0.4 + 0.6 * (1.0 - dist / blip.kind.range()).clamp(0.0, 1.0);
+                        *c = BackgroundColor(RED.with_alpha(a));
+                    }
+                }
+            }
+            None => node.display = Display::None,
+        }
     }
 }
