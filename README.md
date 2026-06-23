@@ -24,6 +24,7 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 |---|---|---|
 | ![Defend against the horde](site/screenshots/fight-orks.png) | ![Night combat](site/screenshots/night-combat.png) | ![The ork fortress](site/screenshots/ork-fortress.png) |
 | ![Snow biome](site/screenshots/snow-biome.png) | ![Desert biome](site/screenshots/desert-biome.png) | ![Swamp fortress](site/screenshots/swamp-fortress.png) |
+| <img width="1917" height="1091" alt="image" src="https://github.com/user-attachments/assets/97b5a5d6-038e-483c-b041-e9641e749aaa" /> |
 
 ## Controls
 
