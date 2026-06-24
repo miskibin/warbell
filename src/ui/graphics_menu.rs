@@ -108,6 +108,7 @@ enum ToggleId {
     Dof,
     Outline,
     GodRays,
+    MotionBlur,
     Vsync,
     Mute,
 }
@@ -343,6 +344,7 @@ fn graphics_pane(p: &mut Pane<'_>, fonts: &UiFonts, quality: GraphicsQuality, s:
     check_row(p, fonts, "Depth of field", ToggleId::Dof, s.depth_of_field);
     check_row(p, fonts, "Outline", ToggleId::Outline, s.outline);
     check_row(p, fonts, "God rays", ToggleId::GodRays, s.god_rays);
+    check_row(p, fonts, "Motion blur", ToggleId::MotionBlur, s.motion_blur);
 }
 
 fn display_pane(p: &mut Pane<'_>, fonts: &UiFonts, w: &WindowSettings) {
@@ -640,6 +642,7 @@ fn on_toggle_change(
         ToggleId::Dof => set_custom(&mut quality, || settings.depth_of_field = on),
         ToggleId::Outline => set_custom(&mut quality, || settings.outline = on),
         ToggleId::GodRays => set_custom(&mut quality, || settings.god_rays = on),
+        ToggleId::MotionBlur => set_custom(&mut quality, || settings.motion_blur = on),
         ToggleId::Vsync => window.vsync = on, // window setting — independent of the render preset
         ToggleId::Mute => audio.muted = on,   // audio setting
     }
@@ -737,6 +740,7 @@ fn sync_controls(
             ToggleId::Dof => settings.depth_of_field,
             ToggleId::Outline => settings.outline,
             ToggleId::GodRays => settings.god_rays,
+            ToggleId::MotionBlur => settings.motion_blur,
             ToggleId::Vsync => window.vsync,
             ToggleId::Mute => audio.muted,
         };

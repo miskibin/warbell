@@ -126,8 +126,7 @@ impl AtmoSample {
             ambient_color: srgb(ambient_color),
             ambient_brightness,
             fog_density,
-            // Island base: neutral bloom. Callers that want a hotter glow (the Blight) bump this
-            // on the returned sample.
+            // Island base: neutral bloom. Callers that want a hotter glow (the Blight) bump it.
             bloom_scale: 1.0,
         }
     }

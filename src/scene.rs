@@ -6,7 +6,7 @@
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::{Exposure, Hdr};
-use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
+use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 // 0.19: `Atmosphere` + `ScatteringMedium` moved bevy::pbr → bevy::light, and the procedural sky is
 // now a standalone entity (not a camera component) opted into per-camera by `AtmosphereSettings`.
@@ -565,6 +565,12 @@ fn setup_camera(
         (
             DepthPrepass,
             NormalPrepass,
+            // Motion-vector prepass: present from spawn so the velocity texture is allocated from
+            // frame 0. It is deliberately NEVER toggled at runtime — adding it to a live view
+            // crashes (the texture isn't reallocated, so the bg-motion-vectors pipeline mismatches
+            // the render pass → wgpu validation error → quit). `quality::apply_quality` toggles only
+            // the `MotionBlur` effect that consumes it (off by default). Cheap on this low-poly scene.
+            MotionVectorPrepass,
             // 0.19 contact shadows (screen-space; requires the depth prepass above). High/Ultra
             // carry it; `quality::apply_quality` strips it on Low alongside the depth prepass.
             ContactShadows::default(),

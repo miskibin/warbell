@@ -16,6 +16,7 @@ use bevy::camera::Exposure;
 use bevy::light::{FogVolume, VolumetricFog};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
+use bevy::post_process::effect_stack::Vignette;
 
 use crate::dof::Dof;
 use bevy::prelude::*;
@@ -61,6 +62,9 @@ impl Default for LightOverride {
 struct Cheats<'w> {
     bank: ResMut<'w, crate::economy::Bank>,
     player: ResMut<'w, crate::player::PlayerRes>,
+    /// Live look knobs (saturation / grain / chromatic), edited by the Render section. Rides here
+    /// because `panel_ui` is already at the 16-param ceiling.
+    look: ResMut<'w, crate::postfx::LookSettings>,
 }
 
 pub struct DebugPanelPlugin;
@@ -139,6 +143,8 @@ fn panel_ui(
             // camera row from the panel.
             Option<&mut Outline>,
             Option<&mut VolumetricFog>,
+            // Cinematic vignette (built-in post effect) — absent on the Low preset, so optional.
+            Option<&mut Vignette>,
         ),
         With<Camera3d>,
     >,
@@ -258,6 +264,7 @@ fn panel_ui(
                 mut exposure,
                 mut outline,
                 mut volfog,
+                mut vignette,
             )) = cam.single_mut()
             {
                 egui::CollapsingHeader::new("Fog").default_open(true).show(ui, |ui| {
@@ -314,10 +321,22 @@ fn panel_ui(
                 egui::CollapsingHeader::new("Render").default_open(true).show(ui, |ui| {
                     ui.label("Exposure / colour grade");
                     ui.add(egui::Slider::new(&mut exposure.ev100, 7.0..=13.0).text("exposure ev100"));
-                    ui.add(egui::Slider::new(&mut grading.global.post_saturation, 0.5..=2.0).text("saturation"));
+                    // Saturation is routed through `LookSettings` (read by grade.rs) so it STICKS —
+                    // editing `grading.post_saturation` directly was overwritten every frame. The
+                    // main washed-out lever; push past 1.2 to richen the AgX look.
+                    ui.add(egui::Slider::new(&mut cheats.look.saturation, 0.5..=2.5).text("saturation ⭐"));
                     ui.add(egui::Slider::new(&mut grading.shadows.contrast, 0.5..=1.5).text("shadow contrast"));
                     ui.add(egui::Slider::new(&mut grading.midtones.contrast, 0.5..=1.5).text("mid contrast"));
                     ui.add(egui::Slider::new(&mut grading.highlights.contrast, 0.5..=1.5).text("high contrast"));
+
+                    ui.separator();
+                    ui.label("Cinematic lens (post FX)");
+                    ui.add(egui::Slider::new(&mut cheats.look.chromatic, 0.0..=0.03).text("chromatic aberration"));
+                    if let Some(vig) = vignette.as_mut() {
+                        ui.add(egui::Slider::new(&mut vig.intensity, 0.0..=0.6).text("vignette"));
+                    } else {
+                        ui.weak("vignette off (Low graphics preset)");
+                    }
 
                     ui.separator();
                     ui.label("Outline (crisp edges)");

@@ -157,7 +157,12 @@ fn fragment(
         // (3) soft grass detail imprint on up-facing fragments, normalised by mean luminance.
         //     Off-grass the imprint collapses to its luminance so snow keeps the blade-scale
         //     value texture without picking up the green cast.
-        let top_face = step(0.5, in.world_normal.y);
+        // Soft slope fade, NOT a hard `step(0.5, …)`. The chamfered terrace lip rolls its
+        // normal from ~0.92 (top edge) to ~0.37 (base) across ONE facet, so a hard step cut
+        // the grass imprint along a line mid-triangle → a crisp green "wedge" on the cliff
+        // lip. `smoothstep` fades the imprint down the lip instead (band matches `topw`
+        // above), so the lip keeps grass but melts into the dirt wall with no triangle.
+        let top_face = smoothstep(0.35, 0.80, in.world_normal.y);
         let det = sample_detail(wp, detail_scale) / max(mean, 0.01);
         let det_l = dot(det, vec3<f32>(0.2126, 0.7152, 0.0722));
         let det_c = mix(vec3<f32>(det_l), det, green);

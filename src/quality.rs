@@ -34,6 +34,8 @@ use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::light::{CascadeShadowConfig, DirectionalLight, DirectionalLightShadowMap};
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
+use bevy::post_process::effect_stack::{ChromaticAberration, Vignette};
+use bevy::post_process::motion_blur::MotionBlur;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use serde::{Deserialize, Serialize};
@@ -195,6 +197,11 @@ pub struct GraphicsSettings {
     pub depth_of_field: bool,
     pub outline: bool,
     pub god_rays: bool,
+    /// Per-object motion blur (`bevy_post_process`). OFF by default on every preset — it forces an
+    /// always-on motion-vector prepass, so it's strictly opt-in. `#[serde(default)]` = `false`, so
+    /// old saved configs (written before this field existed) load with it off.
+    #[serde(default)]
+    pub motion_blur: bool,
     /// Internal-3D render resolution as a fraction of the window (0.30–1.0). 1.0 = native. The
     /// dominant fragment-cost lever on weak GPUs (cost ≈ scale²); UI/post stay full-res.
     pub render_scale: f32,
@@ -219,6 +226,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             depth_of_field: true,
             outline: true,
             god_rays: true, // screen-space light shafts (godrays.rs) — cheap, so High carries them too
+            motion_blur: false, // opt-in only — see the field doc
             render_scale: 1.0,
         },
         GraphicsQuality::Ultra => GraphicsSettings {
@@ -230,6 +238,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             depth_of_field: true,
             outline: true,
             god_rays: true,
+            motion_blur: false,
             render_scale: 1.0,
         },
         // Low: tuned for integrated GPUs — SSAO/bloom/DoF/outline off (each strips a whole pass),
@@ -244,6 +253,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             depth_of_field: false,
             outline: false,
             god_rays: false,
+            motion_blur: false,
             render_scale: 0.6,
         },
         GraphicsQuality::Custom => preset_settings(GraphicsQuality::High),
@@ -300,6 +310,7 @@ impl Plugin for QualityPlugin {
             // env override / saved config locked the preset and the adapter is a weak device type.
             .add_systems(Startup, detect_adapter_quality)
             .add_systems(Update, debug_qswitch) // FOREST_QSWITCH=<preset>: flip preset at t≈4s (crash repro)
+            .add_systems(Update, debug_mbtoggle) // FOREST_MBTOGGLE=1: flip motion-blur at t≈4s (crash repro)
             .add_systems(
                 Update,
                 (
@@ -343,6 +354,24 @@ fn debug_qswitch(
     if time.elapsed_secs() >= 4.0 {
         info!("FOREST_QSWITCH: switching preset to {:?}", target);
         *quality = target;
+        *done = true;
+    }
+}
+
+/// Debug repro: `FOREST_MBTOGGLE=1` flips the motion-blur setting once at ~4 s of wall-clock — the
+/// runtime toggle the player hits in Settings — to reproduce the crash headlessly. Inert otherwise.
+fn debug_mbtoggle(mut settings: ResMut<GraphicsSettings>, mut frame: Local<u32>, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    if std::env::var("FOREST_MBTOGGLE").is_err() {
+        *done = true;
+        return;
+    }
+    *frame += 1;
+    if *frame == 90 {
+        settings.motion_blur = !settings.motion_blur;
+        info!("FOREST_MBTOGGLE: motion_blur -> {} (runtime toggle)", settings.motion_blur);
         *done = true;
     }
 }
@@ -496,6 +525,30 @@ fn apply_quality(
             e.insert(crate::godrays::default_godrays());
         } else {
             e.remove::<crate::godrays::GodRays>();
+        }
+
+        // Cinematic lens (built-in `bevy_post_process` effects): a static edge vignette + a subtle
+        // chromatic aberration (punched on hits by `postfx::drive_chromatic`). Both ride in the
+        // existing effect-stack pass — no new render-graph node — so they're a cheap premium-preset
+        // dressing. Same on/off gate as god-rays (High/Ultra on, Low off). Film grain is a separate
+        // UI overlay (`postfx`), gated there.
+        if god {
+            e.insert((crate::postfx::default_vignette(), crate::postfx::default_chromatic()));
+        } else {
+            e.remove::<Vignette>();
+            e.remove::<ChromaticAberration>();
+        }
+
+        // Motion blur: opt-in (off by default). Toggle ONLY the blur effect here — the
+        // motion-vector prepass that feeds it lives on the camera from spawn and is never toggled,
+        // because adding it to a live view crashes wgpu (the velocity texture isn't reallocated, so
+        // the bg-motion-vectors pipeline mismatches the pass). MotionBlur safely reads the
+        // always-present texture, same as the outline/DoF effect toggles. Shutter > 0.5 over-blurs
+        // past a true 24fps shutter on purpose — a clearly-visible artistic blur when enabled.
+        if s.motion_blur {
+            e.insert(MotionBlur { shutter_angle: 1.0, samples: 2 });
+        } else {
+            e.remove::<MotionBlur>();
         }
 
         // Normal prepass: dead weight when nothing consumes it (SSAO + outline both off), so drop it.

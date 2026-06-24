@@ -35,10 +35,10 @@ use crate::audio::MusicState;
 /// Warden HP at level 1, ×`HP_GROWTH` per level. Out-stats a bare hero on purpose (mid-game) —
 /// a deliberately long, attrition fight; bumped (again) so a geared hero can't melt a warden in
 /// a few swings — it must be a sustained, dangerous duel.
-const BASE_HP: f32 = 3200.0;
+const BASE_HP: f32 = 2720.0; // 15% under the old 3200 — wardens were too tanky
 const HP_GROWTH: f32 = 1.18;
 /// Warden melee damage to the hero at level 1, ×`DMG_GROWTH` per level.
-const BASE_MELEE: f32 = 58.0;
+const BASE_MELEE: f32 = 49.3; // 15% under the old 58 (signature = melee×SIG_MULT scales with it)
 const DMG_GROWTH: f32 = 1.13;
 /// Signature attack damage = melee × this.
 const SIG_MULT: f32 = 1.6;

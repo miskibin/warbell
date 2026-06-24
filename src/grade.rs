@@ -83,25 +83,25 @@ fn reactive(p: &tileworld_core::player::Player, now: f64) -> (f32, f32) {
 fn drive_grade(
     time: Res<Time>,
     player: Option<Res<PlayerRes>>,
+    look: Res<crate::postfx::LookSettings>,
     mut cams: Query<&mut ColorGrading, With<Camera3d>>,
     mut overlays: Query<&mut BackgroundGradient, With<Vignette>>,
-    mut base_sat: Local<Option<f32>>,
-    mut last_drain: Local<f32>,
+    mut last_sat: Local<f32>,
     mut last_darkness: Local<f32>,
 ) {
     let (darkness, drain) = match player.as_deref() {
         Some(p) => reactive(&p.0, time.elapsed_secs_f64()),
         None => (0.0, 0.0),
     };
-    // Drain the camera's saturation toward grey on damage, restoring forest's base at rest
-    // (captured once, so we never clobber the bespoke colour grade). Skip the write when the drain
-    // is unchanged so we don't re-mark `ColorGrading` (and the gradient asset) dirty every frame at
-    // rest — the overlay is invisible and static the vast majority of the time.
-    if (drain - *last_drain).abs() > 1e-4 || base_sat.is_none() {
-        *last_drain = drain;
+    // Saturation = the panel-tunable base (`LookSettings`, the washed-out lever) drained toward
+    // grey on a hit. Reading the base from the resource — rather than capturing the camera's once —
+    // is what lets the F1 saturation slider actually stick. Skip the write when unchanged so we
+    // don't re-mark `ColorGrading` dirty every frame at rest.
+    let sat = look.saturation * (1.0 - drain).max(0.0);
+    if (sat - *last_sat).abs() > 1e-4 {
+        *last_sat = sat;
         for mut cg in &mut cams {
-            let base = *base_sat.get_or_insert(cg.global.post_saturation);
-            cg.global.post_saturation = base * (1.0 - drain).max(0.0);
+            cg.global.post_saturation = sat;
         }
     }
     // Debug: `FOREST_GRADETEST=1` forces a strong vignette so the harness can verify the radial

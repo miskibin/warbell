@@ -18,10 +18,10 @@ const DECK_HALF_Z: f32 = 1.2;
 /// Bank overhang past the water edge on each side (world units).
 const OVERHANG: f32 = 1.4;
 /// Min world-XZ gap between two bridges (so they don't cluster on one crossing).
-const MIN_SPACING: f32 = 13.0;
+const MIN_SPACING: f32 = 9.0;
 /// At most this many bridges (four rivers now cross the island — each needs several crossings
 /// or the player/invaders detour absurdly far).
-const MAX_BRIDGES: usize = 12;
+const MAX_BRIDGES: usize = 20;
 /// Acceptable half-width of the channel being bridged (skip slivers + wide lake-like spans —
 /// a clean river crossing is a couple units across).
 const MIN_HALF: f32 = 0.6;
