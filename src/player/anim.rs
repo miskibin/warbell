@@ -419,7 +419,7 @@ fn heavy_chop(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(lerp(0.0, -0.02, p), lerp(0.0, 0.18, p), 0.0)); // eyes stay on the target
             po.sh_r = Jp::r(e3(lerp(0.12, -2.9, p), 0.0, lerp(0.15, 0.05, p))); // raise up the FRONT arc (neg X) → arm overhead, leaning toward the foe (no back-wrench)
             po.el_r = Jp::r(rx(lerp(-0.4, -0.3, p))); // near-straight: arm + blade read as one raised line
-            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.8, p), lerp(0.3, 0.2, p), 0.0)); // counter-rotate so the blade points UP in the front-raised frame
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.3, p), lerp(0.3, 0.2, p), 0.0)); // counter-rotate: blade laid back over the head toward horizontal (natural cock, not a vertical flagpole)
             po.sh_l = Jp::r(e3(lerp(0.1, 0.45, p), lerp(0.0, 0.35, p), lerp(-0.15, -0.15, p))); // off hand drawn up to the haft (two-handed)
             po.el_l = Jp::r(rx(lerp(-0.5, -1.2, p)));
             po.shield = Jp { t: Some(SHIELD_REST_T), r: e3(lerp(0.15, 0.3, p), lerp(-1.5, -1.0, p), 0.0) };
@@ -436,7 +436,7 @@ fn heavy_chop(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(lerp(-0.02, 0.14, p), lerp(0.18, -0.06, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-2.9, -1.45, p), lerp(0.0, 0.1, p), lerp(0.05, -0.12, p))); // overhead-front → down-front (one forward arc)
             po.el_r = Jp::r(rx(lerp(-0.3, -0.3, p)));
-            po.sword = Jp::r(e3(lerp(2.8, 2.75, p), lerp(0.2, -0.5, p), lerp(0.0, -0.3, p))); // blade whips down through the front
+            po.sword = Jp::r(e3(lerp(2.3, 2.75, p), lerp(0.2, -0.5, p), lerp(0.0, -0.3, p))); // blade whips down through the front
             po.sh_l = Jp::r(e3(lerp(0.45, -0.2, p), lerp(0.35, -0.1, p), lerp(-0.15, -0.4, p)));
             po.el_l = Jp::r(rx(lerp(-1.2, -0.85, p)));
             po.hip_l = Jp::r(rx(lerp(-0.2, 0.5, p)));
