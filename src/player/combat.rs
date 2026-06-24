@@ -66,6 +66,32 @@ const SHAKE_HIT: f32 = 0.20;
 const KNOCKBACK: f32 = 6.0;
 const KNOCKBACK_CRIT: f32 = 9.0;
 
+// ── Charged Heavy Strike ────────────────────────────────────────────────────────────────────────
+// Holding LMB past `CHARGE_THRESHOLD` and releasing unleashes a guaranteed-crit Heavy Strike — a
+// SECOND, separate swing fired ~0.8s after the light one (so it never clunks into a double). A quick
+// tap is unchanged: the light swing still fires on press, and the charge stays invisible below
+// `CHARGE_GRACE`. The 0.8s wind-up + slowed feet (`CHARGE_MOVE_MULT`) + a small stamina cost are the
+// price. See `player::charge` (the bar UI) and `anim::charge_stance` / `anim::heavy_chop`.
+/// Hold time (s) required to qualify the release as a Heavy Strike.
+pub(crate) const CHARGE_THRESHOLD: f32 = 0.8;
+/// Below this hold time (s) the charge is invisible — a normal tap never flashes the bar or slows.
+pub(crate) const CHARGE_GRACE: f32 = 0.2;
+/// Move-speed multiplier while charging (read by `movement::player_move`).
+pub(crate) const CHARGE_MOVE_MULT: f32 = 0.4;
+/// `attack_variant` sentinel for the heavy swing (the light swing rolls 0..=2; `anim` maps this to
+/// `heavy_chop`).
+pub(crate) const HEAVY_VARIANT: u8 = 3;
+/// Heavy = guaranteed crit at this multiple of the swing's base damage.
+const HEAVY_MULT: f64 = 3.0;
+/// Stamina spent the instant a heavy fires (small — the wind-up is the real cost). Drawn from the
+/// same pool block/arts use, so spamming heavies trades against blocking. Exposed for the bar UI's
+/// "can I afford it" grey-out.
+pub(crate) const HEAVY_STAMINA_COST: f32 = 30.0;
+/// Heavy juice tier — a notch ABOVE a kill (`HITSTOP_KILL`/`SHAKE_KILL`) so the payoff lands hard.
+const HITSTOP_HEAVY: f32 = 0.14;
+const SHAKE_HEAVY: f32 = 0.6;
+const FOV_KICK_HEAVY: f32 = 2.4;
+
 pub fn drive_hit_stop(
     real: Res<Time<bevy::time::Real>>,
     mut vtime: ResMut<Time<bevy::time::Virtual>>,
@@ -360,7 +386,7 @@ pub fn player_attack(
     mut commands: Commands,
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
-    mut hero_q: Query<(&mut Hero, &HeroHealth)>,
+    mut hero_q: Query<(&mut Hero, &mut HeroHealth)>,
     mut targets: Query<
         (
             Entity,
@@ -376,26 +402,61 @@ pub fn player_attack(
         ),
     >,
 ) {
-    let Ok((mut hero, hh)) = hero_q.single_mut() else { return };
+    let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
     if *mode != PlayMode::Play || !player.0.is_alive() {
         hero.attacking = false;
+        hero.charge_t = -1.0;
         return;
     }
     let dt = time.delta_secs();
 
-    // Start a swing on a click — only while the cursor is locked (actually playing) and not
-    // guarding (raising the shield takes priority over swinging).
-    if !hero.attacking && !hh.blocking && orbit.locked && buttons.just_pressed(MouseButton::Left) {
-        hero.attacking = true;
-        hero.attack_t = 0.0;
-        hero.hit_dealt = false;
-        // Roll a random studio attack clip (0 overhead chop / 1 horizontal slash / 2 forward thrust)
-        // so successive swings vary instead of replaying one canned slash.
-        hero.attack_variant = (rng.unit() * 3.0).floor().clamp(0.0, 2.0) as u8;
-        // Only the exertion grunt fires on the wind-up (and only ~34% of the time — voice gates
-        // it). The whoosh is DEFERRED to hit resolution so a connecting blow plays its impact
-        // alone and a whiff plays the whoosh alone — never both (Character.tsx).
-        cues.write(AudioCue::HeroGruntSwing);
+    // Charging is gated on the same conditions as swinging: cursor locked (actually playing) and not
+    // guarding (the shield takes priority).
+    let can_act = orbit.locked && !hh.blocking;
+
+    // ── Heavy-Strike charge on the LMB hold ──────────────────────────────────────────────────────
+    // A press fires the normal light swing (unchanged) AND arms a charge. Holding past
+    // `CHARGE_THRESHOLD` and releasing fires a separate Heavy swing. Since 0.8s > the 0.45s swing,
+    // the heavy never overlaps the light — they read as a light→heavy combo, not a double-swing.
+    if can_act && buttons.just_pressed(MouseButton::Left) {
+        // Start the light swing (only if one isn't already mid-flight — can't restart in place).
+        if !hero.attacking {
+            hero.attacking = true;
+            hero.attack_t = 0.0;
+            hero.hit_dealt = false;
+            hero.heavy = false;
+            // Roll a random studio attack clip (0 overhead chop / 1 horizontal slash / 2 forward
+            // thrust) so successive swings vary instead of replaying one canned slash.
+            hero.attack_variant = (rng.unit() * 3.0).floor().clamp(0.0, 2.0) as u8;
+            // Only the exertion grunt fires on the wind-up (and only ~34% of the time — voice gates
+            // it). The whoosh is DEFERRED to hit resolution so a connecting blow plays its impact
+            // alone and a whiff plays the whoosh alone — never both (Character.tsx).
+            cues.write(AudioCue::HeroGruntSwing);
+        }
+        hero.charge_t = 0.0; // arm the charge from this press (>= 0.0 = charging)
+    }
+    // While armed (`charge_t >= 0.0`): build the hold, or resolve it on release / loss of control.
+    if hero.charge_t >= 0.0 {
+        if buttons.pressed(MouseButton::Left) && can_act {
+            hero.charge_t += dt;
+        } else {
+            // Released (or can no longer act) — fire the Heavy if held long enough and affordable.
+            if buttons.just_released(MouseButton::Left)
+                && can_act
+                && hero.charge_t >= CHARGE_THRESHOLD
+                && hh.stamina >= HEAVY_STAMINA_COST
+            {
+                hh.stamina -= HEAVY_STAMINA_COST;
+                hero.attacking = true;
+                hero.attack_t = 0.0;
+                hero.hit_dealt = false;
+                hero.heavy = true;
+                hero.attack_variant = HEAVY_VARIANT;
+                cues.write(AudioCue::HeroGruntSwing);
+                cues.write(AudioCue::Slam); // a beefier release whoosh for the heavy wind-up
+            }
+            hero.charge_t = -1.0; // disarm (under threshold, unaffordable, or lost control)
+        }
     }
     if !hero.attacking {
         return;
@@ -404,6 +465,7 @@ pub fn player_attack(
     let phase = hero.attack_t / ATTACK_DURATION;
     if phase >= 1.0 {
         hero.attacking = false;
+        hero.heavy = false; // swing done — the next light swing must not inherit the heavy tag
         return;
     }
     if hero.hit_dealt || phase < HIT_PHASE {
@@ -422,7 +484,13 @@ pub fn player_attack(
     let base = (player.0.attack_damage + mods.weapon_bonus()) * mods.power_mult(now);
     // Broadcast the cone so ore/dummies share this swing (non-crit damage).
     mods.publish_swing(origin, fwd, base.round() as f32);
-    let (dmg_f, crit) = roll_crit(base, player.0.crit_chance, rng.unit());
+    // A charged Heavy is a GUARANTEED crit at ×HEAVY_MULT — the `crit` flag below then drives the
+    // crit knockback/float/freeze/juice. A normal swing rolls its crit as before.
+    let (dmg_f, crit) = if hero.heavy {
+        (base * HEAVY_MULT, true)
+    } else {
+        roll_crit(base, player.0.crit_chance, rng.unit())
+    };
     let dmg = dmg_f.round() as f32;
     let bounty_mult = player.0.bounty_mult;
     let lifesteal = player.0.lifesteal;
@@ -453,6 +521,12 @@ pub fn player_attack(
         let mid = Vec3::new(p.x, p.y + 0.9, p.z);
         spawn_blood(&mut commands, &fx, mid, dir, dead);
         spawn_slash(&mut commands, &fx, &mut juice.materials, mid, now_s);
+        // Heavy flourish: an extra ground shockwave ring + a bright spark gout on every heavy
+        // contact (cosmetic only — the heavy is a single-target hit, no splash damage).
+        if hero.heavy {
+            spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
+            spawn_burst(&mut commands, &fx, mid, true);
+        }
         // A blood splat under the target on EVERY hit (small + brief), big + lingering on a kill.
         spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), dead, now_s);
         if dead {
@@ -496,18 +570,16 @@ pub fn player_attack(
                 o.kb = dir * if crit { KNOCKBACK_CRIT } else { KNOCKBACK };
                 o.hit_recoil = now_s;
             }
-            // Crit reads as "{dmg}!" in gold; a normal hit is the plain number.
-            let (text, color) = if crit {
-                (format!("{}!", dmg as i32), crate::combat_fx::col_kill())
+            // A heavy reads as "{dmg}!!" big in gold; a lucky crit "{dmg}!"; a normal hit the plain
+            // number.
+            let (text, color, fscale) = if hero.heavy {
+                (format!("{}!!", dmg as i32), crate::combat_fx::col_kill(), 1.5)
+            } else if crit {
+                (format!("{}!", dmg as i32), crate::combat_fx::col_kill(), 1.2)
             } else {
-                (format!("{}", dmg as i32), crate::combat_fx::col_ork_hit())
+                (format!("{}", dmg as i32), crate::combat_fx::col_ork_hit(), 1.0)
             };
-            floats.0.push(crate::combat_fx::FloatReq {
-                world: head,
-                text,
-                color,
-                scale: if crit { 1.2 } else { 1.0 },
-            });
+            floats.0.push(crate::combat_fx::FloatReq { world: head, text, color, scale: fscale });
             commands.entity(e).try_insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
             // Springy body squash-and-stretch — re-kicked in place on rapid hits so the rest
             // scale captured by the first squash is never forgotten.
@@ -630,7 +702,13 @@ pub fn player_attack(
     // = `-fwd` kicks the camera back along the swing (a directed jolt, not pure chaos). `crit`
     // is the swing-wide roll (one per swing, line ~419), so any connecting hit on a crit swing
     // gets the crit tier; a bonked townsperson (hit_any, never crit/kill) takes the light tier.
-    if killed_any {
+    if hero.heavy && hit_any {
+        // Top tier — a landed Heavy hits harder than any kill: longest freeze, biggest shake/punch.
+        juice.feedback.shake_dir = -fwd;
+        juice.feedback.trauma = (juice.feedback.trauma + SHAKE_HEAVY).min(1.0);
+        crate::combat_fx::add_fov_kick(&mut juice.feedback, FOV_KICK_HEAVY);
+        juice.hitstop.remaining = juice.hitstop.remaining.max(HITSTOP_HEAVY);
+    } else if killed_any {
         juice.feedback.shake_dir = -fwd;
         juice.feedback.trauma = (juice.feedback.trauma + SHAKE_KILL).min(1.0);
         crate::combat_fx::add_fov_kick(&mut juice.feedback, crate::combat_fx::FOV_KICK_KILL);

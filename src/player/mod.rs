@@ -11,6 +11,7 @@ pub(crate) mod anim;
 mod arts;
 mod block;
 mod camera;
+mod charge;
 mod combat;
 
 pub(crate) use combat::{
@@ -110,6 +111,16 @@ pub struct Hero {
     /// Transient: play the studio **victory** clip (sword raised, proud sway). Set by a win / a
     /// preview hook; not persisted (derived, like `attacking`).
     pub victory: bool,
+    // ── Charged Heavy Strike ──
+    /// Seconds the attack button has been held since the last press, or **`-1.0` when not charging**
+    /// (the sentinel — `>= 0.0` means a charge is armed/building). Set by `combat::player_attack`;
+    /// drives the charge bar, the move-slow ([`movement`]) and the charge stance ([`anim`]).
+    /// Transient (derived, like `attacking`) — not saved; reset to `-1.0` on a fresh run.
+    pub charge_t: f32,
+    /// Whether the *current* swing is the charged Heavy Strike (guaranteed crit, ×3 damage, max
+    /// juice) rather than a normal tap — drives the heavy pose ([`anim`]) + damage ([`combat`]).
+    /// Set on release of a full charge; cleared when the swing ends. Transient.
+    pub heavy: bool,
 }
 
 /// Hero **shield/stamina** state — only the block mechanic. HP, gold, XP/level and the combat
@@ -182,6 +193,12 @@ pub struct HeroState {
 #[derive(Resource, Default)]
 pub struct PendingHeroDamage(pub f32);
 
+/// Present when a scripted demo (`FOREST_DEMO=explore`) owns the hero's locomotion — [`movement`]
+/// yields so it doesn't fight the script (which writes pos/facing/anim directly). Lets a `FOREST_TPS`
+/// capture film the scripted walk through the real follow-cam.
+#[derive(Resource)]
+pub struct ScriptedHero;
+
 /// Set true the frame a warden's telegraphed **critical** lands on the hero. Read by
 /// [`health::apply_hero_damage`]: a critical that connects is LETHAL (one-shot) unless the hero is
 /// blocking or mid-dodge, which negates it — so the windup is the player's cue to raise the shield.
@@ -195,11 +212,16 @@ impl Plugin for PlayerPlugin {
         // Capture screenshots hold the scene's static overview camera → start in FreeRoam
         // so the follow-cam never hijacks the shot (the hero still spawns, at rest). `FOREST_FP`
         // forces Play + first-person so the eye-view can be captured (it needs the follow-cam).
+        // `FOREST_TPS=1` forces Play + THIRD-person — the real over-the-shoulder gameplay camera —
+        // so a shot/clip frames the world the way a player actually sees it (no god-cam `FOREST_CAM`
+        // guessing). Tune the orbit with `FOREST_TPS_AZ`/`_PITCH` (radians) + `_DIST` (units); pair
+        // with `FOREST_HERO` to place the hero and `FOREST_DEMO=explore` to film a real walk.
         // `FOREST_FREEROAM=1` boots into the fly-cam *without* capturing/exiting — so a fixed
         // `FOREST_CAM` view holds (the fly-cam stays put with no input), giving a pinned, identical
         // frame to A/B perf changes (e.g. `FOREST_NOCULL` on/off) off the F2 overlay.
         let fp_boot = std::env::var("FOREST_FP").is_ok();
-        let start_mode = if fp_boot {
+        let tps_boot = std::env::var("FOREST_TPS").is_ok();
+        let start_mode = if fp_boot || tps_boot {
             PlayMode::Play
         } else if std::env::var("FOREST_SHOT").is_ok()
             || std::env::var("FOREST_CLIP").is_ok()
@@ -209,6 +231,13 @@ impl Plugin for PlayerPlugin {
         } else {
             PlayMode::Play
         };
+        // Third-person-shot orbit overrides (radians / units), so a capture can pick the viewing
+        // angle without touching code. Defaults are the normal in-game over-the-shoulder pose.
+        let mut orbit = camera::OrbitCam::default();
+        let envf = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f32>().ok());
+        if let Some(a) = envf("FOREST_TPS_AZ") { orbit.azimuth = a; }
+        if let Some(p) = envf("FOREST_TPS_PITCH") { orbit.pitch = p; }
+        if let Some(d) = envf("FOREST_TPS_DIST") { orbit.dist = d; }
         app.insert_resource(start_mode)
             .init_resource::<HeroState>()
             .init_resource::<PendingHeroDamage>()
@@ -216,10 +245,10 @@ impl Plugin for PlayerPlugin {
             .init_resource::<PlayerRes>()
             .init_resource::<combat::CombatRng>()
             .init_resource::<combat::HitStop>()
-            .insert_resource(camera::OrbitCam::default())
+            .insert_resource(orbit)
             .insert_resource(camera::FirstPerson { active: fp_boot, ..default() })
             .add_systems(Startup, combat::setup_combat_fx)
-            .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, debug_grant_boons))
+            .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, charge::spawn_charge_bar, debug_grant_boons))
             // Fresh run: wipe progression + revive the hero on a new run (NOT on un-pause).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
@@ -244,6 +273,8 @@ impl Plugin for PlayerPlugin {
                     combat::drive_hit_stop, // ungated: must resume the clock after the freeze
                     arts::apply_knock, // ungated: fold queued slam knockbacks into ork kb
                     arts::sync_arts_hud, // ability-chip HUD (show/dim per readiness)
+                    charge::sync_charge_bar, // heavy-strike charge bar (show/fill per hold)
+                    charge::heavy_tip, // one-time "Hold LMB" hint near the first enemy
                 ),
             )
             // World-sim — gated on the freeze condition (`Modal::None` ⇒ Playing, no panel).
@@ -308,6 +339,15 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
         "attack" | "attack1" => swing(&mut hero, 0),
         "attack2" => swing(&mut hero, 1),
         "attack3" => swing(&mut hero, 2),
+        "heavy" => {
+            hero.heavy = true;
+            swing(&mut hero, combat::HEAVY_VARIANT); // the charged Heavy Strike chop
+        }
+        "charge" => {
+            // Force the hold from wall-clock (absolute, so nothing resets it between frames): the
+            // charge-stance coil deepens then holds at full.
+            hero.charge_t = (time.elapsed_secs() * 0.25).min(combat::CHARGE_THRESHOLD);
+        }
         "victory" => hero.victory = true,
         "jump" => {
             hero.on_ground = false;
@@ -365,6 +405,8 @@ fn spawn_hero(
                 hit_dealt: false,
                 attack_variant: 0,
                 victory: false,
+                charge_t: -1.0,
+                heavy: false,
             },
             HeroHealth::default(),
         ))
@@ -555,6 +597,8 @@ fn reset_player(
         hit_dealt: false,
         attack_variant: 0,
         victory: false,
+        charge_t: -1.0,
+        heavy: false,
     };
     tf.translation = Vec3::new(pos.x, y, pos.y);
     tf.rotation = Quat::from_rotation_y(0.0);

@@ -115,6 +115,9 @@ pub(super) struct Bodies<'w, 's> {
     animals: Query<'w, 's, &'static Animal>,
     villagers: Query<'w, 's, &'static Villager>,
     bosses: Query<'w, 's, &'static crate::boss::Boss, Without<crate::dying::Dying>>,
+    /// Present when a demo script owns the hero — `player_move` then yields locomotion to it
+    /// (bundled here to keep `player_move` under Bevy's 16-param ceiling).
+    scripted: Option<Res<'w, super::ScriptedHero>>,
 }
 
 pub fn player_move(
@@ -137,6 +140,15 @@ pub fn player_move(
 ) {
     let Ok((mut hero, mut tf)) = hero_q.single_mut() else { return };
     let t = time.elapsed_secs();
+
+    // A scripted demo (`FOREST_DEMO=explore`) owns the hero's pos/facing/anim — yield locomotion to
+    // it (don't fight it with input-driven movement) but still mirror the pose into `HeroState` so
+    // the follow-cam / weather / audio track the scripted walk.
+    if bodies.scripted.is_some() {
+        write_state(&mut state, &hero);
+        state.alive = player.0.is_alive();
+        return;
+    }
 
     // Hold still in FreeRoam (fly-cam drives the view), while down (awaiting respawn), or in build
     // mode (WASD then drives the build palette, not the knight). Keep the mirror current; `alive=false`
@@ -205,7 +217,9 @@ pub fn player_move(
         * if sprinting { SPRINT_MULT } else { 1.0 }
         * player.0.move_speed_mult as f32
         * buffs.0.speed_mult(t as f64) as f32 // active Haste buff (1.0 = none)
-        * if in_swamp { SWAMP_SLOW } else { 1.0 };
+        * if in_swamp { SWAMP_SLOW } else { 1.0 }
+        // Winding up a Heavy Strike commits you: slowed feet while the charge builds.
+        * if hero.charge_t > super::combat::CHARGE_GRACE { super::combat::CHARGE_MOVE_MULT } else { 1.0 };
     let desired = if moving { Vec2::new(move_dir.x, move_dir.z) * want_speed } else { Vec2::ZERO };
     let ramp = if moving { ACCEL } else { DECEL }; // faster to start than to stop
     let new_vel = hero.vel + (desired - hero.vel) * (dt * ramp).min(1.0);

@@ -52,6 +52,7 @@ mod dying;
 mod economy;
 mod tree_ui;
 mod firelight;
+mod footprints;
 mod footstep_fx;
 mod game_state;
 mod godrays;
@@ -268,5 +269,8 @@ fn main() {
         // Night-siege lightning flashes + delayed thunder (active only during a Wave). Standalone:
         // the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(storm::StormPlugin)
+        // Biome-aware boot-print decals trailing the hero (standalone: the tuples above are at the
+        // `Plugins` arity-15 cap).
+        .add_plugins(footprints::FootprintPlugin)
         .run();
 }

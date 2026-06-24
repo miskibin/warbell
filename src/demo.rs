@@ -24,7 +24,10 @@ impl Plugin for DemoPlugin {
     fn build(&self, app: &mut App) {
         match std::env::var("FOREST_DEMO").ok().as_deref() {
             Some("explore") => {
-                app.add_systems(Update, explore_drive.run_if(in_state(crate::game_state::Modal::None)))
+                // Mark the hero scripted so `player::movement` yields locomotion to `explore_drive`
+                // (otherwise, in a `FOREST_TPS` Play-mode capture, input-driven movement fights it).
+                app.insert_resource(crate::player::ScriptedHero)
+                    .add_systems(Update, explore_drive.run_if(in_state(crate::game_state::Modal::None)))
                     .add_systems(PostUpdate, mute_captions);
             }
             Some("defend") => {
@@ -95,12 +98,13 @@ fn sample_path(path: &[Vec2], d: f32) -> (Vec2, Vec2, bool) {
 fn explore_drive(
     time: Res<Time>,
     prog: Option<Res<crate::capture::ClipProgress>>,
+    mode: Res<crate::player::PlayMode>,
     mut hero_q: Query<(&mut Hero, &mut Transform), Without<Camera3d>>,
     mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>)>,
     mut dist: Local<f32>,
 ) {
     let dt = time.delta_secs();
-    let (Ok((mut hero, mut htf)), Ok(mut ctf)) = (hero_q.single_mut(), cam_q.single_mut()) else {
+    let Ok((mut hero, mut htf)) = hero_q.single_mut() else {
         return;
     };
     // Hold at the start until recording begins (warm-up lets shaders/lighting settle first).
@@ -129,11 +133,17 @@ fn explore_drive(
     htf.translation = Vec3::new(pos.x, y + bob, pos.y);
     htf.rotation = Quat::from_rotation_y(hero.facing);
 
-    // Third-person chase: behind the walk direction, raised, looking at the hero's head.
-    let eye = Vec3::new(pos.x, y + 1.0, pos.y);
-    let back = Vec3::new(dir.x, 0.0, dir.y).normalize_or_zero();
-    ctf.translation = eye - back * 5.8 + Vec3::Y * 2.5;
-    ctf.look_at(eye, Vec3::Y);
+    // Camera: in FreeRoam (no follow-cam runs) drive a bespoke third-person chase. In Play
+    // (`FOREST_TPS`) leave the camera to the real `player::camera::player_camera` follow, so the
+    // clip frames the walk exactly like actual gameplay instead of this stand-in rig.
+    if *mode == crate::player::PlayMode::FreeRoam {
+        if let Ok(mut ctf) = cam_q.single_mut() {
+            let eye = Vec3::new(pos.x, y + 1.0, pos.y);
+            let back = Vec3::new(dir.x, 0.0, dir.y).normalize_or_zero();
+            ctf.translation = eye - back * 5.8 + Vec3::Y * 2.5;
+            ctf.look_at(eye, Vec3::Y);
+        }
+    }
 }
 
 // ── talk: cycle the funny townsfolk barks as on-screen captions ──────────────────────

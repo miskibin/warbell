@@ -77,6 +77,21 @@ the `apt-get` line in a **SessionStart hook** (see the `session-start-hook` skil
 $env:FOREST_SHOT="shot.png"; cargo run      # warms up (≥120 frames AND ≥6s so cold pipelines/IBL settle), saves PNG, exits
 ```
 
+**For player-perspective / game-feel shots use `FOREST_TPS=1`, NOT a hand-placed `FOREST_CAM`.**
+`FOREST_TPS` boots the real over-the-shoulder **gameplay** camera (`player::camera`), so the frame
+matches what a player actually sees — no guessing fly-cam coordinates (which reliably produces
+useless god/cloud-cam angles). Just drop the hero with `FOREST_HERO="x,z"`; tune the view with
+`FOREST_TPS_AZ`/`_PITCH` (radians) + `_DIST` (units). Pair with `FOREST_DEMO=explore` to film a real
+**walking** shot (footsteps / dust kicks / footprints / anim) through the follow-cam. Reserve
+`FOREST_CAM` for deliberate god/overview framing only.
+
+```powershell
+# player-perspective still (hero framed by the real follow-cam):
+$env:FOREST_SHOT="shot.png"; $env:FOREST_TPS="1"; $env:FOREST_HERO="-18,24"; cargo run
+# real gameplay walk clip (the demo drives the hero; the follow-cam films it):
+$env:FOREST_CLIP="target/clips/walk"; $env:FOREST_TPS="1"; $env:FOREST_TPS_PITCH="0.6"; $env:FOREST_DEMO="explore"; cargo run
+```
+
 For **GIFs / video** (itch.io promo, motion bugs) use the clip mode instead — it saves a numbered
 PNG per frame to a dir, then ffmpeg stitches it. A clamped fixed timestep keeps motion smooth
 despite the per-frame encode stall; `FOREST_CLIP_ORBIT` slowly circles a point. `siege_clip_refill`
@@ -108,6 +123,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
 | `FOREST_FP=1` | boot straight into first-person (forces Play so the follow-cam eye-view can be captured; `player/camera.rs`) |
+| `FOREST_TPS=1` (+`_AZ`/`_PITCH` rad, `_DIST` units) | boot Play + **third-person** real follow-cam so a shot/clip frames the world like actual gameplay (NOT a god-cam `FOREST_CAM`); place the hero with `FOREST_HERO`, film a walk with `FOREST_DEMO=explore` (`player/mod.rs`, `player/camera.rs`) |
 | `FOREST_LOADTEST=1` | hold the boot loading veil up (even under a capture) so it can be shot (`loading.rs`); pair with `FOREST_SHOT`+`FOREST_MENU=1` |
 | `FOREST_PANEL=tree\|inv` | seed + open the upgrade-tree / satchel panel for a shot |
 | `FOREST_EQUIP="sword_gold,gold_armor"` | equip the listed item ids at startup so the hero model shows its weapon/armor |
@@ -115,6 +131,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_QUALITY=ultra\|high\|low` | startup graphics preset (`quality.rs`); `ultra` = demo showcase (visible god rays + maxed AA/AO/shadows) |
 | `FOREST_AUDIOTEST` / `FOREST_GRADETEST` | isolate audio / reactive-grade for testing |
 | `FOREST_FLOATTEST=1` | continuously stage sample floating combat numbers near the hero (style preview) |
+| `FOREST_FEETTEST=1` | stamp a marching row of footprint decals (a stretch per surface look) on the lawn at `z≈18–25`, `x≈0` so a shot can frame the boot-print decal in isolation — the in-world trail only stamps while the hero walks (`footprints.rs`) |
 | `FOREST_FLAGTEST=1` | park one cloth banner in open air at `(0, 6, -22)` to frame the flutter in isolation (`banner.rs`). NB the cloth streams along world ≈`(0.9, 0, -0.43)` — shoot from a spot perpendicular to that or it reads edge-on |
 | `BEVY_ASSET_ROOT` | point at this dir if running the binary from elsewhere (WGSL loads from `assets/shaders/`) |
 
