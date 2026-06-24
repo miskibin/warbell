@@ -18,6 +18,9 @@ use crate::worldmap;
 
 /// Downward pull on settling dust motes.
 const GRAV: f32 = 6.0;
+/// A drop shorter than this lands clean — no dust kick. (Below `movement::FALL_SAFE`, so even a
+/// painless hop still puffs, but a flat-ground micro-bounce doesn't.)
+const LAND_MIN_FALL: f32 = 0.6;
 
 /// A kicked-up dust/splash mote — shrinks to nothing over its life (shared material, no per-mote
 /// alpha, so thousands still batch).
@@ -102,8 +105,11 @@ fn surf_mat(fx: &FxAssets, pos: Vec2) -> Handle<StandardMaterial> {
 }
 
 /// On each gait half-cycle (a footfall), kick up a puff — or a splash + ripple over the river.
+/// Also two non-footfall beats: a fatter **landing** burst on touchdown after a real drop, and
+/// **sprint** footfalls that throw more, faster dust trailing behind the heading.
 fn emit(
     mut last_half: Local<i64>,
+    mut last_ground: Local<bool>,
     mut commands: Commands,
     fx: Option<Res<FxAssets>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -112,6 +118,21 @@ fn emit(
     let (Some(fx), Ok(hero)) = (fx, hero_q.single()) else {
         return;
     };
+
+    // ── Landing kick: on the airborne→grounded edge, a drop above the threshold thumps up dust,
+    // scaled by fall height. (Runs before the footfall gate so a jump that lands while standing
+    // still still puffs.) At startup `air_takeoff_y == y`, so the fall is 0 and nothing fires.
+    if hero.on_ground && !*last_ground {
+        let fall = hero.air_takeoff_y - hero.y;
+        if fall > LAND_MIN_FALL {
+            let k = ((fall - LAND_MIN_FALL) / 3.0).clamp(0.0, 1.0);
+            let mat = surf_mat(&fx, hero.pos);
+            let feet = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
+            spawn_puffs(&mut commands, &fx.puff, &mat, feet, 7 + (k * 9.0) as u32, 1.4 + k * 1.8, 0.9 + k * 0.4, 0.0);
+        }
+    }
+    *last_ground = hero.on_ground;
+
     let half = (hero.walk_phase / PI).floor() as i64;
     if !(hero.moving && hero.on_ground) {
         *last_half = half; // idle/airborne: stay current so resuming doesn't fire a stale puff
@@ -143,7 +164,12 @@ fn emit(
         ));
     } else {
         let mat = surf_mat(&fx, hero.pos);
-        spawn_puffs(&mut commands, &fx.puff, &mat, p, 5, 1.1, 0.8, 0.0);
+        // Sprinting (run_amt → 1) throws more, faster dust, kicked back behind the heading so the
+        // trail reads as churned-up sprint. A walk (run_amt ≈ 0) is unchanged (5 motes at 1.1).
+        let run = hero.run_amt.clamp(0.0, 1.0);
+        let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
+        let kick = p - Vec3::new(fwd.x, 0.0, fwd.y) * (0.22 * run);
+        spawn_puffs(&mut commands, &fx.puff, &mat, kick, 5 + (run * 5.0) as u32, 1.1 + run * 1.6, 0.8 + run * 0.3, 0.0);
     }
 }
 

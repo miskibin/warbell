@@ -711,7 +711,7 @@ pub fn build(
             shadow_maps_enabled: false,
             ..default()
         },
-        FireLight { phase: 2.4, base: 42_000.0 },
+        FireLight { phase: 2.4, base: 42_000.0, next_ember: 0.0 },
         FortressFlame { base: 42_000.0 },
         BiomeEntity,
     ));
@@ -746,7 +746,7 @@ pub fn build(
             shadow_maps_enabled: false,
             ..default()
         },
-        FireLight { phase: 0.7, base: 95_000.0 },
+        FireLight { phase: 0.7, base: 95_000.0, next_ember: 0.0 },
         FortressFlame { base: 95_000.0 },
         BiomeEntity,
     ));
@@ -802,7 +802,7 @@ pub fn build(
             shadow_maps_enabled: false,
             ..default()
         },
-        FireLight { phase: 4.1, base: 18_000.0 },
+        FireLight { phase: 4.1, base: 18_000.0, next_ember: 0.0 },
         FortressFlame { base: 18_000.0 },
         BiomeEntity,
     ));

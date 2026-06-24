@@ -115,6 +115,9 @@ pub(super) struct Bodies<'w, 's> {
     animals: Query<'w, 's, &'static Animal>,
     villagers: Query<'w, 's, &'static Villager>,
     bosses: Query<'w, 's, &'static crate::boss::Boss, Without<crate::dying::Dying>>,
+    /// Present when a demo script owns the hero — `player_move` then yields locomotion to it
+    /// (bundled here to keep `player_move` under Bevy's 16-param ceiling).
+    scripted: Option<Res<'w, super::ScriptedHero>>,
 }
 
 pub fn player_move(
@@ -137,6 +140,15 @@ pub fn player_move(
 ) {
     let Ok((mut hero, mut tf)) = hero_q.single_mut() else { return };
     let t = time.elapsed_secs();
+
+    // A scripted demo (`FOREST_DEMO=explore`) owns the hero's pos/facing/anim — yield locomotion to
+    // it (don't fight it with input-driven movement) but still mirror the pose into `HeroState` so
+    // the follow-cam / weather / audio track the scripted walk.
+    if bodies.scripted.is_some() {
+        write_state(&mut state, &hero);
+        state.alive = player.0.is_alive();
+        return;
+    }
 
     // Hold still in FreeRoam (fly-cam drives the view), while down (awaiting respawn), or in build
     // mode (WASD then drives the build palette, not the knight). Keep the mirror current; `alive=false`
