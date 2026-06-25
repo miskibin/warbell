@@ -213,6 +213,7 @@ impl ItemDef {
             "marsh_herb" => return IconSpec { shape: IconShape::Herb, fg: (90, 165, 70), accent: (60, 120, 50) },
             "croc_steak" => return IconSpec { shape: IconShape::Meat, fg: (170, 70, 65), accent: (235, 220, 200) },
             "elk_jerky" => return IconSpec { shape: IconShape::Meat, fg: (140, 78, 50), accent: (235, 220, 200) },
+            "meat" => return IconSpec { shape: IconShape::Meat, fg: (175, 80, 72), accent: (235, 220, 200) },
             "potion" => return IconSpec { shape: IconShape::Potion, fg: (210, 60, 90), accent: (180, 140, 90) },
             "mercenary_contract" => return IconSpec { shape: IconShape::Scroll, fg: (215, 195, 150), accent: (150, 120, 80) },
             // The three buff charms — tinted by their buff hue (resist blue, power red,
@@ -268,6 +269,8 @@ pub static ITEM_DEFS: &[ItemDef] = &[
         .buff(BuffKind::Haste, 12000.0, 1.3),
     ItemDef::new("croc_steak", "Croc Steak", "🥩", ItemKind::Consumable).heal(70.0).stack(),
     ItemDef::new("elk_jerky", "Elk Jerky", "🍖", ItemKind::Consumable).heal(35.0).stack(),
+    // Generic meat — guaranteed off every wild-animal kill (see `verbs::animal_drops`). A modest heal.
+    ItemDef::new("meat", "Raw Meat", "🍖", ItemKind::Consumable).heal(25.0).stack(),
     // Foraged in the swamp — heal + resist poultice, tagged Food (the resist is a
     // bonus on eating; the tag decides where it shows, not what it does).
     ItemDef::new("marsh_herb", "Marsh Herb", "🌿", ItemKind::Consumable)

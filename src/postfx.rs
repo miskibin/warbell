@@ -38,7 +38,7 @@ pub struct LookSettings {
 
 impl Default for LookSettings {
     fn default() -> Self {
-        Self { saturation: 1.2, chromatic: 0.0 } // chromatic off by default (component not inserted anyway)
+        Self { saturation: 1.1, chromatic: 0.0 } // chromatic off by default (component not inserted anyway)
     }
 }
 

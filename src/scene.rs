@@ -530,9 +530,9 @@ fn setup_camera(
     let (yaw, pitch, _) = cam_tf.rotation.to_euler(EulerRot::YXZ);
 
     let mut grading = ColorGrading::default();
-    grading.global.post_saturation = 1.2;
-    grading.shadows.contrast = 1.0;
-    grading.midtones.contrast = 1.2;
+    grading.global.post_saturation = 1.1; // driven live by grade.rs from LookSettings; kept in sync
+    grading.shadows.contrast = 1.05;
+    grading.midtones.contrast = 1.5;
     grading.highlights.contrast = 1.03;
 
     commands.spawn((
@@ -545,7 +545,7 @@ fn setup_camera(
         Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), far: 230.0, ..default() }),
         cam_tf,
         Hdr,
-        Exposure { ev100: 10.60 },
+        Exposure { ev100: 11.0 },
         Tonemapping::AgX,
         // SSAO + SMAA path (mutually exclusive with MSAA). Bevy's built-in DepthOfField is
         // gone — it silently no-op'd next to SSAO and only did a single focal plane. Depth

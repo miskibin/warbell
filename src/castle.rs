@@ -865,8 +865,9 @@ const WALL_THICK: f32 = 0.6;
 fn wall_parts(len: f32) -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
     v.push((bx(len, WALL_H, WALL_THICK, 0.0, WALL_H / 2.0, 0.0), M::Stone));
-    // Walkway lip (a thin overhang course just under the merlons).
-    v.push((bx(len, 0.12, WALL_THICK + 0.12, 0.0, WALL_H - 0.06, 0.0), M::DarkStone));
+    // Walkway lip (a thin overhang course just under the merlons). Its top sits a hair ABOVE the
+    // main wall's top (which is also at WALL_H) so the two coplanar top faces don't Z-fight/flicker.
+    v.push((bx(len, 0.12, WALL_THICK + 0.12, 0.0, WALL_H - 0.04, 0.0), M::DarkStone));
     let step = 0.8;
     let count = (len / step).floor().max(1.0) as i32;
     let start = -((count - 1) as f32 * step) / 2.0;

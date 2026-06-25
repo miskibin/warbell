@@ -38,7 +38,7 @@ pub struct VisualSettings {
 impl Default for VisualSettings {
     fn default() -> Self {
         Self {
-            pollen_glow: 2.5,
+            pollen_glow: 3.5,
             pollen_speed: 1.0,
             prop_roughness: 0.62,
             prop_reflectance: 0.50,

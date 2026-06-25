@@ -1478,6 +1478,9 @@ fn animal_drops(
     for k in kills.read() {
         let prof = animal_profile(k.species);
         let mut drops: Vec<&'static str> = Vec::new();
+        // Every wild-animal kill always yields meat (player request) — on top of the species'
+        // rolled drops (fur/venom/steak/…), which stay as flavour bonuses.
+        drops.push("meat");
         if let Some((id, chance)) = prof.drop {
             if rng.unit() < chance {
                 drops.push(id);

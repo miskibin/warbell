@@ -512,7 +512,7 @@ impl Plugin for SiegePlugin {
             // Sim — frozen behind any panel / outside Playing.
             .add_systems(
                 Update,
-                (run_director, invader_brain, siege_controls, night_warning, director_march)
+                (run_director, invader_brain, siege_controls, night_warning, keep_attack_alert, director_march)
                     .after(advance_game_clock)
                     .run_if(in_state(Modal::None)),
             )
@@ -556,6 +556,36 @@ fn night_warning(
             speak.write(crate::audio::Speak::new(crate::audio::Concept::NightWarning));
         }
     }
+}
+
+/// Re-warn at most this often (wall-clock secs) while the keep keeps taking blows.
+const KEEP_ALERT_COOLDOWN: f64 = 8.0;
+
+/// On-screen alarm: the instant the keep starts taking hits during a night assault, flash a
+/// top-centre [`Notice`](crate::ui::notice::Notice) — then re-warn on a cooldown while the
+/// battering continues. Pairs with the spoken `KeepHurt` line (which only fires once, below half
+/// HP); this is the immediate *visual* cue that the base itself is under attack. Wave-only: the
+/// keep is repaired (never damaged) during Prep, so any HP drop here is an invader blow.
+fn keep_attack_alert(
+    time: Res<Time>,
+    siege: Res<Siege>,
+    keep: Res<KeepHp>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    mut prev_hp: Local<f32>,
+    mut next_alert: Local<f64>,
+) {
+    // Outside a night assault, track the keep's HP as the baseline so Prep repair / the dawn heal
+    // never read as an attack on the next wave's first frame.
+    if siege.phase != GamePhase::Wave {
+        *prev_hp = keep.hp;
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    if keep.hp < *prev_hp && keep.hp > 0.0 && now >= *next_alert {
+        notice.push("The keep is under attack!", now);
+        *next_alert = now + KEEP_ALERT_COOLDOWN;
+    }
+    *prev_hp = keep.hp;
 }
 
 fn reset_siege(

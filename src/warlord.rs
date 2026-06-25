@@ -31,10 +31,10 @@ use crate::{steer, worldmap};
 // ── Tuning (all forest-side) ─────────────────────────────────────────────────────────────
 /// Base HP at hero level 1, grown ×`HP_PER_LEVEL` per hero level so a fully-geared late hero still
 /// gets a real fight. Deliberately the toughest sack of HP in the game — this is the finale.
-const BASE_HP: f32 = 4200.0;
+const BASE_HP: f32 = 3570.0; // 15% off (was 4200)
 const HP_PER_LEVEL: f32 = 0.12;
 /// Melee damage to the hero (no per-night growth — the warlord is a one-time fight).
-const MELEE_DMG: f32 = 56.0;
+const MELEE_DMG: f32 = 47.6; // 15% off (was 56); MELEE_NPC_DMG derives from this
 /// Boss cleave vs a town defender — the armour-blunted share (same 0.6 mult ork melee uses on
 /// guards) so a mustered war party bleeds against him but isn't deleted in two swings.
 const MELEE_NPC_DMG: f32 = MELEE_DMG * 0.6;
