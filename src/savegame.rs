@@ -89,6 +89,10 @@ pub struct SaveData {
     pub discoveries_found: u32,
     pub discoveries_completed: bool,
     pub discovered_landmarks: Vec<String>,
+    /// Names of landmarks whose sealed gear the hero has CLAIMED (won the Hold-the-Rune trial).
+    /// Additive — old saves default to empty (no gear claimed), so the trials simply re-arm.
+    #[serde(default)]
+    pub claimed_landmark_gear: Vec<String>,
     /// Indexed by `ChestId`; only one-shot treasure chests (caches respawn on their own).
     pub opened_chests: Vec<bool>,
     /// Tutorial-quest progress. Additive + **optional**: a save written before the quest system
@@ -273,6 +277,12 @@ impl SaveCtx<'_, '_> {
                 .filter(|l| l.is_discovered())
                 .map(|l| l.name.to_string())
                 .collect(),
+            claimed_landmark_gear: self
+                .landmarks
+                .iter()
+                .filter(|l| l.is_gear_claimed())
+                .map(|l| l.name.to_string())
+                .collect(),
             opened_chests,
             quest: Some(self.quest.0.clone()),
         }
@@ -440,6 +450,9 @@ pub(crate) fn restore_discovered_landmarks(
         if data.discovered_landmarks.iter().any(|n| n == lm.name) {
             lm.set_discovered(true);
         }
+        if data.claimed_landmark_gear.iter().any(|n| n == lm.name) {
+            lm.set_gear_claimed(true);
+        }
     }
 }
 
@@ -525,6 +538,7 @@ mod tests {
             discoveries_found: 3,
             discoveries_completed: false,
             discovered_landmarks: vec!["The Hollow Oak".into()],
+            claimed_landmark_gear: vec!["The Hollow Oak".into()],
             opened_chests: vec![false, true, false],
             quest: Some(QuestLog { active: 3, progress: 2.0 }),
         }

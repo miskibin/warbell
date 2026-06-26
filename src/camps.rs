@@ -78,8 +78,10 @@ const CAMP_RESPAWN_FAR: f32 = 40.0;
 /// Captives are deliberately NOT tracked here — a freed cage stays open and empty, matching the
 /// original: a camp's prisoners are a one-time rescue, the warband a renewable threat.
 #[derive(Resource)]
-struct CampWarbands {
-    armory: orks::Armory,
+pub(crate) struct CampWarbands {
+    /// The prebuilt ork mesh/material armory — also reused by `landmarks.rs` to summon Rune-Trial
+    /// guardians (camp-style orks home-anchored at a landmark).
+    pub(crate) armory: orks::Armory,
     cleared_at: Vec<Option<f32>>,
 }
 

@@ -300,7 +300,8 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
             // the wider edges); half-extent from the flatness-probe reach, floored at block_r.
             let hb = (s.foot_r * s.scale * 0.55).max(s.block_r);
             crate::blockers::add_obb(x, z, hb, hb, yaw);
-            crate::landmarks::attach_custom(commands, id, s.name, s.lore, s.buff, s.mag, s.beacon, Vec3::new(x, y, z), meshes, materials);
+            // Vignette set-pieces carry no sealed gear ("" → no Rune-Trial), only their shrine buff.
+            crate::landmarks::attach_custom(commands, id, s.name, s.lore, s.buff, s.mag, s.beacon, "", Vec3::new(x, y, z), meshes, materials);
             info!("vignette {:?} \"{}\" at {:.1},{:.1},{:.1}", s.biome, s.name, x, y, z);
         } else {
             info!("vignette: no spot found for {:?}", s.biome);
