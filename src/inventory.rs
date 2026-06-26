@@ -14,7 +14,7 @@ use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use tileworld_core::buff_store::BuffStore;
+use tileworld_core::buff_store::{BuffKind, BuffStore};
 use tileworld_core::inventory::{item_def, Bag, ConsumeEffect, ItemKind, QUICK_SLOTS};
 use tileworld_core::item_toast_store::ToastStack;
 use tileworld_core::player::Player;
@@ -138,7 +138,7 @@ impl Plugin for InventoryPlugin {
             .init_resource::<Toasts>()
             .init_resource::<InvPanelDirty>()
             .add_message::<QuickFlash>()
-            .add_systems(Startup, (debug_seed, debug_equip))
+            .add_systems(Startup, (debug_seed, debug_equip, debug_bufftest))
             // Fresh run wipes bag, buffs and toasts (with the rest of progression).
             .add_systems(OnExit(AppState::StartScreen), reset_inventory)
             .add_systems(OnExit(AppState::GameOver), reset_inventory)
@@ -171,6 +171,18 @@ impl Plugin for InventoryPlugin {
 /// Set when a satchel action changes the bag; `rebuild_inv_panel` consumes it once per frame.
 #[derive(Resource, Default)]
 struct InvPanelDirty(bool);
+
+/// Screenshot hook: `FOREST_BUFFTEST=1` applies all three timed buffs at boot so a shot can frame
+/// the buff HUD chips (icon + name + effect + countdown). No effect in normal play.
+fn debug_bufftest(mut buffs: ResMut<Buffs>, time: Res<Time>) {
+    if std::env::var("FOREST_BUFFTEST").is_err() {
+        return;
+    }
+    let now = time.elapsed_secs() as f64;
+    buffs.0.apply_buff(BuffKind::Power, 45_000.0, 1.4, now);
+    buffs.0.apply_buff(BuffKind::Resist, 45_000.0, 0.6, now);
+    buffs.0.apply_buff(BuffKind::Haste, 45_000.0, 1.3, now);
+}
 
 /// Screenshot hook: `FOREST_PANEL=inv` seeds a sample bag so the satchel + quick-bar render
 /// with content under the capture harness. No effect in normal play.
