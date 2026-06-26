@@ -690,9 +690,33 @@ fn drive_rune_trial(
             // satchel never silently eats an earned piece.
             if active.won {
                 if try_grant(&mut inv.0, &mut toasts.0, active.gear, 1, now as f64) {
+                    // Auto-WIELD the prize if it beats what's equipped — a hard-won top-tier piece
+                    // should land in hand, not sit unnoticed in the satchel. A side-grade/worse
+                    // piece stays bagged so the hero is never downgraded.
+                    let equipped = if inv.0.is_gear_upgrade(active.gear) {
+                        match inv.0.bag.iter().position(|s| s.item_id.as_deref() == Some(active.gear)) {
+                            Some(i) => {
+                                inv.0.activate_bag_item(i);
+                                true
+                            }
+                            None => false,
+                        }
+                    } else {
+                        false
+                    };
                     if let Ok(mut lm) = landmarks.get_mut(active.landmark) {
                         lm.gear_claimed = true;
                     }
+                    floats.0.push(FloatReq {
+                        world: Vec3::new(active.center.x, 2.4, active.center.y),
+                        text: if equipped {
+                            "Claimed and equipped!".into()
+                        } else {
+                            "Claimed — open your satchel (I) to equip".into()
+                        },
+                        color: Color::srgb(0.7, 1.0, 0.75),
+                        scale: 1.0,
+                    });
                     Outcome::Claimed
                 } else {
                     if now >= active.next_spawn {

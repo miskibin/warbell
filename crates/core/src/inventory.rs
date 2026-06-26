@@ -27,6 +27,9 @@ pub struct ConsumeEffect {
     pub heal: f64,
     /// Timed buff to grant on use, if any: (kind, duration_ms, magnitude).
     pub buff: Option<(BuffKind, f64, f64)>,
+    /// True when the consumed item is *food* (the Q quick-kind) rather than a
+    /// potion/elixir — the ECS layer exempts eating from the heal stamina cost.
+    pub food: bool,
 }
 
 /// Item category. `Token` = a key/quest item that just sits in the bag (the
@@ -490,6 +493,18 @@ impl Bag {
         }
     }
 
+    /// True if wearable `id` is strictly better than what's equipped in its slot (a higher weapon
+    /// damage bonus, or a higher armor defense) — so a caller can auto-equip a reward only when it's
+    /// an actual upgrade, never a downgrade. Non-wearables return false.
+    pub fn is_gear_upgrade(&self, id: &str) -> bool {
+        match item_def(id) {
+            Some(d) if matches!(d.kind, ItemKind::Weapon) => d.damage_bonus > self.weapon_bonus,
+            // `armor_damage_mult` is `1 - defense`, so a better piece has a LOWER mult.
+            Some(d) if matches!(d.kind, ItemKind::Armor) => (1.0 - d.defense) < self.armor_damage_mult,
+            _ => false,
+        }
+    }
+
     /// True if the bag could accept EVERY id in `ids` at once — accounts for empty
     /// slots plus stackable merges. Lets a chest avoid granting loot it has no room
     /// for. Mirrors `bagHasRoomFor`.
@@ -566,7 +581,11 @@ impl Bag {
         if def.kind != ItemKind::Consumable {
             return None;
         }
-        let effect = ConsumeEffect { heal: def.heal, buff: def.buff };
+        let effect = ConsumeEffect {
+            heal: def.heal,
+            buff: def.buff,
+            food: matches!(def.quick_of(), QuickKind::Food),
+        };
         let slot = &mut self.bag[i];
         slot.count -= 1;
         if slot.count <= 0 {
@@ -1039,6 +1058,27 @@ mod tests {
         b.add("bread", 1);
         assert!(!b.owns_wearable("bread"));
         assert!(!b.owns_wearable("mercenary_contract"));
+    }
+
+    #[test]
+    fn is_gear_upgrade_compares_against_the_equipped_slot() {
+        let mut b = Bag::new();
+        // Fresh hero: fists (weapon_bonus 0), no armor → any wearable is an upgrade.
+        assert!(b.is_gear_upgrade("sword_iron")); // +11 > 0
+        assert!(b.is_gear_upgrade("leather_armor")); // 0.11 > 0
+        // Equip the Golden Blade (+21): a weaker weapon isn't an upgrade, a stronger one is.
+        b.add("sword_gold", 1);
+        b.activate_bag_item(idx_of(&b, "sword_gold"));
+        assert!(!b.is_gear_upgrade("sword_iron")); // +11 < +21
+        assert!(!b.is_gear_upgrade("sword_gold")); // equal is not strictly better
+        assert!(b.is_gear_upgrade("blade_frost")); // +34 > +21
+        // Equip Gilded Plate (28%): better defense upgrades, worse doesn't.
+        b.add("gold_armor", 1);
+        b.activate_bag_item(idx_of(&b, "gold_armor"));
+        assert!(!b.is_gear_upgrade("leather_armor")); // 0.11 < 0.28
+        assert!(b.is_gear_upgrade("dragon_plate")); // 0.42 > 0.28
+        // Consumables are never "gear upgrades".
+        assert!(!b.is_gear_upgrade("bread"));
     }
 
     #[test]
