@@ -16,6 +16,7 @@ use bevy::prelude::*;
 use crate::audio::AudioCue;
 use crate::combat_fx::HitFeedback;
 use crate::game_state::Modal;
+use crate::landmarks::{Landmark, LandmarkInteract};
 use crate::player::HeroState;
 use crate::siege::{GamePhase, Siege};
 use crate::ui::fonts::{label, UiFonts};
@@ -29,6 +30,8 @@ const SHOP_DIST: f32 = 3.5;
 /// Talk-back range: a bit over the villager-chatter trigger (`npc::NEAR_DIST` 7.0) so stepping
 /// back half a pace during the jab doesn't lose the prompt.
 const TALK_DIST: f32 = 8.0;
+/// Stand this close to a discovered landmark to get its `[E]` prompt (challenge trial or pray).
+const LANDMARK_DIST: f32 = 3.6;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InteractKind {
@@ -43,6 +46,12 @@ enum InteractKind {
     /// Standing at the unbroken gate of Gnashfang Hold — **E** breaks it open and wakes the
     /// garrison + Warlord (`ork_fortress::breach_gate`). The game's win condition.
     BreachGate,
+    /// At a discovered landmark whose signature gear is still SEALED — **E** begins its
+    /// Hold-the-Rune trial (`landmarks::start_rune_trial` via [`LandmarkInteract`]).
+    TrialChallenge,
+    /// At a landmark whose gear is already won (or a vignette with none) — **E** prays at its
+    /// shrine for a timed buff (`landmarks::shrine`).
+    Shrine,
 }
 impl InteractKind {
     fn prompt(self) -> &'static str {
@@ -53,6 +62,8 @@ impl InteractKind {
             InteractKind::TalkBack => "Talk back",
             InteractKind::Chest => "Open chest",
             InteractKind::BreachGate => "Break the gate",
+            InteractKind::TrialChallenge => "Challenge the guardians",
+            InteractKind::Shrine => "Pray at the shrine",
         }
     }
     /// The keycap shown on the prompt chip. Every contextual action — chests included — is on **E**.
@@ -77,6 +88,13 @@ struct ActiveInteraction {
 struct ChestIo<'w, 's> {
     chests: Query<'w, 's, (Entity, &'static crate::chest::Chest, &'static Transform)>,
     open: MessageWriter<'w, crate::chest::OpenChest>,
+}
+
+/// Landmark read + interact-request, bundled to keep `drive_interaction` under the param cap.
+#[derive(SystemParam)]
+struct LandmarkIo<'w, 's> {
+    landmarks: Query<'w, 's, (Entity, &'static Landmark, &'static Transform)>,
+    interact: MessageWriter<'w, LandmarkInteract>,
 }
 
 /// The centred hint row. Holds up to three sibling chips — `[B] Build`, the contextual `[E] …`, and
@@ -132,6 +150,7 @@ fn drive_interaction(
     mut offered: ResMut<crate::audio::director::OfferedReply>,
     mut voices: ResMut<crate::audio::director::VoiceManager>,
     mut chest_io: ChestIo,
+    mut landmark_io: LandmarkIo,
     assault: Res<crate::ork_fortress::AssaultState>,
     mut breach: MessageWriter<crate::ork_fortress::BreachGate>,
 ) {
@@ -180,6 +199,24 @@ fn drive_interaction(
         crate::ork_fortress::BREACH_RANGE,
         !assault.breached,
     ));
+    // Nearest discovered landmark in reach: a sealed-gear one offers its trial, an already-claimed
+    // (or gear-less vignette) one offers its shrine. Remember the entity so the E press targets it.
+    let mut nearest_landmark: Option<(Entity, Vec2, f32, bool)> = None; // (e, at, dist, sealed)
+    for (e, lm, tf) in &landmark_io.landmarks {
+        if !lm.is_discovered() {
+            continue;
+        }
+        let at = Vec2::new(tf.translation.x, tf.translation.z);
+        let d = p.distance(at);
+        if d < LANDMARK_DIST && nearest_landmark.map_or(true, |(_, _, bd, _)| d < bd) {
+            let sealed = lm.has_gear() && !lm.is_gear_claimed();
+            nearest_landmark = Some((e, at, d, sealed));
+        }
+    }
+    if let Some((_, at, _, sealed)) = nearest_landmark {
+        let kind = if sealed { InteractKind::TrialChallenge } else { InteractKind::Shrine };
+        candidates.push((kind, at, LANDMARK_DIST, true));
+    }
 
     // Pick the nearest in-range, available interactable.
     let mut best: Option<(InteractKind, f32)> = None;
@@ -218,6 +255,13 @@ fn drive_interaction(
             // Break into the Hold — `ork_fortress::breach_gate` wakes the garrison + Warlord.
             InteractKind::BreachGate => {
                 breach.write(crate::ork_fortress::BreachGate);
+            }
+            // Landmark — fire the request at exactly the landmark the resolver named; `landmarks.rs`
+            // decides trial-vs-shrine from its state.
+            InteractKind::TrialChallenge | InteractKind::Shrine => {
+                if let Some((e, _, _, _)) = nearest_landmark {
+                    landmark_io.interact.write(LandmarkInteract(e));
+                }
             }
         }
     }

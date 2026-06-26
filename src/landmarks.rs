@@ -3,10 +3,13 @@
 //! destinations:
 //!
 //! - **Discovery** — the first time the hero walks within [`DISCOVER_R`] of a landmark it's
-//!   *found*: a one-time cache (gold + a frontier-graded relic), a floating "Discovered: …"
-//!   announce + its lore line, a chime, and the [`Discoveries`] tally ticks (all five → a bonus).
-//! - **Shrine** — once found, **F** within [`SHRINE_R`] prays at it for a timed buff (per-biome
-//!   Resist/Power/Haste, on a [`SHRINE_CD`] cooldown). The repeatable reason to come back.
+//!   *found*: a little pocket gold, a floating "Discovered: …" announce + its lore line, a chime,
+//!   and the [`Discoveries`] tally ticks (all five → a bonus). Its signature GEAR stays sealed.
+//! - **Rune-Trial** — a found landmark's gear is earned, not given: standing near it shows an
+//!   `[E]` prompt (`interaction.rs`) → press it to begin a Hold-the-Rune trial (hold the circle
+//!   against a guardian horde; win → the named gear). See the trial systems below.
+//! - **Shrine** — once a landmark's gear is claimed (or for gear-less vignettes), the same `[E]`
+//!   prays at it for a timed buff (per-biome Resist/Power/Haste, on a [`SHRINE_CD`] cooldown).
 //! - **Beacon** — over each *undiscovered* landmark a column of emissive will-o'-wisp motes
 //!   (unlit → punches through the fog) draws the eye from afar. It despawns once the place is
 //!   found. Ambient life as a signpost: "something is out there."
@@ -30,8 +33,6 @@ use crate::ui::fonts::{label, FONT_LABEL, UiFonts};
 
 /// Walk this close to an unfound landmark → it's discovered.
 const DISCOVER_R: f32 = 6.0;
-/// Press **F** this close to a found landmark → pray at its shrine.
-const SHRINE_R: f32 = 3.5;
 /// Shrine cooldown (s) between prayers — just under a prep day, so ~once per cycle per shrine.
 const SHRINE_CD: f32 = 120.0;
 /// Shrine buff duration (ms) — longer than a consumable's 12s; it's a trek to earn it.
@@ -56,9 +57,9 @@ const HOLD_SECS: f32 = 35.0;
 /// you must defend the spot, not kite the horde in a circle forever.
 const DRAIN_MULT: f32 = 1.5;
 /// Seconds between guardian spawns while a trial runs.
-const GUARD_SPAWN_INTERVAL: f32 = 2.0;
-/// Cap on live trial guardians at once (steady pressure, not an unsurvivable pile).
-const GUARD_MAX_ALIVE: usize = 7;
+const GUARD_SPAWN_INTERVAL: f32 = 2.8;
+/// Cap on live trial guardians at once — kept low so the trial reads as a tense hold, not a swarm.
+const GUARD_MAX_ALIVE: usize = 3;
 /// Stray this far from the landmark and the trial aborts (so the horde isn't dragged off).
 const TRIAL_ABORT_R: f32 = 18.0;
 /// Guardians spawn on a ring this far out — just beyond the rune circle.
@@ -111,6 +112,13 @@ impl Landmark {
     /// Whether this landmark's sealed gear has been claimed (read by the save snapshot).
     pub fn is_gear_claimed(&self) -> bool {
         self.gear_claimed
+    }
+
+    /// Whether this landmark hoards a gear piece at all (vignette set-pieces carry none → only a
+    /// shrine). Read by `interaction.rs` to choose the prompt: a sealed-gear landmark offers the
+    /// trial, an empty or already-claimed one offers the shrine.
+    pub fn has_gear(&self) -> bool {
+        !self.gear.is_empty()
     }
 
     /// Mark the gear claimed on a loaded game (the live path is winning the trial).
@@ -295,13 +303,15 @@ impl Plugin for LandmarksPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Discoveries>()
             .init_resource::<RuneTrial>()
+            .add_message::<LandmarkInteract>()
             // Beacon drift is a visual — runs even while the world is frozen, like the particles.
             .add_systems(Update, beacon_drift)
             // Reconcile beacons to discovery state (ungated): catches the save-restore path, which
             // flips `discovered` directly without going through `discover`'s beacon snuff.
             .add_systems(Update, snuff_found_beacons)
-            // The trial HUD draws ungated (like the rest of the HUD) so it shows through any frame.
-            .add_systems(Update, sync_rune_hud)
+            // The trial HUD + rune ring draw ungated (like the rest of the HUD) so they show + clean
+            // up through any frame.
+            .add_systems(Update, (sync_rune_hud, sync_rune_ring))
             .add_systems(
                 Update,
                 (track_total, discover, shrine, start_rune_trial, drive_rune_trial)
@@ -407,11 +417,11 @@ fn discover(
             color: col_kill(),
             scale: 1.1,
         });
-        // Hint at the sealed gear + how to claim it (legible acquisition — no opaque grab).
+        // Hint at the sealed gear (the contextual [E] prompt shows when you stand near it).
         if !lm.gear.is_empty() {
             floats.0.push(FloatReq {
                 world: Vec3::new(p.x, p.y + 1.3, p.z),
-                text: "A sealed cache hums within — press F to face its guardians".into(),
+                text: "A sealed cache hums within — stand close to challenge its guardians".into(),
                 color: Color::srgb(0.75, 0.92, 1.0),
                 scale: 0.85,
             });
@@ -442,35 +452,34 @@ fn discover(
     }
 }
 
-/// **F** at a found landmark prays at its shrine: a timed per-biome buff on a cooldown.
+/// Interacting (**E**, via `interaction.rs`) with a found landmark whose gear is already claimed (or
+/// a vignette that never had gear) prays at its shrine: a timed per-biome buff on a cooldown. Range
+/// is gated by the interaction resolver. Sealed-gear landmarks are handled by `start_rune_trial`.
 #[allow(clippy::too_many_arguments)]
 fn shrine(
+    mut events: MessageReader<LandmarkInteract>,
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
     hero: Res<HeroState>,
     mut buffs: ResMut<Buffs>,
     mut floats: ResMut<FloatQueue>,
     mut cues: MessageWriter<AudioCue>,
     mut q: Query<(&mut Landmark, &Transform)>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyF) || !hero.alive {
+    if !hero.alive {
         return;
     }
     let now = time.elapsed_secs();
-    for (mut lm, tf) in &mut q {
+    for LandmarkInteract(e) in events.read() {
+        let Ok((mut lm, tf)) = q.get_mut(*e) else { continue };
         if !lm.discovered {
             continue;
         }
-        // While the gear is still sealed, F belongs to the trial (`start_rune_trial`), not the
-        // shrine — you can only pray here once you've earned the cache. (Vignettes carry no gear,
-        // so `gear == ""` falls straight through to praying.)
-        if !lm.gear.is_empty() && !lm.gear_claimed {
+        // Sealed gear → that's the trial's job (`start_rune_trial`), not a prayer. (Vignettes carry
+        // no gear, so `has_gear()` is false and they fall straight through to praying.)
+        if lm.has_gear() && !lm.gear_claimed {
             continue;
         }
         let p = tf.translation;
-        if Vec2::new(p.x, p.z).distance(hero.pos) > SHRINE_R {
-            continue;
-        }
         let head = Vec3::new(p.x, p.y + 2.6, p.z);
         if now < lm.shrine_ready_at {
             let left = (lm.shrine_ready_at - now).ceil() as i64;
@@ -481,7 +490,7 @@ fn shrine(
                 scale: 0.9,
             });
             cues.write(AudioCue::UiSelect);
-            return;
+            continue;
         }
         lm.shrine_ready_at = now + SHRINE_CD;
         buffs.0.apply_buff(lm.buff, SHRINE_BUFF_MS, lm.buff_mag, now as f64);
@@ -493,7 +502,6 @@ fn shrine(
         });
         cues.write(AudioCue::Forage);
         cues.write(AudioCue::LevelUp);
-        return; // one shrine per press
     }
 }
 
@@ -510,6 +518,12 @@ struct TrialGuardian;
 /// live at snapshot time).
 #[derive(Resource, Default)]
 struct RuneTrial(Option<ActiveTrial>);
+
+/// Fired by `interaction.rs` when the hero presses **E** at a landmark (the contextual-prompt
+/// system that names the action on a visible chip). The landmark systems decide what it means from
+/// the landmark's state: a sealed-gear landmark starts the trial, an empty/claimed one prays.
+#[derive(Message)]
+pub struct LandmarkInteract(pub Entity);
 
 struct ActiveTrial {
     /// The landmark entity whose sealed gear this trial unlocks.
@@ -528,42 +542,38 @@ struct ActiveTrial {
     spawn_i: u32,
 }
 
-/// Press **F** at a discovered landmark whose gear is still SEALED → wake its guardians and begin
-/// the Hold-the-Rune trial. Day/Prep only (no stacking two hordes), one trial at a time.
+/// Begin a Hold-the-Rune trial when the hero interacts (**E**, via `interaction.rs`) with a
+/// discovered landmark whose gear is still SEALED. Day/Prep only (no stacking two hordes), one trial
+/// at a time. Range is already gated by the interaction resolver; we re-check state here.
 #[allow(clippy::too_many_arguments)]
 fn start_rune_trial(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut events: MessageReader<LandmarkInteract>,
     hero: Res<HeroState>,
     siege: Res<crate::siege::Siege>,
     time: Res<Time>,
     mut trial: ResMut<RuneTrial>,
     mut floats: ResMut<FloatQueue>,
     mut cues: MessageWriter<AudioCue>,
-    q: Query<(Entity, &Landmark, &Transform)>,
+    q: Query<(&Landmark, &Transform)>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyF) || !hero.alive {
-        return;
-    }
     let now = time.elapsed_secs();
-    for (e, lm, tf) in &q {
-        if !lm.discovered || lm.gear.is_empty() || lm.gear_claimed {
-            continue; // not a sealed-gear landmark
+    for LandmarkInteract(e) in events.read() {
+        let Ok((lm, tf)) = q.get(*e) else { continue };
+        if !lm.discovered || !lm.has_gear() || lm.gear_claimed || !hero.alive {
+            continue; // not a sealed-gear landmark (the shrine system handles claimed/empty)
         }
         let p = tf.translation;
-        if Vec2::new(p.x, p.z).distance(hero.pos) > SHRINE_R {
-            continue;
-        }
         let head = Vec3::new(p.x, p.y + 2.6, p.z);
         if trial.0.is_some() {
             push_hint(&mut floats, &mut cues, head, "Another trial is already underway");
-            return;
+            continue;
         }
         if siege.phase != crate::siege::GamePhase::Prep {
             push_hint(&mut floats, &mut cues, head, "Face the guardians by day — not mid-siege");
-            return;
+            continue;
         }
         trial.0 = Some(ActiveTrial {
-            landmark: e,
+            landmark: *e,
             name: lm.name,
             gear: lm.gear,
             center: Vec2::new(p.x, p.z),
@@ -579,7 +589,6 @@ fn start_rune_trial(
             scale: 1.3,
         });
         cues.write(AudioCue::ChestOpen);
-        return;
     }
 }
 
@@ -793,6 +802,52 @@ fn sync_rune_hud(
     }
     if let Ok(mut t) = labels.single_mut() {
         t.0 = format!("{} — hold the rune  {pct:.0}%", active.name);
+    }
+}
+
+/// A glowing marker on the rune circle — spawned in a ring while a trial runs so the hold zone is
+/// unmistakable, swept when it ends.
+#[derive(Component)]
+struct RuneRing;
+
+/// Spawn a ring of glowing markers around the rune circle while a trial runs (so the hero SEES
+/// exactly where to stand to hold), and sweep them the instant it ends.
+fn sync_rune_ring(
+    trial: Res<RuneTrial>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    existing: Query<Entity, With<RuneRing>>,
+) {
+    let Some(active) = &trial.0 else {
+        for e in &existing {
+            commands.entity(e).try_despawn();
+        }
+        return;
+    };
+    if !existing.is_empty() {
+        return; // ring already raised
+    }
+    let mesh = meshes.add(Sphere::new(0.17).mesh().ico(2).unwrap());
+    let mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.35, 0.9, 1.0),
+        emissive: LinearRgba::rgb(0.4, 1.8, 2.6), // bright cyan glow — punches through the scene
+        unlit: true,
+        ..default()
+    });
+    let cy = crate::worldmap::ground_at_world(active.center.x, active.center.y).unwrap_or(0.0) + 0.3;
+    const N: u32 = 48;
+    for i in 0..N {
+        let a = i as f32 / N as f32 * std::f32::consts::TAU;
+        let x = active.center.x + a.cos() * RUNE_R;
+        let z = active.center.y + a.sin() * RUNE_R;
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_xyz(x, cy, z),
+            RuneRing,
+            NotShadowCaster,
+        ));
     }
 }
 
