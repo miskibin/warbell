@@ -333,6 +333,12 @@ pub(crate) struct RescuedCamps {
 }
 
 const CAMP_HOME_R: f32 = 6.0;
+/// Peasants freed when a camp's warband falls — a whole **cage** of captives, not one. With organic
+/// town growth deliberately slowed (core `SETTLE_FOOD` raised), clearing camps in daylight is now
+/// the main way the town grows: 5 camps × 3 = +15, the army's backbone. Raw-added (uncapped, like
+/// the old +1) — the realistic max (camps + start ≈ 17) stays under the 24 house cap, and a farm
+/// feeds far more than the headcount, so over-house peasants don't starve.
+const CAMP_RESCUE_POP: u32 = 3;
 
 impl Plugin for VillagersPlugin {
     fn build(&self, app: &mut App) {
@@ -517,9 +523,10 @@ pub fn spawn_scene_peasant(
     e
 }
 
-/// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): one
-/// joins the castle as militia (a new guard) and grows the bloodline, with a float over the cage
-/// so you see it happen. `seen` gates against freeing a camp before its orks have even spawned.
+/// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): a cage
+/// of [`CAMP_RESCUE_POP`] joins the castle as militia (new guards) and grows the bloodline, with a
+/// float over the cage so you see it happen. `seen` gates against freeing a camp before its orks
+/// have even spawned.
 #[allow(clippy::too_many_arguments)]
 fn camp_rescue(
     mut town: ResMut<crate::town::TownRes>,
@@ -561,12 +568,12 @@ fn camp_rescue(
             }
         }
         crate::camps::open_cage(&mut commands, &mut meshes, &mut materials, cage_tf);
-        // The freed captive joins the town's population (a guard appears in the courtyard via
-        // `sync_population_bodies`) — and the bloodline with it: heirs ARE the headcount.
-        town.0.population += 1;
+        // The freed captives join the town's population (guards appear in the courtyard via
+        // `sync_population_bodies`) — and the bloodline with them: heirs ARE the headcount.
+        town.0.population += CAMP_RESCUE_POP;
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(cage.x, y + 1.8, cage.y),
-            text: "Captive freed!  +1 townsperson".into(),
+            text: format!("Captives freed!  +{CAMP_RESCUE_POP} townsfolk"),
             color: Color::srgb(0.5, 1.0, 0.6),
             scale: 1.2,
         });
@@ -1283,9 +1290,15 @@ fn guard_combat(
                 // Far from the foe → A* toward it (thread walls/gates instead of wedging);
                 // close → cheap direct steer. Same pattern as the return-to-post walk.
                 let step_target = if d > GUARD_PATH_RANGE {
+                    // Replan when the path runs out, OR when the goal has drifted >2u AND this
+                    // guard's stagger window has elapsed. The stagger must gate the goal-moved
+                    // case too (AND, not OR): a moving target — a fleeing foe, or the hero's ring
+                    // post under a rallied muster — would otherwise re-fire every frame and, with
+                    // the whole war party crossing the 2u threshold together, cluster island-scale
+                    // A* onto the same frames (the "go after me" perf spike). Cursor-exhaust stays
+                    // an always-allowed replan; it's naturally spread by per-guard walk progress.
                     if path.cursor >= path.waypoints.len()
-                        || now >= path.next_replan
-                        || path.goal_cached.distance(tp) > 2.0
+                        || (now >= path.next_replan && path.goal_cached.distance(tp) > 2.0)
                     {
                         path.waypoints = crate::navgrid::path_to(v.pos, tp);
                         path.cursor = 0;
@@ -1321,9 +1334,13 @@ fn guard_combat(
                 // river crossing and the castle GATE instead of wedging on the wall. Near home →
                 // cheap direct steer, no pathing churn. Mirrors the invader keep-march in `siege.rs`.
                 let step_target = if to_post.length() > GUARD_PATH_RANGE {
+                    // Goal-moved replan is AND-gated by the stagger (see the chase branch above):
+                    // a rallied guard's post tracks the running hero every frame, so an OR here
+                    // re-pathed the whole muster on the same frames → spikes. A fixed post (a freed
+                    // captive marching home) never trips goal-moved, so it replans only on
+                    // cursor-exhaust — unchanged from before.
                     if path.cursor >= path.waypoints.len()
-                        || now >= path.next_replan
-                        || path.goal_cached.distance(g.post) > 2.0
+                        || (now >= path.next_replan && path.goal_cached.distance(g.post) > 2.0)
                     {
                         path.waypoints = crate::navgrid::path_to(v.pos, g.post);
                         path.cursor = 0;

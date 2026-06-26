@@ -32,8 +32,13 @@ pub const START_HOUSES: u32 = 1;
 /// Peasants a fresh town starts with (= `START_HOUSES * POP_PER_HOUSE`).
 pub const START_POP: u32 = START_HOUSES * POP_PER_HOUSE;
 /// Net food (production − upkeep) that must accumulate to settle one new peasant — or,
-/// as a deficit, to starve one away. The `growth` meter is clamped to ±this.
-pub const SETTLE_FOOD: f64 = 20.0;
+/// as a deficit, to starve one away. The `growth` meter is clamped to ±this. Raised 20→45
+/// (×2.25) to slow ORGANIC town growth: a single farm now settles a peasant in ~45 s, not ~20.
+/// The point is to make **clearing ork camps** (each frees a cage → +3 peasants, see
+/// `villagers::camp_rescue`) the real way the town grows, so daytime sorties have a purpose.
+/// `LARDER_REGROW_RATE` is scaled by the same factor so the anti-extinction floor (regrowing a
+/// wiped town's bedrock pair) keeps its old absolute speed — only steady-state growth slows.
+pub const SETTLE_FOOD: f64 = 45.0;
 /// Multiplier on the *positive* growth flow only — a food surplus settles peasants this
 /// much faster. Deficit/starvation is unaffected (×1), so the town grows quickly but still
 /// only starves at the natural rate. `2.0` = settlers arrive twice as fast.
@@ -47,8 +52,10 @@ pub const UPKEEP_PER_POP: f64 = 0.04;
 /// runs a settler-attracting surplus ([`LARDER_REGROW_RATE`]).
 pub const LARDER_POP: u32 = 2;
 /// Food surplus per second the larder runs while the town is below [`LARDER_POP`] — sized so
-/// a wiped-out town regrows its pair organically within ~2½ minutes (80 s per settler).
-pub const LARDER_REGROW_RATE: f64 = 0.25;
+/// a wiped-out town regrows its pair organically within ~2½ minutes. Scaled with `SETTLE_FOOD`
+/// (0.25 → 0.56, ×2.25) so this anti-extinction recovery keeps its old absolute speed even though
+/// the higher settle threshold slows steady-state growth.
+pub const LARDER_REGROW_RATE: f64 = 0.56;
 /// Building HP healed per second while repairing (Prep phase).
 pub const REPAIR_PER_SEC: f64 = 8.0;
 /// Base cost to raise the FIRST House (inside the walls). Houses don't burn, so cost + `MAX_HOUSES`
@@ -605,15 +612,16 @@ mod tests {
     #[test]
     fn population_starves_on_a_food_deficit() {
         let mut t = Town::new(0, 4); // 2 paying mouths beyond the pair → net −0.08/s
-        // −0.08 × 250s = −20 = −SETTLE_FOOD → one starves.
-        assert_eq!(t.population_tick(250.0), PopEvent::Starved);
+        // −0.08 × 600s = −48 ≤ −SETTLE_FOOD(45) → one starves.
+        assert_eq!(t.population_tick(600.0), PopEvent::Starved);
         assert_eq!(t.population, 3);
     }
 
     #[test]
     fn starvation_floors_at_the_larder_pair() {
-        let mut t = Town::new(0, 3); // one paying mouth, no farms
-        assert_eq!(t.population_tick(600.0), PopEvent::Starved);
+        let mut t = Town::new(0, 3); // one paying mouth, no farms → net −0.04/s
+        // −0.04 × 1200s = −48 ≤ −SETTLE_FOOD(45) → one starves.
+        assert_eq!(t.population_tick(1200.0), PopEvent::Starved);
         assert_eq!(t.population, 2);
         // The bedrock pair eat from the castle larder — hunger can never take them.
         assert_eq!(t.population_tick(10_000.0), PopEvent::None);
@@ -624,7 +632,7 @@ mod tests {
     fn larder_regrows_an_emptied_town_to_the_pair() {
         let mut t = Town::new(0, 0); // wiped out overnight, no farms at all
         t.houses = 1; // the founding house still stands (houses are protected)
-        // 0.25/s × 80s × BOOST(2) = 40 ≥ SETTLE_FOOD → a settler, then the second.
+        // 0.56/s × 80s × BOOST(2) = 89.6 ≥ SETTLE_FOOD(45) → a settler, then the second.
         assert_eq!(t.population_tick(80.0), PopEvent::Grew);
         assert_eq!(t.population_tick(80.0), PopEvent::Grew);
         assert_eq!(t.population, 2);
@@ -639,8 +647,8 @@ mod tests {
         let mut bank = bank_with(50.0, 0.0, 0.0);
         t.build(0, BuildKind::Farm, &mut bank);
         t.plots[0].staffed = true; // the staffed farm is pure surplus
-        // +0.5/s × 10s × SETTLE_GROWTH_BOOST(2) = +10 = half of SETTLE_FOOD.
-        t.population_tick(10.0);
+        // +0.5/s × 22.5s × SETTLE_GROWTH_BOOST(2) = +22.5 = half of SETTLE_FOOD(45).
+        t.population_tick(22.5);
         assert!((t.growth_fraction() - 0.5).abs() < 1e-9);
     }
 
