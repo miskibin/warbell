@@ -299,8 +299,10 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
             position_type: PositionType::Absolute,
             left: Val::Px(18.0),
             bottom: Val::Px(80.0),
-            flex_direction: FlexDirection::Row,
-            column_gap: Val::Px(8.0),
+            // Column so each buff is its own labelled "what it does" chip, stacked like the toasts.
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::FlexStart,
+            row_gap: Val::Px(6.0),
             ..default()
         },
         bevy::ui::FocusPolicy::Pass,
@@ -414,6 +416,26 @@ fn buff_icon_key(kind: BuffKind) -> &'static str {
     }
 }
 
+/// Accent tint for a buff chip (icon + left border) — warm for offense, cool for defense, green for
+/// speed, so the buff reads at a glance even before the label.
+fn buff_color(kind: BuffKind) -> Color {
+    match kind {
+        BuffKind::Power => rgb(255, 150, 90),
+        BuffKind::Resist => rgb(120, 180, 255),
+        BuffKind::Haste => rgb(150, 230, 140),
+    }
+}
+
+/// One-line "what it does", derived from the buff's multiplier magnitude (so a stronger source reads
+/// stronger). Power/Haste are `mag − 1` up; Resist is `1 − mag` of damage shaved off.
+fn buff_desc(kind: BuffKind, mag: f64) -> String {
+    match kind {
+        BuffKind::Power => format!("+{:.0}% damage", (mag - 1.0) * 100.0),
+        BuffKind::Haste => format!("+{:.0}% move speed", (mag - 1.0) * 100.0),
+        BuffKind::Resist => format!("-{:.0}% damage taken", (1.0 - mag) * 100.0),
+    }
+}
+
 /// Drive quick-slot icons/counts, rebuild the buff pips, and rebuild the pickup-toast rows.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_inv_hud(
@@ -464,23 +486,37 @@ fn update_inv_hud(
     if let Ok(root) = buff_root_q.single() {
         commands.entity(root).with_children(|bar| {
             for a in buffs.0.active_buffs(now) {
+                let accent = buff_color(a.kind);
                 bar.spawn((
                     BuffPip,
                     Node {
-                        flex_direction: FlexDirection::Column,
+                        // Horizontal chip like the pickup toasts: [icon] [name + what it does] [time].
+                        flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
-                        row_gap: Val::Px(3.0),
-                        padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
-                        border_radius: radius(R_BTN),
+                        column_gap: Val::Px(9.0),
+                        padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
+                        border: UiRect::left(Val::Px(3.0)),
+                        border_radius: radius(7.0),
                         ..default()
                     },
-                    BackgroundColor(rgba(26, 20, 14, 0.6)),
+                    BackgroundColor(rgba(26, 20, 14, 0.9)),
+                    BorderColor::all(accent),
+                    shadow_hud(),
                 ))
-                .with_children(|pip| {
+                .with_children(|row| {
                     if let Some(e) = atlas.get_tintable(buff_icon_key(a.kind)) {
-                        pip.spawn(widgets::icon_tinted(e, 18.0, GOLD));
+                        row.spawn(widgets::icon_tinted(e, 22.0, accent));
                     }
-                    pip.spawn(label(&fonts.bold, format!("{:.0}s", a.remain), 10.0, GOLD));
+                    row.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(1.0),
+                        ..default()
+                    })
+                    .with_children(|c| {
+                        c.spawn(label(&fonts.bold, a.kind.label(), 13.0, rgb(242, 244, 250)));
+                        c.spawn(label(&fonts.semibold, buff_desc(a.kind, a.mag), 10.0, rgba(255, 224, 170, 0.82)));
+                    });
+                    row.spawn(label(&fonts.bold, format!("{:.0}s", a.remain), 12.0, GOLD));
                 });
             }
         });

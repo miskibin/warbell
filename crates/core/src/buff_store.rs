@@ -49,6 +49,9 @@ pub struct ActiveBuff {
     pub remain: f64,
     /// full granted duration (sec) — for the HUD countdown ratio
     pub full_sec: f64,
+    /// multiplier magnitude (resist 0.6, power 1.4, haste 1.3, …) — lets the HUD spell out what the
+    /// buff actually does (e.g. "+40% damage") instead of a bare timer.
+    pub mag: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -137,7 +140,7 @@ impl BuffStore {
             let b = self.slot(kind);
             let remain = b.until - now;
             if remain > 0.0 {
-                out.push(ActiveBuff { kind, remain, full_sec: b.full_sec });
+                out.push(ActiveBuff { kind, remain, full_sec: b.full_sec, mag: b.mag });
             }
         }
         out
