@@ -86,6 +86,7 @@ mod quadruped;
 mod quality;
 mod quest;
 mod roads;
+mod rival;
 mod ruins;
 mod savegame;
 mod scenes;
@@ -272,5 +273,8 @@ fn main() {
         // Cinematic lens: vignette + chromatic aberration (per-preset, in quality.rs) + film grain.
         // The per-biome colour grade itself rides in scene::advance_sky.
         .add_plugins(postfx::PostFxPlugin)
+        // Rival AI stronghold: a second castle in the desert (Stronghold-Crusader-style opponent).
+        // Standalone: the tuples above are at the `Plugins` arity-15 cap.
+        .add_plugins(rival::RivalPlugin)
         .run();
 }

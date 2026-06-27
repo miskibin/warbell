@@ -1080,7 +1080,7 @@ pub struct BuildState {
 }
 
 /// Number of phases [`build_step`] walks through. The loading veil maps its progress bar onto this.
-pub const BUILD_STEPS: u32 = 28;
+pub const BUILD_STEPS: u32 = 29;
 
 /// Build the whole world in ONE call (terrain → scatter → castle → fortress → …). Used by the
 /// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0. The normal
@@ -1149,6 +1149,7 @@ pub fn build_step(
         25 => crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats),
         26 => crate::bridges::populate(commands, meshes, std_mats),
         27 => crate::distant_isles::build(commands, meshes, std_mats),
+        28 => crate::rival::build(commands, meshes, std_mats),
         _ => {}
     }
 }
@@ -1302,6 +1303,7 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
                 && !crate::bridges::near_bridge(x, z, 1.0)
                 && !crate::ork_fortress::on_gate_approach(x, z)
                 && !(crate::ork_fortress::in_blight_world(x, z) && z > 86.0)
+                && !crate::rival::near_fort(x, z)
         },
         &|x, z| tile_top_y_world(x, z),
     );
