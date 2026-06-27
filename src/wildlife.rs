@@ -852,6 +852,7 @@ fn valid(place: Place, x: f32, z: f32, min_r: f32) -> bool {
     worldmap::ground_at_world(x, z).is_some()
         && !crate::blockers::is_blocked(x, z)
         && !crate::camps::in_clearing(x, z) // keep herds out of the ork camps
+        && !crate::rival::near_fort(x, z) // …and out of the rival stronghold
         && !crate::town::near_build_plot(x, z) // keep animals off the farm/building plots
         && (x * x + z * z).sqrt() >= min_r // castle/town exclusion (wider for predators)
         && place_ok(place, x, z)

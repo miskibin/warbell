@@ -274,6 +274,7 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
                 || crate::blockers::is_blocked(x, z)
                 || crate::camps::in_clearing(x, z)
                 || crate::castle::in_footprint(x, z)
+                || crate::rival::near_fort(x, z)
             {
                 continue;
             }

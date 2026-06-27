@@ -452,6 +452,7 @@ pub fn populate_landmarks(
                 || crate::blockers::is_blocked(x, z)
                 || crate::camps::in_clearing(x, z)
                 || crate::castle::in_footprint(x, z)
+                || crate::rival::near_fort(x, z)
             {
                 continue;
             }

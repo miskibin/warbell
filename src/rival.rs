@@ -327,8 +327,8 @@ pub struct RivalBuilding {
     pub idx: usize,
 }
 
-/// Spawn one rival building at plot `idx` (world-snapped, its own entity). Shared by the build-time
-/// pre-fill (none, currently) and the runtime economy tick.
+/// Spawn one rival building at plot `idx` (world-snapped, its own entity). Shared by the runtime
+/// economy tick, the load-restore reconcile, and the screenshot-staging hook.
 fn spawn_building(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -386,7 +386,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
         }
     });
 
-    // Walls / towers / dwellings root.
+    // Walls / towers root (the bailey starts bare — the economy raises buildings on plots).
     let fort_root = commands
         .spawn((Transform::from_xyz(centre.x, y, centre.y), Visibility::Visible, BiomeEntity, RivalEntity))
         .id();
@@ -398,6 +398,33 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
 
     // Hand the material set to the economy tick so it can raise buildings at runtime.
     commands.insert_resource(mats);
+
+    // Make the fort SOLID — register collision boxes for the curtain walls, keep and towers (the
+    // mirror of the player castle's wall blockers) so the hero can't walk through the ramparts and
+    // world-prop placement avoids them. Registered once; the fort is permanent world geometry, so
+    // (like the castle) these are never removed.
+    register_blockers(centre);
+}
+
+/// Curtain-wall / keep / tower collision boxes (axis-aligned — the fort is square). The south gate
+/// gap is left open so units sally through it, exactly like the player castle's gate gaps.
+fn register_blockers(centre: Vec2) {
+    use crate::blockers::add_box;
+    let (cx, cz) = (centre.x, centre.y);
+    let h = WALL_HALF;
+    let t = WALL_T / 2.0 + 0.2; // wall half-depth + a small body margin
+    add_box(cx, cz - h, h, t); // north wall
+    add_box(cx + h, cz, t, h); // east wall
+    add_box(cx - h, cz, t, h); // west wall
+    // South wall, split around the gate gap (±GATE_HALF stays passable).
+    let seg_hw = (h - GATE_HALF) / 2.0;
+    let seg_cx = (h + GATE_HALF) / 2.0;
+    add_box(cx - seg_cx, cz + h, seg_hw, t); // south-west of gate
+    add_box(cx + seg_cx, cz + h, seg_hw, t); // south-east of gate
+    add_box(cx, cz, 3.1, 3.1); // keep (6×6 base)
+    for (sx, sz) in [(-1.0_f32, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        add_box(cx + sx * h, cz + sz * h, 1.5, 1.5); // corner towers
+    }
 }
 
 // ── Autonomous economy ───────────────────────────────────────────────────────────────
@@ -504,16 +531,20 @@ fn restore_rival(
     mats: Option<Res<RivalMats>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    buildings: Query<Entity, With<RivalBuilding>>,
+    // Reap the prior in-process run's buildings AND live soldiers — the garrison is transient (not
+    // saved), so a Continue starts from a clean fort and `rival_garrison` re-tops it up. Matches the
+    // New-Game `reset_rival` sweep.
+    stale: Query<Entity, Or<(With<RivalBuilding>, With<RivalSoldier>)>>,
 ) {
     let Some(crate::savegame::GameLoaded(data)) = ev.read().last() else { return };
     state.gold = data.rival_gold;
     // Floor population back to the founding base so an old save (which has none) still fields a
-    // starter rival that can grow.
+    // starter rival that can grow. (Population only ever grows today, so this never shrinks a real
+    // value; if losses are added later, gate the floor on the `built == 0` old-save signature.)
     state.population = data.rival_population.max(RIVAL_BASE_POP);
     state.built = data.rival_built.min(PLOT_OFFSETS.len());
     state.since_build = RIVAL_BUILD_MIN_INTERVAL;
-    for e in &buildings {
+    for e in &stale {
         commands.entity(e).try_despawn();
     }
     let Some(mats) = mats else { return };
@@ -629,7 +660,7 @@ fn rival_garrison(
     let s = 0x5217_0000u32.wrapping_add(seed.wrapping_mul(2654435761));
     let mut r = s | 1;
     let a = next_f(&mut r) * std::f32::consts::TAU;
-    let rad = 3.0 + next_f(&mut r) * 5.0;
+    let rad = 5.0 + next_f(&mut r) * 4.0; // ring between the keep (±3.1) and the walls (±12)
     let pos = RIVAL_CENTRE + Vec2::new(a.cos() * rad, a.sin() * rad);
     let e = crate::villagers::spawn_rival_soldier(&mut commands, &mut meshes, &mut creature_mats, RIVAL_CENTRE, pos, s);
     commands.entity(e).insert((
@@ -701,7 +732,7 @@ fn rival_combat(
             sol.patrol_t -= dt;
             if sol.patrol_t <= 0.0 || vpos.distance(sol.patrol) < 0.6 {
                 let a = next_f(&mut sol.rng) * std::f32::consts::TAU;
-                let rad = 2.0 + next_f(&mut sol.rng) * 7.0;
+                let rad = 5.0 + next_f(&mut sol.rng) * 4.5; // patrol the open ring inside the walls
                 sol.patrol = sol.home + Vec2::new(a.cos() * rad, a.sin() * rad);
                 sol.patrol_t = 3.0 + next_f(&mut sol.rng) * 4.0;
             }

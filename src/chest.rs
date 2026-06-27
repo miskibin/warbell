@@ -365,6 +365,7 @@ pub fn populate_chests(commands: &mut Commands, meshes: &mut Assets<Mesh>, mater
             || crate::blockers::is_blocked(x, z)
             || crate::camps::in_clearing(x, z)
             || crate::castle::in_footprint(x, z)
+            || crate::rival::near_fort(x, z)
             || crate::town::near_build_plot(x, z)
             || crate::bridges::near_bridge(x, z, 1.0)
         {

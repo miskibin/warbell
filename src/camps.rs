@@ -195,7 +195,10 @@ fn site_ok(cx: f32, cz: f32, biome: Biome, placed: &[CampSite]) -> bool {
     // Keep camps off the castle's doorstep — 24→40 so a biome camp can't reject-sample onto
     // the grass apron right against the keep wall (the biome blobs sit 70+ units out, so this
     // only rejects the too-close apron, never a real biome clearing).
-    if crate::castle::in_footprint(cx, cz) || Vec2::new(cx, cz).length() < 40.0 {
+    if crate::castle::in_footprint(cx, cz)
+        || Vec2::new(cx, cz).length() < 40.0
+        || crate::rival::near_fort(cx, cz)
+    {
         return false;
     }
     // The Blight is Gnashfang Hold's own ground (it reads as Swamp to `biome_at_world`) —
