@@ -1494,6 +1494,15 @@ fn animal_drops(
                 drops.push(id);
             }
         }
+        // Gear gate: a hunt-kill never yields mid/top weapons or armor (e.g. the golem's
+        // stone_maul/iron_armor) — that ladder is earned ONLY at the biome landmark trials. Meat,
+        // hides, buff consumables and the basic starter kit pass through.
+        drops.retain(|id| {
+            let wearable = tileworld_core::inventory::item_def(id)
+                .map(|d| matches!(d.kind, tileworld_core::inventory::ItemKind::Weapon | tileworld_core::inventory::ItemKind::Armor))
+                .unwrap_or(false);
+            !wearable || matches!(*id, "sword_iron" | "leather_armor")
+        });
         for id in drops {
             let ang = (rng.unit() * std::f64::consts::TAU) as f32;
             let r = 0.2 + rng.unit() as f32 * 0.5;

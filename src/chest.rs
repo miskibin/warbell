@@ -10,7 +10,6 @@
 //! derived deterministically from world position, so no new save fields are needed.
 
 use bevy::prelude::*;
-use tileworld_core::frontier;
 use tileworld_core::inventory::{item_def, Bag, ItemKind};
 
 use crate::audio::{AudioCue, Concept, Speak};
@@ -135,28 +134,37 @@ fn ease_out_back(k: f32) -> f32 {
     1.0 + 2.70158 * k1 * k1 * k1 + 1.70158 * k1 * k1
 }
 
-/// Chance a rolled chest slot pays a consumable (food/potion) instead of wearable gear. The
-/// frontier gear pools (`frontier::roll_gear`) are nearly all weapons/armor — the Relic pool is
-/// 100% wearable — which buried the hero in near-identical kit. Biasing hard toward consumables
-/// (~85%) makes a dropped weapon/armor the rare exception, not the rule; combined with
-/// `dedup_wearables` (owned gear is skipped entirely), the bag stops filling with swords.
-const CONSUMABLE_RATE: f64 = 0.85;
-
-/// Roll one scattered-chest item: mostly a consumable (scaled by distance), else frontier gear.
-/// `roll` in [0,1) — deterministic per chest slot, so loot stays stable across reloads.
+/// Roll one scattered-chest item — always a PROVISION (food/potion), never wearable gear. Chests
+/// pay in gold + provisions; weapons/armor are earned ONLY at the biome landmark trials
+/// (`landmarks.rs`), so random chest gear can't trivialise the gear ladder. `factor` scales the
+/// food up with distance; `roll` varies it so a haul isn't all-identical.
 fn roll_chest_item(factor: f64, roll: f64) -> &'static str {
-    if roll < CONSUMABLE_RATE {
-        return if factor > 0.7 {
-            "feast"
-        } else if factor > 0.4 {
-            "potion"
-        } else {
-            "bread"
-        };
+    if factor > 0.7 {
+        if roll < 0.5 { "feast" } else { "potion" }
+    } else if factor > 0.4 {
+        if roll < 0.5 { "potion" } else { "bread" }
+    } else {
+        "bread"
     }
-    // Remap the leftover range back to [0,1) so the gear pick still spans its whole pool.
-    let g = (roll - CONSUMABLE_RATE) / (1.0 - CONSUMABLE_RATE);
-    frontier::roll_gear(factor, g)
+}
+
+/// The only wearables a chest may ever hand out — the basic starter kit, so a fresh hero can find a
+/// first sword + jerkin to ramp on. Everything stronger (axe, stone_maul, iron_armor, sword_gold,
+/// gold_armor, blade_frost, dragon_plate) is earned ONLY at the biome landmark trials.
+const STARTER_GEAR: [&str; 2] = ["sword_iron", "leather_armor"];
+
+/// Strip any wearable that isn't basic starter kit from a chest haul (even hand-authored ones), so
+/// opening a chest never showers mid/top armor or weapons — that ladder is landmark-only. Keeps
+/// consumables/tokens and the starter pieces; order preserved.
+fn strip_non_starter_gear(loot: Vec<&'static str>) -> Vec<&'static str> {
+    loot.into_iter()
+        .filter(|id| {
+            let wearable = item_def(id)
+                .map(|d| matches!(d.kind, ItemKind::Weapon | ItemKind::Armor))
+                .unwrap_or(false);
+            !wearable || STARTER_GEAR.contains(id)
+        })
+        .collect()
 }
 
 /// Drop wearable gear the hero already owns (and collapse a repeat within the same haul) so a
@@ -212,8 +220,10 @@ fn chest_interact(
         let head = Vec3::new(p.x, p.y + 1.4, p.z);
 
         // Resolve loot: hand-authored trophy → fixed haul; caches → gold + a loaf; deep-rim hoard →
-        // guaranteed top-tier haul + heavy purse; ordinary treasure → frontier gear + gold (Relic
-        // rolls the top pool). The curves steepen with distance so the frontier pulls the hero out.
+        // a big purse + provisions; ordinary treasure → provisions + gold. Chests NO LONGER roll
+        // wearable gear — that's earned only at the landmark trials (`landmarks.rs`), so opening a
+        // chest never showers random armor. The gold curves steepen with distance to pull the hero
+        // out; the trophy chests' fixed authored loot (incl. the starter sword) is untouched.
         let (loot, gold): (Vec<&'static str>, i64) = if let Some((g, ids)) = chest.trophy {
             (ids.to_vec(), g)
         } else if chest.cache {
@@ -223,27 +233,25 @@ fn chest_interact(
             }
             (loot, (4.0 + chest.factor * 24.0).round() as i64)
         } else if chest.hoard {
+            // A deep-rim hoard: a heavy purse + a stack of provisions (gear lives at the landmarks).
             let h = tile_hash(p.x, p.z);
-            let loot = (0..4)
-                .map(|i| frontier::roll_gear(1.0, (h + i as f64 * 0.37) % 1.0))
-                .collect();
-            (loot, (50.0 + chest.factor * 60.0 + h * 25.0).round() as i64)
+            (vec!["feast", "feast", "potion"], (70.0 + chest.factor * 70.0 + h * 30.0).round() as i64)
         } else {
             let h = tile_hash(p.x, p.z);
             let items = 1 + (chest.factor * 2.0).round() as i64;
-            // Relic chests roll from the top pool (factor pinned to 1.0) so the deep-biome haul is
-            // reliably strong; Wood uses the frontier-graded factor. Gold stays the modest curve —
-            // exploration pays in GEAR, not purses.
+            // Relic chests pin factor to 1.0 so the provisions are top-tier (feast); ordinary ones
+            // use the frontier-graded factor. Gold stays a modest curve.
             let roll_factor = if chest.tier == ChestTier::Relic { 1.0 } else { chest.factor };
             let loot = (0..items)
                 .map(|i| roll_chest_item(roll_factor, (h + i as f64 * 0.37) % 1.0))
                 .collect();
             (loot, (5.0 + chest.factor * 55.0 + h * 10.0).round() as i64)
         };
-        // Ignore duplicate wearables: drop any weapon/armor the hero already owns (or a repeat
-        // within this haul) so a chest never stuffs the bag with a second copy. Rolled hauls only —
-        // the authored trophy passes through intact.
-        let loot = if chest.trophy.is_some() { loot } else { dedup_wearables(&inv.0, loot) };
+        // Gear gate: strip any non-starter weapon/armor (applies to authored trophies too — the
+        // mid/top ladder is landmark-only), then drop wearables the hero already owns / a repeat in
+        // this haul. So a chest only ever ramps a fresh hero with basic kit; everything else melts
+        // to gold + provisions.
+        let loot = dedup_wearables(&inv.0, strip_non_starter_gear(loot));
         // Won't open if the bag can't hold the gear (TS: full bag rejects the chest).
         if !inv.0.has_room_for(&loot) {
             floats.0.push(FloatReq {
@@ -643,13 +651,33 @@ mod tests {
     }
 
     #[test]
-    fn chest_item_biases_consumables_then_falls_back_to_gear() {
-        // Below the rate → a consumable, better food deeper out.
+    fn chest_item_is_always_a_provision_scaled_by_distance() {
+        // Chests pay provisions, NEVER wearable gear (gear is earned only at the landmark trials).
+        // Better food deeper out; the roll just varies which provision within a tier.
         assert_eq!(roll_chest_item(1.0, 0.0), "feast");
+        assert_eq!(roll_chest_item(1.0, 0.99), "potion");
         assert_eq!(roll_chest_item(0.5, 0.0), "potion");
+        assert_eq!(roll_chest_item(0.5, 0.99), "bread");
         assert_eq!(roll_chest_item(0.0, 0.0), "bread");
-        // Above the rate → frontier gear from the matching pool.
-        let g = roll_chest_item(1.0, 0.99);
-        assert!(["blade_frost", "dragon_plate", "sword_gold", "gold_armor"].contains(&g));
+        // No roll ever yields a weapon/armor.
+        for r in [0.0, 0.3, 0.6, 0.99] {
+            let id = roll_chest_item(1.0, r);
+            assert!(!["blade_frost", "dragon_plate", "sword_gold", "gold_armor"].contains(&id));
+        }
+    }
+
+    #[test]
+    fn strip_keeps_starter_kit_and_consumables_but_drops_mid_top_gear() {
+        let kept = strip_non_starter_gear(vec![
+            "sword_iron",     // starter weapon — kept
+            "leather_armor",  // starter armor — kept
+            "stone_maul",     // mid weapon — dropped
+            "iron_armor",     // mid armor — dropped
+            "gold_armor",     // top armor — dropped
+            "blade_frost",    // top weapon — dropped
+            "bread",          // consumable — kept
+            "mercenary_contract", // token — kept
+        ]);
+        assert_eq!(kept, vec!["sword_iron", "leather_armor", "bread", "mercenary_contract"]);
     }
 }
