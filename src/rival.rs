@@ -479,6 +479,36 @@ fn reset_rival(
     }
 }
 
+/// On a loaded game (`GameLoaded`), restore the rival's treasury/population/build-count from the
+/// carried snapshot and reconcile its buildings to match (reap the live ones, raise one per built
+/// plot) — the mirror of `town::restore_buildings`. Reads the value off the carried `SaveData`, not
+/// the live `RivalState` (which load may write the same frame in undefined order). The static fort
+/// (keep/walls/towers) is world geometry and untouched; the garrison re-tops-up on its own.
+fn restore_rival(
+    mut ev: MessageReader<crate::savegame::GameLoaded>,
+    mut state: ResMut<RivalState>,
+    mats: Option<Res<RivalMats>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    buildings: Query<Entity, With<RivalBuilding>>,
+) {
+    let Some(crate::savegame::GameLoaded(data)) = ev.read().last() else { return };
+    state.gold = data.rival_gold;
+    // Floor population back to the founding base so an old save (which has none) still fields a
+    // starter rival that can grow.
+    state.population = data.rival_population.max(RIVAL_BASE_POP);
+    state.built = data.rival_built.min(PLOT_OFFSETS.len());
+    state.since_build = RIVAL_BUILD_MIN_INTERVAL;
+    for e in &buildings {
+        commands.entity(e).try_despawn();
+    }
+    let Some(mats) = mats else { return };
+    for idx in 0..state.built {
+        let kind = BUILD_ORDER[idx % BUILD_ORDER.len()];
+        spawn_building(&mut commands, &mut meshes, &mats, idx, kind);
+    }
+}
+
 /// Screenshot staging (`FOREST_RIVAL=<n>`): instantly raise `n` rival buildings (default: fill the
 /// bailey) so a shot can frame a grown rival town without waiting out the economy. No-op otherwise.
 fn stage_rival_for_shot(
@@ -701,8 +731,9 @@ impl Plugin for RivalPlugin {
                 Update,
                 (rival_economy, rival_garrison, rival_combat).run_if(in_state(crate::game_state::Modal::None)),
             )
+            // Reconcile the rival's economy + buildings to a loaded save (ungated; fires on a load).
+            .add_systems(Update, restore_rival)
             // Screenshot staging (ungated; env-gated inside).
             .add_systems(Update, stage_rival_for_shot);
-        // Save/load round-trip lands in the next step.
     }
 }

@@ -101,6 +101,18 @@ pub struct SaveData {
     /// run doesn't restart the tutorial on every Continue.
     #[serde(default)]
     pub quest: Option<QuestLog>,
+    // ── rival stronghold (Stronghold-Crusader-style AI opponent) ──
+    /// The rival lord's banked gold. Additive — old saves default to 0.0 (a fresh treasury).
+    #[serde(default)]
+    pub rival_gold: f64,
+    /// The rival's population (drives its tax income). Additive — defaults to 0; `restore_rival`
+    /// floors it back to the founding base, so an old save resumes with a starter rival.
+    #[serde(default)]
+    pub rival_population: u32,
+    /// How many buildings the rival has raised (== next plot index). Additive — defaults to 0
+    /// (a bare bailey), so old saves resume with the fort but no grown town, which then grows.
+    #[serde(default)]
+    pub rival_built: usize,
 }
 
 /// Set when the player picks **Continue**; drained by [`apply_pending_load`] on the next play frame.
@@ -234,6 +246,7 @@ struct SaveCtx<'w, 's> {
     captives: Option<Res<'w, crate::ork_fortress::BlightCaptives>>,
     disc: Res<'w, Discoveries>,
     quest: Res<'w, QuestLogRes>,
+    rival: Res<'w, crate::rival::RivalState>,
     active_map: Res<'w, crate::worldmap::ActiveMap>,
     chests: Query<'w, 's, (&'static Chest, &'static ChestId)>,
     landmarks: Query<'w, 's, &'static Landmark>,
@@ -285,6 +298,9 @@ impl SaveCtx<'_, '_> {
                 .collect(),
             opened_chests,
             quest: Some(self.quest.0.clone()),
+            rival_gold: self.rival.gold,
+            rival_population: self.rival.population,
+            rival_built: self.rival.built,
         }
     }
 }
@@ -545,6 +561,9 @@ mod tests {
             claimed_landmark_gear: vec!["The Hollow Oak".into()],
             opened_chests: vec![false, true, false],
             quest: Some(QuestLog { active: 3, progress: 2.0 }),
+            rival_gold: 142.5,
+            rival_population: 8,
+            rival_built: 5,
         }
     }
 
