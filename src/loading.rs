@@ -195,8 +195,8 @@ fn spawn_loading(
                     height: Val::Percent(100.0),
                     ..default()
                 },
-                BackgroundColor(VEIL.with_alpha(0.55)),
-                VeilBg(0.55),
+                BackgroundColor(VEIL.with_alpha(0.72)),
+                VeilBg(0.72),
             ));
             // Wordmark (Cinzel) — blank until the display font loads, which is ~when we reveal.
             root.spawn((label(&fonts.display, "WARBELL", 72.0, GOLD), LoadingText(GOLD)));
