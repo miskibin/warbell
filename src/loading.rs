@@ -95,11 +95,6 @@ struct VeilRoot;
 /// A text element of the veil (title / tip) whose colour we re-tint each frame for the fade.
 #[derive(Component)]
 struct LoadingText(Color);
-/// A backdrop layer of the veil (the photo + its darkening scrim) — re-tinted each frame so it
-/// fades together with the veil. The `f32` is the layer's base opacity at full veil (image = 1.0,
-/// scrim < 1.0 so the wordmark/tip stay readable over the art).
-#[derive(Component)]
-struct VeilBg(f32);
 /// The rotating-tip line — its *content* is swapped from [`TIPS`] when the shown index changes
 /// (its colour fade is handled by [`LoadingText`], which it also carries).
 #[derive(Component)]
@@ -130,12 +125,7 @@ fn load_test() -> bool {
     std::env::var("FOREST_LOADTEST").is_ok()
 }
 
-fn spawn_loading(
-    mut commands: Commands,
-    time: Res<Time>,
-    fonts: Res<UiFonts>,
-    asset_server: Res<AssetServer>,
-) {
+fn spawn_loading(mut commands: Commands, time: Res<Time>, fonts: Res<UiFonts>) {
     let hold = load_test();
     // The capture harnesses want a clean first frame — boot with the veil dormant (but still
     // spawned, so a later reset under the harness could raise it). `FOREST_LOADTEST` overrides.
@@ -175,29 +165,6 @@ fn spawn_loading(
             VeilRoot,
         ))
         .with_children(|root| {
-            // Backdrop photo (snow-biome battle), drawn behind the wordmark. Covers the whole
-            // screen; its tint alpha is driven each frame so it fades with the veil.
-            root.spawn((
-                ImageNode::new(asset_server.load("ui/loading_bg.png")),
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    ..default()
-                },
-                VeilBg(1.0),
-            ));
-            // Darkening scrim over the photo so the gold wordmark / tip / bar stay legible.
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    ..default()
-                },
-                BackgroundColor(VEIL.with_alpha(0.72)),
-                VeilBg(0.72),
-            ));
             // Wordmark (Cinzel) — blank until the display font loads, which is ~when we reveal.
             root.spawn((label(&fonts.display, "WARBELL", 72.0, GOLD), LoadingText(GOLD)));
             // Rotating flavour line (its content set from `TIPS[tip]`, re-rolled per load).
@@ -243,10 +210,9 @@ fn drive_veil(
     progress: Res<crate::biome::BuildProgress>,
     mut veil: ResMut<Veil>,
     mut root_q: Query<(&mut Node, &mut BackgroundColor), With<VeilRoot>>,
-    mut fill_q: Query<(&mut Node, &mut BackgroundColor), (With<ProgressFill>, Without<VeilRoot>, Without<ProgressTrack>, Without<VeilBg>)>,
-    mut track_q: Query<&mut BackgroundColor, (With<ProgressTrack>, Without<VeilRoot>, Without<ProgressFill>, Without<VeilBg>)>,
+    mut fill_q: Query<(&mut Node, &mut BackgroundColor), (With<ProgressFill>, Without<VeilRoot>, Without<ProgressTrack>)>,
+    mut track_q: Query<&mut BackgroundColor, (With<ProgressTrack>, Without<VeilRoot>, Without<ProgressFill>)>,
     mut texts: Query<(&LoadingText, &mut TextColor)>,
-    mut bg_q: Query<(&VeilBg, Option<&mut ImageNode>, Option<&mut BackgroundColor>), (Without<VeilRoot>, Without<ProgressFill>, Without<ProgressTrack>)>,
     mut tip_q: Query<&mut Text, With<TipText>>,
     // Last tip index applied to the text node — so we only rewrite (and re-lay-out) it when it
     // actually changes, never per-frame.
@@ -311,15 +277,5 @@ fn drive_veil(
 
     for (t, mut tc) in &mut texts {
         tc.0 = t.0.with_alpha(alpha);
-    }
-
-    // Fade the backdrop photo + its scrim with the veil. The image tints via `ImageNode::color`,
-    // the scrim via its `BackgroundColor`; each scaled by its base opacity.
-    for (bg, image, color) in &mut bg_q {
-        if let Some(mut image) = image {
-            image.color = Color::WHITE.with_alpha(alpha * bg.0);
-        } else if let Some(mut color) = color {
-            color.0 = VEIL.with_alpha(alpha * bg.0);
-        }
     }
 }

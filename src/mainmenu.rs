@@ -106,19 +106,6 @@ fn spawn_menu_backdrop(mut commands: Commands, asset_server: Res<AssetServer>) {
         GlobalZIndex(-100),
         MenuSceneEntity,
     ));
-    // Darkening scrim over the backdrop so the title/buttons read against it (z just above the
-    // image at -100, still below the start-screen UI at default z).
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            ..default()
-        },
-        BackgroundColor(rgba(10, 7, 4, 0.5)),
-        GlobalZIndex(-99),
-        MenuSceneEntity,
-    ));
 }
 
 fn despawn_menu_scene(mut commands: Commands, q: Query<Entity, With<MenuSceneEntity>>) {
