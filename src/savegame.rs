@@ -113,6 +113,10 @@ pub struct SaveData {
     /// (a bare bailey), so old saves resume with the fort but no grown town, which then grows.
     #[serde(default)]
     pub rival_built: usize,
+    /// The player razed the rival fort — stays destroyed across save/load. Additive — old saves
+    /// default to `false` (the fort still stands).
+    #[serde(default)]
+    pub rival_destroyed: bool,
 }
 
 /// Set when the player picks **Continue**; drained by [`apply_pending_load`] on the next play frame.
@@ -301,6 +305,7 @@ impl SaveCtx<'_, '_> {
             rival_gold: self.rival.gold,
             rival_population: self.rival.population,
             rival_built: self.rival.built,
+            rival_destroyed: self.rival.destroyed,
         }
     }
 }
@@ -564,6 +569,7 @@ mod tests {
             rival_gold: 142.5,
             rival_population: 8,
             rival_built: 5,
+            rival_destroyed: false,
         }
     }
 

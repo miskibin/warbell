@@ -245,6 +245,16 @@ fn rally_one(commands: &mut Commands, e: Entity, guard: Option<&Guard>, v: &Vill
 // from `siege.rs`, predator bites from `wildlife.rs`) — no self-inflicted melt — so guards are
 // beefy enough that a pair wins a 1v1 but a wave still overwhelms them.
 const NPC_MAX_HP: f32 = 210.0; // raised from 140: defender HP is flat but the night dmg ramp is steep, so late nights gangs shredded peasants — bigger pool lets the militia survive a night-4+ swarm
+
+/// Flat max-HP the militia gains for nights already survived: peasants harden *a bit* as the siege
+/// wears on so the steep night dmg ramp doesn't shred them faster each night. Grows per night,
+/// capped so it never dwarfs the base pool. Derived from the (saved) `wave_index`, so it round-trips
+/// loads for free; applied in [`guard_arms_upkeep`] which only ever raises `max`.
+const NIGHT_HP_PER: f32 = 14.0;
+const NIGHT_HP_CAP: f32 = 140.0;
+fn night_hp_bonus(wave_index: i32) -> f32 {
+    ((wave_index + 1).max(0) as f32 * NIGHT_HP_PER).min(NIGHT_HP_CAP)
+}
 /// Base unarmed-guard strike. Each `villager_arms_tier` (the Defense "Guard Arms" line) lifts this
 /// to the advertised figure via [`guard_damage`]; the guard-vigor line adds flat HP atop NPC_MAX_HP.
 const GUARD_DAMAGE: f32 = 6.3; // −30% off the old 9: guards trade slower, lean on staying power
@@ -1087,9 +1097,10 @@ fn npc_fight_back(
 /// upgrade is felt at once. Only ever raises `max` — a wounded guard keeps its current `hp`.
 fn guard_arms_upkeep(
     def: Res<crate::economy::Defenses>,
+    siege: Res<crate::siege::Siege>,
     mut q: Query<&mut NpcHp, Without<crate::dying::Dying>>,
 ) {
-    let target = NPC_MAX_HP + def.guard_hp_bonus;
+    let target = NPC_MAX_HP + def.guard_hp_bonus + night_hp_bonus(siege.wave_index);
     for mut hp in &mut q {
         if hp.max < target {
             let gained = target - hp.max;

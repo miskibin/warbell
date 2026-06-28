@@ -40,9 +40,11 @@ const SLAM_RADIUS: f32 = 4.2;
 const SLAM_MULT: f32 = 3.0;
 const SLAM_KNOCK: f32 = 18.0;
 
-// Sand Dash — the DODGE: long blink, light damage, and brief invulnerability (i-frames) so you can
+// Sand Dash — the DODGE: a short blink, light damage, and brief invulnerability (i-frames) so you can
 // blink straight through a boss swing.
-const DASH_DIST: f32 = 7.0;
+// Distance halved (was 7.0 — it overshot, hurling the hero ~2× too far past the fight); 3.5 is a
+// tight evasive hop that still clears a boss swing without launching you out of the melee.
+const DASH_DIST: f32 = 3.5;
 const DASH_HALF_WIDTH: f32 = 1.5;
 const DASH_MULT: f32 = 1.0;
 /// Seconds of invulnerability granted from the blink's start.

@@ -52,8 +52,9 @@ const BEACON_MOTES: u32 = 22;
 // the ONLY source of top-tier gear (random chest/animal rolls are pulled) so acquisition is
 // legible: a beacon you see from afar marks exactly where each piece is.
 
-/// Radius of the rune circle the hero must hold to fill the meter.
-const RUNE_R: f32 = 5.0;
+/// Radius of the rune circle the hero must hold to fill the meter. Wide enough that the glowing
+/// ring reads as a real arena to defend (not a tight dot underfoot) and the hero has room to swing.
+const RUNE_R: f32 = 8.0;
 /// Seconds of held ground (inside the circle) to fill the meter and claim the gear.
 const HOLD_SECS: f32 = 35.0;
 /// The meter drains this much faster than it fills while the hero stands OUTSIDE the circle — so
@@ -64,9 +65,14 @@ const GUARD_SPAWN_INTERVAL: f32 = 2.8;
 /// Cap on live trial guardians at once — kept low so the trial reads as a tense hold, not a swarm.
 const GUARD_MAX_ALIVE: usize = 3;
 /// Stray this far from the landmark and the trial aborts (so the horde isn't dragged off).
-const TRIAL_ABORT_R: f32 = 18.0;
-/// Guardians spawn on a ring this far out — just beyond the rune circle.
-const GUARD_RING_R: f32 = 9.0;
+const TRIAL_ABORT_R: f32 = 22.0;
+/// Guardians spawn on a ring this far out — just beyond the (now wider) rune circle.
+const GUARD_RING_R: f32 = 12.0;
+/// After landmarks are planted, fell every tree within this radius so the set-piece reads from afar
+/// and the rune-trial arena (the [`RUNE_R`] ring + the [`GUARD_RING_R`] guardian ring) has open
+/// ground. Tree scatter runs long before landmark placement (worldmap build phases 5–9 vs. 23), so
+/// trees otherwise crowd right up to a landmark.
+const LANDMARK_CLEAR_R: f32 = 13.0;
 
 // ── Components / resources ────────────────────────────────────────────────────────
 
@@ -317,11 +323,43 @@ impl Plugin for LandmarksPlugin {
             // The trial HUD + rune ring draw ungated (like the rest of the HUD) so they show + clean
             // up through any frame.
             .add_systems(Update, (sync_rune_hud, sync_rune_ring))
+            // Fell trees crowding the landmarks once they've spawned (runs once, then idles).
+            .add_systems(Update, clear_trees_around_landmarks)
             .add_systems(
                 Update,
                 (track_total, discover, shrine, start_rune_trial, drive_rune_trial)
                     .run_if(in_state(Modal::None)),
             );
+    }
+}
+
+/// Fell every tree within [`LANDMARK_CLEAR_R`] of a landmark, once, after the landmarks exist.
+/// Tree scatter (worldmap build phases 5–9) runs long before landmark placement (phase 23), so
+/// trees crowd right up to the set-pieces; this opens the ground around each so the landmark reads
+/// from afar and the rune-trial arena is clear. Despawns (not fells → no regrow entity) and lifts
+/// the trunk blocker. Runs once: idles until landmarks are present, clears, then never again
+/// (matches the in-process Continue/New-Game reset, which doesn't re-spawn landmarks).
+fn clear_trees_around_landmarks(
+    mut commands: Commands,
+    landmarks: Query<&Transform, With<Landmark>>,
+    trees: Query<(Entity, &Transform), With<crate::verbs::ChopTree>>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    let centers: Vec<Vec2> = landmarks.iter().map(|tf| Vec2::new(tf.translation.x, tf.translation.z)).collect();
+    if centers.is_empty() {
+        return; // landmarks not planted yet — try again next frame
+    }
+    *done = true;
+    let r2 = LANDMARK_CLEAR_R * LANDMARK_CLEAR_R;
+    for (e, tf) in &trees {
+        let p = Vec2::new(tf.translation.x, tf.translation.z);
+        if centers.iter().any(|c| c.distance_squared(p) < r2) {
+            crate::blockers::remove_at(p.x, p.y); // p.y is world Z
+            commands.entity(e).try_despawn();
+        }
     }
 }
 
@@ -528,6 +566,31 @@ fn shrine(
 
 // ── Rune-Trial — systems that run the "Hold the Rune" gear gate ──────────────────────
 
+/// Find a DRY-LAND spawn point for a trial guardian near the [`GUARD_RING_R`] ring, starting from
+/// `ang`. Landmarks beside a river/lake/coast have ring arcs out over water, where the old fixed
+/// placement dropped orks into the sea; this sweeps the ring and steps inward (never inside the
+/// [`RUNE_R`] hold circle, so a guardian can't pop on top of the hero) for a spot whose whole
+/// footprint is standable. `None` if every probe is wet — the caller then skips that spawn tick.
+fn guardian_landfall(center: Vec2, ang: f32) -> Option<Vec2> {
+    use std::f32::consts::TAU;
+    const BODY_R: f32 = 0.45; // ork footprint — keep the whole body off the water, not just its centre
+    // Outer ring first, then inward in 1-unit steps, stopping above RUNE_R (=8) so guardians stay
+    // outside the arena the hero defends.
+    for step in 0..=3 {
+        let radius = GUARD_RING_R - step as f32; // 12, 11, 10, 9
+        for k in 0..16 {
+            let a = ang + k as f32 / 16.0 * TAU;
+            let p = center + Vec2::new(a.cos(), a.sin()) * radius;
+            if let Some(y) = crate::steer::footing(p.x, p.y) {
+                if crate::steer::can_stand(p.x, p.y, BODY_R, y) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// A guardian summoned by an active Rune-Trial — a camp-style ork home-anchored at the landmark
 /// (so it aggros the hero like a warband, via the shared `orks::ork_brain`). Tagged so the trial
 /// can sweep them all on win/abort. Home ≠ any camp centre, so the camp systems ignore them.
@@ -538,7 +601,15 @@ struct TrialGuardian;
 /// save can only be written in Prep and the trial aborts the instant night falls, so none is ever
 /// live at snapshot time).
 #[derive(Resource, Default)]
-struct RuneTrial(Option<ActiveTrial>);
+pub struct RuneTrial(Option<ActiveTrial>);
+
+impl RuneTrial {
+    /// Whether a Hold-the-Rune trial is currently running. Read by `interaction.rs` to hide the
+    /// `[E] Challenge the guardians` prompt once the fight has begun (you can't start a second one).
+    pub fn is_active(&self) -> bool {
+        self.0.is_some()
+    }
+}
 
 /// Fired by `interaction.rs` when the hero presses **E** at a landmark (the contextual-prompt
 /// system that names the action on a visible chip). The landmark systems decide what it means from
@@ -673,19 +744,25 @@ fn drive_rune_trial(
                     if let Some(wb) = &warbands {
                         let i = active.spawn_i;
                         let ang = i as f32 * 2.399_963; // golden-angle spread around the rune
-                        let pos = active.center + Vec2::new(ang.cos(), ang.sin()) * GUARD_RING_R;
-                        const VARIANTS: [crate::orks::OrkVariant; 4] = [
-                            crate::orks::OrkVariant::Grunt,
-                            crate::orks::OrkVariant::Scout,
-                            crate::orks::OrkVariant::Berserker,
-                            crate::orks::OrkVariant::Grunt,
-                        ];
-                        let variant = VARIANTS[i as usize % VARIANTS.len()];
-                        let seed = i.wrapping_mul(0x9e37_79b1) ^ 0x51ed_2c01;
-                        // Home-anchored AT the landmark so it aggros the hero holding the rune.
-                        let g = wb.armory.spawn(&mut commands, variant, crate::orks::Faction::Red, active.center, pos, seed);
-                        commands.entity(g).try_insert(TrialGuardian);
-                        active.spawn_i += 1;
+                        // Land the guardian on dry ground: a landmark beside a river/lake/coast has
+                        // ring points out over water, and the old fixed-ring placement dropped orks
+                        // INTO the water. Sweep the ring (and step inward, never inside the hold
+                        // circle) for a standable spot; if the whole sweep is wet, skip this tick and
+                        // retry on the next cadence.
+                        if let Some(pos) = guardian_landfall(active.center, ang) {
+                            const VARIANTS: [crate::orks::OrkVariant; 4] = [
+                                crate::orks::OrkVariant::Grunt,
+                                crate::orks::OrkVariant::Scout,
+                                crate::orks::OrkVariant::Berserker,
+                                crate::orks::OrkVariant::Grunt,
+                            ];
+                            let variant = VARIANTS[i as usize % VARIANTS.len()];
+                            let seed = i.wrapping_mul(0x9e37_79b1) ^ 0x51ed_2c01;
+                            // Home-anchored AT the landmark so it aggros the hero holding the rune.
+                            let g = wb.armory.spawn(&mut commands, variant, crate::orks::Faction::Red, active.center, pos, seed);
+                            commands.entity(g).try_insert(TrialGuardian);
+                            active.spawn_i += 1;
+                        }
                         active.next_spawn = now + GUARD_SPAWN_INTERVAL;
                     }
                 }

@@ -123,6 +123,8 @@ pub struct Juice<'w> {
     feedback: ResMut<'w, crate::combat_fx::HitFeedback>,
     hitstop: ResMut<'w, HitStop>,
     materials: ResMut<'w, Assets<StandardMaterial>>,
+    /// Active run's difficulty — drives the Easy hero-damage handicap.
+    siege: Option<Res<'w, crate::siege::Siege>>,
 }
 
 /// Townsfolk the hero can harmlessly bonk with a swing: the [`crate::villagers::Villager`] bodies
@@ -131,11 +133,20 @@ pub struct Juice<'w> {
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Bystanders<'w, 's> {
     speak: MessageWriter<'w, crate::audio::Speak>,
+    // The rival stronghold's desert garrison + workers + raiders carry `Villager` (for animation)
+    // but are NOT our townsfolk — exclude them so bonking a rival peasant doesn't earn OUR
+    // peasants' sarcastic earful (`Concept::HitByHero`). They're "not ours".
     folk: Query<
         'w,
         's,
         &'static GlobalTransform,
-        (With<crate::villagers::Villager>, Without<crate::dying::Dying>),
+        (
+            With<crate::villagers::Villager>,
+            Without<crate::dying::Dying>,
+            Without<crate::rival::RivalWorker>,
+            Without<crate::rival::RivalSoldier>,
+            Without<crate::rival::RivalRaider>,
+        ),
     >,
 }
 
@@ -491,7 +502,10 @@ pub fn player_attack(
     // One crit roll per swing (TS): every cone target shares it. Damage =
     // (attack_damage + equipped-weapon bonus) × active power-buff, doubled on crit, rounded.
     let now = time.elapsed_secs() as f64;
-    let base = (player.0.attack_damage + mods.weapon_bonus()) * mods.power_mult(now);
+    // Difficulty handicap: Easy gives the hero extra melee punch on top of everything else.
+    let diff = juice.siege.as_ref().map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
+    let dmg_mul = crate::siege::mods_for(diff).hero_dmg_mul as f64;
+    let base = (player.0.attack_damage + mods.weapon_bonus()) * mods.power_mult(now) * dmg_mul;
     // Broadcast the cone so ore/dummies share this swing (non-crit damage).
     mods.publish_swing(origin, fwd, base.round() as f32);
     // A charged Heavy is a GUARANTEED crit at ×HEAVY_MULT — the `crit` flag below then drives the
@@ -720,7 +734,19 @@ pub fn player_attack(
         }
     }
     if let Some((_, head)) = bonk {
-        bystanders.speak.write(crate::audio::Speak::at(crate::audio::Concept::HitByHero, head));
+        // A clipped townsperson only earns the sarcastic earful when it's a deliberate poke — NOT
+        // collateral mid-battle. If any ork is near the hero we're in a fight, so stay quiet; an
+        // accidental bonk between sword-strokes shouldn't make the peasant quip over the screaming.
+        const BATTLE_QUIET_R2: f32 = 14.0 * 14.0;
+        let in_battle = targets.iter().any(|(_, gt, _, ork, _, _)| {
+            ork.is_some() && {
+                let p = gt.translation();
+                Vec2::new(p.x - origin.x, p.z - origin.y).length_squared() < BATTLE_QUIET_R2
+            }
+        });
+        if !in_battle {
+            bystanders.speak.write(crate::audio::Speak::at(crate::audio::Concept::HitByHero, head));
+        }
         // A connecting bonk plays the impact thud + a light shake below, not the empty-swing whoosh.
         hit_any = true;
     }

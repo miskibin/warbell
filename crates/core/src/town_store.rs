@@ -64,8 +64,9 @@ pub const HOUSE_COST: Cost = Cost { wood: 12.0, stone: 8.0 };
 /// Per-already-standing-House surcharge added on top of [`HOUSE_COST`]. The population snowball
 /// (more houses → more peasants → more gold/workers → faster everything) still runs, but each new
 /// dwelling is a bigger haul, so the ramp decelerates instead of letting you spam all `MAX_HOUSES`
-/// for a flat pittance. House #2 (1 standing) = 18 wood / 12 stone; the 12th = 78 / 52. Tunable.
-pub const HOUSE_COST_STEP: Cost = Cost { wood: 6.0, stone: 4.0 };
+/// for a flat pittance. House #2 (1 standing) = 17 wood / 11.5 stone; the 12th = 67 / 46.5.
+/// Step trimmed ~15% (was 6/4) to ease the population ramp. Tunable.
+pub const HOUSE_COST_STEP: Cost = Cost { wood: 5.0, stone: 3.5 };
 
 /// Cost to raise the next House given how many already stand: `HOUSE_COST + houses × HOUSE_COST_STEP`.
 pub fn house_cost(houses: u32) -> Cost {
@@ -493,10 +494,10 @@ mod tests {
 
     #[test]
     fn house_cost_escalates_with_count() {
-        // First house at the base; each subsequent adds the step (6 wood / 4 stone).
+        // First house at the base; each subsequent adds the step (5 wood / 3.5 stone).
         assert_eq!(house_cost(0), Cost { wood: 12.0, stone: 8.0 });
-        assert_eq!(house_cost(1), Cost { wood: 18.0, stone: 12.0 });
-        assert_eq!(house_cost(11), Cost { wood: 78.0, stone: 52.0 });
+        assert_eq!(house_cost(1), Cost { wood: 17.0, stone: 11.5 });
+        assert_eq!(house_cost(11), Cost { wood: 67.0, stone: 46.5 });
 
         // Build two in a row: the second deducts the escalated cost, not the base.
         let mut t = Town::new(0, 0);
@@ -505,10 +506,10 @@ mod tests {
         assert!(t.build_house(&mut bank));
         assert_eq!(bank.wood(), 88.0); // 100 - 12
         assert_eq!(bank.stone(), 92.0); // 100 - 8
-        assert_eq!(t.next_house_cost(), Cost { wood: 18.0, stone: 12.0 });
+        assert_eq!(t.next_house_cost(), Cost { wood: 17.0, stone: 11.5 });
         assert!(t.build_house(&mut bank));
-        assert_eq!(bank.wood(), 70.0); // 88 - 18
-        assert_eq!(bank.stone(), 80.0); // 92 - 12
+        assert_eq!(bank.wood(), 71.0); // 88 - 17
+        assert_eq!(bank.stone(), 80.5); // 92 - 11.5
     }
 
     #[test]

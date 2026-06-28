@@ -1147,7 +1147,7 @@ fn rival_raid_director(
             let pos = RIVAL_CENTRE + Vec2::new(spread, WALL_HALF + 3.0);
             spawn_raider(&mut commands, &mut meshes, &mut creature_mats, pos, s);
         }
-        notice.push("Najeźdźcy rywala maszerują na zamek!", time.elapsed_secs_f64());
+        notice.push("Rival raiders march on the keep!", time.elapsed_secs_f64());
     }
 }
 
@@ -1208,11 +1208,16 @@ fn rival_raid_brain(
     mut pending: ResMut<crate::player::PendingHeroDamage>,
     mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
     mut keep: ResMut<crate::siege::KeepHp>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    mut next_alert: Local<f64>,
     mut raiders: Query<(&mut RivalRaider, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
     townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>, Without<RivalRaider>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
+    // Set when any raider lands a blow this frame → throttled on-screen "under attack" cue, so a
+    // daytime raid the player isn't watching still announces itself (the siege keep-alert is night-only).
+    let mut struck = false;
     let tw = time.elapsed_secs_wrapped();
     let goal = crate::siege::KEEP_POS;
     let folk: Vec<(Entity, Vec2)> =
@@ -1247,6 +1252,7 @@ fn rival_raid_brain(
                 if rd.atk_cd <= 0.0 {
                     rd.atk_cd = RAIDER_ATK_CD;
                     v.atk_anim = now;
+                    struck = true;
                     match victim {
                         None => pending.0 += RAIDER_HERO_DMG,
                         Some(ve) => npc_dmg.0.push(crate::villagers::NpcHit { victim: ve, amount: RAIDER_NPC_DMG, attacker: None }),
@@ -1265,6 +1271,7 @@ fn rival_raid_brain(
             if rd.atk_cd <= 0.0 {
                 rd.atk_cd = RAIDER_ATK_CD;
                 v.atk_anim = now;
+                struck = true;
                 keep.hp = (keep.hp - RAIDER_KEEP_DMG).max(0.0);
             }
         } else {
@@ -1274,6 +1281,13 @@ fn rival_raid_brain(
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+    // Re-warn at most every 8s while the raid keeps landing blows (mirrors siege::keep_attack_alert,
+    // which is night-only — raids hit during the day, so they need their own cue).
+    let now64 = time.elapsed_secs_f64();
+    if struck && now64 >= *next_alert {
+        notice.push("Rival raiders are attacking!", now64);
+        *next_alert = now64 + 8.0;
     }
 }
 
@@ -1345,7 +1359,7 @@ fn rival_fort_damage(
             gold: 400,
             xp: 300,
         });
-        notice.push("Twierdza rywala padła! Najazdy ustają.", time.elapsed_secs_f64());
+        notice.push("The rival stronghold has fallen — the raids cease.", time.elapsed_secs_f64());
     }
 }
 

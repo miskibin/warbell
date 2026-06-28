@@ -168,14 +168,24 @@ fn fragment(
         let det_c = mix(vec3<f32>(det_l), det, green);
         rgb *= mix(vec3<f32>(1.0), det_c, detail_strength * top_face);
 
-        // (4) macro albedo-variety: broad worn-dirt scuffs + damp moss hollows so the field
-        //     stops reading as one flat green. Very low-freq blobs, green-gated, strength from
-        //     the preset (`macro_variety`). Value/hue stays subtle — this is variety, not camo.
+        // (4) macro albedo-variety: broad low-freq patches so the field reads as a living meadow
+        //     of mottled greens — worn dirt, damp moss, sun-dried gold, lush deep-green — instead
+        //     of one flat tone. All green-gated + preset-scaled (`macro_variety`); each on its own
+        //     noise offset/frequency so they overlap into organic patches, not a regular quilt.
+        //     Kept under ~0.4 mix so it's varied, not camo.
         let variety = forest.params2.z;
-        let worn = smoothstep(0.60, 0.88, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.82, 0.74, 0.55), worn * 0.30 * green * variety);
-        let moss = smoothstep(0.62, 0.92, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.72, 0.92, 0.62), moss * 0.22 * green * variety);
+        // Worn sun-bleached dirt scuffs (bald spots / trodden paths) — warm + desaturated.
+        let worn = smoothstep(0.55, 0.86, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.80, 0.70, 0.50), worn * 0.40 * green * variety);
+        // Damp moss hollows — cool, rich, slightly darker green.
+        let moss = smoothstep(0.58, 0.90, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.68, 0.92, 0.58), moss * 0.32 * green * variety);
+        // Sun-dried golden sweeps — drier grass catching the light (a brighter warm push).
+        let dry = smoothstep(0.60, 0.90, ter_noise(wp * 0.015 + vec2<f32>(33.0, 7.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(1.14, 1.02, 0.62), dry * 0.28 * green * variety);
+        // Lush well-watered patches — deep saturated green.
+        let lush = smoothstep(0.62, 0.92, ter_noise(wp * 0.030 + vec2<f32>(2.0, 27.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.74, 1.02, 0.70), lush * 0.26 * green * variety);
     }
 
     pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), pbr_input.material.base_color.a);

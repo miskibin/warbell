@@ -64,11 +64,11 @@ pub struct GodRays {
 impl Default for GodRays {
     fn default() -> Self {
         Self {
-            sun_color: Vec3::new(1.0, 0.85, 0.6),
-            intensity: 0.9,
+            sun_color: Vec3::new(1.0, 0.83, 0.55), // a touch warmer/golden
+            intensity: 1.05,
             sun_screen: Vec2::new(0.5, 0.35),
-            decay: 0.96,
-            density: 0.7,
+            decay: 0.974, // longer shafts (was 0.96 — rays died too close to the sun)
+            density: 0.85, // march further toward the sun so the shafts reach across the sky
             weight: 0.10,
             threshold: 0.62,
             num_samples: 48.0,

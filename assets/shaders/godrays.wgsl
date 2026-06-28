@@ -66,6 +66,15 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         decay *= settings.decay;
     }
 
+    // Radial SHAFT structure — the difference between a flat sun-glow and crepuscular rays. Break
+    // the smooth fan into soft beams + gaps by an angular function of the direction from the sun
+    // (non-harmonic frequencies so it doesn't read as a regular pinwheel). The beams rotate with
+    // the sun's screen position, so they stay anchored to the light like real god rays.
+    let dir = in.uv - settings.sun_screen;
+    let ang = atan2(dir.y, dir.x);
+    let beam = 0.72 + 0.28 * (0.6 * sin(ang * 9.0) + 0.4 * sin(ang * 17.0 + 1.7));
+    accum *= beam;
+
     accum *= strength * settings.sun_color;
     return vec4<f32>(scene.rgb + accum, scene.a);
 }

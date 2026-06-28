@@ -306,12 +306,18 @@ fn spawn_model(
         // miner|unemployed|guard` picks the type (default woodcutter).
         s if s.starts_with("peasant") => {
             use crate::peasant_model::PeasantKind::*;
-            let kind = match s.rsplit(':').next() {
-                Some("farmer") => Farmer,
-                Some("miner") => Miner,
-                Some("unemployed") => Unemployed,
-                Some("guard") => Guard,
-                _ => Woodcutter,
+            // Order-independent so `peasant:guard:desert` still reads as a guard (a plain `rsplit`
+            // grabbed the trailing `desert` and silently fell back to woodcutter).
+            let kind = if s.contains("farmer") {
+                Farmer
+            } else if s.contains("miner") {
+                Miner
+            } else if s.contains("unemployed") {
+                Unemployed
+            } else if s.contains("guard") {
+                Guard
+            } else {
+                Woodcutter
             };
             // `FOREST_VIEW=peasant:guard:desert` (any `desert` in the spec) inspects the rival's
             // desert-garbed variant (turban + cloak, sandy tunic).

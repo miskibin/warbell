@@ -203,7 +203,9 @@ fn setup_hint_root(mut commands: Commands) {
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(16.0),
-            bottom: Val::Px(16.0),
+            // Sit above the ability bar (52px cell + 16px bottom inset) so the spend/equip
+            // toast doesn't stack on top of the special-ability chips in the same corner.
+            bottom: Val::Px(80.0),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::FlexEnd,
             row_gap: Val::Px(6.0),

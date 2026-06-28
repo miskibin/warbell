@@ -15,6 +15,7 @@
 //! conventions and `docs/superpowers/specs/` for the parity roadmap.
 
 mod aftermath;
+mod ambient_life;
 mod audio;
 mod banner;
 mod biped;
@@ -189,6 +190,7 @@ fn main() {
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
         ))
+        .add_plugins(ambient_life::AmbientLifePlugin) // daytime butterflies + sky bird flock (visual charm)
         .add_plugins((
             wind::WindPlugin,
             wildlife::WildlifePlugin,   // ambient animals: wander/graze/startle + limb anim

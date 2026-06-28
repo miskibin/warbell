@@ -60,12 +60,12 @@ use OrkVariant::{Berserker, Grunt, Scout, Shaman};
 /// so more of the warband is alive at once.
 pub const WAVES: [WaveDef; 8] = [
     WaveDef { count: 5, hp_scale: 1.0, dmg_scale: 1.0, variants: &[Grunt, Grunt, Scout, Grunt], spawn_interval: 1.3 },
-    WaveDef { count: 8, hp_scale: 1.2, dmg_scale: 1.1, variants: &[Grunt, Scout, Grunt, Berserker], spawn_interval: 1.1 },
-    WaveDef { count: 12, hp_scale: 1.5, dmg_scale: 1.25, variants: &[Grunt, Scout, Berserker, Shaman], spawn_interval: 1.0 },
-    WaveDef { count: 16, hp_scale: 1.9, dmg_scale: 1.45, variants: &[Grunt, Berserker, Scout, Shaman], spawn_interval: 0.9 },
-    WaveDef { count: 21, hp_scale: 2.35, dmg_scale: 1.7, variants: &[Berserker, Scout, Grunt, Shaman], spawn_interval: 0.8 },
-    WaveDef { count: 27, hp_scale: 2.9, dmg_scale: 2.0, variants: &[Berserker, Scout, Shaman, Grunt], spawn_interval: 0.7 },
-    WaveDef { count: 33, hp_scale: 3.55, dmg_scale: 2.35, variants: &[Berserker, Shaman, Scout, Grunt], spawn_interval: 0.6 },
+    WaveDef { count: 7, hp_scale: 1.2, dmg_scale: 1.1, variants: &[Grunt, Scout, Grunt, Berserker], spawn_interval: 1.1 },
+    WaveDef { count: 10, hp_scale: 1.5, dmg_scale: 1.25, variants: &[Grunt, Scout, Berserker, Shaman], spawn_interval: 1.0 },
+    WaveDef { count: 13, hp_scale: 1.9, dmg_scale: 1.45, variants: &[Grunt, Berserker, Scout, Shaman], spawn_interval: 0.9 },
+    WaveDef { count: 17, hp_scale: 2.35, dmg_scale: 1.7, variants: &[Berserker, Scout, Grunt, Shaman], spawn_interval: 0.8 },
+    WaveDef { count: 22, hp_scale: 2.9, dmg_scale: 2.0, variants: &[Berserker, Scout, Shaman, Grunt], spawn_interval: 0.7 },
+    WaveDef { count: 26, hp_scale: 3.55, dmg_scale: 2.35, variants: &[Berserker, Shaman, Scout, Grunt], spawn_interval: 0.6 },
     WaveDef { count: 1, hp_scale: 14.0, dmg_scale: 2.6, variants: &[Berserker], spawn_interval: 0.5 }, // boss
 ];
 
@@ -114,6 +114,8 @@ pub struct DiffMods {
     pub hp_mul: f32,
     pub prep_mul: f32,
     pub player_hp_mul: f32,
+    /// Scales the hero's melee damage at run start. Easy gives a beginner extra punch.
+    pub hero_dmg_mul: f32,
     pub keep_hp_mul: f32,
     pub heirs_bonus: u32,
 }
@@ -126,7 +128,8 @@ pub fn mods_for(d: Difficulty) -> DiffMods {
             count_mul: 0.7,
             hp_mul: 0.75,
             prep_mul: 1.4,
-            player_hp_mul: 1.6,
+            player_hp_mul: 2.1,
+            hero_dmg_mul: 1.3,
             keep_hp_mul: 2.0,
             heirs_bonus: 2,
         },
@@ -135,6 +138,7 @@ pub fn mods_for(d: Difficulty) -> DiffMods {
             hp_mul: 1.0,
             prep_mul: 1.0,
             player_hp_mul: 1.0,
+            hero_dmg_mul: 1.0,
             keep_hp_mul: 1.0,
             heirs_bonus: 0,
         },
@@ -143,6 +147,7 @@ pub fn mods_for(d: Difficulty) -> DiffMods {
             hp_mul: 1.2,
             prep_mul: 0.8,
             player_hp_mul: 1.0,
+            hero_dmg_mul: 1.0,
             keep_hp_mul: 0.9,
             heirs_bonus: 0,
         },
@@ -1380,12 +1385,12 @@ mod tests {
         let n = mods_for(Difficulty::Normal);
         assert_eq!(
             n,
-            DiffMods { count_mul: 1.0, hp_mul: 1.0, prep_mul: 1.0, player_hp_mul: 1.0, keep_hp_mul: 1.0, heirs_bonus: 0 }
+            DiffMods { count_mul: 1.0, hp_mul: 1.0, prep_mul: 1.0, player_hp_mul: 1.0, hero_dmg_mul: 1.0, keep_hp_mul: 1.0, heirs_bonus: 0 }
         );
         // Easy softens the orks AND buffs the hero/keep/heirs so a beginner can survive.
         let e = mods_for(Difficulty::Easy);
         assert!(e.count_mul < 1.0 && e.hp_mul < 1.0 && e.prep_mul > 1.0);
-        assert!(e.player_hp_mul > 1.0 && e.keep_hp_mul > 1.0 && e.heirs_bonus > 0);
+        assert!(e.player_hp_mul > 1.0 && e.hero_dmg_mul > 1.0 && e.keep_hp_mul > 1.0 && e.heirs_bonus > 0);
         // Hard does the reverse (more/tougher orks, shorter day, frailer keep).
         let h = mods_for(Difficulty::Hard);
         assert!(h.count_mul > 1.0 && h.hp_mul > 1.0 && h.prep_mul < 1.0 && h.keep_hp_mul < 1.0);

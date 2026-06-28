@@ -304,24 +304,30 @@ pub(crate) fn action_over_loco(action: &Pose, loco: &Pose, leg: f32) -> Pose {
 }
 
 /// A forward running leap (studio `jumpForward` feel) — blended over the plain vertical jump by how
-/// fast the hero is moving: forward lean, lead knee driving up, trail leg extended back, arms
-/// reaching. `h` (apex height, recovered from physics) lifts the lead knee + arms toward the top.
+/// fast the hero is moving. Now a real broad-jump arc: lead knee drives high at launch/apex then
+/// **extends to plant** as you fall, while the trail leg scissors the other way — so the silhouette
+/// changes through the jump instead of holding one stiff frame. `h` = apex closeness, `fall` ramps
+/// 0→1 only on the descent (signed velocity), driving the landing reach.
 fn leap_pose(vel_y: f32) -> Pose {
-    let v = (vel_y / 6.5).clamp(-1.0, 1.0);
+    let v = (vel_y / 6.5).clamp(-1.0, 1.0); // 6.5 = movement::JUMP_SPEED
     let h = (1.0 - v.abs()).clamp(0.0, 1.0);
+    let fall = (-v).max(0.0); // 0 on the way up, 1 falling fast
     let mut p = rest();
-    p.torso = Jp::r(rx(0.32));
-    p.head = Jp::r(rx(-0.15));
-    p.hip_l = Jp::r(rx(-0.75 + h * 0.2)); // lead leg drives forward + up
-    p.knee_l = Jp::r(rx(1.0));
-    p.foot_l = Jp::r(rx(-0.3));
-    p.hip_r = Jp::r(rx(0.5 - h * 0.2)); // trail leg extends back
-    p.knee_r = Jp::r(rx(0.35));
-    p.foot_r = Jp::r(rx(0.3));
-    p.sh_l = Jp::r(e3(-0.4 - h * 0.3, 0.0, -0.25));
-    p.el_l = Jp::r(rx(-0.7));
-    p.sh_r = Jp::r(e3(-0.4 - h * 0.3, 0.0, 0.25));
-    p.el_r = Jp::r(rx(-0.7));
+    p.torso = Jp::r(e3(0.42 - fall * 0.2, 0.12, 0.0)); // deep forward dive, chest opens to spot the landing
+    p.head = Jp::r(rx(-0.2 + fall * 0.3)); // chin tucks in flight, lifts to look down on descent
+    // Lead (left) leg: knee tucks high through the climb, then drives down/forward to reach the ground.
+    p.hip_l = Jp::r(rx(-0.95 + h * 0.2 + fall * 0.7));
+    p.knee_l = Jp::r(rx(1.15 - fall * 0.95)); // tucked at apex, straightens to plant
+    p.foot_l = Jp::r(rx(-0.35 + fall * 0.4));
+    // Trail (right) leg: streams back hard at launch, sweeps forward under you as you fall (scissor).
+    p.hip_r = Jp::r(rx(0.65 - fall * 0.55));
+    p.knee_r = Jp::r(rx(0.3 + fall * 0.45));
+    p.foot_r = Jp::r(rx(0.3 - fall * 0.2));
+    // Arms pump the broad jump: lead arm reaches forward/up, trail arm drives back and opens on descent.
+    p.sh_l = Jp::r(e3(-0.7 - h * 0.45, 0.0, -0.25));
+    p.el_l = Jp::r(rx(-0.6));
+    p.sh_r = Jp::r(e3(0.35 + fall * 0.25, 0.0, 0.3 + fall * 0.2));
+    p.el_r = Jp::r(rx(-0.85 + h * 0.3));
     p
 }
 
@@ -354,22 +360,30 @@ fn dash_pose(p: f32) -> Pose {
 }
 
 // ── Jump (physics height → studio airtime formulas) ─────────────────────────────────────
+// A standing hop, but no longer mirror-symmetric: signed velocity splits **rise** (legs trail from
+// the push-off) → **apex** (knees tuck up, arms thrown high + a small torso twist for life) →
+// **fall** (legs reach down to land, arms open for balance). The lead/trail legs differ so it never
+// reads like a flat frontal frame.
 fn jump_pose(vel_y: f32) -> Pose {
-    let v = (vel_y / 6.5).clamp(-1.0, 1.0); // 6.5 = movement::JUMP_SPEED
+    let v = (vel_y / 6.5).clamp(-1.0, 1.0); // 6.5 = movement::JUMP_SPEED; signed: + rising, − falling
     let h = (1.0 - v.abs()).clamp(0.0, 1.0); // studio `height`: 0 at launch/landing, 1 at apex
+    let rise = v.max(0.0); // 1 just off the ground, 0 by apex
+    let fall = (-v).max(0.0); // 0 until apex, 1 dropping fast
     let mut p = rest(); // root owns real height → hips stay at rest
-    p.torso = Jp::r(rx(0.3 - h * 0.4));
-    p.head = Jp::r(rx(-0.2 + h * 0.1));
-    p.hip_l = Jp::r(rx(-0.5 + h * 0.8));
-    p.hip_r = Jp::r(rx(-0.5 + h * 0.4));
-    p.knee_l = Jp::r(rx(1.0 - h * 0.9));
-    p.knee_r = Jp::r(rx(1.0 - h * 0.5));
+    p.torso = Jp::r(e3(0.3 - h * 0.45 + fall * 0.2, h * 0.18, h * 0.12)); // crunch + a touch of twist/roll at apex
+    p.head = Jp::r(rx(-0.2 + h * 0.15 - fall * 0.2));
+    // Lead (left) leg tucks higher at apex; trail (right) trails the push-off and reaches first to land.
+    p.hip_l = Jp::r(rx(-0.4 + h * 0.95 - fall * 0.35));
+    p.hip_r = Jp::r(rx(-0.6 + h * 0.45 + fall * 0.2));
+    p.knee_l = Jp::r(rx(1.0 - h * 0.95 + rise * 0.2));
+    p.knee_r = Jp::r(rx(1.0 - h * 0.5 - fall * 0.3));
     p.foot_l = Jp::r(rx(-0.5 + h * 0.6));
-    p.foot_r = Jp::r(rx(-0.5 + h * 0.8));
-    p.sh_l = Jp::r(e3(0.5 - h * 1.5, 0.0, -h * 0.3));
+    p.foot_r = Jp::r(rx(-0.5 + h * 0.8 + fall * 0.2));
+    // Arms thrown up at apex; on the way down the off arm sweeps wider to balance the descent.
+    p.sh_l = Jp::r(e3(0.5 - h * 1.7 - rise * 0.2, 0.0, -h * 0.4));
     p.el_l = Jp::r(rx(-0.8 + h * 0.5));
-    p.sh_r = Jp::r(e3(0.5 - h * 1.5, 0.0, h * 0.3));
-    p.el_r = Jp::r(rx(-0.8 + h * 0.5));
+    p.sh_r = Jp::r(e3(0.5 - h * 1.5, 0.0, h * 0.45 + fall * 0.35));
+    p.el_r = Jp::r(rx(-0.85 + h * 0.5));
     p
 }
 
@@ -565,7 +579,10 @@ fn horizontal_slash(phase: &Phase, p: f32) -> Pose {
     let mut po = rest();
     match phase {
         Phase::Wind => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.05, 1.0, p), lerp(0.0, -0.06, p))), r: e3(0.0, lerp(0.0, -0.45, p), 0.0) };
+            // Sink into a WIDE, LOW, planted power-stance (the reference silhouette): hips drop deep,
+            // both legs splay out to the sides and bend hard, weight coiled onto both feet — loaded to
+            // unleash a big horizontal sweep. The arms cock the blade back/out to the right.
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.05, 0.86, p), lerp(0.0, -0.04, p))), r: e3(0.0, lerp(0.0, -0.4, p), 0.0) };
             po.torso = Jp::r(e3(lerp(0.0, 0.05, p), lerp(0.0, -0.35, p), 0.0));
             po.head = Jp::r(e3(0.0, lerp(0.0, -0.3, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(0.12, -0.15, p), lerp(0.0, -0.65, p), lerp(0.15, 0.55, p)));
@@ -574,9 +591,18 @@ fn horizontal_slash(phase: &Phase, p: f32) -> Pose {
             po.sh_l = Jp::r(e3(lerp(0.1, 0.25, p), lerp(0.0, 0.35, p), lerp(-0.15, -0.1, p)));
             po.el_l = Jp::r(rx(lerp(-0.5, -0.4, p)));
             po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.18, p))), r: e3(lerp(0.15, 0.35, p), lerp(-0.45, -0.2, p), lerp(0.1, 0.15, p)) };
+            // Wide planted legs: hips roll OUT on Z (splay), thighs sit back, knees fold deep, feet flatten.
+            po.hip_l = Jp::r(e3(lerp(0.0, -0.12, p), 0.0, lerp(0.0, 0.4, p)));
+            po.knee_l = Jp::r(rx(lerp(0.0, 0.7, p)));
+            po.foot_l = Jp::r(rx(lerp(0.0, -0.25, p)));
+            po.hip_r = Jp::r(e3(lerp(0.0, -0.1, p), 0.0, lerp(0.0, -0.5, p)));
+            po.knee_r = Jp::r(rx(lerp(0.0, 0.78, p)));
+            po.foot_r = Jp::r(rx(lerp(0.0, -0.3, p)));
         }
         Phase::Strike => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, 1.0 + (p * PI).sin() * 0.03, lerp(-0.06, 0.2, p))), r: e3(0.0, lerp(-0.45, 0.55, p), 0.0) };
+            // Uncoil EXPLOSIVELY: drive up out of the deep stance (hips rise 0.86→1.0) as the splayed
+            // legs sweep into a forward plant and the blade whips across the front.
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.86, 1.0, p) + (p * PI).sin() * 0.04, lerp(-0.04, 0.2, p))), r: e3(0.0, lerp(-0.4, 0.55, p), 0.0) };
             po.torso = Jp::r(e3(lerp(0.05, 0.12, p), lerp(-0.35, 0.55, p), lerp(0.0, 0.08, p)));
             po.head = Jp::r(e3(0.0, lerp(-0.3, 0.15, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-0.15, -1.4, p), lerp(-0.65, 0.0, p), lerp(0.55, -0.4, p)));
@@ -584,10 +610,12 @@ fn horizontal_slash(phase: &Phase, p: f32) -> Pose {
             po.sword = Jp::r(e3(lerp(2.35, 2.45, p), lerp(0.75, 0.05, p), lerp(-0.6, 0.25, p)));
             po.sh_l = Jp::r(e3(lerp(0.25, -0.35, p), lerp(0.35, -0.45, p), lerp(-0.1, -0.4, p)));
             po.el_l = Jp::r(rx(lerp(-0.4, -0.75, p)));
-            po.hip_l = Jp::r(rx(lerp(0.0, 0.3, p)));
-            po.knee_l = Jp::r(rx(lerp(0.0, 0.25, p)));
-            po.hip_r = Jp::r(rx(lerp(0.0, -0.15, p)));
-            po.knee_r = Jp::r(rx(lerp(0.0, 0.2, p)));
+            po.hip_l = Jp::r(e3(lerp(-0.12, 0.3, p), 0.0, lerp(0.4, 0.0, p))); // splay closes as the leg drives forward
+            po.knee_l = Jp::r(rx(lerp(0.7, 0.25, p)));
+            po.foot_l = Jp::r(rx(lerp(-0.25, 0.0, p)));
+            po.hip_r = Jp::r(e3(lerp(-0.1, -0.15, p), 0.0, lerp(-0.5, 0.0, p)));
+            po.knee_r = Jp::r(rx(lerp(0.78, 0.2, p)));
+            po.foot_r = Jp::r(rx(lerp(-0.3, 0.0, p)));
         }
         Phase::Recovery => {
             po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.0, 1.05, p), lerp(0.2, 0.0, p))), r: e3(0.0, lerp(0.55, 0.0, p), 0.0) };
@@ -894,6 +922,9 @@ pub fn hero_anim(
                 Joint::HipL | Joint::HipR => tf.rotation *= rx(-0.35 * landing),
                 Joint::FootL | Joint::FootR => tf.rotation *= rx(0.4 * landing),
                 Joint::Torso => tf.rotation *= rx(0.25 * landing),
+                // Arms throw down to absorb the impact, then spring back as `landing` decays.
+                Joint::ShoulderL | Joint::ShoulderR => tf.rotation *= rx(0.3 * landing),
+                Joint::ElbowL | Joint::ElbowR => tf.rotation *= rx(-0.25 * landing),
                 _ => {}
             }
         }

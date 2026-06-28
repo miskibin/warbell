@@ -499,17 +499,19 @@ pub fn build(
         images,
         std_mats,
     );
-    // Blotchy coarse leather — tents, drums, hide roofs.
+    // Coarse leather — tents, drums, hide roofs. Kept FAINT (`strength` 0.16, lower blotch)
+    // so the tents read like the town's flat-shaded buildings with just a tooth, not a
+    // heavy patchwork that stood out against the rest of the game.
     let hide_mat = make_prop_mat(
         &GroundDetail {
             scale: 2.1,
-            strength: 0.32,
-            variation: 0.7,
+            strength: 0.16,
+            variation: 0.45,
             seed: 33.0,
             dark: 0xa89c8c,
             base: 0xc8bcaa,
             light: 0xe2d6c4,
-            grain: 0.7,
+            grain: 0.45,
             streak: 0.2,
         },
         0.97,

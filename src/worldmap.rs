@@ -800,7 +800,7 @@ fn tile_at(ix: i32, iz: i32) -> Option<(TB, i32)> {
 }
 
 // World ↔ tile helpers (world is the enlarged tile-space recentred on the origin).
-fn tile_biome_world(wx: f32, wz: f32) -> Option<Biome> {
+pub fn tile_biome_world(wx: f32, wz: f32) -> Option<Biome> {
     let t = tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32)?;
     match t.0 {
         TB::Forest => Some(Biome::Forest),
@@ -849,6 +849,14 @@ pub fn biome_at_world(wx: f32, wz: f32) -> Option<Biome> {
 /// formula 1.4× off — bridges spanned dry land far from the real river, and the horizontal
 /// river branch produced absurdly long decks.
 pub fn is_river_world(wx: f32, wz: f32) -> bool {
+    // The rival fort force-flattens its plateau to dry desert (`classify` checks `fort_flat_zone`
+    // BEFORE the river), so the carved channel does NOT exist there. Mirror that here, or the
+    // bridge scanner (which reads this raw predicate, not the built terrain) lays a deck on the dry
+    // ground next to the rival keep — a bridge over nothing. The castle safe-zone is already
+    // excluded inside `is_river`.
+    if crate::rival::fort_flat_zone(wx, wz) {
+        return false;
+    }
     is_river((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
 }
 

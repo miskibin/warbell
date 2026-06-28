@@ -250,11 +250,12 @@ pub fn build(
     let mat = crate::creature::make_creature_material(creature_mats);
     // The structural props (tents, cage, banner, fire ring) carry a FAINT grime-grain
     // detail texture multiplied over their vertex colours — same trick as Gnashfang Hold, but
-    // kept subtle (`strength` 0.3) so the camps don't read over-textured against the other
-    // biomes' clean flat-shaded props. One extra batch.
+    // kept FAINT (`strength` 0.16) so the camps don't read over-textured against the other
+    // biomes' clean flat-shaded props — a tooth on the hide/timber, not a patchwork. One
+    // extra batch.
     let grime = crate::biome::GroundDetail {
         scale: 1.0,
-        strength: 0.30,
+        strength: 0.16,
         variation: 0.5,
         seed: 13.0,
         dark: 0x9c968c,

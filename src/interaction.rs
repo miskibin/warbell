@@ -95,6 +95,9 @@ struct ChestIo<'w, 's> {
 struct LandmarkIo<'w, 's> {
     landmarks: Query<'w, 's, (Entity, &'static Landmark, &'static Transform)>,
     interact: MessageWriter<'w, LandmarkInteract>,
+    /// The in-flight Rune-Trial — so the `[E] Challenge the guardians` prompt disappears once the
+    /// defence has started (you can't begin a second trial mid-fight).
+    trial: Res<'w, crate::landmarks::RuneTrial>,
 }
 
 /// The centred hint row. Holds up to three sibling chips — `[B] Build`, the contextual `[E] …`, and
@@ -201,9 +204,12 @@ fn drive_interaction(
     ));
     // Nearest discovered landmark in reach: a sealed-gear one offers its trial, an already-claimed
     // (or gear-less vignette) one offers its shrine. Remember the entity so the E press targets it.
+    // While a trial is actually running, drop the landmark prompt entirely — the hero is mid-defence
+    // and the `[E] Challenge the guardians` chip would be a no-op (a second trial can't start).
+    let trial_running = landmark_io.trial.is_active();
     let mut nearest_landmark: Option<(Entity, Vec2, f32, bool)> = None; // (e, at, dist, sealed)
     for (e, lm, tf) in &landmark_io.landmarks {
-        if !lm.is_discovered() {
+        if !lm.is_discovered() || trial_running {
             continue;
         }
         let at = Vec2::new(tf.translation.x, tf.translation.z);
