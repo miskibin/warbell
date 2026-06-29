@@ -4,8 +4,10 @@
 //! (per-joint flat-shaded vertex-coloured meshes) for `spawn_biped`. `skin`/`tunic`/`trouser` are
 //! passed in so the town keeps its per-villager colour variety; the rest are the studio's fixed hues.
 //!
-//! Tools ride the **right hand's `Sword` pivot** (built +Y like the hero/ork weapons so the shared
-//! rest rotation holds them carried); a belt pouch rides the **left hand's `Shield` pivot**.
+//! Each peasant carries ONLY the tool of his trade on the **right hand's `Sword` pivot** (built +Y
+//! like the hero/ork weapons so the shared rest rotation holds them carried): woodcutter → axe,
+//! farmer → hoe, miner → pickaxe, guard → sword; the unemployed go empty-handed. The off-hand
+//! (`Shield` pivot) is left empty — no belt pouch or other prop.
 //!
 //! Every part carries a [`Surf`] code (baked into the vertex-colour alpha by [`crate::creature::surf`])
 //! so the shared `CreatureMaterial` shader textures cloth/metal/skin correctly — without it every part
@@ -31,7 +33,7 @@ pub enum PeasantKind {
 
 // Fixed studio peasant hues (skin/tunic/trouser are caller-supplied for town variety).
 const LEATHER: u32 = 0x4e3b31; // gripColor
-const WOOD: u32 = 0xa3afc2; // trimColor (tool hafts)
+const WOOD: u32 = 0x6b4a2e; // wood brown (tool hafts — a real timber haft, not the old pale-grey trim)
 const IRON: u32 = 0xcfd3dc; // bladeColor (tools/helmet)
 const HAIR: u32 = 0x3a2418; // natural brown (studio reuses plumeColor, but that's our hero red)
 const DARK: u32 = 0x23160f; // eyes/mouth
@@ -172,30 +174,21 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         bx(0.055, 0.04, 0.025, v(0.0, 0.035, 0.225), IRON, Surf::Metal), // buckle
     ]);
 
+    // A clean tunic: cone body + collar + hem + belt only. The old vest panel / diagonal shoulder
+    // strap / per-trade patches were removed — they piled up into visual clutter on the chest and
+    // read as "random junk". A worker's trade is now told by his TOOL + headgear (and the farmer's
+    // apron / desert cloak / guard plate below), not by chest decals.
     let mut torso_parts = vec![
         frustum_s(0.25, 0.2, 0.44, v(1.05, 1.0, 0.8), v(0.0, 0.14, 0.02), tunic, Surf::Cloth), // tunic
         frustum_s(0.14, 0.17, 0.045, v(1.05, 1.0, 0.8), v(0.0, 0.34, 0.04), LEATHER, Surf::Cloth), // collar
         frustum_s(0.23, 0.22, 0.04, v(1.08, 1.0, 0.82), v(0.0, -0.08, 0.02), LEATHER, Surf::Cloth), // hem
-        bxr(0.24, 0.34, 0.045, v(0.0, 0.14, 0.16), rx(0.08), LEATHER, Surf::Cloth), // vest
-        bxr(0.07, 0.42, 0.055, v(-0.09, 0.16, 0.17), rz(-0.35), LEATHER, Surf::Cloth), // shoulder strap
     ];
-    if woodcutter {
-        for x in [-0.08_f32, 0.06] {
-            torso_parts.push(bxr(0.025, 0.34, 0.026, v(x, 0.13, 0.2), rx(0.08), PATCH, Surf::Cloth));
-        }
-    }
     if farmer {
+        // The apron is the farmer's clean trade mark (kept; the suspenders hold it up).
         torso_parts.push(bxr(0.2, 0.32, 0.035, v(0.0, 0.08, 0.18), rx(0.08), PATCH, Surf::Cloth)); // apron
         for side in [-1.0_f32, 1.0] {
             torso_parts.push(bxr(0.035, 0.42, 0.035, v(side * 0.08, 0.17, 0.195), rz(side * 0.12), LEATHER, Surf::Cloth)); // suspender
         }
-    }
-    if unemployed {
-        torso_parts.push(bxr(0.095, 0.07, 0.03, v(0.08, 0.18, 0.2), rz(-0.18), PATCH, Surf::Cloth)); // chest patch
-        torso_parts.push(bxr(0.2, 0.045, 0.035, v(-0.03, -0.08, 0.16), rz(0.14), PATCH, Surf::Cloth)); // torn hem
-    }
-    if miner {
-        torso_parts.push(bxr(0.23, 0.12, 0.035, v(0.0, 0.22, 0.19), rx(0.08), DARK, Surf::Skin)); // dust panel
     }
     if desert {
         // A cloak draped down the back — a clear desert silhouette over whatever clothes are under it.
@@ -346,11 +339,10 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         None // unemployed — empty handed
     };
 
-    // Belt pouch on the left hand (the studio peasant's "shield"-slot prop).
-    let shield = Some(group(vec![
-        bx(0.12, 0.16, 0.055, v(0.0, -0.06, 0.0), LEATHER, Surf::Cloth), // pouch body
-        bx(0.13, 0.055, 0.06, v(0.0, 0.035, 0.008), WOOD, Surf::Skin), // flap
-    ]));
+    // Left hand stays empty — a peasant carries ONLY the tool of his trade (axe / hoe / pick / sword),
+    // nothing in the off-hand. The old belt-pouch prop hung off every villager regardless of trade and
+    // read as a random item, so it's gone.
+    let shield = None;
 
     BipedMeshes {
         hips,

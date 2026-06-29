@@ -2351,16 +2351,6 @@ fn spawn(
     root
 }
 
-/// The villager belt-pouch transform on the **left hand** (the studio peasant's "shield" slot) —
-/// matches the `peasant` model-viewer framing so it hangs at the hip.
-fn pouch_xf() -> Transform {
-    Transform {
-        translation: Vec3::new(0.0, 0.0, 0.14),
-        rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
-        scale: Vec3::ONE,
-    }
-}
-
 /// Map a villager [`Kind`] (+ cosmetic `seed`) to a studio peasant biped mesh set. The town keeps
 /// its per-villager skin/tunic variety; the trouser tone is picked deterministically from the seed.
 fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool, desert: bool) -> BipedMeshes {
@@ -2399,7 +2389,8 @@ fn build_biped_body(
     // Kids get an oversized head on a downscaled body (chibi proportions) so they read as children,
     // not just small adults.
     let head_scale = if kid { 1.55 } else { 1.06 };
-    crate::biped::spawn_biped(commands, root, mat, h, head_scale, 1.0, 0.15, 0.3, VIL_RIG_OFF, Some(pouch_xf()));
+    // No off-hand prop: peasants carry only their trade tool, so the shield/pouch slot is empty.
+    crate::biped::spawn_biped(commands, root, mat, h, head_scale, 1.0, 0.15, 0.3, VIL_RIG_OFF, None);
 }
 
 /// Spawn a villager's body (torso + limbs + head) as children of `root`, each tagged
