@@ -690,7 +690,9 @@ fn wear_noise(x: f32, z: f32) -> f32 {
 fn worn_slab(w: f32, d: f32, y: f32, fray: f32, noise_amp: f32, mottle: f32) -> Mesh {
     let hw = w / 2.0 + fray;
     let hd = d / 2.0 + fray;
-    let step = 0.5_f32;
+    // Finer grid → the noise-cut rim steps in ~quarter-tile teeth instead of the old blocky
+    // half-tile sawtooth that read as a pixelated cut-out against the lawn.
+    let step = 0.25_f32;
     let nx = (2.0 * hw / step).ceil() as usize;
     let nz = (2.0 * hd / step).ceil() as usize;
     let mut pos: Vec<[f32; 3]> = Vec::with_capacity((nx + 1) * (nz + 1));
@@ -1304,6 +1306,26 @@ const PATH_RECTS: [(f32, f32, f32, f32); 5] = [
     (11.75, 0.0, 10.5, 3.4),  // east gate → plaza
 ];
 
+/// How strongly world point `(wx, wz)` sits on the trodden castle yard (the plaza + the four gate
+/// paths of [`PATH_RECTS`]): 1 across a rect's core, fading to 0 over ~`EDGE` beyond its rim, with
+/// a little sine wobble so the outline isn't a crisp rectangle. `worldmap::ground_color` bakes this
+/// straight into the terrain vertex colour (same as the gate approach-roads), so the packed-earth
+/// yard is **the same surface as the ground** — no raised slab laid on top. (Pre-walls only; raising
+/// the walls paves the SAME network in cobble geometry — see `build`.)
+pub fn yard_strength(wx: f32, wz: f32) -> f32 {
+    const EDGE: f32 = 1.7; // world-unit falloff band outside each rect
+    let wob = 0.55 * (wx * 0.7 + 1.3).sin() * (wz * 0.5 - 0.4).cos()
+        + 0.35 * (wx * 0.23 - wz * 0.19 + 2.1).sin();
+    let mut best = 0.0_f32;
+    for (cx, cz, w, d) in PATH_RECTS {
+        // Distance inside the rect (positive inside, negative outside) to the nearest edge.
+        let din = (w / 2.0 - (wx - cx).abs()).min(d / 2.0 - (wz - cz).abs());
+        let s = ((din + wob + EDGE) / EDGE).clamp(0.0, 1.0);
+        best = best.max(s * s);
+    }
+    best
+}
+
 /// Is `(wx, wz)` on (or hard against) the plaza/path paving? Used to keep grass off the routes.
 fn on_paving(wx: f32, wz: f32) -> bool {
     PATH_RECTS
@@ -1428,18 +1450,13 @@ pub fn build(
     // route network: a plaza under the keep + bell + muster yard, and four paths running to the
     // gates, with the courtyard lawn showing everywhere between. Day one the routes are trodden
     // packed earth (the feet of the settlement wrote them); raising the Palisade Walls paves the
-    // SAME network in cobble — paving as progression, never a full-courtyard slab again. Both
-    // variants are `worn_slab`s (rims alpha-dissolve into the lawn); paths sit 1.5cm above the
-    // plaza sheet so their frayed overlaps at the junctions can't z-fight.
+    // SAME network in cobble — paving as progression. The pre-walls **packed earth is NOT geometry**:
+    // it's baked into the terrain ground colour (`castle::yard_strength` → `worldmap::ground_color`),
+    // so it's the same surface as the lawn, not a slab laid on top. Only the cobble paving is a
+    // raised `worn_slab` (a genuine built pavement), sitting 1.5cm above the ground; its frayed rim
+    // overlaps at the junctions sit slightly higher so they can't z-fight.
     for (i, (px, pz, w, d)) in PATH_RECTS.into_iter().enumerate() {
         let y = if i == 0 { 0.02 } else { 0.035 };
-        spawn(
-            vec![(worn_slab(w, d, y, 1.1, 0.18, 0.07), M::Packed)],
-            Vec3::new(px, 0.0, pz),
-            0.0,
-            Vec3::ONE,
-            CastleKind::PreWalls,
-        );
         spawn(
             vec![(worn_slab(w, d, y + 0.005, 0.7, 0.12, 0.04), M::Cobble)],
             Vec3::new(px, 0.0, pz),

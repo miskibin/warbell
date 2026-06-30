@@ -699,15 +699,17 @@ fn spawn_chunks(
     mat: &Handle<StandardMaterial>,
     chunks: std::collections::HashMap<(i32, i32), ChunkBucket>,
 ) {
-    // Cover cuts out abruptly at 38 units — small ground cover (grass/flowers/mushrooms) is a tiny
-    // speck at range, so culling it close trims overdraw + distant aliased clutter with little visible
-    // loss (the cutoff sits well inside the fog ramp, FOG_CLEAR ≈ 57). An ABRUPT range (empty
-    // crossfade band, `is_abrupt()` true) is deliberate: a non-empty band routes the chunk through
-    // the dithered-crossfade pipeline (per-fragment `discard`), which defeats early-z on these large
+    // Cover cuts out abruptly at 55 units — small ground cover (grass/flowers/mushrooms) is a tiny
+    // speck at range, so culling it trims overdraw + distant aliased clutter with little visible loss.
+    // The cutoff is pushed PAST the fog start (FOG_BASE_START ≈ 40) so a chunk vanishes inside the
+    // haze, not in crystal-clear air — earlier (38u) the cutoff sat in front of the fog ramp, so you
+    // could watch each flower chunk snap in/out as you walked. An ABRUPT range (empty crossfade band,
+    // `is_abrupt()` true) is deliberate: a non-empty band routes the chunk through the
+    // dithered-crossfade pipeline (per-fragment `discard`), which defeats early-z on these large
     // merged meshes. Collapsing both margins keeps it abrupt while preserving `use_aabb: true`.
     let cover_range = bevy::camera::visibility::VisibilityRange {
         start_margin: 0.0..0.0,   // always visible up close
-        end_margin: 38.0..38.0,   // abrupt cutoff at 38 world units (no dithered fade band)
+        end_margin: 55.0..55.0,   // abrupt cutoff at 55 world units — inside the fog ramp so it hides
         use_aabb: true,
     };
     for (key, bucket) in chunks {

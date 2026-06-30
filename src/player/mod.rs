@@ -506,13 +506,15 @@ pub(crate) fn spawn_hero_meshes(
     let p = |t: Vec3| Transform::from_translation(t);
     let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, fp_hide: false, weapon: false });
     let arm = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: true, fp_hide: false, weapon: false });
-    // The head fills the lens in FP — hide just it (`fp_hide`), keep the rest of the body visible.
-    let head = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, fp_hide: true, weapon: false });
+    // FP eye sits ~at chest/neck height (`FP_EYE_H`) right inside the upper body, so the head, neck,
+    // torso and shoulders crowd the lens as a dark blob. `fp_off` hides those in first-person; the
+    // forearms/hands/weapon/shield/legs stay visible. Visible in third person regardless.
+    let fp_off = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, fp_hide: true, weapon: false });
     // The UPPER arms (shoulder meshes) sit right at the FP eye and balloon into two blobs that fill
     // the lens. Hide just those in first person (`fp_keep:false`) like the body. The FOREARMS stay
     // (`arm`, kept) so the sword/shield read as HELD in a hand — not levitating — posed low into the
     // corners by the FP viewmodel raise (`anim::hero_anim`). Visible in third person regardless.
-    let upper = body;
+    let upper = fp_off;
 
     use model::{HIP_DX, O_ELBOW, O_FOOT, O_HAND, O_HEAD, O_HIP_Y, O_KNEE, O_NECK, O_SHOULDER_Y, O_TORSO, SHOULDER_DX, Y_HIPS};
 
@@ -525,9 +527,9 @@ pub(crate) fn spawn_hero_meshes(
 
     // Spine: hips (anim-fixed Y_HIPS) → torso → neck → head.
     let hips = spawn_joint(commands, rig, Some(Hips), p(Vec3::new(0.0, Y_HIPS, 0.0)), mat, body(meshes.add(m.hips)));
-    let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, O_TORSO, 0.0)), mat, body(meshes.add(m.torso)));
-    let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, O_NECK, 0.0)), mat, body(meshes.add(m.neck)));
-    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, head(meshes.add(m.head)));
+    let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, O_TORSO, 0.0)), mat, fp_off(meshes.add(m.torso)));
+    let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, O_NECK, 0.0)), mat, fp_off(meshes.add(m.neck)));
+    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, fp_off(meshes.add(m.head)));
 
     // Left arm + heater shield on the hand pivot (`anim` rewrites the shield pose every frame).
     let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, upper(meshes.add(m.shoulder_l)));

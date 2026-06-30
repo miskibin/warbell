@@ -1007,11 +1007,24 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
         (col[1] * v).clamp(0.0, 1.0),
         (col[2] * v * (1.0 - warm)).clamp(0.0, 1.0),
     ];
-    // Worn dirt approach-paths baked straight into the ground (not raised geometry — they're
-    // just a brown blend in the terrain, like the original game's roads).
-    let strength = crate::roads::road_strength(x - GX, z - GZ);
-    if strength > 0.0 {
-        col = mix3(col, lin3(p.road_dirt), strength * 0.85);
+    // Worn dirt baked straight into the ground (NOT raised geometry — just a brown blend in the
+    // terrain, like the original game's paths), so it's the SAME surface as the lawn rather than a
+    // slab laid on top. The open gate approach-roads OUTSIDE the walls get a light worn tint; the
+    // castle yard (plaza + gate paths) INSIDE is more heavily trodden — a darker packed-earth
+    // "klepisko" — layered on after, so it dominates and stays continuous through the gates.
+    // `ground_color` runs in BASE space (0..BASE_COLS, island centre at CX); the dirt queries are
+    // world-space (castle at origin), so convert: world = base·MAP_SCALE − G. (The old code passed
+    // `x − GX` here, which dropped the ·MAP_SCALE and mis-placed the worn dirt — the bug that made
+    // the baked paths invisible and left the courtyard relying on an overlaid slab.)
+    let wx = x * MAP_SCALE - GX;
+    let wz = z * MAP_SCALE - GZ;
+    let road_s = crate::roads::road_strength(wx, wz);
+    if road_s > 0.0 {
+        col = mix3(col, lin3(p.road_dirt), road_s * 0.85);
+    }
+    let yard_s = crate::castle::yard_strength(wx, wz);
+    if yard_s > 0.0 {
+        col = mix3(col, lin3(0x52391f), yard_s * 0.92);
     }
     [col[0], col[1], col[2], 1.0]
 }
@@ -1103,7 +1116,7 @@ pub struct BuildState {
 }
 
 /// Number of phases [`build_step`] walks through. The loading veil maps its progress bar onto this.
-pub const BUILD_STEPS: u32 = 29;
+pub const BUILD_STEPS: u32 = 30;
 
 /// Build the whole world in ONE call (terrain → scatter → castle → fortress → …). Used by the
 /// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0. The normal
@@ -1173,6 +1186,7 @@ pub fn build_step(
         26 => crate::bridges::populate(commands, meshes, std_mats),
         27 => crate::distant_isles::build(commands, meshes, std_mats),
         28 => crate::rival::build(commands, meshes, images, std_mats),
+        29 => bs_swamp_pools(commands, meshes, std_mats),
         _ => {}
     }
 }
@@ -1200,16 +1214,19 @@ fn bs_grass_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
 fn bs_swamp_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
     let swamp_detail = GroundDetail {
         scale: 0.16,
-        strength: 0.55,
-        variation: 0.95,
+        strength: 0.6, // a touch stronger so the wet/dry blotch reads
+        variation: 1.0, // max blotch → standing wet pools vs. exposed muck
         seed: 11.0,
-        dark: 0x2c3522,
-        base: 0x49543a,
-        light: 0x687a4a,
+        dark: 0x1f2b18, // deeper near-black-green: the standing bog-water pools (was 0x2c3522)
+        base: 0x434f37,
+        light: 0x6f8350, // slightly brighter wet-sheen crest (was 0x687a4a)
         grain: 0.7,
         streak: 0.6,
     };
-    let swamp_mat = crate::terrain::make_material(&swamp_detail, 0.82, images, terrain_mats);
+    // Roughness 0.82 read as DRY matte muck — the single biggest reason the marsh didn't look wet.
+    // Dropped to 0.40 so the low (overcast) sun + sky throw a broad damp specular sheen across the
+    // bog, reading as standing water / wet mud rather than dry dirt (player: "bardziej mokre bagno").
+    let swamp_mat = crate::terrain::make_material(&swamp_detail, 0.40, images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, swamp_mat, |tb| tb == TB::Swamp);
 }
 
@@ -1409,6 +1426,57 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
         },
         &|x, z| tile_top_y_world(x, z),
     );
+}
+
+/// Standing bog-water pools scattered across the swamp — the surest "wet" signal (the ground sheen
+/// alone reads subtly). Flat glossy dark-teal discs laid a hair above the muck: low roughness + the
+/// IBL/sun glint make them read as still water between the reeds/lily-pads (player: "mokre bagno").
+/// Swamp tiles only (not the Blight, whose mire is trampled dry earth); kept off build plots/bridges.
+fn bs_swamp_pools(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+    let water_mat = std_mats.add(StandardMaterial {
+        // Dark murky teal; semi-transparent so the muck tints through at the rim like shallow water.
+        base_color: Color::srgba(0x21 as f32 / 255.0, 0x33 as f32 / 255.0, 0x2c as f32 / 255.0, 0.86),
+        perceptual_roughness: 0.12, // glassy → mirrors the sky/sun = the "wet" read
+        reflectance: 0.6,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    });
+    // A unit disc lying flat (normal +Y); scaled per-pool. Circle's mesh faces +Z, so tip it up.
+    let disc: Vec<Handle<Mesh>> = (0..3)
+        .map(|v| meshes.add(Circle::new(1.0).mesh().resolution(10 + v * 2).build()))
+        .collect();
+    for iz in 0..ROWS {
+        for ix in 0..COLS {
+            let Some((TB::Swamp, h)) = tile_at(ix, iz) else { continue };
+            let mut rng = tileworld_core::rng::Mulberry32::new((iz * COLS + ix) as u32 ^ 0x9a7d_31b1);
+            if rng.next() > 0.24 {
+                continue; // ~1 pool per ~4 swamp tiles → frequent but not a solid sheet
+            }
+            let wx = ix as f32 - GX + 0.5 + (rng.next() as f32 - 0.5) * 0.6;
+            let wz = iz as f32 - GZ + 0.5 + (rng.next() as f32 - 0.5) * 0.6;
+            if crate::bridges::near_bridge(wx, wz, 0.6)
+                || crate::camps::in_clearing(wx, wz)
+                || crate::town::near_build_plot(wx, wz)
+            {
+                continue;
+            }
+            let r = 0.55 + rng.next() as f32 * 0.95;
+            let v = (rng.next() * 3.0) as usize % 3;
+            commands.spawn((
+                Mesh3d(disc[v].clone()),
+                MeshMaterial3d(water_mat.clone()),
+                Transform {
+                    // A hair above the tile top so it films over the muck without z-fighting.
+                    translation: Vec3::new(wx, (h - 1) as f32 * GROUND_STEP + 0.03, wz),
+                    rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+                        * Quat::from_rotation_z(rng.next() as f32 * std::f32::consts::TAU),
+                    scale: Vec3::new(r, r * (0.8 + rng.next() as f32 * 0.5), 1.0),
+                },
+                crate::biome::BiomeEntity,
+            ));
+        }
+    }
 }
 
 fn config_for(b: Biome) -> BiomeConfig {

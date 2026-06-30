@@ -61,7 +61,7 @@ const BASE_SUN_LUX: f32 = 11_000.0;
 /// Swamp (`0.034`) lands at ~(45, 121). Daytime-gated, so night returns to the open baseline.
 const FOG_REF_DENSITY: f32 = 0.009;
 const FOG_MAX_DENSITY: f32 = 0.036;
-const FOG_BASE_START: f32 = 48.0; // was 57 (was 85) — pulled in further for a little more haze
+const FOG_BASE_START: f32 = 40.0; // was 48/57/85 — pulled in so haze starts before the cover cull (55u)
 const FOG_BASE_END: f32 = 112.0; // was 127 (was 190) — pulled in further for a little more haze
 /// How far the foggy regions pull the clear radius / horizon IN. Kept gentle (was 43/75) so the
 /// fog reads as a long, gradual gradient that EXPANDS with distance — a sharp pull walled the
