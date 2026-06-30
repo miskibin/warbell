@@ -138,7 +138,10 @@ fn bake_facet_shading(mut m: Mesh) -> Mesh {
         for (c, (ny, y)) in cols.iter_mut().zip(nys.iter().zip(&ys)) {
             let up = ny * 0.5 + 0.5; // 0 facing down … 1 facing up
             let h = (y - y_min) / span; // 0 base … 1 crown
-            let f = (0.74 + 0.42 * up) * (0.86 + 0.26 * h);
+            // Lifted facet shading (was 0.74+0.42·up / 0.86+0.26·h): higher floor so the
+            // shaded undersides/base no longer crush to near-black — the canopy reads bright
+            // and airy like the reference, while keeping enough spread for facet definition.
+            let f = (0.86 + 0.22 * up) * (0.90 + 0.16 * h);
             c[0] *= f;
             c[1] *= f;
             c[2] *= f;
@@ -224,25 +227,26 @@ fn build_broadleaf() -> Mesh {
 // TREE_TINTS can't reach by multiply. Same 9 icospheres as the broadleaf, so no mesh cost.
 fn build_autumn() -> Mesh {
     let bark = lin(TREE_TRUNK);
+    // Same tall slim bole + high clustered crown as the green broadleaf (they're one species,
+    // just turned), so an autumn tree stands shoulder-to-shoulder with the greens.
     let mut parts = vec![
-        tinted(trunk_part(0.10, 0.13, 0.36, 7, Vec3::new(0.0, 0.18, 0.0)), bark),
-        tinted(trunk_part(0.085, 0.105, 0.38, 7, Vec3::new(0.015, 0.45, 0.01)), bark),
+        tinted(trunk_part(0.075, 0.10, 0.5, 7, Vec3::new(0.0, 0.25, 0.0)), bark),
+        tinted(trunk_part(0.058, 0.072, 0.5, 7, Vec3::new(0.02, 0.70, 0.01)), bark),
     ];
-    parts.extend(root_flare(0.13, 4, 0.16, bark, 0.45));
-    parts.push(branch_part(0.045, 0.34, 0.65, 0.4, Vec3::new(0.03, 0.52, 0.0), bark));
-    parts.push(branch_part(0.04, 0.30, -0.75, 2.6, Vec3::new(-0.02, 0.46, 0.02), bark));
+    parts.extend(root_flare(0.10, 4, 0.13, bark, 0.45));
+    parts.push(branch_part(0.035, 0.30, 0.7, 0.4, Vec3::new(0.03, 0.78, 0.0), bark));
+    parts.push(branch_part(0.032, 0.26, -0.8, 2.6, Vec3::new(-0.02, 0.74, 0.02), bark));
 
-    // (radius, centre, tone) — dark/red/olive grounded base → orange/amber body → gold cap.
-    let blobs: [(f32, Vec3, u32); 9] = [
-        (0.46, Vec3::new(0.0, 0.66, 0.0), AUTUMN_DARK),
-        (0.27, Vec3::new(0.27, 0.60, 0.10), AUTUMN_RED),
-        (0.25, Vec3::new(-0.20, 0.58, -0.18), AUTUMN_OLIVE),
-        (0.40, Vec3::new(0.02, 0.88, 0.0), AUTUMN_MID),
-        (0.25, Vec3::new(-0.26, 0.84, 0.10), AUTUMN_RED),
-        (0.23, Vec3::new(0.22, 0.92, -0.16), AUTUMN_LIGHT),
-        (0.32, Vec3::new(0.0, 1.08, 0.02), AUTUMN_MID),
-        (0.20, Vec3::new(0.16, 1.18, 0.10), AUTUMN_GOLD),
-        (0.21, Vec3::new(-0.06, 1.26, -0.06), AUTUMN_LIGHT),
+    // (radius, centre, tone) — dark/red/olive shaded base → orange/amber body → gold cap.
+    let blobs: [(f32, Vec3, u32); 8] = [
+        (0.34, Vec3::new(0.0, 1.06, 0.0), AUTUMN_DARK),
+        (0.27, Vec3::new(0.28, 1.00, 0.08), AUTUMN_RED),
+        (0.26, Vec3::new(-0.24, 1.04, -0.10), AUTUMN_OLIVE),
+        (0.30, Vec3::new(0.04, 1.30, 0.04), AUTUMN_MID),
+        (0.23, Vec3::new(-0.22, 1.26, 0.12), AUTUMN_RED),
+        (0.22, Vec3::new(0.22, 1.30, -0.12), AUTUMN_LIGHT),
+        (0.24, Vec3::new(-0.02, 1.52, -0.02), AUTUMN_MID),
+        (0.18, Vec3::new(0.14, 1.56, 0.10), AUTUMN_GOLD),
     ];
     for (r, c, tone) in blobs {
         parts.push(tinted(foliage(r, 1, c), lin(tone)));
@@ -254,30 +258,32 @@ fn build_autumn() -> Mesh {
 /// three crown tones differ. (dark base mass → mid body → light sunlit cap)
 fn build_broadleaf_toned(dark: u32, mid: u32, light: u32) -> Mesh {
     let bark = lin(TREE_TRUNK);
+    // Reference-style broadleaf: a TALL slim bole carries a high, bumpy clustered crown that
+    // floats clear of the ground (you can see most of the trunk), instead of a fat short pole
+    // wearing a ground-hugging ball. Trunk visible for ~half the height, then a clump of
+    // faceted leaf masses (ico detail 1 — crisp low-poly facets, as in the reference).
     let mut parts = vec![
-        // Two-segment tapering bole (thicker foot, slimmer upper) + root flare. The upper
-        // segment drops to overlap the lower by ~0.10u (was 0.03) so the two never read as a
-        // pinched/broken join.
-        tinted(trunk_part(0.10, 0.13, 0.36, 7, Vec3::new(0.0, 0.18, 0.0)), bark),
-        tinted(trunk_part(0.085, 0.105, 0.38, 7, Vec3::new(0.015, 0.45, 0.01)), bark),
+        // Two-segment slim tapering bole, reaching ~0.95u before the crown.
+        tinted(trunk_part(0.075, 0.10, 0.5, 7, Vec3::new(0.0, 0.25, 0.0)), bark),
+        tinted(trunk_part(0.058, 0.072, 0.5, 7, Vec3::new(0.02, 0.70, 0.01)), bark),
     ];
-    parts.extend(root_flare(0.13, 4, 0.16, bark, 0.45));
-    // Two limbs forking off the upper bole into the canopy mass.
-    parts.push(branch_part(0.045, 0.34, 0.65, 0.4, Vec3::new(0.03, 0.52, 0.0), bark));
-    parts.push(branch_part(0.04, 0.30, -0.75, 2.6, Vec3::new(-0.02, 0.46, 0.02), bark));
+    parts.extend(root_flare(0.10, 4, 0.13, bark, 0.45));
+    // Two limbs forking off the upper bole up into the clustered crown.
+    parts.push(branch_part(0.035, 0.30, 0.7, 0.4, Vec3::new(0.03, 0.78, 0.0), bark));
+    parts.push(branch_part(0.032, 0.26, -0.8, 2.6, Vec3::new(-0.02, 0.74, 0.02), bark));
 
-    // Crown: dark grounded mass → mid body → sunlit cap, with off-axis side lobes so no
-    // two silhouettes line up. (radius, centre, tone)
-    let blobs: [(f32, Vec3, u32); 9] = [
-        (0.46, Vec3::new(0.0, 0.66, 0.0), dark),
-        (0.27, Vec3::new(0.27, 0.60, 0.10), dark),
-        (0.25, Vec3::new(-0.20, 0.58, -0.18), dark),
-        (0.40, Vec3::new(0.02, 0.88, 0.0), mid),
-        (0.25, Vec3::new(-0.26, 0.84, 0.10), mid),
-        (0.23, Vec3::new(0.22, 0.92, -0.16), mid),
-        (0.32, Vec3::new(0.0, 1.08, 0.02), light),
-        (0.20, Vec3::new(0.16, 1.18, 0.10), light),
-        (0.21, Vec3::new(-0.06, 1.26, -0.06), light),
+    // Clustered bumpy crown sitting high on the bole: a knot of faceted leaf masses,
+    // dark shaded base/back → mid body → light sunlit crown, pushed off-axis so the
+    // silhouette reads as several leaf clumps, not one smooth ball. (radius, centre, tone)
+    let blobs: [(f32, Vec3, u32); 8] = [
+        (0.34, Vec3::new(0.0, 1.06, 0.0), dark),
+        (0.27, Vec3::new(0.28, 1.00, 0.08), dark),
+        (0.26, Vec3::new(-0.24, 1.04, -0.10), mid),
+        (0.30, Vec3::new(0.04, 1.30, 0.04), mid),
+        (0.23, Vec3::new(-0.22, 1.26, 0.12), mid),
+        (0.22, Vec3::new(0.22, 1.30, -0.12), light),
+        (0.24, Vec3::new(-0.02, 1.52, -0.02), light),
+        (0.18, Vec3::new(0.14, 1.56, 0.10), light),
     ];
     for (r, c, tone) in blobs {
         parts.push(tinted(foliage(r, 1, c), lin(tone)));
@@ -324,7 +330,7 @@ fn build_birch() -> Mesh {
 
     // A slim limb carrying its own small leaf puff out beside the crown.
     parts.push(branch_part(0.025, 0.30, 0.95, 0.9, Vec3::new(0.02, 0.62, 0.0), lin(BIRCH_TRUNK)));
-    parts.push(tinted(foliage(0.16, 0, Vec3::new(0.27, 0.80, -0.22)), lin(BIRCH_LIGHT)));
+    parts.push(tinted(foliage(0.16, 1, Vec3::new(0.27, 0.80, -0.22)), lin(BIRCH_LIGHT)));
 
     // Airy six-blob crown: dark base masses, light top puffs, drifting off the axis.
     let blobs: [(f32, Vec3, u32); 6] = [
@@ -336,7 +342,7 @@ fn build_birch() -> Mesh {
         (0.13, Vec3::new(0.0, 1.34, 0.02), BIRCH_LIGHT),
     ];
     for (r, c, tone) in blobs {
-        parts.push(tinted(foliage(r, 0, c), lin(tone)));
+        parts.push(tinted(foliage(r, 1, c), lin(tone)));
     }
     merged(parts)
 }
@@ -411,40 +417,44 @@ fn build_dead() -> Mesh {
     merged(parts)
 }
 
-// ── Pine / spruce conifer — short brown trunk + 3 stacked green cone tiers + a tip ──
+// ── Pine / spruce conifer — slim trunk + 8 slender drooping cone tiers + a sharp leader ──
 //
-// The forest had no conifer (only the broadleaf/birch/dead broad-crowns), so this adds a
-// strong new pointed silhouette. Snow-FREE (unlike the snow biome's snow-laden pine): a
-// lush dark→light green spruce. Wide low tier → narrow high tier, each base overlapping
-// the one below so the boughs layer. ~1.65u tall (towers a touch over the broadleaf).
+// A strong pointed silhouette (the layered spruces in the reference). Snow-FREE (unlike the
+// snow biome's snow-laden pine): a lush dark→light green spruce. Eight narrow overlapping
+// tiers from a wide skirt to a sharp point, each tier's base overhanging the one above so the
+// boughs read as drooping serrated layers. ~2.1u tall (towers well over the broadleaf).
 fn build_pine() -> Mesh {
     let bark = lin(TREE_TRUNK);
-    // Stub trunk under the boughs + a shallow root flare gripping the ground.
-    let mut parts = vec![tinted(trunk_part(0.07, 0.095, 0.42, 6, Vec3::new(0.0, 0.21, 0.0)), bark)];
-    parts.extend(root_flare(0.095, 3, 0.12, bark, 0.8));
+    // Slim visible trunk under the boughs + a shallow root flare gripping the ground.
+    let mut parts = vec![tinted(trunk_part(0.06, 0.085, 0.5, 6, Vec3::new(0.0, 0.25, 0.0)), bark)];
+    parts.extend(root_flare(0.085, 3, 0.11, bark, 0.8));
 
-    // Five overlapping bough tiers, dark shadowed skirt → sunlit crown, each nudged a
-    // touch off the spire axis and yawed so the faceted cones never align — the jitter is
-    // what turns "stacked party hats" into a grown spruce. 8 sides for crisper facets.
-    // (base_y, radius, height, xz-nudge, yaw, tone)
-    let tiers: [(f32, f32, f32, Vec3, f32, u32); 5] = [
-        (0.26, 0.54, 0.52, Vec3::new(0.02, 0.0, -0.02), 0.0, FOLIAGE_DARK),
-        (0.52, 0.46, 0.50, Vec3::new(-0.03, 0.0, 0.02), 0.4, FOLIAGE_DARK),
-        (0.78, 0.38, 0.48, Vec3::new(0.02, 0.0, 0.03), 0.8, FOLIAGE_MID),
-        (1.04, 0.30, 0.44, Vec3::new(-0.02, 0.0, -0.02), 1.2, FOLIAGE_MID),
-        (1.28, 0.22, 0.38, Vec3::new(0.01, 0.0, 0.01), 1.6, FOLIAGE_LIGHT),
+    // EIGHT slender overlapping bough tiers (reference spruce), narrowly tapering to a sharp
+    // point, dark shadowed skirt → sunlit crown. res 6 → bold hexagonal facets, and each wide
+    // tier base overhangs the slimmer cone above it, so the rim of each layer pokes out as a
+    // drooping serrated bough edge instead of one smooth triangle. Slight yaw jitter so the
+    // facets never line up vertically. (base_y, radius, height, xz-nudge, yaw, tone)
+    let tiers: [(f32, f32, f32, Vec3, f32, u32); 8] = [
+        (0.30, 0.52, 0.40, Vec3::new(0.02, 0.0, -0.02), 0.0, FOLIAGE_DARK),
+        (0.48, 0.47, 0.40, Vec3::new(-0.03, 0.0, 0.02), 0.5, FOLIAGE_DARK),
+        (0.66, 0.42, 0.40, Vec3::new(0.02, 0.0, 0.03), 1.0, FOLIAGE_MID),
+        (0.86, 0.36, 0.40, Vec3::new(-0.02, 0.0, -0.02), 1.5, FOLIAGE_MID),
+        (1.06, 0.30, 0.38, Vec3::new(0.02, 0.0, 0.02), 2.0, FOLIAGE_MID),
+        (1.28, 0.24, 0.36, Vec3::new(-0.02, 0.0, -0.01), 2.5, FOLIAGE_LIGHT),
+        (1.50, 0.18, 0.34, Vec3::new(0.01, 0.0, 0.01), 3.0, FOLIAGE_LIGHT),
+        (1.72, 0.12, 0.30, Vec3::new(0.0, 0.0, 0.0), 3.5, FOLIAGE_LIGHT),
     ];
     for (base_y, r, h, nudge, yaw, c) in tiers {
         let m = Cone { radius: r, height: h }
             .mesh()
-            .resolution(8)
+            .resolution(6)
             .build()
             .rotated_by(Quat::from_rotation_y(yaw))
             .translated_by(Vec3::new(nudge.x, h * 0.5 + base_y, nudge.z));
         parts.push(tinted(m, lin(c)));
     }
-    // The sunlit leader spike capping the spire (~1.78u total).
-    parts.push(tinted(cone_at(0.12, 0.30, 1.48, 7, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
+    // The sunlit leader spike capping the spire (~2.1u total — towers over the broadleaves).
+    parts.push(tinted(cone_at(0.09, 0.28, 1.92, 6, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
 
     merged(parts)
 }
@@ -515,10 +525,11 @@ fn build_stump() -> Mesh {
 /// Computed once at scene build; the registered blocker stays a single circle, so there is no
 /// per-frame cost (collision queries are unchanged).
 pub fn silhouette_block_radius(mesh: &Mesh) -> f32 {
-    // Knee-to-waist band of the unit-space mesh: catches a low dense canopy / wide conifer skirt
-    // and the trunk, but sits below the high airy crowns (birch ~0.98, poplar tip) you walk under.
+    // Knee-to-chest band of the unit-space mesh: catches a wide conifer skirt, the trunk, and the
+    // underside of the broadleaf's high clustered crown, but stays below the airy birch crown
+    // (~0.98) you walk under. Raised from 0.60 once the broadleaf crown floated high on a tall bole.
     const LO: f32 = 0.05;
-    const HI: f32 = 0.60;
+    const HI: f32 = 0.85;
     let Some(pos) = mesh.attribute(Mesh::ATTRIBUTE_POSITION).and_then(|p| p.as_float3()) else {
         return 0.20; // no positions → fall back to the old flat trunk radius
     };
@@ -597,9 +608,9 @@ mod tests {
         silhouette_block_radius(&build_tree_mesh(k))
     }
 
-    /// The whole point of the per-kind footprint: a wide low crown / conifer skirt blocks wider
-    /// (you sink only a little into a big tree) than a slim columnar poplar or an airy birch
-    /// (you can reach their trunk). Guards against a regression back to one flat radius for all.
+    /// The whole point of the per-kind footprint: the wide-skirted conifer blocks widest, while
+    /// the airy birch (slim pale trunk, crown floating above the sample band) lets you walk right
+    /// up to it. Guards against a regression back to one flat radius for all kinds.
     #[test]
     fn block_radius_tracks_silhouette_per_kind() {
         let broadleaf = radius(TreeKind::Broadleaf);
@@ -616,11 +627,12 @@ mod tests {
         for v in [broadleaf, autumn, pine, poplar, birch] {
             assert!((0.13..=0.85).contains(&v), "radius {v} out of range");
         }
-        // Big round/skirted crowns dwarf the slim silhouettes.
-        assert!(broadleaf > poplar + 0.05, "broadleaf {broadleaf} ≯ poplar {poplar}");
-        assert!(broadleaf > birch + 0.05, "broadleaf {broadleaf} ≯ birch {birch}");
+        // The wide low conifer skirt blocks wider than any slim silhouette.
         assert!(pine > birch + 0.04, "pine {pine} ≯ birch {birch}");
-        // The airy birch reads as its slim pale trunk down low — a small bump.
-        assert!(birch <= 0.24, "birch {birch} should stay a slim-trunk bump");
+        assert!(pine > poplar, "pine {pine} ≯ poplar {poplar}");
+        // The airy birch stays a slim silhouette — its pale trunk plus the one low side leaf-puff
+        // (the high crown floats above the sample band), so it blocks far narrower than the conifer.
+        assert!(birch <= 0.32, "birch {birch} should stay slim");
+        assert!(pine > birch + 0.08, "pine {pine} should dwarf birch {birch}");
     }
 }
