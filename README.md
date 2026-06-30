@@ -11,7 +11,14 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 
 [**▶ Website**](https://miskibin.github.io/warbell/) · [**⬇ Download for Windows**](https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi) · [**Changelog**](https://miskibin.github.io/warbell/changelog.html)
 
-<img src="site/screenshots/castle-after.png" width="800" alt="A fortified keep at dusk">
+<img src="site/screenshots/castle-after.png" width="800" alt="Fortified keep at golden hour — five biomes and meadow cover across the island">
+
+**Before → after** — same overview camera; the island went from bare green paste to a living world.
+
+| Before | After |
+|:---:|:---:|
+| <img src="site/screenshots/castle-after-legacy.png" width="390" alt="Earlier marketing shot — flat meadow, distant vegetation culled"> | <img src="site/screenshots/castle-after.png" width="390" alt="Current shot — smooth terrain, fertility-matched cover, five biomes visible"> |
+| Blocky terraces, meadow read empty at range | Continuous heightfield, grass & flowers that track the ground tint, snow/desert/rock biomes in frame |
 
 </div>
 

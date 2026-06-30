@@ -715,14 +715,18 @@ fn spawn_chunks(
     for (key, bucket) in chunks {
         let center = chunk_center(key);
         if let Some(mesh) = merge_props(bucket.cover).filter(|_| !no_grass()) {
-            commands.spawn((
+            let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),
                 Transform::from_translation(center),
                 bevy::light::NotShadowCaster,
-                cover_range.clone(),
                 BiomeEntity,
             ));
+            // Cover (grass/flowers) uses the same `FOREST_NOCULL` gate as props/trees so overview
+            // marketing shots (`FOREST_SHOT` + a pulled-back `FOREST_CAM`) still show meadow cover.
+            if scatter_cull_enabled() {
+                e.insert(cover_range.clone());
+            }
         }
         if let Some(mesh) = merge_props(bucket.props) {
             let mut e = commands.spawn((
