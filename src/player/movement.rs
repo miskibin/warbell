@@ -308,10 +308,10 @@ pub fn player_move(
         }
         // Steer toward the INPUT direction while pressing (hold the last facing through the slide). In
         // first person the *view* owns facing (set in `player_camera`) so attacks fire where you aim.
-        // While a swing is in flight the *attack* owns facing (it soft-snaps toward the locked target
-        // in `player_attack`), so we skip the move-steer there — otherwise strafing yanks the body off
-        // the enemy and the blow lands sideways. This was the "hero turns his side to the target" bug.
-        if moving && !fp.active && !hero.attacking {
+        // This stays live DURING a swing — `player_attack` only *gently* nudges facing toward the
+        // locked foe (a soft aim-assist), and the player's own steer here always overpowers it, so it
+        // never feels like the game wrenches the body off where you're pointing.
+        if moving && !fp.active {
             let want = move_dir.x.atan2(move_dir.z);
             hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
         }

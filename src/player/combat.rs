@@ -22,12 +22,15 @@ const ATTACK_RANGE: f32 = 1.8;
 const ATTACK_CONE_DOT: f32 = 0.5; // cos 60° — front cone half-angle
 const HIT_PHASE: f32 = 0.3; // fraction into the swing where damage lands
 
-// ── Attack lock-on ──
-// When a swing starts, the hero soft-snaps his facing toward the nearest enemy so a strafing attack
-// lands square on the target instead of sideways (the "turns his side to whoever he's hitting" bug).
-const LOCK_RANGE: f32 = 3.0; // a touch past ATTACK_RANGE so a circled foo is grabbed before you're on top
-const LOCK_DOT: f32 = -0.4; // ~226° front arc — catch a foe at your side, but never whip 180° to your back
-const LOCK_TURN_RATE: f32 = 24.0; // rad/s soft-turn — snappier than the move-steer so it lands by the hit frame
+// ── Attack aim-assist ──
+// When a swing starts, the hero *gently* leans his facing toward the nearest enemy so a swing reads
+// as aimed at the foe instead of sideways (the "turns his side to whoever he's hitting" bug). It's a
+// soft assist, NOT a lock: the turn is slower than the move-steer, which stays live, so the player's
+// own input always overpowers it — standing still and swinging tidies your aim; actively strafing
+// keeps your heading. Never a hard snap, never freezes control.
+const LOCK_RANGE: f32 = 3.0; // a touch past ATTACK_RANGE so a circled foe is grabbed before you're on top
+const LOCK_DOT: f32 = -0.2; // ~200° front arc — leans toward a foe at your side, but never to your back
+const LOCK_TURN_RATE: f32 = 9.0; // rad/s — gentler than the 15 rad/s move-steer, so player input wins
 
 /// Nearest live enemy within [`LOCK_RANGE`] and the front [`LOCK_DOT`] arc, as a facing angle.
 /// Picks the closest so a knight in a melee commits to the foe he's actually next to.
@@ -532,8 +535,9 @@ pub fn player_attack(
     if !hero.attacking {
         return;
     }
-    // Soft-snap toward the locked foe across the wind-up so the blow lands facing it. Movement's
-    // move-steer is suppressed while `attacking`, so this is the sole facing writer here (third-person).
+    // Gently lean toward the locked foe across the swing (third-person). This is a soft assist, not a
+    // lock — the move-steer in `player_move` stays live and turns faster, so active input overrides
+    // this; with no input (standing to swing) it quietly tidies the aim onto the target.
     if let Some(target) = hero.lock_face {
         hero.facing = super::movement::lerp_angle(hero.facing, target, (dt * LOCK_TURN_RATE).min(1.0));
     }
