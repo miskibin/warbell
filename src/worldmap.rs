@@ -961,7 +961,11 @@ fn corner_top_y(cx: i32, cz: i32) -> Option<f32> {
 fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
     let bx = cx as f32 / MAP_SCALE;
     let bz = cz as f32 / MAP_SCALE;
-    if !is_land_shape(bx, bz) {
+    // `is_land_shape` is the OLD island ellipse, which does NOT include the Blight (it extends
+    // south past the old coast). Without the Blight exception every fortress-interior corner read
+    // as sea → `wetn == 4` → `build_terrain_chunk` skipped the cell, leaving the courtyard a
+    // textureless void. The Blight is real land, so treat it as such here.
+    if !is_land_shape(bx, bz) && crate::ork_fortress::blight_class_base(bx, bz).is_none() {
         return (-0.6, false); // sea
     }
     if river_blocked(bx, bz) {
