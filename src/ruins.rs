@@ -14,15 +14,35 @@ use bevy::prelude::*;
 use bevy::mesh::VertexAttributeValues;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
-use crate::palette::{lin, lin_scaled, DEAD_WOOD, DEAD_WOOD_DARK};
+use crate::palette::{lin, DEAD_WOOD, DEAD_WOOD_DARK};
 
-// ── Trilithon stone tints (mottled weathered granite greys) ──────────────────
+// ── Trilithon / rocky landmark (baked shadow → pale cap, like biome_rocky) ───
+const STONE_DARK: u32 = 0x6b6358; // shadowed foot / crevice wedge
+const STONE_BODY: u32 = 0x8a7f70; // mid grey-brown body
+const STONE_PALE: u32 = 0xb3a692; // sun-bleached top facet
+const STONE_COOL: u32 = 0x7d7a72; // cooler accent lump
 const STONE_A: u32 = 0x9a9aa3; // left upright — cool light grey
-const STONE_B: u32 = 0x8a8f98; // lintel — mid grey (the cross-beam reads darker)
+const STONE_B: u32 = 0x8a8f98; // lintel — mid grey
 const STONE_C: u32 = 0xaab0b2; // right upright — pale warm grey
-const STONE_CAP: u32 = 0x6b6862; // shaded hewn caps / shadowed underside
-const STONE_MOSS: u32 = 0x74803f; // subtle moss accent creeping up a base
-const STONE_EARTH: u32 = 0x6a6358; // worn earthen ring the circle stands on
+const STONE_CAP: u32 = 0x6b6862; // shaded underside
+const LICHEN_ORANGE: u32 = 0xc88a3a;
+const LICHEN_SAGE: u32 = 0x9aa56b;
+const PEBBLE_WARM: u32 = 0x8a7a64;
+
+// ── Frozen spire (angular ice chunks, biome_snow family) ─────────────────────
+const ICE_BODY: u32 = 0xa9d2f0;
+const ICE_RIME: u32 = 0xc4e3f6;
+const ICE_PALE: u32 = 0xe6f4fc;
+const ICE_DEEP: u32 = 0x5f93cc;
+const ICE_RIM: u32 = 0x9cc3e0;
+const FROST_ROCK: u32 = 0x66727f; // blue-grey rubble the crystals erupt from
+
+// ── Sunken pyramid (banded sandstone facets, biome_desert family) ─────────────
+const SAND_BODY: u32 = 0xd9c08a;
+const SAND_LT: u32 = 0xe9d4a2;
+const SAND_DK: u32 = 0xbb9c5e;
+const SAND_SHADOW: u32 = 0x8c7340;
+const SAND_DOOR: u32 = 0x2c2418;
 
 // ── Dead-tree wood tints ─────────────────────────────────────────────────────
 const TREE_BARK: u32 = DEAD_WOOD; // 0x6e6258 weathered grey-brown
@@ -95,6 +115,7 @@ fn cyl(r: f32, h: f32, center: Vec3, res: u32, c: u32) -> Mesh {
 
 /// A subdivided `a×b` plane facing +Y (built so it can be rotated into any box face). The
 /// subdivisions give the flat face enough triangles for [`mottle`] to resolve into a grain.
+#[allow(dead_code)]
 fn plane(a: f32, b: f32, sub: u32) -> Mesh {
     Plane3d::new(Vec3::Y, Vec2::new(a * 0.5, b * 0.5)).mesh().subdivisions(sub).build()
 }
@@ -160,6 +181,76 @@ fn mottle(mut m: Mesh, amount: f32) -> Mesh {
     m
 }
 
+/// A low-poly faceted lump (ico detail 0) — the angular chipped-stone look.
+fn facet_at(r: f32, off: Vec3, squash: f32, c: u32) -> Mesh {
+    tinted(
+        Sphere::new(r)
+            .mesh()
+            .ico(0)
+            .expect("ico detail in range")
+            .scaled_by(Vec3::new(1.0, squash, 1.0))
+            .translated_by(off),
+        lin(c),
+    )
+}
+
+/// A faceted lump stretched on X/Y/Z and Z-tilted into a jagged block.
+fn block_at(rx: f32, ry: f32, rz: f32, off: Vec3, tilt: f32, c: u32) -> Mesh {
+    tinted(
+        Sphere::new(1.0)
+            .mesh()
+            .ico(0)
+            .expect("ico detail in range")
+            .scaled_by(Vec3::new(rx, ry, rz))
+            .rotated_by(Quat::from_rotation_z(tilt))
+            .translated_by(off),
+        lin(c),
+    )
+}
+
+/// `block_at` with an extra yaw so fracture slabs can lean in any direction.
+fn slab_at(rx: f32, ry: f32, rz: f32, off: Vec3, yaw: f32, tilt: f32, c: u32) -> Mesh {
+    tinted(
+        Sphere::new(1.0)
+            .mesh()
+            .ico(0)
+            .expect("ico detail in range")
+            .scaled_by(Vec3::new(rx, ry, rz))
+            .rotated_by(Quat::from_rotation_y(yaw) * Quat::from_rotation_z(tilt))
+            .translated_by(off),
+        lin(c),
+    )
+}
+
+/// Centre height that grounds a Z-tilted slab's lowest point at y=0.
+fn slab_ground(rx: f32, ry: f32, tilt: f32) -> f32 {
+    ((rx * tilt.sin()).powi(2) + (ry * tilt.cos()).powi(2)).sqrt()
+}
+
+/// A flat lichen splotch pressed onto a stone surface.
+fn lichen_at(r: f32, off: Vec3, c: u32) -> Mesh {
+    facet_at(r, off, 0.24, c)
+}
+
+/// An upright cylinder whose centre sits at `cy` (a part rooted at y=0 uses `cy = h/2`).
+fn cyl_up(r: f32, h: f32, cy: f32, res: u32, c: u32) -> Mesh {
+    tinted(Cylinder::new(r, h).mesh().resolution(res).build().translated_by(yv(cy)), lin(c))
+}
+
+/// An angular rock chunk: squashed icosphere, yawed + pitched (biome_snow `chunk_at`).
+fn chunk_at(r: f32, off: Vec3, scale: Vec3, yaw: f32, pitch: f32, detail: u32, c: u32) -> Mesh {
+    tinted(
+        Sphere::new(r)
+            .mesh()
+            .ico(detail)
+            .expect("ico detail in range")
+            .scaled_by(scale)
+            .rotated_by(Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch))
+            .translated_by(off),
+        lin(c),
+    )
+}
+
 /// A cylinder primitive whose BASE sits at the local origin, then optionally pitched
 /// about Z and yawed about Y, then translated to its attach point. Order: lift the
 /// base-centred cylinder so its base is at origin → rotate (so it swings about its
@@ -177,239 +268,279 @@ fn limb(radius: f32, height: f32, resolution: u32, pitch_z: f32, yaw_y: f32, att
 
 // ── Standing stones (rocky landmark) ──────────────────────────────────────────
 
-/// **The Standing Stones** — a clean Stonehenge-style trilithon arch (two tapered
-/// uprights + a lintel) standing inside an outer ring of five rough leaning monoliths,
-/// all on a low worn earthen circle. Mottled weathered greys with a moss accent; base at
-/// y=0, ~3u to the lintel. Walk through the arch (the opening faces ±Z; the ring leaves
-/// that line clear).
+/// Stacked banded drums for one arch upright — wind-resistant pale ledges + lichen at the foot.
+fn arch_upright(height: f32, r0: f32, bands: &[u32]) -> Vec<Mesh> {
+    let drums = 5;
+    let h = height / drums as f32;
+    let mut parts = Vec::new();
+    for i in 0..drums {
+        let t = i as f32 / drums as f32;
+        let r = r0 * (1.0 - t * 0.26);
+        let c = bands[i % bands.len()];
+        parts.push(cyl_up(r, h * 1.03, h * (i as f32 + 0.5), 8, c));
+        if i == 2 || i == 4 {
+            parts.push(facet_at(r * 1.12, yv(h * (i as f32 + 1.0)), 0.2, STONE_PALE));
+        }
+    }
+    parts.push(lichen_at(r0 * 0.18, Vec3::new(r0 * 0.75, 0.45, 0.18), LICHEN_ORANGE));
+    parts.push(lichen_at(r0 * 0.14, Vec3::new(-r0 * 0.7, 0.85, -0.12), LICHEN_SAGE));
+    parts
+}
+
+/// **The Standing Stones** — a natural rock arch: two banded stone pillars bridged by a
+/// thick faceted lintel, ringed by five leaning monolith slabs and foot-rubble. No plinth
+/// or turf disc — the set-piece grows straight out of the ground like the rocky biome's
+/// crags. Base at y=0, ~3u to the lintel crown; the opening faces ±Z.
 pub fn build_trilithon_mesh() -> Mesh {
-    const POST_W: f32 = 0.7; // upright width (X)
-    const POST_D: f32 = 0.7; // upright depth (Z)
-    const POST_H: f32 = 2.6; // upright bulk height
-    const GAP: f32 = 2.0; // centre-to-centre spacing of the two uprights
-    const HALF: f32 = GAP * 0.5; // ±1.0 in X
-    const LINTEL_H: f32 = 0.45; // cross-beam thickness
-    const PLINTH_H: f32 = 0.14; // low platform under both posts
+    const GAP: f32 = 2.0;
+    const HALF: f32 = GAP * 0.5;
+    const POST_H: f32 = 2.55;
+    const POST_R: f32 = 0.38;
 
     let mut parts: Vec<Mesh> = Vec::new();
 
-    // Worn earthen ring the whole circle stands on — a low wide disc, grounds it.
-    parts.push(cyl(3.9, 0.12, yv(0.06), 20, STONE_EARTH));
-
-    // Low turf/earth plinth the uprights stand on — base at y=0.
-    parts.push(tinted(
-        box_at(GAP + POST_W + 0.5, PLINTH_H, POST_D + 0.5, Vec3::new(0.0, PLINTH_H * 0.5, 0.0)),
-        lin(STONE_CAP),
-    ));
-
-    // The two uprights. Left = STONE_A, right = STONE_C (distinct greys). Each is a
-    // tall box bulk sitting on the plinth + a narrower, darker hewn cap on top, so
-    // the silhouette reads tapered/chiselled. Posts rise from y=PLINTH_H.
-    for (sx, body_hex) in [(-HALF, STONE_A), (HALF, STONE_C)] {
-        let base_y = PLINTH_H;
-        // Slight per-stone brightness jitter so even the two uprights differ subtly.
-        let v = if sx < 0.0 { 0.97 } else { 1.03 };
-        parts.push(tinted(
-            tile_box(POST_W, POST_H, POST_D, 4).translated_by(Vec3::new(sx, base_y + POST_H * 0.5, 0.0)),
-            lin_scaled(body_hex, v),
-        ));
-        // Hewn cap — narrower + darker, capping the upright just under the lintel.
-        parts.push(tinted(
-            box_at(POST_W * 0.82, 0.18, POST_D * 0.82, Vec3::new(sx, base_y + POST_H - 0.02, 0.0)),
-            lin(STONE_CAP),
-        ));
+    let left_bands = [STONE_A, STONE_BODY, STONE_PALE, STONE_B, STONE_C];
+    let right_bands = [STONE_C, STONE_COOL, STONE_PALE, STONE_BODY, STONE_A];
+    for (sx, bands) in [(-HALF, &left_bands[..]), (HALF, &right_bands[..])] {
+        for p in arch_upright(POST_H, POST_R, bands) {
+            parts.push(p.translated_by(Vec3::new(sx, 0.0, 0.0)));
+        }
+        parts.push(facet_at(POST_R * 0.55, Vec3::new(sx, POST_R * 0.28, 0.05), 0.82, STONE_DARK));
     }
 
-    // Horizontal lintel spanning both uprights' tops, with a darker shadowed underside.
-    let lintel_w = GAP + POST_W + 0.3;
-    let lintel_y = PLINTH_H + POST_H + LINTEL_H * 0.5 - 0.02;
-    parts.push(tinted(tile_box(lintel_w, LINTEL_H, POST_D, 5).translated_by(Vec3::new(0.0, lintel_y, 0.0)), lin(STONE_B)));
-    parts.push(tinted(
-        box_at(lintel_w * 0.98, 0.06, POST_D * 0.7, Vec3::new(0.0, PLINTH_H + POST_H + 0.02, 0.0)),
-        lin(STONE_CAP),
+    let lintel_y = POST_H + 0.18;
+    parts.push(block_at(
+        GAP * 0.34,
+        0.52,
+        POST_R * 1.9,
+        Vec3::new(-GAP * 0.27, lintel_y, 0.0),
+        -0.10,
+        STONE_B,
     ));
-
-    // Moss creeping up the base of the left upright (thin slab on the +Z face).
-    parts.push(tinted(
-        box_at(POST_W * 0.6, 0.7, 0.04, Vec3::new(-HALF, PLINTH_H + 0.45, POST_D * 0.5 + 0.02)),
-        lin(STONE_MOSS),
+    parts.push(block_at(
+        GAP * 0.34,
+        0.52,
+        POST_R * 1.9,
+        Vec3::new(GAP * 0.27, lintel_y, 0.0),
+        0.10,
+        STONE_B,
     ));
+    parts.push(block_at(GAP * 0.16, 0.48, POST_R * 1.75, Vec3::new(0.0, lintel_y + 0.32, 0.0), 0.0, STONE_PALE));
+    parts.push(block_at(GAP * 0.48, 0.20, POST_R * 1.5, Vec3::new(0.0, lintel_y - 0.06, 0.0), 0.0, STONE_CAP));
+    parts.push(facet_at(0.38, Vec3::new(-0.65, lintel_y - 0.42, 0.12), 0.78, STONE_DARK));
+    parts.push(facet_at(0.32, Vec3::new(0.85, lintel_y - 0.38, -0.08), 0.78, STONE_BODY));
 
-    // ── Outer ring: five rough leaning monoliths around the arch. Each is a tapered
-    // bulk + a hewn cap, faced toward the centre and tilted a touch so the circle reads
-    // weathered, not stamped. Angles dodge the ±Z entrance line so the arch stays walkable.
-    let greys = [STONE_A, STONE_B, STONE_C, STONE_CAP, STONE_A];
-    let ring_r = 3.35;
+    let greys = [STONE_A, STONE_B, STONE_C, STONE_COOL, STONE_BODY];
+    let ring_r = 3.2;
     for i in 0..5 {
         let a = i as f32 * (TAU / 5.0) + 0.55;
         let (rx, rz) = (a.cos() * ring_r, a.sin() * ring_r);
-        let h = 1.5 + (i % 3) as f32 * 0.45;
-        let w = 0.52 + (i % 2) as f32 * 0.12;
-        let yaw = a + FRAC_PI_2; // flat face toward centre
-        let tilt = if i % 2 == 0 { 0.06 } else { -0.05 };
-        let lean = Quat::from_rotation_y(yaw) * Quat::from_rotation_z(tilt);
+        let h = 1.45 + (i % 3) as f32 * 0.42;
+        let w = 0.48 + (i % 2) as f32 * 0.10;
+        let yaw = a + FRAC_PI_2;
+        let tilt = if i % 2 == 0 { 0.22 } else { -0.18 };
         let g = greys[i];
-        // Tapered bulk (base at origin → lean → seat on the ring).
-        parts.push(tinted(
-            tile_box(w, h, w * 0.85, 4)
-                .translated_by(yv(h * 0.5))
-                .rotated_by(lean)
-                .translated_by(Vec3::new(rx, 0.1, rz)),
-            lin_scaled(g, 0.96 + (i as f32) * 0.02),
+        parts.push(slab_at(
+            w,
+            h,
+            w * 0.82,
+            Vec3::new(rx, slab_ground(w, h, tilt) + 0.04, rz),
+            yaw,
+            tilt,
+            g,
         ));
-        // Hewn cap.
-        parts.push(tinted(
-            Cuboid::new(w * 0.8, 0.16, w * 0.7)
-                .mesh()
-                .build()
-                .translated_by(yv(h - 0.04))
-                .rotated_by(lean)
-                .translated_by(Vec3::new(rx, 0.1, rz)),
-            lin(STONE_CAP),
+        parts.push(facet_at(w * 0.42, Vec3::new(rx, slab_ground(w, h, tilt) + h * 0.92, rz), 0.5, STONE_PALE));
+        if i % 3 == 0 {
+            parts.push(lichen_at(0.11, Vec3::new(rx, 0.35, rz + 0.2), LICHEN_SAGE));
+        }
+    }
+
+    for &(dx, dz, r) in &[
+        (-1.4_f32, 0.75, 0.22),
+        (1.35, -0.65, 0.20),
+        (0.15, 1.05, 0.18),
+        (-0.9, -0.95, 0.16),
+        (1.6, 0.35, 0.14),
+    ] {
+        parts.push(facet_at(
+            r,
+            Vec3::new(dx, r * 0.55, dz),
+            0.68,
+            if dx < 0.0 { STONE_COOL } else { PEBBLE_WARM },
         ));
     }
 
-    mottle(flat_shaded(merged(parts)), 0.6)
+    mottle(flat_shaded(merged(parts)), 0.55)
 }
 
 // ── Frozen spire (snow landmark) ──────────────────────────────────────────────
 
-/// **The Frozen Spire** — a tall tapered ice crystal (a 6-sided prism stepping in to a
-/// pale rime upper, capped by a pointed cone) ringed by five leaning flanking shards on a
-/// frosted snow mound. Pale blues with bright sunlit facets; ~3.6u tall, base at y=0.
+/// **The Frozen Spire** — a shattered ice outcrop: a tall central crystal stack of angular
+/// chunks stepping up to a pale rime crown, ringed by five leaning flanking shards. Dark
+/// frost-rock rubble at the foot grounds it (no snow-dome plinth). ~3.6u tall, base at y=0.
 pub fn build_frozen_spire_mesh() -> Mesh {
-    const ICE: u32 = 0xa9d2f0; // crystal body blue
-    const RIME: u32 = 0xc4e3f6; // upper, frostier blue
-    const PALE: u32 = 0xe6f4fc; // sunlit tip / facet
-    const DEEP: u32 = 0x5f93cc; // shadowed shard
-    const SNOW: u32 = 0xeef6fc; // mound
-
     let mut parts: Vec<Mesh> = Vec::new();
 
-    // Frosted snow mound (wide squashed dome) the crystals erupt from.
-    parts.push(ball(1.5, yv(0.06), 0.22, SNOW));
-    parts.push(ball(0.9, Vec3::new(0.7, 0.05, -0.4), 0.3, SNOW));
+    // Frost-rock rubble the crystals erupt from — buried footing, not a blank mound.
+    parts.push(chunk_at(0.34, yv(0.14), Vec3::new(1.35, 0.55, 1.1), 0.2, 0.0, 0, FROST_ROCK));
+    parts.push(chunk_at(0.22, Vec3::new(0.55, 0.10, -0.35), Vec3::new(1.1, 0.7, 1.0), 1.4, 0.15, 0, FROST_ROCK));
+    parts.push(chunk_at(0.18, Vec3::new(-0.48, 0.08, 0.42), Vec3::new(1.0, 0.65, 1.1), 2.0, -0.1, 0, FROST_ROCK));
 
-    // Central crystal: a stepped 6-sided prism narrowing as it rises, then a cone tip.
-    let bh = 2.3;
-    parts.push(cyl(0.46, bh * 0.5, yv(0.2 + bh * 0.25), 6, ICE));
-    parts.push(cyl(0.34, bh * 0.5, yv(0.2 + bh * 0.75), 6, RIME));
-    parts.push(tinted(
-        Cone { radius: 0.34, height: 1.0 }.mesh().resolution(6).build().translated_by(yv(0.2 + bh + 0.5)),
-        lin(PALE),
+    // Central spire — stacked angular ice chunks tapering upward with bright crown facets.
+    let bands: [(f32, f32, f32, f32, u32); 5] = [
+        (0.44, 0.55, 1.05, 0.0, ICE_DEEP),
+        (0.38, 0.52, 0.98, 0.12, ICE_BODY),
+        (0.32, 0.48, 0.92, 0.22, ICE_RIME),
+        (0.26, 0.42, 0.88, 0.35, ICE_BODY),
+        (0.20, 0.36, 0.82, 0.48, ICE_RIME),
+    ];
+    let mut cy = 0.12;
+    for (i, &(r, h, squash, drift, c)) in bands.iter().enumerate() {
+        parts.push(chunk_at(
+            r,
+            Vec3::new(drift * 0.08, cy + h * 0.5, drift * 0.05),
+            Vec3::new(1.0, squash, 0.95),
+            drift,
+            0.08,
+            0,
+            c,
+        ));
+        cy += h;
+        if i == 2 || i == 4 {
+            parts.push(facet_at(r * 0.55, Vec3::new(drift * 0.1, cy, drift * 0.06), 0.42, ICE_PALE));
+        }
+    }
+    // Pointed crown shard.
+    parts.push(chunk_at(
+        0.18,
+        Vec3::new(0.12, cy + 0.42, 0.04),
+        Vec3::new(0.75, 1.4, 0.75),
+        0.6,
+        -0.15,
+        0,
+        ICE_PALE,
     ));
-    // Three bright sunlit facet ridges standing proud of the body (catch the light).
+    // Sunlit ridge facets standing proud of the body.
     for i in 0..3 {
         let a = i as f32 * (TAU / 3.0) + 0.3;
-        parts.push(tinted(
-            Cuboid::new(0.05, bh * 0.8, 0.05)
-                .mesh()
-                .build()
-                .translated_by(Vec3::new(0.42, 0.2 + bh * 0.45, 0.0))
-                .rotated_by(Quat::from_rotation_y(a)),
-            lin(PALE),
+        parts.push(chunk_at(
+            0.06,
+            Vec3::new(a.cos() * 0.38, 1.55, a.sin() * 0.38),
+            Vec3::new(0.35, 2.8, 0.35),
+            a,
+            0.0,
+            0,
+            ICE_PALE,
         ));
     }
 
-    // ── Flanking shards: five leaning tapered crystals (body prism + cone tip) around
-    // the base, two-tone so the cluster reads as a shattered outcrop.
-    let mut shard = |parts: &mut Vec<Mesh>, base: Vec3, h: f32, r: f32, lean: Quat, c: u32| {
-        let body = Cylinder::new(r, h * 0.7)
-            .mesh()
-            .resolution(6)
-            .build()
-            .translated_by(yv(h * 0.35))
-            .rotated_by(lean)
-            .translated_by(base);
-        parts.push(tinted(body, lin(c)));
-        let tip = Cone { radius: r, height: h * 0.4 }
-            .mesh()
-            .resolution(6)
-            .build()
-            .translated_by(yv(h * 0.7 + h * 0.2))
-            .rotated_by(lean)
-            .translated_by(base);
-        parts.push(tinted(tip, lin(PALE)));
-    };
+    // Flanking shards — leaning ice chunks + smaller tip splinters.
     for i in 0..5 {
         let a = i as f32 * (TAU / 5.0) + 0.4;
-        let (sx, sz) = (a.cos() * 0.72, a.sin() * 0.72);
-        let h = 1.0 + (i % 3) as f32 * 0.34;
-        let lean = Quat::from_rotation_y(a) * Quat::from_rotation_z(0.30);
-        shard(&mut parts, Vec3::new(sx, 0.12, sz), h, 0.2, lean, if i % 2 == 0 { ICE } else { DEEP });
+        let (sx, sz) = (a.cos() * 0.78, a.sin() * 0.78);
+        let h = 0.85 + (i % 3) as f32 * 0.32;
+        let c = if i % 2 == 0 { ICE_BODY } else { ICE_DEEP };
+        parts.push(chunk_at(
+            0.22,
+            Vec3::new(sx, h * 0.42, sz),
+            Vec3::new(0.9, h, 0.85),
+            a,
+            0.32,
+            0,
+            c,
+        ));
+        parts.push(chunk_at(
+            0.12,
+            Vec3::new(sx + a.cos() * 0.08, h * 0.88, sz + a.sin() * 0.08),
+            Vec3::new(0.7, 1.1, 0.7),
+            a + 0.4,
+            -0.2,
+            0,
+            ICE_PALE,
+        ));
+        if i % 2 == 0 {
+            parts.push(tinted(
+                Cone { radius: 0.018, height: 0.12 }
+                    .mesh()
+                    .resolution(4)
+                    .build()
+                    .rotated_by(Quat::from_rotation_x(PI))
+                    .translated_by(Vec3::new(sx, h * 0.55, sz) - yv(0.06)),
+                lin(ICE_RIM),
+            ));
+        }
     }
 
-    mottle(flat_shaded(merged(parts)), 0.28)
+    mottle(flat_shaded(merged(parts)), 0.32)
 }
 
 // ── Sunken pyramid (desert landmark) ──────────────────────────────────────────
 
-/// **The Sunken Pyramid** — a weathered stepped sandstone ziggurat: five receding tiers
-/// (each with a sunlit top lip + a recessed shadow reveal under its step), a central front
-/// staircase, and a doorwayed summit temple. Half-buried in a low sand drift, with a
-/// toppled obelisk and rubble beside it. ~3.6u tall, base at y=0.
+/// **The Sunken Pyramid** — a weathered stepped sandstone ziggurat built from faceted
+/// blocks (corner drums + sunlit cap facets per tier), a front stair of flat slabs, a
+/// doorwayed summit cluster, and half-buried sand-drift rubble at the foot — no blank
+/// platform plinth. ~3.6u tall, base at y=0.
 pub fn build_sunken_pyramid_mesh() -> Mesh {
-    const SAND: u32 = 0xd9c08a; // sandstone body
-    const SAND_LT: u32 = 0xe9d4a2; // sunlit ridge / stair tread
-    const SAND_DK: u32 = 0xbb9c5e; // shaded course / drift
-    const SHADOW: u32 = 0x8c7340; // recessed reveal under each step
-    const DOOR: u32 = 0x2c2418; // dark temple doorway
-
     let mut parts: Vec<Mesh> = Vec::new();
 
-    // Half-buried sand drift skirt — a low wide platform + corner dunes, hides the seam
-    // and reads as the pyramid sunk into the dunes.
-    parts.push(tbox(4.4, 0.18, 4.4, yv(0.09), 5, SAND_DK));
-    for &(dx, dz) in &[(1.9_f32, 1.7_f32), (-2.0, 1.5), (-1.6, -1.9), (1.8, -1.6)] {
-        parts.push(ball(0.9, Vec3::new(dx, 0.06, dz), 0.28, SAND_DK));
+    // Half-buried sand drifts — low angled slabs + pebbles hugging the base.
+    for &(dx, dz, yaw) in &[
+        (1.75_f32, 1.55, 0.4),
+        (-1.85, 1.4, -0.6),
+        (-1.5, -1.75, 1.2),
+        (1.65, -1.45, -0.3),
+    ] {
+        parts.push(slab_at(1.0, 0.14, 0.75, Vec3::new(dx, 0.08, dz), yaw, 0.08, SAND_DK));
+    }
+    for &(dx, dz) in &[(1.55_f32, 1.45), (-1.65, 1.25), (-1.4, -1.65), (1.5, -1.35)] {
+        parts.push(facet_at(0.28, Vec3::new(dx, 0.11, dz), 0.52, SAND_DK));
     }
 
-    // ── Receding tiers.
     let tiers = 5;
-    let (w0, w1, th) = (3.4_f32, 1.1_f32, 0.40_f32);
-    let mut y = 0.14;
+    let (w0, w1, th) = (3.2_f32, 1.0_f32, 0.38_f32);
+    let mut y_base = 0.0_f32;
     let mut top_w = w0;
     for i in 0..tiers {
         let t = i as f32 / (tiers - 1) as f32;
         let w = w0 + (w1 - w0) * t;
-        // Recessed shadow reveal sitting on the wider course below (skip the first, which
-        // sits on the drift, not a step).
+        let body_c = if i % 2 == 0 { SAND_BODY } else { SAND_DK };
+
         if i > 0 {
-            parts.push(tinted(box_at(w + 0.06, 0.07, w + 0.06, yv(y + 0.035)), lin(SHADOW)));
+            parts.push(facet_at(w * 0.48, yv(y_base + 0.04), 0.32, SAND_SHADOW));
         }
-        // Tier body, alternating course tone for a weathered banding (grainy faces).
-        parts.push(tbox(w, th, w, yv(y + th * 0.5), 5, if i % 2 == 0 { SAND } else { SAND_DK }));
-        // Sunlit top lip.
-        parts.push(tinted(box_at(w, 0.05, w, yv(y + th - 0.02)), lin(SAND_LT)));
-        // Central front staircase tread on the +Z face.
-        parts.push(tinted(box_at(0.66, th * 0.9, 0.18, Vec3::new(0.0, y + th * 0.45, w * 0.5 + 0.03)), lin(SAND_LT)));
-        y += th;
+
+        let corners = [(w * 0.42, w * 0.42), (-w * 0.42, w * 0.42), (-w * 0.42, -w * 0.42), (w * 0.42, -w * 0.42)];
+        for (ci, &(cx, cz)) in corners.iter().enumerate() {
+            let tilt = if ci % 2 == 0 { 0.05 } else { -0.04 };
+            parts.push(block_at(w * 0.22, th, w * 0.20, Vec3::new(cx, y_base + th * 0.5, cz), tilt, body_c));
+        }
+        parts.push(facet_at(w * 0.36, yv(y_base + th - 0.02), 0.26, SAND_LT));
+        parts.push(slab_at(
+            0.55,
+            th * 0.85,
+            0.16,
+            Vec3::new(0.0, y_base + th * 0.45, w * 0.48),
+            0.0,
+            0.0,
+            SAND_LT,
+        ));
+        y_base += th;
         top_w = w;
     }
 
-    // ── Summit temple with a dark doorway facing +Z and a flat overhanging roof.
-    let tw = top_w * 0.92;
-    let tht = 0.58;
-    parts.push(tbox(tw, tht, tw, yv(y + tht * 0.5), 4, SAND));
-    parts.push(tbox(tw * 1.16, 0.12, tw * 1.16, yv(y + tht + 0.05), 2, SAND_DK));
-    parts.push(tinted(box_at(tw * 0.34, tht * 0.7, 0.14, Vec3::new(0.0, y + tht * 0.4, tw * 0.5)), lin(DOOR)));
+    let tw = top_w * 0.9;
+    let tht = 0.55;
+    parts.push(block_at(tw * 0.45, tht, tw * 0.42, yv(y_base + tht * 0.5), 0.04, SAND_BODY));
+    parts.push(slab_at(tw * 0.55, 0.14, tw * 0.50, yv(y_base + tht + 0.06), 0.3, 0.02, SAND_DK));
+    parts.push(facet_at(tw * 0.20, Vec3::new(0.0, y_base + tht * 0.42, tw * 0.48), 0.55, SAND_DOOR));
 
-    // ── Toppled obelisk half-sunk in the sand beside the base + a couple of rubble blocks.
-    let obelisk = {
-        let shaft = box_at(0.34, 1.7, 0.34, yv(0.85));
-        let pyramidion = Cone { radius: 0.26, height: 0.4 }.mesh().resolution(4).build().translated_by(yv(1.9));
-        let mut m = shaft;
-        m.merge(&pyramidion).expect("obelisk parts share attributes");
-        tinted(
-            m.rotated_by(Quat::from_rotation_z(1.25)).translated_by(Vec3::new(2.25, 0.18, 0.5)),
-            lin(SAND_DK),
-        )
-    };
-    parts.push(obelisk);
-    parts.push(tbox(0.5, 0.32, 0.5, Vec3::new(-2.3, 0.16, 1.0), 1, SAND));
-    parts.push(tbox(0.4, 0.26, 0.6, Vec3::new(-2.5, 0.13, -0.7), 1, SAND_DK));
+    parts.push(slab_at(0.30, 1.55, 0.26, Vec3::new(2.2, 0.88, 0.48), 0.5, 1.22, SAND_DK));
+    parts.push(facet_at(0.24, Vec3::new(2.62, 0.26, 0.58), 0.68, SAND_LT));
+    parts.push(facet_at(0.28, Vec3::new(-2.2, 0.15, 0.95), 0.65, SAND_BODY));
+    parts.push(facet_at(0.22, Vec3::new(-2.45, 0.12, -0.65), 0.65, SAND_DK));
+    parts.push(facet_at(0.18, Vec3::new(0.85, 0.10, -1.55), 0.6, SAND_DK));
 
-    mottle(flat_shaded(merged(parts)), 0.6)
+    mottle(flat_shaded(merged(parts)), 0.58)
 }
 
 // ── Per-biome placement (combined world map) ─────────────────────────────────────
