@@ -9,7 +9,8 @@
 //! turntable). `main()` calls [`run`] and returns early when `FOREST_VIEW` is set.
 //!
 //! Models: `FOREST_VIEW=hero` (default) renders the knight in rest pose; honours
-//! `FOREST_EQUIP="weapon,armor"`. New models slot into the `match` in [`spawn_model`].
+//! `FOREST_EQUIP="weapon,armor"`. `FOREST_VIEW=landmark:trilithon|spire|pyramid`
+//! previews a biome landmark prop on the white vertex-colour material.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -270,7 +271,27 @@ fn setup(
             crate::player::HeroHealth::default(),
         ))
         .id();
-    spawn_model(&mut commands, root, &mut meshes, &mat);
+    let view = std::env::var("FOREST_VIEW").unwrap_or_default();
+    if view.starts_with("landmark:") {
+        let mesh = match view.rsplit(':').next() {
+            Some("trilithon") | Some("rocky") | Some("stones") => crate::ruins::build_trilithon_mesh(),
+            Some("spire") | Some("snow") | Some("ice") => crate::ruins::build_frozen_spire_mesh(),
+            Some("pyramid") | Some("desert") => crate::ruins::build_sunken_pyramid_mesh(),
+            _ => crate::ruins::build_trilithon_mesh(),
+        };
+        let white = std_mats.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.92,
+            ..default()
+        });
+        commands.entity(root).insert((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(white),
+            Transform::from_scale(Vec3::splat(1.3)),
+        ));
+    } else {
+        spawn_model(&mut commands, root, &mut meshes, &mat);
+    }
 }
 
 /// Spawn the model named by `FOREST_VIEW` under `root`. Add new models as `match` arms.
