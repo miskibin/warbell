@@ -32,6 +32,15 @@ cargo check                     # type-check without the (slow) link
 at single-digit FPS — while our own crates stay at low opt for fast rebuilds. The first build is
 slow; incremental rebuilds of `src/` are fast.
 
+**Cold builds are expensive — prefer `cargo check` to verify code.** A fresh checkout / ephemeral
+cloud container has an empty `target/`, so the *first* compile rebuilds all of `bevy` at
+`opt-level = 3` (~10–15 min). That cost is inherent and **not** a bug to "fix" in `Cargo.toml` (the
+opt-3 deps are deliberate). To verify a code change, run `cargo check` (skips codegen + link — the
+priciest part at opt-3), **not** `cargo build`. Reserve `cargo build`/`cargo run` for when you
+actually need to launch the binary (e.g. a `FOREST_SHOT` capture). On a developer machine the cold
+cost is paid once; only ephemeral containers re-pay it every session — the real cure there is
+persisting `target/` + `~/.cargo` across sessions, which is a cloud-infra change, not a repo edit.
+
 **Multi-agent caveat:** in a *parallel-dispatch* session (several agents each editing ONE module
 against a *shared* `target/`), agents must **not** run `cargo build/check/run` — a concurrent build
 corrupts the shared dir; the integrator builds once at the end. That rule is **only** for parallel
