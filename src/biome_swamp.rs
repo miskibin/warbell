@@ -698,6 +698,7 @@ fn build_swamp_cover_extra_mesh(variant: u32) -> Mesh {
 /// muck (the `Circle` mesh lies in the XY plane, normal +Z; rotate −90° about X to lie
 /// flat). `variant`: 0 = a big pad with two satellites and a pale-pink closed lotus bud
 /// (gold heart wrapped in petal blobs); 1 = a plain drift of three mixed-size pads.
+#[allow(dead_code)] // kept for future river-surface placement; no longer scattered on the dry floor
 fn build_lily_disc_mesh(variant: u32) -> Mesh {
     let flat = |m: Mesh| -> Mesh { m.rotated_by(Quat::from_rotation_x(-FRAC_PI_2)) };
     let pad = |at: Vec3, r: f32| -> [Mesh; 2] {
@@ -967,7 +968,9 @@ pub fn config() -> BiomeConfig {
         cover: vec![
             PropClass {
                 variants: vec![(build_moss_patch_mesh(), 1.0)],
-                chance: 0.22, // thinned ~35% — was 0.34
+                // Cut hard (was 0.22): the flat rounded moss mounds carpeting the floor read as
+                // unnatural "plates everywhere" (player). A scattered few, not a tiled sheet.
+                chance: 0.09,
                 scale: (0.7, 1.4),
                 tree: false,
                 block_radius: 0.0,
@@ -986,17 +989,10 @@ pub fn config() -> BiomeConfig {
                 tree: false,
                 block_radius: 0.0,
             },
-            // Lily-pad drifts — one in two carries the pale lotus bud.
-            PropClass {
-                variants: vec![
-                    (build_lily_disc_mesh(0), 1.0),
-                    (build_lily_disc_mesh(1), 1.0),
-                ],
-                chance: 0.065, // thinned ~35% — was 0.10
-                scale: (0.7, 1.3),
-                tree: false,
-                block_radius: 0.0,
-            },
+            // Lily pads CUT from the dry floor: perfect flat discs lying on muck read as the
+            // unnatural "rounded plates" (player). Pads belong on open water; scattering them as
+            // ground cover was the worst offender. Keep `build_lily_disc_mesh` for future
+            // river-surface placement.
             // Soft pale floor accents — bog cotton + lilac marsh flowers.
             PropClass {
                 variants: (0..2).map(|v| (build_swamp_cover_extra_mesh(v), 1.0)).collect(),

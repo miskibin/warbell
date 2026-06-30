@@ -27,6 +27,13 @@ const STEP_FREQ: f32 = 7.0;
 const ACCEL: f32 = 14.0;
 const DECEL: f32 = 9.0;
 const PLAYER_R: f32 = 0.22;
+/// Walking down a terrace drops the ground a full height class (`worldmap::GROUND_STEP` 0.5) under
+/// the body in one tile. Without a snap the body floats above the new-lower ground for a frame or
+/// two each step, flicking `on_ground` off→on → the walk/fall anim strobes all the way down a
+/// slope (the "mountains are buggy" report). If we were grounded and aren't rising, glue the body
+/// to ground for drops within one class; real cliffs/jumps (gap > this, or a jump's `vel_y > 0`)
+/// still go airborne and take fall damage.
+const STEP_SNAP: f32 = 0.55;
 
 /// Seconds the Sand-Dash slide takes to travel its whole blink (`arts::DASH_DIST`). Short + ease-out
 /// → an explosive launch that glides to a stop, so the dash *moves* the body instead of teleporting.
@@ -354,7 +361,10 @@ pub fn player_move(
     }
     hero.vel_y -= GRAVITY * dt;
     hero.y += hero.vel_y * dt;
-    if hero.y <= ground_y {
+    // Step-down snap (see STEP_SNAP): stepping off a terrace while already grounded and not jumping
+    // keeps the hero glued to the ground instead of micro-falling, so the gait anim doesn't strobe.
+    let snap_down = was_on_ground && hero.vel_y <= 0.0 && hero.y - ground_y <= STEP_SNAP;
+    if hero.y <= ground_y || snap_down {
         // Just touched down: a long drop (cliff/jump) bruises on landing.
         if !was_on_ground {
             let fall = hero.air_takeoff_y - ground_y;

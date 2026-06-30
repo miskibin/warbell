@@ -2,8 +2,9 @@
 //! generated in the original BASE space (144×108): an elliptical island with a noisy
 //! coast, five biome blobs (snow NW, desert NE, rock E, forest SW, swamp S), a grass
 //! centre safe-zone (the castle spot), a grass frontier with scattered forest clumps and
-//! rolling terraced knolls, a beach ring backed by patchy coastal mountain ridges, four
-//! carved rivers + one lake, and **terraced** stepped heights (flat tile-tops + cliff
+//! rolling terraced knolls, a beach ring backed by patchy coastal mountain ridges, three
+//! meandering rivers (each springing from a highland and draining to the sea) with soft sandy
+//! banks + one lake, and **terraced** stepped heights (flat tile-tops + cliff
 //! faces; snow peak 10, rock peak 9). South of the old coast the grid extends into the
 //! **Blight** — the walkable ork-fortress mire (`TB::Blight`, shape owned by
 //! `ork_fortress.rs`) that gameplay treats as swamp (poison + slow).
@@ -127,8 +128,8 @@ struct Palette {
 const PAL_HOME: Palette = Palette {
     grass: 0x6fb24c,
     grass_dark: 0x4f8c38,
-    grass_dry: 0x8fa953,
-    grass_gold: 0xa8b048,
+    grass_dry: 0x6f9a48, // green-shifted off the old olive 0x8fa953 (player: ground too yellow)
+    grass_gold: 0x7ba049, // was a warm gold 0xa8b048 — now a muted lighter green so variety reads green, not yellow
     sand: 0xcdb079,
     forest: 0x5d9e44,
     rock: 0x8d847a,
@@ -447,54 +448,114 @@ fn dist_from_castle(x: f32, z: f32) -> f32 {
     (x - CX).hypot(z - CZ)
 }
 
-fn river_x(z: f32) -> f32 {
-    40.0 + (z * 0.18).sin() * 5.0 + (z * 0.07 + 1.4).sin() * 3.0
+// ── Rivers: meandering courses from the highland sources down to the sea ─────────────
+/// A river course in BASE space: control points from a highland SOURCE to a sea MOUTH, plus the
+/// channel half-width at the source and at the mouth (rivers widen downstream). Sampled once into
+/// a dense, *meandering* polyline (a perpendicular noise offset winds the course) — so the bank is
+/// an organic curve, not the four axis-aligned sine branches that used to radiate from the centre.
+struct RiverDef {
+    pts: &'static [(f32, f32)],
+    w_src: f32,
+    w_mouth: f32,
 }
-fn river_z(x: f32) -> f32 {
-    20.0 + (x * 0.13 + 0.7).sin() * 4.0
+
+// Home island — three rivers, each BORN at a highland and draining to a DIFFERENT coast so the
+// water is spread across the map instead of clustered at the centre:
+//  • Snowmelt — snow massif's SE foot, winding SW through the forest to the west coast.
+//  • Minewater — the rock range's SW foot by the lake, draining south to the south coast.
+//  • Dunebrook — the NE highland, running north through the desert to the north coast.
+// Sources sit just OUTSIDE the peak-region radius (so `in_mountain` doesn't suppress the spring)
+// and well clear of the castle safe-zone (so it isn't clipped to dry grass).
+const HOME_RIVERS: &[RiverDef] = &[
+    RiverDef { pts: &[(54.0, 43.0), (45.0, 53.0), (35.0, 63.0), (25.0, 72.0), (14.0, 80.0), (3.0, 87.0)], w_src: 0.7, w_mouth: 1.7 },
+    RiverDef { pts: &[(90.0, 82.0), (89.0, 90.0), (88.0, 98.0), (87.0, 106.0)], w_src: 0.8, w_mouth: 1.6 },
+    RiverDef { pts: &[(80.0, 34.0), (78.0, 24.0), (75.0, 14.0), (72.0, 5.0), (70.0, -3.0)], w_src: 0.6, w_mouth: 1.4 },
+];
+
+// Ashlands — its own three courses off ITS highlands (rock massif W, snow drifts NE): a west
+// torrent off the charcoal massif to the west coast, a north seep, and an eastern drain.
+const ASH_RIVERS: &[RiverDef] = &[
+    RiverDef { pts: &[(46.0, 70.0), (34.0, 78.0), (22.0, 85.0), (10.0, 91.0)], w_src: 0.7, w_mouth: 1.6 },
+    RiverDef { pts: &[(96.0, 36.0), (98.0, 26.0), (101.0, 15.0), (104.0, 4.0)], w_src: 0.7, w_mouth: 1.5 },
+    RiverDef { pts: &[(78.0, 66.0), (84.0, 76.0), (90.0, 86.0), (96.0, 96.0)], w_src: 0.6, w_mouth: 1.4 },
+];
+
+fn active_rivers() -> &'static [RiverDef] {
+    match active_id() {
+        1 => ASH_RIVERS,
+        _ => HOME_RIVERS,
+    }
 }
-/// Southern stream: rises near the castle safe-zone and winds south through the forest to the
-/// coast (the safe-zone test in `is_river` clips its head).
-fn river_x2(z: f32) -> f32 {
-    56.0 + (z * 0.15 + 2.0).sin() * 4.0 + (z * 0.06).sin() * 2.5
+
+/// Densely-sampled river centrelines for the active map: `(x, z, half_width)` per sample, with the
+/// organic meander already baked into the XZ. Memoised per map id (like the tile grid).
+fn river_points() -> Arc<Vec<(f32, f32, f32)>> {
+    static PTS: OnceLock<Mutex<HashMap<u8, Arc<Vec<(f32, f32, f32)>>>>> = OnceLock::new();
+    let cache = PTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("river point cache poisoned");
+    guard
+        .entry(active_id())
+        .or_insert_with(|| {
+            let mut pts: Vec<(f32, f32, f32)> = Vec::new();
+            for def in active_rivers() {
+                let seg: Vec<f32> = def.pts.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).collect();
+                let total: f32 = seg.iter().sum::<f32>().max(1e-3);
+                let mut acc = 0.0;
+                for (si, w) in def.pts.windows(2).enumerate() {
+                    let (ax, az) = w[0];
+                    let (bx, bz) = w[1];
+                    let l = seg[si].max(1e-3);
+                    let (dx, dz) = ((bx - ax) / l, (bz - az) / l); // unit tangent
+                    let (perpx, perpz) = (-dz, dx); // unit perpendicular
+                    let steps = (l / 0.6).ceil() as i32;
+                    for k in 0..=steps {
+                        let s = k as f32 / steps as f32;
+                        let along = acc + s * l;
+                        let t = (along / total).clamp(0.0, 1.0);
+                        let cx = ax + (bx - ax) * s;
+                        let cz = az + (bz - az) * s;
+                        // Meander: two perpendicular sine bands whose sway grows downstream.
+                        let m = ((along * 0.17).sin() * 1.7 + (along * 0.063 + 1.3).sin() * 1.2) * (0.35 + t * 0.85);
+                        let half = def.w_src + (def.w_mouth - def.w_src) * t;
+                        pts.push((cx + perpx * m, cz + perpz * m, half));
+                    }
+                    acc += l;
+                }
+            }
+            Arc::new(pts)
+        })
+        .clone()
 }
-/// Southern crossways river: spans the island below the castle through forest + swamp.
-fn river_z2(x: f32) -> f32 {
-    86.0 + (x * 0.11 + 1.0).sin() * 4.0
+
+/// Signed distance (base units) from `(x, z)` to the nearest river surface: negative inside the
+/// channel, positive on land. A smooth noise term frays the edge so the bank is irregular rather
+/// than a clean offset of the centreline. Does NOT apply the safe-zone / mountain guards — callers
+/// pair it with [`river_blocked`].
+fn river_sd(x: f32, z: f32) -> f32 {
+    let mut best = f32::INFINITY;
+    for &(rx, rz, half) in river_points().iter() {
+        let d = (x - rx).hypot(z - rz) - half;
+        if d < best {
+            best = d;
+        }
+    }
+    best - omottle(x, z, 1.3, 7.0) * 0.35
 }
+
+/// The castle safe-zone and the peak massifs carry no river (springs emerge below the peaks; the
+/// keep approach stays dry). Both `is_river` and the bank margin gate on this.
+fn river_blocked(x: f32, z: f32) -> bool {
+    dist_from_castle(x, z) < SAFE_R || in_mountain(x, z)
+}
+/// Half-width (base units) of the sandy bank margin hugging each river — a soft sloped shore that
+/// eases the land into the water instead of dropping as a blocky step.
+const RIVER_BANK: f32 = 1.4;
 fn in_mountain(x: f32, z: f32) -> bool {
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     active_map().regions.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 2.0)
 }
 fn is_river(x: f32, z: f32) -> bool {
-    if dist_from_castle(x, z) < SAFE_R {
-        return false;
-    }
-    if in_mountain(x, z) {
-        return false;
-    }
-    let cx = river_x(z);
-    let w = 0.75 + (z * 0.5).sin() * 0.2;
-    if (x - cx).abs() < w {
-        return true;
-    }
-    // Northern crossways branch (base-space bound — the old `COLS - 10` was grid-space and
-    // never clipped anything; the coast does the clipping anyway).
-    if x > 46.0 && x < 134.0 {
-        let cz = river_z(x);
-        if (z - cz).abs() < 0.7 {
-            return true;
-        }
-    }
-    // Southern stream toward the south coast.
-    if z > 58.0 && (x - river_x2(z)).abs() < 0.7 {
-        return true;
-    }
-    // Southern crossways river through forest + swamp.
-    if x > 14.0 && x < 126.0 && (z - river_z2(x)).abs() < 0.75 {
-        return true;
-    }
-    false
+    !river_blocked(x, z) && river_sd(x, z) < 0.0
 }
 fn is_lake(x: f32, z: f32) -> bool {
     let dx = (x - DELIBERATE_LAKE.0) / DELIBERATE_LAKE.2;
@@ -651,8 +712,19 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     if dc < SAFE_R + edge_fray(x, z).max(-4.0) {
         return Some((TB::Grass, 1));
     }
-    if is_river(x, z) {
-        return None;
+    // River channel + its soft sandy bank. `river_sd` is the signed distance to the nearest
+    // river surface (negative = water): inside the channel carves to sea; a thin positive margin
+    // (`RIVER_BANK`) becomes a sandy shore so the land eases into the water instead of dropping a
+    // blocky step. Computed once and shared (the per-frame `is_river_world` callers recompute, but
+    // that's a single hero-position probe).
+    if !river_blocked(x, z) {
+        let sd = river_sd(x, z);
+        if sd < 0.0 {
+            return None;
+        }
+        if sd < RIVER_BANK {
+            return Some((TB::Sand, 1));
+        }
     }
     if is_lake(x, z) {
         return None;
@@ -886,6 +958,32 @@ pub fn biome_at_world(wx: f32, wz: f32) -> Option<Biome> {
 /// `(world + G) / MAP_SCALE`. Feeding the raw `world + G` (missing the `/ MAP_SCALE`) read the
 /// formula 1.4× off — bridges spanned dry land far from the real river, and the horizontal
 /// river branch produced absurdly long decks.
+/// The active map's river centrelines in WORLD XZ (one `Vec` per river), for tests/tools that need
+/// to check coverage of the courses. Mirrors the base-space sampling used by the carve.
+#[cfg(test)]
+pub(crate) fn rivers_world() -> Vec<Vec<(f32, f32)>> {
+    active_rivers()
+        .iter()
+        .map(|def| {
+            let seg: Vec<f32> = def.pts.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).collect();
+            let mut out = Vec::new();
+            for (si, w) in def.pts.windows(2).enumerate() {
+                let (ax, az) = w[0];
+                let (bx, bz) = w[1];
+                let l = seg[si].max(1e-3);
+                let steps = (l / 0.6).ceil() as i32;
+                for k in 0..=steps {
+                    let s = k as f32 / steps as f32;
+                    let cx = ax + (bx - ax) * s;
+                    let cz = az + (bz - az) * s;
+                    out.push((cx * MAP_SCALE - GX, cz * MAP_SCALE - GZ));
+                }
+            }
+            out
+        })
+        .collect()
+}
+
 pub fn is_river_world(wx: f32, wz: f32) -> bool {
     // The rival fort force-flattens its plateau to dry desert (`classify` checks `fort_flat_zone`
     // BEFORE the river), so the carved channel does NOT exist there. Mirror that here, or the
@@ -944,9 +1042,10 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
         TB::Forest => {
             // Dark moist loam patches under the canopy + dry leaf-litter speckle.
             let moist = smoothstep(0.20, 1.30, noise_a(x * 3.6 + 13.0, z * 3.6 - 5.0));
-            let dry = smoothstep(0.35, 1.40, noise_b(x * 8.0 - 23.0, z * 8.0 + 7.0));
+            let dry = smoothstep(0.50, 1.45, noise_b(x * 8.0 - 23.0, z * 8.0 + 7.0));
             let col = mix3(base, lin3(p.forest_dark), moist * 0.50);
-            mix3(col, lin3(p.forest_dry), dry * 0.35)
+            // Dry leaf-litter kept sparse (player: forest floor too yellow) — narrower band, lower mix.
+            mix3(col, lin3(p.forest_dry), dry * 0.20)
         }
         TB::Swamp => {
             // Standing-water muck pools + mossy hummocks + a green algae seep — the marsh
@@ -1013,8 +1112,11 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     let p2 = omottle(x, z, 9.0, 53.0); // ~4-tile speckle
     let p3 = omottle(x, z, 1.6, 71.0); // ~30-tile golden sweeps
     col = mix3(col, lin3(p.grass_dark), smoothstep(0.1, 1.3, p1) * 0.55);
-    col = mix3(col, lin3(p.grass_dry), smoothstep(0.25, 1.4, p2) * 0.40);
-    col = mix3(col, lin3(p.grass_gold), smoothstep(0.55, 1.5, p3) * 0.45);
+    // Warm tones (olive `grass_dry` + yellow `grass_gold`) kept SPARSE — player: too much
+    // yellow near the castle + forest. Tightened thresholds + lower mix → a few warm sweeps for
+    // variety, not a sheet of it; the lush dark-green stays dominant.
+    col = mix3(col, lin3(p.grass_dry), smoothstep(0.4, 1.5, p2) * 0.18);
+    col = mix3(col, lin3(p.grass_gold), smoothstep(0.85, 1.6, p3) * 0.10);
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     for reg in active_map().regions {
         let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
@@ -1719,8 +1821,6 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 continue;
             }
             let flat = (h - 1) as f32 * GROUND_STEP;
-            let wx = ix as f32 - GX;
-            let wz = iz as f32 - GZ;
 
             // ── Smoothed corner heights (mean of the LAND tiles meeting at each corner). Adjacent
             //    tiles share their boundary corners, so neighbouring tops meet as ONE continuous
@@ -1733,6 +1833,8 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             let cy10 = corner_top_y(ix + 1, iz).unwrap_or(flat);
             let cy01 = corner_top_y(ix, iz + 1).unwrap_or(flat);
             let cy11 = corner_top_y(ix + 1, iz + 1).unwrap_or(flat);
+            let wx = ix as f32 - GX;
+            let wz = iz as f32 - GZ;
 
             // Per-corner normal from the heightfield gradient (central difference over neighbour
             // corners) → shading rolls smoothly across tile seams, no per-facet crease. The `2.0`

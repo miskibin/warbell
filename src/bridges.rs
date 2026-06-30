@@ -15,8 +15,10 @@ use crate::worldmap::{is_river_world, GX, GZ};
 
 /// Half-width along the bank (the deck's SHORT axis) of a deck.
 const DECK_HALF_Z: f32 = 1.2;
-/// Bank overhang past the water edge on each side (world units).
-const OVERHANG: f32 = 1.4;
+/// Bank overhang past the water edge on each side (world units). Small — the deck just seats onto
+/// the sandy bank a little, it doesn't reach out over a long apron (shorter decks, set back from
+/// the water line onto firm shore rather than teetering at the very edge).
+const OVERHANG: f32 = 0.8;
 /// Min world-XZ gap between two bridges (so they don't cluster on one crossing).
 const MIN_SPACING: f32 = 9.0;
 /// At most this many bridges (four rivers now cross the island — each needs several crossings
@@ -25,7 +27,7 @@ const MAX_BRIDGES: usize = 20;
 /// Acceptable half-width of the channel being bridged (skip slivers + wide lake-like spans —
 /// a clean river crossing is a couple units across).
 const MIN_HALF: f32 = 0.6;
-const MAX_HALF: f32 = 5.0;
+const MAX_HALF: f32 = 3.5;
 
 /// World-Y step a mover can walk on/off the deck in one move (mirrors `steer::MAX_STEP`, kept a
 /// hair under it). A deck whose banks sit more than this from the plank top strands the hero ON
@@ -50,9 +52,9 @@ struct Span {
 }
 
 /// Find a few clean river crossings by scanning the whole island for NARROW water channels.
-/// Cached — reads only the pure `is_river_world` channel (no built terrain). The combined-map
-/// river is L-shaped (a near-vertical `river_x` branch + a horizontal `river_z` branch), so a
-/// deck must span whichever axis the local channel is narrow on — not always X.
+/// Cached — reads only the pure `is_river_world` channel (no built terrain). The rivers meander
+/// freely (no longer axis-aligned), so a deck must span whichever axis the local channel is narrow
+/// on — not always X.
 fn spans() -> &'static [Span] {
     static SPANS: OnceLock<Vec<Span>> = OnceLock::new();
     SPANS.get_or_init(|| {
@@ -331,22 +333,22 @@ mod tests {
 
     /// Every river must end up with at least one deck — the greedy narrowest-first pick is
     /// allowed to favour clean crossings, but a whole river with no bridge strands invader
-    /// camps (and players) on long detours. Buckets are loose world-space regions of the four
-    /// channels: west vertical, southern stream, north horizontal, south horizontal.
+    /// camps (and players) on long detours. Checked generically against the actual river
+    /// centrelines: each course must have a deck within reach of one of its sample points.
     #[test]
     fn every_river_gets_a_bridge() {
         let s = spans();
-        assert!(s.len() >= 8, "expected a healthy bridge count, got {}", s.len());
-        let west_vert = s.iter().any(|b| b.across_x && b.cx < -30.0);
-        let south_stream = s.iter().any(|b| b.across_x && b.cx >= -30.0 && b.cz > 5.0);
-        let north_horiz = s.iter().any(|b| !b.across_x && b.cz < -35.0);
-        let south_horiz = s.iter().any(|b| !b.across_x && b.cz > 30.0);
-        let dump: Vec<(f32, f32, bool)> = s.iter().map(|b| (b.cx, b.cz, b.across_x)).collect();
-        assert!(
-            west_vert && south_stream && north_horiz && south_horiz,
-            "uncovered river (west_vert={west_vert} south_stream={south_stream} \
-             north_horiz={north_horiz} south_horiz={south_horiz}); spans: {dump:?}"
-        );
+        assert!(s.len() >= 6, "expected a healthy bridge count, got {}", s.len());
+        for (ri, river) in crate::worldmap::rivers_world().into_iter().enumerate() {
+            let nearest = river
+                .iter()
+                .map(|&(rx, rz)| s.iter().map(|b| (b.cx - rx).hypot(b.cz - rz)).fold(f32::INFINITY, f32::min))
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                nearest < 18.0,
+                "river {ri} has no bridge within reach (nearest deck {nearest:.1} world units)"
+            );
+        }
     }
 
     /// Every placed deck must be a USEFUL, STEPPABLE crossing — the two placement bugs:

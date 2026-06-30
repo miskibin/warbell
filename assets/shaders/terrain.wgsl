@@ -212,7 +212,7 @@ fn fragment(
     //     The hue push is gated to green ground; the value drift applies everywhere.
     let ter_big = ter_noise(wp * 0.05) * 0.6 + ter_noise(wp * 0.14) * 0.4;
     let ter_hue = ter_noise(wp * 0.028 + vec2<f32>(11.0, 11.0));
-    rgb += (ter_big - 0.5) * variation * vec3<f32>(0.22, 0.14, -0.14) * green;
+    rgb += (ter_big - 0.5) * variation * vec3<f32>(0.10, 0.09, -0.05) * green;
     rgb *= 1.0 + (ter_hue - 0.5) * variation * 0.40;
 
     // (3)+(4) only on High/Ultra — same coherent `params2.y` lane as the fine mottle above.
@@ -244,14 +244,14 @@ fn fragment(
         // Worn sun-bleached dirt scuffs (bald spots / trodden paths) — warm + desaturated.
         // Lower thresholds widen each patch and stronger mixes raise the contrast between
         // them, so the field reads as a genuinely varied meadow rather than one flat tone.
-        let worn = smoothstep(0.48, 0.82, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.76, 0.65, 0.46), worn * 0.54 * green * variety);
+        let worn = smoothstep(0.55, 0.85, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.78, 0.70, 0.56), worn * 0.28 * green * variety);
         // Damp moss hollows — cool, rich, slightly darker green.
         let moss = smoothstep(0.52, 0.86, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
         rgb = mix(rgb, rgb * vec3<f32>(0.66, 0.90, 0.56), moss * 0.44 * green * variety);
         // Sun-dried golden sweeps — drier grass catching the light (a brighter warm push).
-        let dry = smoothstep(0.54, 0.87, ter_noise(wp * 0.015 + vec2<f32>(33.0, 7.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(1.18, 1.04, 0.60), dry * 0.43 * green * variety);
+        let dry = smoothstep(0.70, 0.93, ter_noise(wp * 0.015 + vec2<f32>(33.0, 7.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(1.06, 1.02, 0.80), dry * 0.10 * green * variety);
         // Lush well-watered patches — deep saturated green.
         let lush = smoothstep(0.56, 0.89, ter_noise(wp * 0.030 + vec2<f32>(2.0, 27.0)));
         rgb = mix(rgb, rgb * vec3<f32>(0.70, 1.03, 0.66), lush * 0.42 * green * variety);
