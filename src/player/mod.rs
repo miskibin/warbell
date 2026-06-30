@@ -136,6 +136,12 @@ pub struct Hero {
     /// World-XZ endpoints of the active dash slide (only meaningful while `dash_t >= 0.0`).
     pub dash_from: Vec2,
     pub dash_to: Vec2,
+    // ── Attack lock-on ──
+    /// Facing angle the current swing is soft-snapping toward — the nearest enemy in lock range when
+    /// the swing started. `Some` only while a swing steers toward a target (third-person; FP aims by
+    /// view), cleared when the swing ends. Makes a blow face what you're hitting instead of your
+    /// strafe direction. Transient (derived, like `attacking`) — not saved.
+    pub lock_face: Option<f32>,
 }
 
 /// Hero **shield/stamina** state — only the block mechanic. HP, gold, XP/level and the combat
@@ -433,6 +439,7 @@ fn spawn_hero(
                 dash_t: -1.0,
                 dash_from: Vec2::ZERO,
                 dash_to: Vec2::ZERO,
+                lock_face: None,
             },
             HeroHealth::default(),
         ))
@@ -638,6 +645,7 @@ fn reset_player(
         dash_t: -1.0,
         dash_from: Vec2::ZERO,
         dash_to: Vec2::ZERO,
+        lock_face: None,
     };
     tf.translation = Vec3::new(pos.x, y, pos.y);
     tf.rotation = Quat::from_rotation_y(0.0);

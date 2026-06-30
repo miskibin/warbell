@@ -15,12 +15,46 @@ use crate::orks::Ork;
 use crate::wildlife::Animal;
 
 use super::camera::OrbitCam;
-use super::{Hero, HeroHealth, PlayMode, PlayerRes};
+use super::{FirstPerson, Hero, HeroHealth, PlayMode, PlayerRes};
 
 pub const ATTACK_DURATION: f32 = 0.45;
 const ATTACK_RANGE: f32 = 1.8;
 const ATTACK_CONE_DOT: f32 = 0.5; // cos 60° — front cone half-angle
 const HIT_PHASE: f32 = 0.3; // fraction into the swing where damage lands
+
+// ── Attack lock-on ──
+// When a swing starts, the hero soft-snaps his facing toward the nearest enemy so a strafing attack
+// lands square on the target instead of sideways (the "turns his side to whoever he's hitting" bug).
+const LOCK_RANGE: f32 = 3.0; // a touch past ATTACK_RANGE so a circled foo is grabbed before you're on top
+const LOCK_DOT: f32 = -0.4; // ~226° front arc — catch a foe at your side, but never whip 180° to your back
+const LOCK_TURN_RATE: f32 = 24.0; // rad/s soft-turn — snappier than the move-steer so it lands by the hit frame
+
+/// Nearest live enemy within [`LOCK_RANGE`] and the front [`LOCK_DOT`] arc, as a facing angle.
+/// Picks the closest so a knight in a melee commits to the foe he's actually next to.
+fn lock_target_angle<'a>(
+    gts: impl Iterator<Item = &'a GlobalTransform>,
+    origin: Vec2,
+    facing: f32,
+) -> Option<f32> {
+    let fwd = Vec2::new(facing.sin(), facing.cos());
+    let mut best: Option<(f32, f32)> = None; // (dist², angle)
+    for gt in gts {
+        let p = gt.translation();
+        let to = Vec2::new(p.x - origin.x, p.z - origin.y);
+        let d2 = to.length_squared();
+        if d2 > LOCK_RANGE * LOCK_RANGE || d2 < 1e-6 {
+            continue;
+        }
+        let dir = to / d2.sqrt();
+        if dir.dot(fwd) < LOCK_DOT {
+            continue; // behind you — don't snap-spin onto it mid-swing
+        }
+        if best.map_or(true, |(bd, _)| d2 < bd) {
+            best = Some((d2, dir.x.atan2(dir.y)));
+        }
+    }
+    best.map(|(_, a)| a)
+}
 
 /// Deterministic crit-roll source — one roll per swing. mulberry32 ("feels-the-same", no
 /// byte-parity need). Init in `PlayerPlugin`.
@@ -125,6 +159,9 @@ pub struct Juice<'w> {
     materials: ResMut<'w, Assets<StandardMaterial>>,
     /// Active run's difficulty — drives the Easy hero-damage handicap.
     siege: Option<Res<'w, crate::siege::Siege>>,
+    /// First-person flag — folded in here (not a standalone `Res`) so `player_attack` stays under
+    /// Bevy's 16-param ceiling. In FP the view owns facing, so the lock-on facing-snap is skipped.
+    fp: Res<'w, FirstPerson>,
 }
 
 /// Townsfolk the hero can harmlessly bonk with a swing: the [`crate::villagers::Villager`] bodies
@@ -428,9 +465,19 @@ pub fn player_attack(
     if *mode != PlayMode::Play || !player.0.is_alive() {
         hero.attacking = false;
         hero.charge_t = -1.0;
+        hero.lock_face = None;
         return;
     }
     let dt = time.delta_secs();
+
+    // Lock-on: in third-person, snap toward the nearest enemy the instant a swing begins (FP aims by
+    // view, so it owns facing — no lock there). Computed once and reused for the light press and the
+    // heavy release below so both swings commit to the same foe.
+    let new_lock = if juice.fp.active {
+        None
+    } else {
+        lock_target_angle(targets.iter().map(|t| t.1), hero.pos, hero.facing)
+    };
 
     // Charging is gated on the same conditions as swinging: cursor locked (actually playing) and not
     // guarding (the shield takes priority).
@@ -447,6 +494,7 @@ pub fn player_attack(
             hero.attack_t = 0.0;
             hero.hit_dealt = false;
             hero.heavy = false;
+            hero.lock_face = new_lock; // commit the swing to the nearest foe (None = no target → hold facing)
             // Roll a random studio attack clip (0 overhead chop / 1 horizontal slash / 2 forward
             // thrust) so successive swings vary instead of replaying one canned slash.
             hero.attack_variant = (rng.unit() * 3.0).floor().clamp(0.0, 2.0) as u8;
@@ -473,6 +521,7 @@ pub fn player_attack(
                 hero.attack_t = 0.0;
                 hero.hit_dealt = false;
                 hero.heavy = true;
+                hero.lock_face = new_lock; // commit the heavy to the nearest foe too
                 hero.attack_variant = HEAVY_VARIANT;
                 cues.write(AudioCue::HeroGruntSwing);
                 cues.write(AudioCue::Slam); // a beefier release whoosh for the heavy wind-up
@@ -483,11 +532,17 @@ pub fn player_attack(
     if !hero.attacking {
         return;
     }
+    // Soft-snap toward the locked foe across the wind-up so the blow lands facing it. Movement's
+    // move-steer is suppressed while `attacking`, so this is the sole facing writer here (third-person).
+    if let Some(target) = hero.lock_face {
+        hero.facing = super::movement::lerp_angle(hero.facing, target, (dt * LOCK_TURN_RATE).min(1.0));
+    }
     hero.attack_t += dt;
     let phase = hero.attack_t / ATTACK_DURATION;
     if phase >= 1.0 {
         hero.attacking = false;
         hero.heavy = false; // swing done — the next light swing must not inherit the heavy tag
+        hero.lock_face = None; // release the facing lock so move-steer takes over again
         return;
     }
     if hero.hit_dealt || phase < HIT_PHASE {

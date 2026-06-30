@@ -37,6 +37,11 @@ const MAX_PITCH: f32 = 1.45;
 const MIN_DIST: f32 = 2.3;
 const MAX_DIST: f32 = 11.0;
 const ZOOM_SENS: f32 = 0.55;
+/// Minimum gap kept between the third-person eye and the terrain below it. When the orbit would sink
+/// the camera into a hill/slope between the hero and the lens, the eye is lifted to ground + this so
+/// it never punches under the world (the "camera dips below the hill" bug). Covers the 0.04 near
+/// plane plus a little body so geometry doesn't poke into frame.
+const CAM_GROUND_CLEAR: f32 = 0.5;
 /// Extra follow distance pulled back (smoothly) while a warden winds up its killing blow — a slow
 /// dolly-out that builds tension across the telegraph, then eases back in once the blow resolves.
 const CRIT_ZOOM_OUT: f32 = 4.5;
@@ -285,8 +290,15 @@ pub fn player_camera(
     // Speed feel: sprinting dollies the camera back a touch (eased by `run_amt`).
     let r_speed = hero.run_amt.clamp(0.0, 1.0) * SPRINT_DOLLY;
     let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist + r_tension + r_speed);
-    let follow_eye =
+    let mut follow_eye =
         follow_target + Vec3::new(a.sin() * p.cos() * r, p.sin() * r, a.cos() * p.cos() * r);
+    // Terrain clamp: never let the follow eye sink below the ground under it (a slope/ridge between
+    // hero and camera). `smooth_surface_y` is continuous so the lift glides instead of popping; only
+    // the third-person eye is clamped (FP rides at head height; build cam is far overhead). `None` —
+    // over water / off the island — leaves the eye free.
+    if let Some(g) = crate::worldmap::ground_at_world(follow_eye.x, follow_eye.z) {
+        follow_eye.y = follow_eye.y.max(g + CAM_GROUND_CLEAR);
+    }
 
     // ── First-person pose ──
     // The orbit's *view* heading (camera-forward yaw) is `azimuth + π` — the look-yaw FP must use so

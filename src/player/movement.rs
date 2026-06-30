@@ -54,7 +54,7 @@ fn key_axis(keys: &ButtonInput<KeyCode>, pos: KeyCode, neg: KeyCode) -> f32 {
     (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f32
 }
 
-fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+pub(super) fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     a + steer::wrap_pi(b - a) * t
 }
 
@@ -308,7 +308,10 @@ pub fn player_move(
         }
         // Steer toward the INPUT direction while pressing (hold the last facing through the slide). In
         // first person the *view* owns facing (set in `player_camera`) so attacks fire where you aim.
-        if moving && !fp.active {
+        // While a swing is in flight the *attack* owns facing (it soft-snaps toward the locked target
+        // in `player_attack`), so we skip the move-steer there — otherwise strafing yanks the body off
+        // the enemy and the blow lands sideways. This was the "hero turns his side to the target" bug.
+        if moving && !fp.active && !hero.attacking {
             let want = move_dir.x.atan2(move_dir.z);
             hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
         }

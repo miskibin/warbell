@@ -267,6 +267,7 @@ fn setup(
                 dash_t: -1.0,
                 dash_from: Vec2::ZERO,
                 dash_to: Vec2::ZERO,
+                lock_face: None,
             },
             crate::player::HeroHealth::default(),
         ))
