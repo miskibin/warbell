@@ -30,7 +30,7 @@ const HIT_PHASE: f32 = 0.3; // fraction into the swing where damage lands
 // keeps your heading. Never a hard snap, never freezes control.
 const LOCK_RANGE: f32 = 3.0; // a touch past ATTACK_RANGE so a circled foe is grabbed before you're on top
 const LOCK_DOT: f32 = -0.2; // ~200° front arc — leans toward a foe at your side, but never to your back
-const LOCK_TURN_RATE: f32 = 9.0; // rad/s — gentler than the 15 rad/s move-steer, so player input wins
+const LOCK_TURN_RATE: f32 = 6.0; // rad/s — a measured lean (was 9: read as a sudden snap), still under the 15 move-steer so input wins
 
 /// Nearest live enemy within [`LOCK_RANGE`] and the front [`LOCK_DOT`] arc, as a facing angle.
 /// Picks the closest so a knight in a melee commits to the foe he's actually next to.
@@ -485,10 +485,18 @@ pub fn player_attack(
     // view, so it owns facing — no lock there). Only computed on the press/release edges that
     // actually read it — otherwise this O(n) scan over every live foe ran every frame of a siege for
     // a value that was discarded. (Both edges use the same value so a light→heavy combo locks one foe.)
+    // Commit the swing to the SOFT-LOCK target (the ringed foe you've been facing) when there is one —
+    // so the blow lands on what the ring shows. Fall back to the nearest-in-arc pick otherwise (e.g.
+    // swinging at wildlife, which the soft-lock deliberately ignores).
     let new_lock = if !juice.fp.active
         && (buttons.just_pressed(MouseButton::Left) || buttons.just_released(MouseButton::Left))
     {
-        lock_target_angle(targets.iter().map(|t| t.1), hero.pos, hero.facing)
+        if let Some(tp) = hero.soft_pos {
+            let to = tp - hero.pos;
+            Some(to.x.atan2(to.y))
+        } else {
+            lock_target_angle(targets.iter().map(|t| t.1), hero.pos, hero.facing)
+        }
     } else {
         None
     };

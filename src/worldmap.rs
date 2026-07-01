@@ -196,7 +196,7 @@ const PAL_ASH: Palette = Palette {
     lava_seam_hot: 0xffb347, // white-hot core
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TB {
     Grass,
     Sand,
@@ -605,17 +605,21 @@ fn in_mountain(x: f32, z: f32) -> bool {
 fn is_river(x: f32, z: f32) -> bool {
     !river_blocked(x, z) && river_sd(x, z) < 0.0
 }
-fn is_lake(x: f32, z: f32) -> bool {
-    let dx = (x - DELIBERATE_LAKE.0) / DELIBERATE_LAKE.2;
-    let dz = (z - DELIBERATE_LAKE.1) / DELIBERATE_LAKE.3;
-    dx * dx + dz * dz < 1.0
+/// Signed distance (base units, negative = water) to the deliberate lake's edge. The SAME clean
+/// ellipse the lake always was — NO fray, NO resize — so `corner_water` marching-squares it into a
+/// smooth shore of the identical shape/size, just without the tile-grid staircase ("square edges").
+/// (An earlier pass added fray + rounded the axis to "organic-ify" it — that was overreach: the task
+/// was only to de-stairstep the existing shape.)
+fn lake_sd(x: f32, z: f32) -> f32 {
+    let (lx, lz, rx, rz) = DELIBERATE_LAKE;
+    let dx = (x - lx) / rx;
+    let dz = (z - lz) / rz;
+    // Normalised ellipse value → approximate base-unit signed distance. The `= 0` contour is exactly
+    // the old `dx²+dz² = 1` ellipse; marching-squares just draws it smooth instead of per-tile.
+    ((dx * dx + dz * dz).sqrt() - 1.0) * rx.min(rz)
 }
-
-/// Shallow marsh pools ("rozlewiska") — the lowest dips of the swamp fill with standing water so the
-/// marsh reads as wetland, not a flat green sheet. Blobby low-frequency noise thresholded so pools
-/// are occasional puddles, not a flooded plain. Only consulted inside a swamp region (`classify`).
-fn swamp_pool(x: f32, z: f32) -> bool {
-    noise_a(x * 0.34 - 3.0, z * 0.34 + 6.0) + noise_b(x * 0.55 + 2.0, z * 0.55 - 1.0) * 0.5 < -0.7
+fn is_lake(x: f32, z: f32) -> bool {
+    lake_sd(x, z) < 0.0
 }
 
 fn edge_fray(x: f32, z: f32) -> f32 {
@@ -809,11 +813,11 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         if reg.biome == TB::Swamp && dc < SAFE_R {
             return Some((TB::Grass, 1));
         }
-        // Marsh pools: the lowest swamp dips fill with water (carved like a river → sea shows
-        // through). Roads/nudge already keep off water, so paths route around the puddles.
-        if reg.biome == TB::Swamp && swamp_pool(x, z) {
-            return None;
-        }
+        // (Marsh pools removed: a small carved pool is tiny, so the water shader's shore-distance
+        // never reaches "deep" over it — the whole pool renders as the white foam collar, reading as
+        // an ugly pale "plate" on the marsh, worse than the flat-disc version it replaced. The swamp
+        // reads wet from the algae ground tint + reeds instead; standing water stays for the rivers
+        // and the deliberate lake, which are big enough to render as real water.)
         if reg.peak > 0 {
             return Some((reg.biome, mountain_height(x, z, reg)));
         }
@@ -987,10 +991,11 @@ fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
     if !is_land_shape(bx, bz) && crate::ork_fortress::blight_class_base(bx, bz).is_none() {
         return (-0.6, false); // sea
     }
-    if river_blocked(bx, bz) {
-        return (1.0, false); // land, no river
-    }
-    let sd = river_sd(bx, bz);
+    // Combine the water sources into ONE corner field (nearest water wins) so marching-squares cuts
+    // a smooth shore for the lake too, not just rivers. The lake isn't gated by `river_blocked`
+    // (that's a river-only keep-out for the safe zone / peaks); it carries its own fixed ellipse.
+    let river = if river_blocked(bx, bz) { f32::INFINITY } else { river_sd(bx, bz) };
+    let sd = river.min(lake_sd(bx, bz));
     (sd, sd < 0.0)
 }
 
@@ -1441,10 +1446,11 @@ pub fn build_step(
         26 => crate::bridges::populate(commands, meshes, std_mats),
         27 => crate::distant_isles::build(commands, meshes, std_mats),
         28 => crate::rival::build(commands, meshes, images, std_mats),
-        // 29 was bs_swamp_pools — flat 2-D teal water DISCS laid on the marsh floor. Players read
-        // them as ugly "green/teal plates" (and they landed on paths). Removed: the swamp now has
-        // real CARVED marsh pools (`swamp_pool` in `classify` → actual water depressions) plus the
-        // algae ground tint, which give the wet read in 3-D instead of a flat decal.
+        // 29 was bs_swamp_pools — flat 2-D teal water DISCS laid on the marsh floor. Removed: they
+        // read as ugly "plates". A later attempt at real CARVED marsh pools was also dropped — a
+        // small pool is tiny, so the water shader foams the whole thing white (another pale plate).
+        // The swamp reads wet from the algae ground tint + reeds; standing water is left to the
+        // rivers + the deliberate lake, which are big enough to render as real water.
         29 => {}
         _ => {}
     }

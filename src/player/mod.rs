@@ -23,6 +23,7 @@ pub use combat::ATTACK_DURATION;
 mod health;
 pub(crate) mod model;
 mod movement;
+mod softlock;
 
 /// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
 pub use camera::FirstPerson;
@@ -142,6 +143,13 @@ pub struct Hero {
     /// view), cleared when the swing ends. Makes a blow face what you're hitting instead of your
     /// strafe direction. Transient (derived, like `attacking`) — not saved.
     pub lock_face: Option<f32>,
+    // ── Soft-lock (combat aim-assist) ──
+    /// Enemy the soft-lock has picked as your current target — the nearest hostile in the front arc
+    /// while in combat. Drives the measured auto-face, the swing's aim, and the ground target ring.
+    /// `None` out of combat / no hostile in range. Transient (derived) — not saved.
+    pub soft_target: Option<Entity>,
+    /// World-XZ of `soft_target`, cached so the swing lock + ring don't re-query it. Transient.
+    pub soft_pos: Option<Vec2>,
 }
 
 /// Hero **shield/stamina** state — only the block mechanic. HP, gold, XP/level and the combat
@@ -273,7 +281,7 @@ impl Plugin for PlayerPlugin {
             .insert_resource(orbit)
             .insert_resource(camera::FirstPerson { active: fp_boot, ..default() })
             .add_systems(Startup, combat::setup_combat_fx)
-            .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, charge::spawn_charge_bar, debug_grant_boons))
+            .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, charge::spawn_charge_bar, debug_grant_boons, softlock::spawn_target_ring))
             // Fresh run: wipe progression + revive the hero on a new run (NOT on un-pause).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
@@ -308,6 +316,7 @@ impl Plugin for PlayerPlugin {
                 Update,
                 (
                     movement::player_move,
+                    softlock::soft_lock, // pick + gently face the soft target, drive the ring (after move so input wins)
                     block::player_block,
                     combat::player_attack,
                     arts::player_arts, // warden weapon arts (after move/attack so a dash sticks)
@@ -440,6 +449,8 @@ fn spawn_hero(
                 dash_from: Vec2::ZERO,
                 dash_to: Vec2::ZERO,
                 lock_face: None,
+                soft_target: None,
+                soft_pos: None,
             },
             HeroHealth::default(),
         ))
@@ -646,6 +657,8 @@ fn reset_player(
         dash_from: Vec2::ZERO,
         dash_to: Vec2::ZERO,
         lock_face: None,
+        soft_target: None,
+        soft_pos: None,
     };
     tf.translation = Vec3::new(pos.x, y, pos.y);
     tf.rotation = Quat::from_rotation_y(0.0);
