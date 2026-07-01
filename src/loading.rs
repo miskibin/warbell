@@ -143,6 +143,9 @@ fn spawn_loading(mut commands: Commands, time: Res<Time>, assets: Res<AssetServe
                 ImageNode {
                     image: assets.load("ui/loading_backdrop.png"),
                     color: Color::WHITE.with_alpha(a0),
+                    // Stretch to fill the frame (the source photo isn't exactly 16:9) so the
+                    // backdrop is full-bleed with no letterbox bars on any screen aspect.
+                    image_mode: bevy::ui::widget::NodeImageMode::Stretch,
                     ..default()
                 },
                 Node {
