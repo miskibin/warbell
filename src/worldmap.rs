@@ -605,18 +605,18 @@ fn in_mountain(x: f32, z: f32) -> bool {
 fn is_river(x: f32, z: f32) -> bool {
     !river_blocked(x, z) && river_sd(x, z) < 0.0
 }
-/// Signed distance (base units, negative = water) to the deliberate lake's edge, with the SAME
-/// two-octave bank fray the rivers use — so `corner_water` marching-squares it into a smooth,
-/// slightly-irregular shore instead of the tile-grid ellipse ("square lake edges" report).
+/// Signed distance (base units, negative = water) to the deliberate lake's edge. The SAME clean
+/// ellipse the lake always was — NO fray, NO resize — so `corner_water` marching-squares it into a
+/// smooth shore of the identical shape/size, just without the tile-grid staircase ("square edges").
+/// (An earlier pass added fray + rounded the axis to "organic-ify" it — that was overreach: the task
+/// was only to de-stairstep the existing shape.)
 fn lake_sd(x: f32, z: f32) -> f32 {
     let (lx, lz, rx, rz) = DELIBERATE_LAKE;
     let dx = (x - lx) / rx;
     let dz = (z - lz) / rz;
-    // Normalised ellipse value → approximate base-unit signed distance (scaled by the smaller
-    // radius so the fray reads at the right size), then frayed like a river bank.
+    // Normalised ellipse value → approximate base-unit signed distance. The `= 0` contour is exactly
+    // the old `dx²+dz² = 1` ellipse; marching-squares just draws it smooth instead of per-tile.
     ((dx * dx + dz * dz).sqrt() - 1.0) * rx.min(rz)
-        - omottle(x, z, 1.5, 41.0) * 0.28
-        - omottle(x, z, 3.4, 12.0) * 0.13
 }
 fn is_lake(x: f32, z: f32) -> bool {
     lake_sd(x, z) < 0.0
