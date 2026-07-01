@@ -128,15 +128,22 @@ fn step_bolts(
     mut marks: MessageWriter<crate::aftermath::BattleMark>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Bolt, &mut Transform)>,
+    mut prev_phase: Local<Option<crate::siege::GamePhase>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let target = Vec3::new(hero.pos.x, hero.y + 1.0, hero.pos.y);
-    // A bolt still in flight when the night clears must not deal damage into the won daytime —
-    // fizzle any live bolt once the wave is over (the keep/invaders are cleared on the same edge).
-    let wave_active = siege.phase == crate::siege::GamePhase::Wave;
+    // A bolt still in flight when a night wave CLEARS must not deal damage into the won daytime —
+    // sweep every live bolt on that Wave→day edge only (the keep/invaders clear on the same edge).
+    // This must NOT fire every daytime frame: wilderness camp shamans cast during the day too, and
+    // despawning their bolts the instant they spawned made those bolts invisible ("szamani strzelają
+    // niewidzialnymi kulami"). Daytime bolts now fly normally and expire on their own TTL/range.
+    let cur_phase = siege.phase;
+    let was = prev_phase.replace(cur_phase);
+    let wave_cleared =
+        was == Some(crate::siege::GamePhase::Wave) && cur_phase != crate::siege::GamePhase::Wave;
     for (e, mut b, mut tf) in &mut q {
         b.ttl -= dt;
-        if !hero.alive || b.ttl <= 0.0 || !wave_active {
+        if !hero.alive || b.ttl <= 0.0 || wave_cleared {
             commands.entity(e).try_despawn();
             continue;
         }

@@ -11,14 +11,36 @@ use super::widgets::border;
 
 const LIFETIME: f64 = 3.5;
 
-/// Pending/active notices: `(text, born_secs)`.
+/// Top-centre system messages. `queue` holds transient `(text, born_secs)` pills that fade after
+/// [`LIFETIME`]; `sticky` holds state-driven banners kept up (no fade) until explicitly cleared.
 #[derive(Resource, Default)]
-pub struct Notice(VecDeque<(String, f64)>);
+pub struct Notice {
+    queue: VecDeque<(String, f64)>,
+    /// Persistent banners, keyed by a caller-chosen id so a system can update/clear its own.
+    sticky: Vec<(u32, String)>,
+}
 
 impl Notice {
-    /// Queue a message (it appears next frame). `now` is `time.elapsed_secs_f64()`.
+    /// Queue a transient message (it appears next frame, fades after ~3.5s). `now` is
+    /// `time.elapsed_secs_f64()`.
     pub fn push(&mut self, text: impl Into<String>, now: f64) {
-        self.0.push_front((text.into(), now));
+        self.queue.push_front((text.into(), now));
+    }
+
+    /// Show `text` as a persistent banner tagged `key`, replacing any prior banner with the same
+    /// key. It stays up (no fade) until [`Notice::clear_sticky`] — for state-driven warnings like an
+    /// active raid that must last exactly as long as the condition holds.
+    pub fn set_sticky(&mut self, key: u32, text: impl Into<String>) {
+        let text = text.into();
+        match self.sticky.iter_mut().find(|(k, _)| *k == key) {
+            Some(slot) => slot.1 = text,
+            None => self.sticky.push((key, text)),
+        }
+    }
+
+    /// Remove the sticky banner tagged `key` (no-op if none is set).
+    pub fn clear_sticky(&mut self, key: u32) {
+        self.sticky.retain(|(k, _)| *k != key);
     }
 }
 
@@ -64,13 +86,20 @@ fn update_notice(
     rows_q: Query<Entity, With<NoticeRow>>,
 ) {
     let now = time.elapsed_secs_f64();
-    notice.0.retain(|(_, born)| now - *born < LIFETIME);
+    notice.queue.retain(|(_, born)| now - *born < LIFETIME);
     for e in &rows_q {
         commands.entity(e).try_despawn();
     }
     let Ok(root) = root_q.single() else { return };
+    // Sticky banners sit on top (persistent state warnings), transient pills below (newest first).
+    let rows: Vec<&str> = notice
+        .sticky
+        .iter()
+        .map(|(_, t)| t.as_str())
+        .chain(notice.queue.iter().map(|(t, _)| t.as_str()))
+        .collect();
     commands.entity(root).with_children(|col| {
-        for (text, _) in notice.0.iter() {
+        for text in rows {
             col.spawn((
                 NoticeRow,
                 Node {
@@ -84,7 +113,7 @@ fn update_notice(
                 shadow_card(),
             ))
             .with_children(|p| {
-                p.spawn(label(&fonts.bold, text.clone(), 13.0, rgb(243, 230, 200)));
+                p.spawn(label(&fonts.bold, text.to_string(), 13.0, rgb(243, 230, 200)));
             });
         }
     });

@@ -469,7 +469,12 @@ fn spawn_building(
         let site = home + out * reach;
         let wseed = 0x9a17_0000u32.wrapping_add((idx as u32).wrapping_mul(2654435761)) | 1;
         let e = crate::villagers::spawn_rival_worker(commands, meshes, creature_mats, trade, home, home, wseed);
-        commands.entity(e).insert(RivalWorker { home, site, patrol: site, patrol_t: 0.0, work_cd: 0.0, rng: wseed });
+        commands.entity(e).insert((
+            RivalWorker { home, site, patrol: site, patrol_t: 0.0, work_cd: 0.0, rng: wseed },
+            // A soft body so the hero can cut the rival's labourers down too (a raiding tactic —
+            // starve the enemy economy). Far frailer than a soldier; pays a peasant-tier bounty.
+            crate::player::Health { hp: WORKER_HP, max: WORKER_HP },
+        ));
     }
 }
 
@@ -850,6 +855,11 @@ const SOLDIER_DMG: f32 = 16.0;
 pub const SOLDIER_BOUNTY_GOLD: i64 = 12;
 pub const SOLDIER_BOUNTY_XP: i64 = 25;
 const SOLDIER_ATK_CD: f32 = 1.1;
+/// A rival labourer (farmer/woodcutter/miner) — an unarmed non-combatant, so it dies in a hit or two
+/// and pays only a token peasant bounty. Read in `player::combat`.
+const WORKER_HP: f32 = 40.0;
+pub const WORKER_BOUNTY_GOLD: i64 = 3;
+pub const WORKER_BOUNTY_XP: i64 = 8;
 const SOLDIER_MELEE: f32 = 1.7;
 /// How near a foe must come before a soldier engages…
 const SOLDIER_SIGHT: f32 = 13.0;
@@ -1088,6 +1098,8 @@ fn step_toward(v: &mut crate::villagers::Villager, target: Vec2, step: f32, cur_
 // keep-0 defeat stays night-gated in `siege.rs`).
 
 const RAIDER_HP: f32 = 70.0;
+/// Sticky-notice id for the "Rival raiders are attacking!" banner (persists while any raider lives).
+const RAID_ALERT_KEY: u32 = 0x5a1d_a1e7;
 const RAIDER_HERO_DMG: f32 = 8.0;
 const RAIDER_NPC_DMG: f32 = 9.0;
 /// Per-strike keep chip. Modest: a full party (~5) just out-paces the prep-time repair, so an
@@ -1219,7 +1231,6 @@ fn rival_raid_brain(
     mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
     mut keep: ResMut<crate::siege::KeepHp>,
     mut notice: ResMut<crate::ui::notice::Notice>,
-    mut next_alert: Local<f64>,
     mut raiders: Query<(&mut RivalRaider, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
     townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>, Without<RivalRaider>)>,
 ) {
@@ -1292,12 +1303,15 @@ fn rival_raid_brain(
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
         tf.rotation = Quat::from_rotation_y(v.facing);
     }
-    // Re-warn at most every 8s while the raid keeps landing blows (mirrors siege::keep_attack_alert,
-    // which is night-only — raids hit during the day, so they need their own cue).
-    let now64 = time.elapsed_secs_f64();
-    if struck && now64 >= *next_alert {
-        notice.push("Rival raiders are attacking!", now64);
-        *next_alert = now64 + 8.0;
+    // Keep a persistent "under attack" banner up for the WHOLE life of the raid — it must not lapse
+    // while any raider is still alive (the night-only siege keep-alert doesn't cover daytime raids).
+    // Raise it once the raid lands its first blow, and drop it the moment the last raider falls
+    // (the query already excludes `Dying`, so a downed raider stops counting immediately).
+    let alive = raiders.iter().count();
+    if alive == 0 {
+        notice.clear_sticky(RAID_ALERT_KEY);
+    } else if struck {
+        notice.set_sticky(RAID_ALERT_KEY, "Rival raiders are attacking!");
     }
 }
 

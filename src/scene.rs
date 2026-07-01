@@ -199,10 +199,11 @@ const NIGHT_DRIFT_RATE: f32 = 0.003; // slow clock creep through the wave (~100s
 // countdown so it isn't already dark with a third of prep left. It climbs dawn→noon over the first
 // ~two-thirds, then descends noon→dusk→dark over the final stretch — one steady sun arc you can
 // time the wave by. At `1.5` the sky hit full dark (`night`→1, ≈t 0.55) at prog≈0.79 — ~40s of
-// dark before the war-bell, which read as "sun set too early"; `3.0` pushes full dark to prog≈0.89
-// (~20s), then the last stretch is the moon climbing to true midnight (T_NIGHTFALL 0.75). Still a
-// visible, moving sky (no "dark, then wait" pop), just night arriving nearer the wave.
-const PREP_SUN_EASE: f32 = 3.0;
+// dark before the war-bell, which read as "sun set too early"; `3.0` pushed full dark to prog≈0.89
+// (~20s), still too early. `6.5` keeps the sun up until the final stretch — full dark (`night`→1)
+// lands at prog≈0.95 (~10s before the war-bell), then the last seconds are the moon climbing to
+// true midnight (T_NIGHTFALL 0.75). Dusk is quick, but it's daylight until night is genuinely near.
+const PREP_SUN_EASE: f32 = 6.5;
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
