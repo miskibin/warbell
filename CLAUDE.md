@@ -134,6 +134,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_BREACH=1` | auto-break the Hold gate on the first sim frame so a shot/clip films the woken garrison + the Warlord boss without a keypress (`ork_fortress::stage_breach`); pair with `FOREST_HERO`/`FOREST_CAM` inside the walls |
 | `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at world ≈`(54, -72)` (NE desert) |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
+| `FOREST_FISHLINE="x,z"` | park one of each fish variety (silver/blue/gold) frozen mid-leap in a lit row at a world XZ (fish-model close-ups, `fish.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
 | `FOREST_FP=1` | boot straight into first-person (forces Play so the follow-cam eye-view can be captured; `player/camera.rs`) |
 | `FOREST_TPS=1` (+`_AZ`/`_PITCH` rad, `_DIST` units) | boot Play + **third-person** real follow-cam so a shot/clip frames the world like actual gameplay (NOT a god-cam `FOREST_CAM`); place the hero with `FOREST_HERO`, film a walk with `FOREST_DEMO=explore` (`player/mod.rs`, `player/camera.rs`) |

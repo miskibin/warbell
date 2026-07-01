@@ -53,6 +53,7 @@ mod dying;
 mod economy;
 mod tree_ui;
 mod firelight;
+mod fish;
 mod footstep_fx;
 mod game_state;
 mod godrays;
@@ -191,6 +192,7 @@ fn main() {
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
         ))
         .add_plugins(ambient_life::AmbientLifePlugin) // daytime butterflies + sky bird flock (visual charm)
+        .add_plugins(fish::FishPlugin) // fish that glide under water near the hero + occasionally leap
         .add_plugins((
             wind::WindPlugin,
             wildlife::WildlifePlugin,   // ambient animals: wander/graze/startle + limb anim
