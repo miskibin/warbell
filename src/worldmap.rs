@@ -605,17 +605,38 @@ fn in_mountain(x: f32, z: f32) -> bool {
 fn is_river(x: f32, z: f32) -> bool {
     !river_blocked(x, z) && river_sd(x, z) < 0.0
 }
+/// Signed distance (base units, negative = water) to the deliberate lake's edge, with the SAME
+/// two-octave bank fray the rivers use — so `corner_water` marching-squares it into a smooth,
+/// slightly-irregular shore instead of the tile-grid ellipse ("square lake edges" report).
+fn lake_sd(x: f32, z: f32) -> f32 {
+    let (lx, lz, rx, rz) = DELIBERATE_LAKE;
+    let dx = (x - lx) / rx;
+    let dz = (z - lz) / rz;
+    // Normalised ellipse value → approximate base-unit signed distance (scaled by the smaller
+    // radius so the fray reads at the right size), then frayed like a river bank.
+    ((dx * dx + dz * dz).sqrt() - 1.0) * rx.min(rz)
+        - omottle(x, z, 1.5, 41.0) * 0.28
+        - omottle(x, z, 3.4, 12.0) * 0.13
+}
 fn is_lake(x: f32, z: f32) -> bool {
-    let dx = (x - DELIBERATE_LAKE.0) / DELIBERATE_LAKE.2;
-    let dz = (z - DELIBERATE_LAKE.1) / DELIBERATE_LAKE.3;
-    dx * dx + dz * dz < 1.0
+    lake_sd(x, z) < 0.0
 }
 
 /// Shallow marsh pools ("rozlewiska") — the lowest dips of the swamp fill with standing water so the
-/// marsh reads as wetland, not a flat green sheet. Blobby low-frequency noise thresholded so pools
-/// are occasional puddles, not a flooded plain. Only consulted inside a swamp region (`classify`).
+/// marsh reads as wetland, not a flat green sheet. A CONTINUOUS low-frequency noise field (negative
+/// = standing water), so `corner_water` can marching-squares a smooth pool shore instead of a
+/// per-tile block. `+5` (dry land) outside a swamp region / on the dry Blight, so pools stay in the
+/// marsh. The noise itself is the organic edge fray.
+fn pool_sd(x: f32, z: f32) -> f32 {
+    let in_swamp = region_at(x, z).is_some_and(|i| active_map().regions[i].biome == TB::Swamp)
+        && crate::ork_fortress::blight_class_base(x, z).is_none();
+    if !in_swamp {
+        return 5.0;
+    }
+    (noise_a(x * 0.34 - 3.0, z * 0.34 + 6.0) + noise_b(x * 0.55 + 2.0, z * 0.55 - 1.0) * 0.5) + 0.7
+}
 fn swamp_pool(x: f32, z: f32) -> bool {
-    noise_a(x * 0.34 - 3.0, z * 0.34 + 6.0) + noise_b(x * 0.55 + 2.0, z * 0.55 - 1.0) * 0.5 < -0.7
+    pool_sd(x, z) < 0.0
 }
 
 fn edge_fray(x: f32, z: f32) -> f32 {
@@ -987,10 +1008,12 @@ fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
     if !is_land_shape(bx, bz) && crate::ork_fortress::blight_class_base(bx, bz).is_none() {
         return (-0.6, false); // sea
     }
-    if river_blocked(bx, bz) {
-        return (1.0, false); // land, no river
-    }
-    let sd = river_sd(bx, bz);
+    // Combine the three water sources into ONE corner field (nearest water wins) so marching-squares
+    // cuts a smooth shore for ALL of them, not just rivers. The lake + marsh pools aren't gated by
+    // `river_blocked` (that's a river-only keep-out for the safe zone / peaks); they carry their own
+    // applicability (fixed ellipse / swamp-region gate).
+    let river = if river_blocked(bx, bz) { f32::INFINITY } else { river_sd(bx, bz) };
+    let sd = river.min(lake_sd(bx, bz)).min(pool_sd(bx, bz));
     (sd, sd < 0.0)
 }
 
