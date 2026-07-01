@@ -1033,6 +1033,12 @@ fn npc_fight_back(
                 With<crate::wildlife::Animal>,
                 With<crate::rival::RivalSoldier>,
             )>,
+            // `FightBack` only ever lands on friendly townsfolk (see `npc_damage_apply`), never on a
+            // hostile — but the `npcs` query above takes `&mut Transform` while this one takes
+            // `&Transform`, and a `RivalSoldier` carries `Villager` too, so without an exclusive
+            // marker Bevy can't prove the two queries disjoint and panics (B0001). Excluding
+            // `FightBack` here is the disjointness proof, mirroring `guard_combat`'s `Without<Guard>`.
+            Without<FightBack>,
             Without<crate::dying::Dying>,
         ),
     >,
