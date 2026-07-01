@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 
 <title>Warbell — Defend the Keep | Free Medieval Strategy Game</title>
-<meta name="description" content="Warbell is a free action-strategy game. By day a knight gathers, builds and upgrades; by night the bell rings and orks besiege the keep. Five biomes, a living town, and a bloodline that fights on after you fall. Download free for Windows.">
+<meta name="description" content="Warbell is a free action-strategy game. By day a knight gathers, builds and upgrades; by night the bell rings and orks besiege the keep. Five biomes, a living town, a rival stronghold, and a bloodline that fights on after you fall. Download free for Windows.">
 <meta name="keywords" content="warbell, medieval game, free PC game, castle defense, ork siege, indie game, bevy, rust game, strategy action game, roguelite, bloodline succession">
 <meta name="author" content="miskibin">
 <meta name="robots" content="index, follow">
@@ -39,7 +39,7 @@
   "@type": "VideoGame",
   "name": "Warbell",
   "alternateName": "Warbell — Defend the Keep",
-  "description": "By day a knight gathers, builds and upgrades; by night the war bell rings and orks besiege the keep. Five biomes, a living town, and a bloodline that fights on after you fall.",
+  "description": "By day a knight gathers, builds and upgrades; by night the war bell rings and orks besiege the keep. Five biomes, a living town, a rival stronghold, and a bloodline that fights on after you fall.",
   "url": "https://miskibin.github.io/warbell/",
   "image": "https://miskibin.github.io/warbell/screenshots/castle-after.png",
   "gamePlatform": "Windows",
@@ -71,281 +71,8 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-
-<style>
-:root{
-  --bg:#0d0a06;
-  --bg2:#15110b;
-  --panel:#1c1610;
-  --panel-2:#241c13;
-  --edge:#352a1c;
-  --edge-hi:#4a3a26;
-  --ink:#efe4ce;
-  --ink-dim:#b09a72;
-  --ink-faint:#7e6c4d;
-  --gold:#d8a14a;
-  --gold-hi:#f4cd78;
-  --gold-deep:#7a5520;
-  --day:#e9b24c;
-  --night:#8f6bd6;
-  --night-deep:#4a357e;
-  --blood:#b5402f;
-  --blood-hi:#dd5a45;
-  --shadow:rgba(0,0,0,.6);
-  --r:8px;
-  --ease:cubic-bezier(.2,.7,.2,1);
-}
-*{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
-html{scroll-behavior:smooth}
-body{
-  font-family:'EB Garamond',Georgia,serif;
-  background:var(--bg);color:var(--ink);
-  line-height:1.7;font-size:18px;overflow-x:hidden;
-}
-h1,h2,h3,h4,.cinzel{font-family:'Cinzel',serif;letter-spacing:.03em}
-a{color:var(--gold);text-decoration:none;transition:color .18s var(--ease)}
-a:hover{color:var(--gold-hi)}
-img{display:block}
-.wrap{max-width:1140px;margin:0 auto;padding:0 32px}
-.eyebrow{
-  font-family:'Cinzel',serif;font-size:12px;letter-spacing:.26em;text-transform:uppercase;
-  color:var(--blood-hi);display:inline-block;margin-bottom:18px;
-}
-
-/* film grain + vignette overlays */
-.grain{
-  position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.04;mix-blend-mode:overlay;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-/* floating motes */
-.motes{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidden}
-.mote{position:absolute;bottom:-10px;width:3px;height:3px;border-radius:50%;
-  background:radial-gradient(circle,rgba(244,205,120,.9),rgba(244,205,120,0));
-  animation:rise linear infinite}
-@keyframes rise{
-  0%{transform:translateY(0) translateX(0);opacity:0}
-  10%{opacity:.7}
-  90%{opacity:.5}
-  100%{transform:translateY(-110vh) translateX(40px);opacity:0}
-}
-
-/* ── Nav ── */
-.nav{
-  position:fixed;top:0;left:0;right:0;z-index:60;height:64px;
-  display:flex;align-items:center;justify-content:space-between;padding:0 32px;
-  transition:background .3s var(--ease),border-color .3s var(--ease),height .3s var(--ease);
-  border-bottom:1px solid transparent;
-}
-.nav.solid{
-  height:56px;background:rgba(13,10,6,.86);border-bottom-color:rgba(216,161,74,.16);
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-}
-.nav-logo{display:flex;align-items:center;gap:10px;font-family:'Cinzel',serif;font-weight:800;font-size:18px;color:var(--gold);letter-spacing:.1em}
-.nav-logo svg{width:22px;height:22px}
-.nav-links{display:flex;align-items:center;gap:28px}
-.nav-links .lnk{font-family:'Cinzel',serif;font-size:13px;letter-spacing:.06em;color:var(--ink-dim);text-transform:uppercase}
-.nav-links .lnk:hover{color:var(--gold-hi)}
-.nav-cta{
-  font-family:'Cinzel',serif;font-size:13px;font-weight:700;letter-spacing:.04em;
-  padding:9px 20px;border-radius:5px;color:#15100a;
-  background:linear-gradient(180deg,var(--gold-hi),var(--gold));
-  border:1px solid var(--gold-deep);
-  box-shadow:0 2px 10px rgba(0,0,0,.4);
-  transition:transform .14s var(--ease),box-shadow .14s var(--ease);
-}
-.nav-cta:hover{color:#15100a;transform:translateY(-1px);box-shadow:0 6px 20px rgba(216,161,74,.35)}
-@media(max-width:760px){.nav-links .lnk{display:none}}
-
-/* ── Hero ── */
-.hero{position:relative;min-height:100svh;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden}
-.hero-bg{position:absolute;inset:-6% -6% -6% -6%;z-index:0;
-  background:url('screenshots/night-combat.png') center 42%/cover no-repeat;
-  will-change:transform;animation:kenburns 26s ease-in-out infinite alternate}
-@keyframes kenburns{from{transform:scale(1.04)}to{transform:scale(1.12)}}
-.hero-veil{position:absolute;inset:0;z-index:1;pointer-events:none;
-  background:
-    radial-gradient(120% 90% at 50% 36%,transparent 30%,rgba(10,8,5,.72) 100%),
-    linear-gradient(180deg,rgba(13,10,6,.55) 0%,rgba(13,10,6,.2) 32%,rgba(13,10,6,.78) 78%,var(--bg) 100%);}
-.hero-veil::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 200px 70px rgba(0,0,0,.85)}
-.hero-inner{position:relative;z-index:2;max-width:840px;padding:90px 28px}
-.hero .title{
-  font-size:clamp(64px,14vw,168px);font-weight:900;color:var(--gold);
-  line-height:.86;letter-spacing:.04em;margin-bottom:24px;
-  text-shadow:0 2px 0 #191006,0 8px 50px rgba(0,0,0,.9),0 0 90px rgba(216,161,74,.18);
-}
-.hero .tagline{font-size:clamp(20px,2.8vw,30px);font-style:italic;color:var(--ink);margin-bottom:10px;text-shadow:0 2px 16px rgba(0,0,0,.95)}
-.hero .subline{font-family:'Cinzel',serif;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-dim);margin-bottom:42px}
-.hero-btns{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
-.btn{
-  display:inline-flex;align-items:center;gap:11px;cursor:pointer;white-space:nowrap;
-  font-family:'Cinzel',serif;font-weight:700;font-size:18px;
-  padding:16px 34px;border-radius:var(--r);transition:transform .14s var(--ease),box-shadow .14s var(--ease),background .2s;
-}
-.btn-primary{color:#15100a;background:linear-gradient(180deg,var(--gold-hi),var(--gold));border:1px solid var(--gold-deep);
-  box-shadow:0 8px 28px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.35)}
-.btn-primary:hover{color:#15100a;transform:translateY(-3px);box-shadow:0 16px 40px rgba(0,0,0,.6),0 0 30px rgba(216,161,74,.28),inset 0 1px 0 rgba(255,255,255,.45)}
-.btn-ghost{color:var(--ink);background:rgba(255,255,255,.05);border:1px solid var(--edge);font-size:16px;padding:15px 28px;backdrop-filter:blur(6px)}
-.btn-ghost:hover{color:var(--gold-hi);transform:translateY(-3px);border-color:var(--gold-deep);background:rgba(216,161,74,.08)}
-.btn .sz{font-family:'EB Garamond',serif;font-weight:400;font-size:13px;opacity:.65}
-.hero-plat{margin-top:18px;color:var(--ink-faint);font-size:13px;letter-spacing:.05em}
-.scrollcue{position:absolute;left:50%;bottom:26px;z-index:3;transform:translateX(-50%);color:var(--ink-dim);
-  animation:bob 2.4s var(--ease) infinite;font-size:22px}
-@keyframes bob{0%,100%{transform:translate(-50%,0);opacity:.5}50%{transform:translate(-50%,8px);opacity:1}}
-
-/* ── Sections ── */
-section{position:relative;padding:108px 0;z-index:2}
-.sec-head{text-align:center;max-width:680px;margin:0 auto 60px}
-.sec-head h2{font-size:clamp(30px,4.6vw,46px);color:var(--gold);line-height:1.1;margin-bottom:10px}
-.sec-head .rule{width:64px;height:1px;margin:16px auto 0;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
-.sec-head p{color:var(--ink-dim);margin-top:14px;font-size:18px}
-.lede{font-size:21px;color:var(--ink-dim);max-width:640px;margin:0 auto;text-align:center}
-
-/* ── The Loop (day / night) ── */
-.loop{background:linear-gradient(180deg,var(--bg),#0a0712 55%,var(--bg))}
-.loop-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:8px}
-.loop-card{position:relative;border-radius:14px;overflow:hidden;border:1px solid var(--edge);min-height:430px;
-  display:flex;flex-direction:column;justify-content:flex-end;padding:34px;box-shadow:0 18px 50px var(--shadow)}
-.loop-card .bgimg{position:absolute;inset:0;z-index:0;background-size:cover;background-position:center;transition:transform .6s var(--ease)}
-.loop-card:hover .bgimg{transform:scale(1.05)}
-.loop-card .tint{position:absolute;inset:0;z-index:1}
-.loop-card .body{position:relative;z-index:2}
-.loop-day .bgimg{background-image:url('screenshots/castle-after.png')}
-.loop-day .tint{background:linear-gradient(180deg,rgba(13,10,6,.15),rgba(233,178,76,.12) 60%,rgba(10,7,3,.92))}
-.loop-night .bgimg{background-image:url('screenshots/night-combat.png')}
-.loop-night .tint{background:linear-gradient(180deg,rgba(13,10,18,.2),rgba(74,53,126,.28) 55%,rgba(8,6,14,.94))}
-.loop-tag{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.2em;text-transform:uppercase;display:inline-flex;align-items:center;gap:8px;margin-bottom:12px}
-.loop-day .loop-tag{color:var(--day)}
-.loop-night .loop-tag{color:#b89bf0}
-.loop-card h3{font-size:30px;color:var(--ink);margin-bottom:12px}
-.loop-card p{color:var(--ink-dim);font-size:16.5px;max-width:42ch}
-.loop-card .verbs{margin-top:18px;display:flex;flex-wrap:wrap;gap:8px}
-.chip{font-family:'Cinzel',serif;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
-  padding:5px 11px;border-radius:20px;border:1px solid var(--edge-hi);color:var(--ink-dim);background:rgba(0,0,0,.35)}
-.loop-bell{text-align:center;margin-top:34px;font-style:italic;color:var(--ink-faint);font-size:17px}
-@media(max-width:740px){.loop-grid{grid-template-columns:1fr}.loop-card{min-height:340px}}
-
-/* ── Trailer ── */
-.trailer-outer{max-width:920px;margin:0 auto}
-.yt{position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;border:1px solid var(--edge);
-  box-shadow:0 26px 70px rgba(0,0,0,.72),0 0 0 1px rgba(216,161,74,.08)}
-.yt iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-
-/* ── Features ── */
-.feat{background:linear-gradient(180deg,var(--bg),var(--bg2) 30%,var(--bg2) 70%,var(--bg))}
-.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px}
-.fcard{background:var(--panel);border:1px solid var(--edge);border-top:2px solid var(--gold-deep);
-  border-radius:var(--r);padding:30px 28px;box-shadow:0 6px 22px var(--shadow);
-  transition:transform .2s var(--ease),border-top-color .2s var(--ease),box-shadow .2s var(--ease)}
-.fcard:hover{transform:translateY(-5px);border-top-color:var(--gold);box-shadow:0 16px 38px rgba(0,0,0,.55),0 0 22px rgba(216,161,74,.07)}
-.fcard .ic{font-size:30px;margin-bottom:14px;display:block;filter:saturate(.85)}
-.fcard h3{font-size:20px;color:var(--gold-hi);margin-bottom:9px;font-weight:600}
-.fcard p{color:var(--ink-dim);font-size:15.5px;line-height:1.62}
-
-/* ── Bloodline (dark dramatic) ── */
-.blood{background:radial-gradient(120% 100% at 50% 0%,#1a0f0c 0%,var(--bg) 60%);text-align:center;overflow:hidden}
-.blood .quote{font-size:clamp(26px,4vw,42px);font-style:italic;color:var(--ink);line-height:1.28;max-width:760px;margin:0 auto 22px;
-  text-shadow:0 2px 30px rgba(0,0,0,.8)}
-.blood .quote .em{color:var(--blood-hi);font-style:normal;font-family:'Cinzel',serif;font-weight:700}
-.blood p{color:var(--ink-dim);max-width:600px;margin:0 auto;font-size:18px}
-.heirs{display:flex;gap:14px;justify-content:center;margin-top:40px;flex-wrap:wrap}
-.heir{width:38px;height:54px;position:relative}
-.heir svg{width:100%;height:100%}
-.heir .flame{animation:flick 2.6s ease-in-out infinite}
-.heir:nth-child(2) .flame{animation-delay:.4s}
-.heir:nth-child(3) .flame{animation-delay:.8s}
-.heir:nth-child(4) .flame{animation-delay:1.2s}
-.heir:nth-child(5) .flame{animation-delay:1.6s}
-.heir.out{opacity:.32;filter:grayscale(1)}
-@keyframes flick{0%,100%{transform:scaleY(1) translateY(0);opacity:1}50%{transform:scaleY(1.18) translateY(-1px);opacity:.82}}
-
-/* ── Stats strip ── */
-.stats{border-top:1px solid var(--edge);border-bottom:1px solid var(--edge);background:var(--bg2);padding:46px 0}
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;text-align:center}
-.stat .num{font-family:'Cinzel',serif;font-size:clamp(32px,5vw,52px);font-weight:800;color:var(--gold);line-height:1}
-.stat .lbl{font-family:'Cinzel',serif;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint);margin-top:8px}
-@media(max-width:680px){.stats-grid{grid-template-columns:repeat(2,1fr);gap:32px 16px}}
-
-/* ── Biomes ── */
-.biomes-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-.biomes-grid .b1{grid-column:span 2}
-.biome{position:relative;border-radius:var(--r);overflow:hidden;border:1px solid var(--edge);aspect-ratio:16/10;cursor:zoom-in;
-  box-shadow:0 8px 26px var(--shadow)}
-.biome img{width:100%;height:100%;object-fit:cover;transition:transform .55s var(--ease)}
-.biome:hover img{transform:scale(1.06)}
-.biome .lab{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:22px 20px 16px;
-  background:linear-gradient(180deg,transparent,rgba(8,5,2,.88));}
-.biome .lab .n{font-family:'Cinzel',serif;font-size:19px;font-weight:700;color:var(--gold-hi);letter-spacing:.04em}
-.biome .lab .d{font-size:14px;color:var(--ink-dim)}
-@media(max-width:740px){.biomes-grid{grid-template-columns:repeat(2,1fr)}.biomes-grid .b1{grid-column:span 2}}
-
-/* ── Before/After slider ── */
-.ba-outer{max-width:940px;margin:0 auto}
-.ba-cap{text-align:center;color:var(--ink-dim);font-style:italic;margin-bottom:18px;font-size:15.5px}
-.ba{position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--edge);aspect-ratio:16/9;user-select:none;
-  box-shadow:0 20px 56px rgba(0,0,0,.68),0 0 0 1px rgba(216,161,74,.06)}
-.ba img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.ba .after{position:absolute;inset:0;overflow:hidden;clip-path:inset(0 calc(100% - var(--p,50%)) 0 0)}
-.ba .after img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.ba .line{position:absolute;top:0;bottom:0;width:2px;left:var(--p,50%);transform:translateX(-50%);z-index:3;pointer-events:none;
-  background:linear-gradient(180deg,transparent,var(--gold) 12%,var(--gold) 88%,transparent)}
-.ba .knob{position:absolute;top:50%;left:var(--p,50%);transform:translate(-50%,-50%);z-index:4;pointer-events:none;
-  width:44px;height:44px;border-radius:50%;border:2px solid rgba(255,255,255,.92);
-  background:linear-gradient(180deg,var(--gold-hi),var(--gold));display:flex;align-items:center;justify-content:center;
-  box-shadow:0 3px 14px rgba(0,0,0,.7)}
-.ba input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:ew-resize;z-index:5;margin:0;-webkit-appearance:none;appearance:none;background:transparent}
-.ba .pill{position:absolute;top:14px;z-index:3;pointer-events:none;font-family:'Cinzel',serif;font-size:11px;letter-spacing:.1em;padding:4px 12px;border-radius:20px;
-  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
-.ba .pill.b{left:14px;color:var(--ink);background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.12)}
-.ba .pill.a{right:14px;color:var(--gold-hi);background:rgba(216,161,74,.22);border:1px solid rgba(216,161,74,.4)}
-
-/* ── Gallery ── */
-.gal{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:38px}
-.gal a{border-radius:var(--r);overflow:hidden;border:1px solid var(--edge);box-shadow:0 6px 20px var(--shadow);
-  transition:transform .22s var(--ease),box-shadow .22s var(--ease),border-color .22s var(--ease)}
-.gal a:hover{transform:scale(1.025);border-color:var(--gold-deep);box-shadow:0 14px 34px var(--shadow)}
-.gal img{width:100%;aspect-ratio:16/9;object-fit:cover;cursor:zoom-in}
-@media(max-width:680px){.gal{grid-template-columns:1fr 1fr}}
-
-/* ── Controls ── */
-.controls{max-width:800px;margin:0 auto;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r);padding:38px 42px;box-shadow:0 6px 26px var(--shadow)}
-.controls dl{display:grid;grid-template-columns:auto 1fr;gap:14px 30px;align-items:baseline}
-.controls dt{font-family:'Cinzel',serif;color:var(--gold);font-size:14px;white-space:nowrap}
-.controls dd{color:var(--ink-dim);font-size:16px}
-kbd{font-family:'Cinzel',serif;font-size:12px;background:#0b0805;color:var(--ink);border:1px solid var(--edge);border-bottom-width:2px;border-radius:3px;padding:2px 8px;margin:0 1px;display:inline-block}
-@media(max-width:600px){.controls{padding:26px 22px}.controls dl{grid-template-columns:1fr;gap:4px 0}.controls dt{margin-top:14px}}
-
-/* ── Final CTA ── */
-.cta{position:relative;text-align:center;overflow:hidden;padding:130px 0}
-.cta-bg{position:absolute;inset:0;z-index:0;background:url('screenshots/swamp-fortress.png') center/cover no-repeat;filter:saturate(.9)}
-.cta-veil{position:absolute;inset:0;z-index:1;background:radial-gradient(110% 100% at 50% 50%,rgba(13,10,6,.62),var(--bg) 88%)}
-.cta-veil::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 160px 60px rgba(0,0,0,.8)}
-.cta-inner{position:relative;z-index:2;max-width:680px;margin:0 auto;padding:0 28px}
-.cta h2{font-size:clamp(34px,5.5vw,58px);color:var(--gold);line-height:1.04;margin-bottom:14px;text-shadow:0 4px 40px rgba(0,0,0,.85)}
-.cta p{color:var(--ink-dim);font-size:19px;margin-bottom:34px}
-
-/* ── Footer ── */
-footer{padding:58px 0 70px;text-align:center;color:var(--ink-faint);border-top:1px solid var(--edge);background:var(--bg2)}
-.f-logo{font-family:'Cinzel',serif;font-weight:900;font-size:26px;color:var(--gold);letter-spacing:.08em;margin-bottom:16px}
-.f-links{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;margin-bottom:18px;font-size:15px}
-footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
-
-/* ── Reveal ── */
-.rv{opacity:0;transform:translateY(28px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
-.rv.in{opacity:1;transform:none}
-.rv-2{transition-delay:.08s}.rv-3{transition-delay:.16s}.rv-4{transition-delay:.24s}.rv-5{transition-delay:.32s}
-@media(prefers-reduced-motion:reduce){
-  .rv{opacity:1;transform:none;transition:none}
-  .hero-bg,.mote,.scrollcue,.heir .flame{animation:none}
-}
-
-/* ── Lightbox ── */
-.lb{position:fixed;inset:0;z-index:200;background:rgba(4,2,1,.95);display:none;align-items:center;justify-content:center;padding:30px;cursor:zoom-out}
-.lb.open{display:flex}
-.lb img{max-width:96vw;max-height:92vh;border-radius:var(--r);box-shadow:0 30px 90px #000}
-</style>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
@@ -354,7 +81,7 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
 
 <nav class="nav" id="nav">
   <a class="nav-logo" href="#top">
-    <svg viewBox="0 0 32 32" fill="none"><path d="M16 3l11 4.5V17c0 6.8-5.2 11.2-11 12.5C10.2 28.2 5 23.8 5 17V7.5z" fill="#1c1610" stroke="#d8a14a" stroke-width="1.6" stroke-linejoin="round"/><text x="16" y="22" font-family="Cinzel,serif" font-size="13" font-weight="900" fill="#d8a14a" text-anchor="middle">W</text></svg>
+    <svg viewBox="0 0 32 32" fill="none"><path d="M16 3l11 4.5V17c0 6.8-5.2 11.2-11 12.5C10.2 28.2 5 23.8 5 17V7.5z" fill="#17151f" stroke="#e3a844" stroke-width="1.6" stroke-linejoin="round"/><text x="16" y="22" font-family="Cinzel,serif" font-size="13" font-weight="900" fill="#e3a844" text-anchor="middle">W</text></svg>
     WARBELL
   </a>
   <div class="nav-links">
@@ -365,7 +92,24 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
     <a class="lnk" href="changelog.html">Changelog</a>
     <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download</a>
   </div>
+  <button class="nav-toggle" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="drawer">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
 </nav>
+
+<!-- Mobile drawer -->
+<div class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-scrim" data-close></div>
+  <nav class="drawer-panel">
+    <button class="drawer-close" data-close aria-label="Close menu">×</button>
+    <a href="#loop" data-close>The Loop</a>
+    <a href="#features" data-close>Features</a>
+    <a href="#island" data-close>Island</a>
+    <a href="#shots" data-close>Screens</a>
+    <a href="changelog.html">Changelog</a>
+    <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows</a>
+  </nav>
+</div>
 
 <header class="hero" id="top">
   <div class="hero-bg" id="heroBg"></div>
@@ -374,7 +118,7 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
     <span class="eyebrow">Defend the Keep</span>
     <h1 class="title">WARBELL</h1>
     <p class="tagline">By day you build. By night you bleed.</p>
-    <p class="subline">One knight · one keep · a five-biome island under siege</p>
+    <p class="subline">One bloodline · one keep · a five-biome island under siege</p>
     <div class="hero-btns">
       <a class="btn btn-primary" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows <span class="sz">· free</span></a>
       <a class="btn btn-ghost" href="#trailer">▶ Watch Trailer</a>
@@ -399,7 +143,7 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
         <div class="body">
           <span class="loop-tag">☀ Daylight</span>
           <h3>Build the stronghold</h3>
-          <p>Loot chests, mine ore and fell timber. Raise walls and towers, recruit townsfolk, and spend hard-won gold at the War Table.</p>
+          <p>Loot chests, mine ore and fell timber. Raise walls and towers, recruit townsfolk, take on quests, and spend hard-won gold at the War Table.</p>
           <div class="verbs"><span class="chip">Gather</span><span class="chip">Build</span><span class="chip">Recruit</span><span class="chip">Upgrade</span><span class="chip">Trade</span></div>
         </div>
       </div>
@@ -434,10 +178,10 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
 <div class="stats">
   <div class="wrap">
     <div class="stats-grid">
-      <div class="stat rv"><div class="num" data-count="126">126</div><div class="lbl">Voice lines</div></div>
-      <div class="stat rv rv-2"><div class="num" data-count="13">13</div><div class="lbl">Wildlife species</div></div>
+      <div class="stat rv"><div class="num" data-count="200" data-suffix="+">200+</div><div class="lbl">Voice &amp; bark lines</div></div>
+      <div class="stat rv rv-2"><div class="num" data-count="15">15</div><div class="lbl">Wildlife species</div></div>
       <div class="stat rv rv-3"><div class="num" data-count="300" data-suffix="+">300+</div><div class="lbl">Hand-built meshes</div></div>
-      <div class="stat rv rv-4"><div class="num" data-count="58" data-suffix="K">58K</div><div class="lbl">Lines of Rust</div></div>
+      <div class="stat rv rv-4"><div class="num" data-count="83" data-suffix="K">83K</div><div class="lbl">Lines of Rust</div></div>
     </div>
   </div>
 </div>
@@ -448,14 +192,16 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
     <div class="sec-head rv"><span class="eyebrow">What's inside</span><h2>A living warband sim</h2><div class="rule"></div>
       <p>Not just a defense game — a whole island that works, fights and grows around you.</p></div>
     <div class="feat-grid">
-      <div class="fcard rv"><span class="ic">⚔️</span><h3>Real-time combat</h3><p>Swing, crit and block with stamina. Four ork breeds — grunts, scouts, berserkers and shamans — each with their own brain and bite.</p></div>
+      <div class="fcard rv ticks"><span class="ic">⚔️</span><h3>Real-time combat</h3><p>Soft-lock onto the nearest threat, then swing, crit and block with stamina — or hold to charge a guaranteed-crit heavy smash. Four ork breeds, each with its own brain and bite.</p></div>
       <div class="fcard rv rv-2"><span class="ic">🏰</span><h3>City-building</h3><p>Lay out plots and raise houses, walls, towers and workshops. A real town economy with food, repair and burn.</p></div>
       <div class="fcard rv rv-3"><span class="ic">🪓</span><h3>Villagers that work</h3><p>Woodcutters fell real trees. Miners chip real boulders and cart the stone home. Recruit them, feed them, grow the town.</p></div>
       <div class="fcard rv rv-4"><span class="ic">🌳</span><h3>The War Table</h3><p>A branching upgrade tree — blade, armor, abilities and defenses. Spend gold and stone to climb it night after night.</p></div>
-      <div class="fcard rv"><span class="ic">🗺️</span><h3>Five biomes</h3><p>Forest, snow, desert, rock and swamp on one enlarged island — each with its own ork camp, wildlife, weather and loot.</p></div>
+      <div class="fcard rv"><span class="ic">🗺️</span><h3>Five biomes &amp; roads</h3><p>Forest, snow, desert, rock and swamp on one island, laced with a curving road network — each biome with its own ork camp, wildlife, weather and loot.</p></div>
       <div class="fcard rv rv-2"><span class="ic">🛡️</span><h3>Defenses &amp; the bell</h3><p>Archer towers, ballistae and shrines you unlock and place. Ring the war bell to call the night on your own terms.</p></div>
-      <div class="fcard rv rv-3"><span class="ic">🔓</span><h3>Free the caged</h3><p>The horde pens captives like cattle. Clear a warband, break the cage open, and they take up arms at your side.</p></div>
-      <div class="fcard rv rv-4"><span class="ic">💀</span><h3>Gnashfang Hold</h3><p>An off-map ork fortress beyond the swamp feeds the waves — patrols, the Blight, and towers that fire on sight.</p></div>
+      <div class="fcard rv rv-3"><span class="ic">🧭</span><h3>Guided by quests</h3><p>A step-by-step quest chain eases you in — where to gather, when to build, how the trials work — so your first night doesn't blindside you.</p></div>
+      <div class="fcard rv rv-4"><span class="ic">🏯</span><h3>A rival in the desert</h3><p>A Stronghold-Crusader-style human opponent holds a walled fort out in the sands — running its own tax economy, raising buildings and patrolling as it grows.</p></div>
+      <div class="fcard rv"><span class="ic">🔓</span><h3>Free the caged</h3><p>The horde pens captives like cattle. Clear a warband, break the cage open, and they take up arms at your side.</p></div>
+      <div class="fcard rv rv-2"><span class="ic">💀</span><h3>Gnashfang Hold</h3><p>An off-map ork fortress beyond the swamp feeds the waves — patrols, the Blight, and towers that fire on sight. Breach it and end the Warlord to win.</p></div>
     </div>
   </div>
 </section>
@@ -478,12 +224,12 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
     <div class="sec-head rv"><span class="eyebrow">Five biomes &amp; the horde</span><h2>The Island</h2><div class="rule"></div>
       <p>The keep sits at the heart. The horde holds the edges. Click any land to see it full-size.</p></div>
     <div class="biomes-grid">
-      <a class="biome rv" href="screenshots/forest-biome.png"><img loading="lazy" src="screenshots/forest-biome.png" alt="Forest biome — woodland and rivers">
+      <a class="biome b1 rv" href="screenshots/forest-biome.png"><img loading="lazy" src="screenshots/forest-biome.png" alt="Forest biome — woodland and rivers">
         <span class="lab"><span class="n">Forest</span><span class="d"> — river-cut woodland, the keep's home</span></span></a>
       <a class="biome rv rv-2" href="screenshots/snow-biome.png"><img loading="lazy" src="screenshots/snow-biome.png" alt="Snow biome">
         <span class="lab"><span class="n">Snow</span><span class="d"> — frozen pinewood</span></span></a>
       <a class="biome rv rv-3" href="screenshots/desert-biome.png"><img loading="lazy" src="screenshots/desert-biome.png" alt="Desert biome">
-        <span class="lab"><span class="n">Desert</span><span class="d"> — cactus flats</span></span></a>
+        <span class="lab"><span class="n">Desert</span><span class="d"> — cactus flats &amp; the rival fort</span></span></a>
       <a class="biome rv" href="screenshots/rock-biome.png"><img loading="lazy" src="screenshots/rock-biome.png" alt="Rock biome">
         <span class="lab"><span class="n">Rock</span><span class="d"> — crystal crags</span></span></a>
       <a class="biome rv rv-2" href="screenshots/swamp-fortress.png"><img loading="lazy" src="screenshots/swamp-fortress.png" alt="Swamp biome — the drowned mire">
@@ -505,7 +251,7 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
         <img src="screenshots/castle-after.png" alt="After fortifying">
         <div class="after"><img src="screenshots/castle-before.png" alt="Before fortifying"></div>
         <div class="line"></div>
-        <div class="knob"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M7 4l-4 6 4 6M13 4l4 6-4 6" stroke="#15100a" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="knob"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M7 4l-4 6 4 6M13 4l4 6-4 6" stroke="#160f06" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <input type="range" min="0" max="100" value="50" aria-label="Before / after">
         <span class="pill b">BEFORE</span><span class="pill a">AFTER</span>
       </div>
@@ -529,10 +275,16 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
     <div class="controls rv">
       <dl>
         <dt>WASD</dt><dd>Move</dd>
-        <dt>LMB · RMB</dt><dd>Attack · block</dd>
+        <dt>LMB · RMB</dt><dd>Attack · block (hold LMB to charge a heavy strike)</dd>
         <dt><kbd>E</kbd></dt><dd>Interact — War Table (upgrades), merchant stall (shop), war bell (ring in the night)</dd>
-        <dt><kbd>I</kbd> · <kbd>F</kbd> · <kbd>R</kbd></dt><dd>Satchel · open chest / forage / rescue · recruit</dd>
-        <dt><kbd>Q</kbd> <kbd>Z</kbd> <kbd>X</kbd> <kbd>C</kbd></dt><dd>Eat food · quick-slot items</dd>
+        <dt><kbd>B</kbd></dt><dd>Build mode — raise walls, towers, houses (daytime, in town)</dd>
+        <dt><kbd>F</kbd> · <kbd>R</kbd></dt><dd>Forage / open chest / free the caged · recruit at the keep</dd>
+        <dt><kbd>I</kbd> · <kbd>Tab</kbd></dt><dd>Satchel</dd>
+        <dt><kbd>Q</kbd></dt><dd>Eat food</dd>
+        <dt><kbd>Y</kbd> · <kbd>T</kbd></dt><dd>Quick-slot items</dd>
+        <dt><kbd>Z</kbd> <kbd>X</kbd> <kbd>C</kbd></dt><dd>Combat arts</dd>
+        <dt><kbd>J</kbd></dt><dd>Quest log</dd>
+        <dt><kbd>N</kbd></dt><dd>Skip to night (during prep)</dd>
         <dt><kbd>`</kbd></dt><dd>Toggle free-roam fly-cam ↔ follow-cam</dd>
         <dt><kbd>H</kbd></dt><dd>How to play</dd>
         <dt><kbd>P</kbd> / <kbd>Esc</kbd></dt><dd>Pause</dd>
@@ -565,6 +317,11 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
   </div>
 </footer>
 
+<!-- Sticky mobile download bar -->
+<div class="mobile-cta">
+  <a href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows <span class="sz">· free · Win 10/11</span></a>
+</div>
+
 <div class="lb" id="lb"><img src="" alt=""></div>
 
 <script>
@@ -586,10 +343,21 @@ const nav=document.getElementById('nav');
 const onScroll=()=>nav.classList.toggle('solid',window.scrollY>40);
 onScroll();window.addEventListener('scroll',onScroll,{passive:true});
 
+// mobile drawer
+const drawer=document.getElementById('drawer'), navToggle=document.getElementById('navToggle');
+function openDrawer(){drawer.classList.add('open');drawer.setAttribute('aria-hidden','false');
+  navToggle.setAttribute('aria-expanded','true');document.body.style.overflow='hidden';}
+function closeDrawer(){drawer.classList.remove('open');drawer.setAttribute('aria-hidden','true');
+  navToggle.setAttribute('aria-expanded','false');document.body.style.overflow='';}
+navToggle.addEventListener('click',openDrawer);
+drawer.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',closeDrawer));
+drawer.querySelectorAll('.drawer-panel a').forEach(a=>a.addEventListener('click',closeDrawer));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
+
 // hero cursor parallax + scroll drift
 const heroBg=document.getElementById('heroBg');
 let mx=0,my=0;
-if(!matchMedia('(prefers-reduced-motion:reduce)').matches){
+if(heroBg&&!matchMedia('(prefers-reduced-motion:reduce)').matches){
   window.addEventListener('mousemove',e=>{
     mx=(e.clientX/window.innerWidth-.5);my=(e.clientY/window.innerHeight-.5);
   },{passive:true});
@@ -600,7 +368,7 @@ if(!matchMedia('(prefers-reduced-motion:reduce)').matches){
   })();
 }
 
-// before/after slider
+// before/after slider (native range handles both mouse + touch drag)
 const ba=document.getElementById('ba');
 if(ba){
   const inp=ba.querySelector('input');
@@ -628,8 +396,6 @@ const io=new IntersectionObserver((ents)=>{
 },{threshold:0,rootMargin:'0px 0px -6% 0px'});
 const rvEls=[...document.querySelectorAll('.rv')];
 rvEls.forEach(el=>io.observe(el));
-// failsafe sweep: reveal anything sitting in (or above) the viewport that the
-// observer missed (e.g. tab was backgrounded on load) — runs on load + each scroll.
 function sweep(){
   rvEls.forEach(el=>{
     if(el.classList.contains('in'))return;
@@ -639,10 +405,8 @@ function sweep(){
 window.addEventListener('load',sweep);
 window.addEventListener('scroll',sweep,{passive:true});
 window.addEventListener('resize',sweep,{passive:true});
-// if the page loaded while the tab was backgrounded (observer paused), sweep on return
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)sweep();});
 sweep();
-// hard guarantee — content can never stay invisible even if the observer never fires
 setTimeout(()=>rvEls.forEach(el=>{if(el.getBoundingClientRect().top<innerHeight*1.4)reveal(el);}),2600);
 
 // lightbox
@@ -653,13 +417,9 @@ document.querySelectorAll('.gal a,.biome').forEach(a=>{
 lb.addEventListener('click',()=>lb.classList.remove('open'));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')lb.classList.remove('open');});
 
-// (native scroll — anchor links use CSS scroll-behavior:smooth; no smooth-scroll lib so
-// nothing can intercept the wheel over a section)
-
 // heir torches (SVG injected)
-const torch='<svg viewBox="0 0 38 54"><rect x="16" y="20" width="6" height="30" rx="2" fill="#5a4326"/><rect x="13" y="18" width="12" height="6" rx="2" fill="#3c2c18"/><g class="flame"><path d="M19 2c4 5 6 8 6 12a6 6 0 1 1-12 0c0-3 2-6 6-12z" fill="#f4cd78"/><path d="M19 7c2 3 3 5 3 7a3 3 0 1 1-6 0c0-2 1-4 3-7z" fill="#dd5a45"/></g></svg>';
+const torch='<svg viewBox="0 0 38 54"><rect x="16" y="20" width="6" height="30" rx="2" fill="#5a4326"/><rect x="13" y="18" width="12" height="6" rx="2" fill="#3c2c18"/><g class="flame"><path d="M19 2c4 5 6 8 6 12a6 6 0 1 1-12 0c0-3 2-6 6-12z" fill="#ffd489"/><path d="M19 7c2 3 3 5 3 7a3 3 0 1 1-6 0c0-2 1-4 3-7z" fill="#ff7355"/></g></svg>';
 document.querySelectorAll('.heir').forEach(h=>h.innerHTML=torch);
 </script>
 </body>
 </html>
-

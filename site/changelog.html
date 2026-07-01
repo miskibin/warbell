@@ -25,131 +25,8 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-
-<style>
-:root{
-  --bg:#0d0a06;
-  --bg2:#15110b;
-  --panel:#1c1610;
-  --panel-2:#241c13;
-  --edge:#352a1c;
-  --edge-hi:#4a3a26;
-  --ink:#efe4ce;
-  --ink-dim:#b09a72;
-  --ink-faint:#7e6c4d;
-  --gold:#d8a14a;
-  --gold-hi:#f4cd78;
-  --gold-deep:#7a5520;
-  --day:#e9b24c;
-  --night:#8f6bd6;
-  --night-deep:#4a357e;
-  --blood:#b5402f;
-  --blood-hi:#dd5a45;
-  --shadow:rgba(0,0,0,.6);
-  --r:8px;
-  --ease:cubic-bezier(.2,.7,.2,1);
-}
-*{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;scroll-behavior:smooth}
-body{
-  font-family:'EB Garamond',Georgia,serif;
-  background:var(--bg);color:var(--ink);
-  line-height:1.7;font-size:18px;overflow-x:hidden;
-}
-h1,h2,h3,h4,.cinzel{font-family:'Cinzel',serif;letter-spacing:.03em}
-a{color:var(--gold);text-decoration:none;transition:color .18s var(--ease)}
-a:hover{color:var(--gold-hi)}
-.wrap{max-width:1140px;margin:0 auto;padding:0 32px}
-.eyebrow{
-  font-family:'Cinzel',serif;font-size:12px;letter-spacing:.26em;text-transform:uppercase;
-  color:var(--blood-hi);display:inline-block;margin-bottom:18px;
-}
-
-/* film grain + motes (shared with the home page) */
-.grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.04;mix-blend-mode:overlay;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
-.motes{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidden}
-.mote{position:absolute;bottom:-10px;width:3px;height:3px;border-radius:50%;
-  background:radial-gradient(circle,rgba(244,205,120,.9),rgba(244,205,120,0));animation:rise linear infinite}
-@keyframes rise{0%{transform:translateY(0) translateX(0);opacity:0}10%{opacity:.7}90%{opacity:.5}100%{transform:translateY(-110vh) translateX(40px);opacity:0}}
-
-/* ── Nav (shared) ── */
-.nav{position:fixed;top:0;left:0;right:0;z-index:60;height:64px;
-  display:flex;align-items:center;justify-content:space-between;padding:0 32px;
-  transition:background .3s var(--ease),border-color .3s var(--ease),height .3s var(--ease);
-  border-bottom:1px solid transparent;}
-.nav.solid{height:56px;background:rgba(13,10,6,.86);border-bottom-color:rgba(216,161,74,.16);
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
-.nav-logo{display:flex;align-items:center;gap:10px;font-family:'Cinzel',serif;font-weight:800;font-size:18px;color:var(--gold);letter-spacing:.1em}
-.nav-logo svg{width:22px;height:22px}
-.nav-links{display:flex;align-items:center;gap:28px}
-.nav-links .lnk{font-family:'Cinzel',serif;font-size:13px;letter-spacing:.06em;color:var(--ink-dim);text-transform:uppercase}
-.nav-links .lnk:hover{color:var(--gold-hi)}
-.nav-links .lnk.active{color:var(--gold-hi)}
-.nav-cta{font-family:'Cinzel',serif;font-size:13px;font-weight:700;letter-spacing:.04em;
-  padding:9px 20px;border-radius:5px;color:#15100a;
-  background:linear-gradient(180deg,var(--gold-hi),var(--gold));border:1px solid var(--gold-deep);
-  box-shadow:0 2px 10px rgba(0,0,0,.4);transition:transform .14s var(--ease),box-shadow .14s var(--ease);}
-.nav-cta:hover{color:#15100a;transform:translateY(-1px);box-shadow:0 6px 20px rgba(216,161,74,.35)}
-@media(max-width:760px){.nav-links .lnk{display:none}}
-
-/* ── Page header ── */
-.page-hero{position:relative;padding:148px 0 56px;text-align:center;overflow:hidden;
-  background:radial-gradient(120% 100% at 50% 0%,#1a0f0c 0%,var(--bg) 64%)}
-.page-hero h1{font-size:clamp(42px,8vw,82px);color:var(--gold);line-height:1;margin-bottom:14px;
-  text-shadow:0 2px 0 #191006,0 8px 50px rgba(0,0,0,.9),0 0 90px rgba(216,161,74,.16)}
-.page-hero .tagline{color:var(--ink);font-style:italic;font-size:clamp(18px,2.4vw,23px);margin-bottom:8px}
-.page-hero .subline{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-dim)}
-.page-hero .rule{width:64px;height:1px;margin:24px auto 0;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
-
-/* ── Timeline ── */
-.log{max-width:840px;margin:0 auto;padding:46px 32px 30px}
-.rel{position:relative;padding:0 0 8px 36px;margin-bottom:42px;border-left:1px solid var(--edge)}
-.rel:last-child{border-left-color:transparent;margin-bottom:14px}
-.rel::before{content:"";position:absolute;left:-7px;top:7px;width:13px;height:13px;border-radius:50%;
-  background:linear-gradient(180deg,var(--gold-hi),var(--gold));box-shadow:0 0 0 4px var(--bg),0 0 14px rgba(216,161,74,.45)}
-.rel.latest::before{box-shadow:0 0 0 4px var(--bg),0 0 24px rgba(216,161,74,.9)}
-.rel-head{display:flex;align-items:baseline;gap:13px;flex-wrap:wrap;margin-bottom:4px}
-.rel-ver{font-family:'Cinzel',serif;font-size:27px;font-weight:800;color:var(--gold-hi);letter-spacing:.03em}
-.rel-date{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}
-.rel-badge{font-family:'Cinzel',serif;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#15100a;
-  background:linear-gradient(180deg,var(--gold-hi),var(--gold));padding:3px 10px;border-radius:20px}
-.rel-sum{color:var(--ink-dim);font-style:italic;margin:2px 0 18px;font-size:17px}
-.rel-card{background:var(--panel);border:1px solid var(--edge);border-top:2px solid var(--gold-deep);
-  border-radius:var(--r);padding:24px 28px;box-shadow:0 6px 22px var(--shadow)}
-.grp{margin-bottom:20px}.grp:last-child{margin-bottom:0}
-.grp-h{margin-bottom:11px}
-.tag{font-family:'Cinzel',serif;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-  padding:4px 11px;border-radius:20px;border:1px solid}
-.tag.new{color:var(--gold-hi);border-color:var(--gold-deep);background:rgba(216,161,74,.12)}
-.tag.fix{color:var(--blood-hi);border-color:#6e2c22;background:rgba(181,64,47,.12)}
-.tag.perf{color:#b89bf0;border-color:var(--night-deep);background:rgba(143,107,214,.14)}
-.rel-card ul{list-style:none;display:flex;flex-direction:column;gap:9px}
-.rel-card li{position:relative;padding-left:20px;color:var(--ink-dim);font-size:16px;line-height:1.62}
-.rel-card li::before{content:"";position:absolute;left:3px;top:11px;width:5px;height:5px;border-radius:50%;background:var(--gold-deep)}
-.rel-card li strong{color:var(--ink);font-weight:600}
-.rel-foot{margin-top:16px;padding-top:14px;border-top:1px solid var(--edge)}
-.rel-foot a{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.05em}
-.log-note{max-width:840px;margin:0 auto;padding:0 32px 40px;text-align:center;color:var(--ink-faint);font-size:15px;font-style:italic}
-.log-note a{font-style:normal}
-.rel-shots{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:0 0 18px}
-.rel-shots a{display:block;border:1px solid var(--edge);border-radius:8px;overflow:hidden;line-height:0;box-shadow:0 4px 14px var(--shadow)}
-.rel-shots img{width:100%;height:150px;object-fit:cover;display:block;transition:transform .4s var(--ease)}
-.rel-shots a:hover img{transform:scale(1.05)}
-@media(max-width:560px){.rel-shots img{height:108px}}
-
-/* ── Footer (shared) ── */
-footer{padding:58px 0 70px;text-align:center;color:var(--ink-faint);border-top:1px solid var(--edge);background:var(--bg2)}
-.f-logo{font-family:'Cinzel',serif;font-weight:900;font-size:26px;color:var(--gold);letter-spacing:.08em;margin-bottom:16px}
-.f-links{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;margin-bottom:18px;font-size:15px}
-footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
-
-/* ── Reveal ── */
-.rv{opacity:0;transform:translateY(24px);transition:opacity .6s var(--ease),transform .6s var(--ease)}
-.rv.in{opacity:1;transform:none}
-@media(prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}.mote{animation:none}}
-</style>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
@@ -158,7 +35,7 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
 
 <nav class="nav" id="nav">
   <a class="nav-logo" href="index.html#top">
-    <svg viewBox="0 0 32 32" fill="none"><path d="M16 3l11 4.5V17c0 6.8-5.2 11.2-11 12.5C10.2 28.2 5 23.8 5 17V7.5z" fill="#1c1610" stroke="#d8a14a" stroke-width="1.6" stroke-linejoin="round"/><text x="16" y="22" font-family="Cinzel,serif" font-size="13" font-weight="900" fill="#d8a14a" text-anchor="middle">W</text></svg>
+    <svg viewBox="0 0 32 32" fill="none"><path d="M16 3l11 4.5V17c0 6.8-5.2 11.2-11 12.5C10.2 28.2 5 23.8 5 17V7.5z" fill="#17151f" stroke="#e3a844" stroke-width="1.6" stroke-linejoin="round"/><text x="16" y="22" font-family="Cinzel,serif" font-size="13" font-weight="900" fill="#e3a844" text-anchor="middle">W</text></svg>
     WARBELL
   </a>
   <div class="nav-links">
@@ -168,7 +45,23 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
     <a class="lnk active" href="changelog.html">Changelog</a>
     <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download</a>
   </div>
+  <button class="nav-toggle" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="drawer">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
 </nav>
+
+<!-- Mobile drawer -->
+<div class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-scrim" data-close></div>
+  <nav class="drawer-panel">
+    <button class="drawer-close" data-close aria-label="Close menu">×</button>
+    <a href="index.html#loop">The Loop</a>
+    <a href="index.html#features">Features</a>
+    <a href="index.html#island">Island</a>
+    <a href="changelog.html" data-close>Changelog</a>
+    <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows</a>
+  </nav>
+</div>
 
 <header class="page-hero" id="top">
   <span class="eyebrow">Version History</span>
@@ -811,13 +704,18 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
     <p class="f-logo">WARBELL</p>
     <div class="f-links">
       <a href="index.html">Home</a>
-      <a href="https://github.com/miskibin/warbell/releases/latest/download/Warbell_0.5.2_x64_en-US.msi">Download</a>
+      <a href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">Download</a>
       <a href="https://github.com/miskibin/warbell">GitHub</a>
       <a href="https://www.youtube.com/watch?v=AMRBW26xBFQ">Trailer</a>
     </div>
     <p class="sm">A game by miskibin · Made with care, swords, and far too many orks.</p>
   </div>
 </footer>
+
+<!-- Sticky mobile download bar -->
+<div class="mobile-cta">
+  <a href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows <span class="sz">· free · Win 10/11</span></a>
+</div>
 
 <script>
 // floating motes
@@ -837,6 +735,17 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
 const nav=document.getElementById('nav');
 const onScroll=()=>nav.classList.toggle('solid',window.scrollY>40);
 onScroll();window.addEventListener('scroll',onScroll,{passive:true});
+
+// mobile drawer
+const drawer=document.getElementById('drawer'), navToggle=document.getElementById('navToggle');
+function openDrawer(){drawer.classList.add('open');drawer.setAttribute('aria-hidden','false');
+  navToggle.setAttribute('aria-expanded','true');document.body.style.overflow='hidden';}
+function closeDrawer(){drawer.classList.remove('open');drawer.setAttribute('aria-hidden','true');
+  navToggle.setAttribute('aria-expanded','false');document.body.style.overflow='';}
+navToggle.addEventListener('click',openDrawer);
+drawer.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',closeDrawer));
+drawer.querySelectorAll('.drawer-panel a').forEach(a=>a.addEventListener('click',closeDrawer));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
 
 // scroll reveal (fail-safe: content can never stay invisible)
 const rvEls=[...document.querySelectorAll('.rv')];
