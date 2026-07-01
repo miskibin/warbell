@@ -297,6 +297,11 @@ fn build_mesh(isle: &Isle) -> Mesh {
 // ── Spawn ────────────────────────────────────────────────────────────────────────
 /// Spawn the ring of distant islands. Called once from `worldmap::build`.
 pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+    // Capture aid: drop the backdrop isles entirely for a clean top-down map shot (they read as
+    // pale blocks on the horizon at altitude). No effect on normal play.
+    if std::env::var("FOREST_NOISLES").is_ok() {
+        return;
+    }
     // One shared white material — vertex colours carry the look, so all islands auto-batch.
     // DOUBLE-SIDED: these islands are tall (peaks ~9-11 units) but are viewed from the hero at
     // sea level, i.e. from BELOW their up-facing top surfaces. With normal back-face culling
@@ -317,7 +322,13 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
         let isle = Isle {
             radius: rng_range(&mut s, 20.0, 58.0),
             aspect: rng_range(&mut s, 0.78, 1.28),
-            mountain: rng01(&mut s).powf(0.85),
+            // Elevation floor 0.45 (was `rng01().powf(0.85)`, which could roll ~0.1): a near-flat
+            // sandbar is almost all class-1 BEACH, so a big low one (e.g. the radius-51 isle due
+            // east) reads as a glaring pale-white strip on the horizon — "the white band across the
+            // map". Flooring the mountain roll keeps every backdrop isle a proper green/rock hill
+            // (beach is just a thin coastal fringe), so they read as distant LAND, not white sand.
+            // One rng01 still consumed → downstream positions are byte-for-byte unchanged.
+            mountain: 0.45 + rng01(&mut s) * 0.55,
             palette: PALETTES[i],
             seed: 0x9e37 + i as u32 * 0x101,
         };

@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
 use crate::palette::{lin, lin_scaled};
-use crate::worldmap::{is_river_world, GX, GZ};
+use crate::worldmap::is_river_world;
 
 /// Half-width along the bank (the deck's SHORT axis) of a deck.
 const DECK_HALF_Z: f32 = 1.2;
@@ -60,48 +60,50 @@ struct Span {
 fn spans() -> &'static [Span] {
     static SPANS: OnceLock<Vec<Span>> = OnceLock::new();
     SPANS.get_or_init(|| {
-        // 1. Gather every candidate crossing on a coarse grid over the island.
-        let mut cands: Vec<Span> = Vec::new();
-        let mut z = -GZ + 4.0;
-        while z < GZ - 4.0 {
-            let mut x = -GX + 4.0;
-            while x < GX - 4.0 {
-                if let Some(s) = crossing_at(x, z) {
-                    cands.push(s);
-                }
-                x += 2.0;
-            }
-            z += 2.0;
-        }
-        // 2. Pick well-SPREAD crossings: seed with the narrowest, then repeatedly take the
-        //    candidate farthest from every chosen deck (max-min distance, capped at
-        //    MIN_SPACING). Narrowest-first alone clustered every deck on the thinnest
-        //    channels and left the widest river with no bridge at all; spreading by distance
-        //    covers each river — and each stretch of it.
+        // A bridge exists ONLY where a ROAD crosses a river. Take each road→river crossing the road
+        // network reports, snap it to a valid narrow/steppable deck nearby, then de-cluster: drop
+        // any deck within MIN_SPACING of one already kept (two roads fording the same spot → one
+        // bridge). Narrowest-first keeps the cleanest decks. This replaces the old island-wide scan
+        // (which placed well-spread decks at the nicest crossings regardless of any path, so decks
+        // stranded in the open with no road leading to them — "bridges in random places").
+        let mut cands: Vec<Span> = crate::roads::river_crossings()
+            .into_iter()
+            .filter_map(|p| nearest_crossing(p.x, p.y))
+            .collect();
         cands.sort_by(|a, b| a.half.partial_cmp(&b.half).unwrap_or(std::cmp::Ordering::Equal));
         let mut out: Vec<Span> = Vec::new();
-        if let Some(&first) = cands.first() {
-            out.push(first);
-        }
-        while out.len() < MAX_BRIDGES {
-            let next = cands
-                .iter()
-                .map(|c| {
-                    let d = out
-                        .iter()
-                        .map(|s| (s.cx - c.cx).hypot(s.cz - c.cz))
-                        .fold(f32::INFINITY, f32::min);
-                    (c, d)
-                })
-                .filter(|(_, d)| *d >= MIN_SPACING)
-                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-            match next {
-                Some((c, _)) => out.push(*c),
-                None => break,
+        for c in cands {
+            if out.len() >= MAX_BRIDGES {
+                break;
+            }
+            if out.iter().all(|s| (s.cx - c.cx).hypot(s.cz - c.cz) >= MIN_SPACING) {
+                out.push(c);
             }
         }
         out
     })
+}
+
+/// A road's river-crossing midpoint can sit a touch off the channel's narrow axis (the centreline
+/// crosses on the diagonal), so probe at the point and then on a small expanding ring for the first
+/// spot that validates as a real deck. `None` if nothing nearby is a clean crossing (e.g. the road
+/// forded a too-wide span) — then that crossing simply gets no bridge.
+fn nearest_crossing(x: f32, z: f32) -> Option<Span> {
+    if let Some(s) = crossing_at(x, z) {
+        return Some(s);
+    }
+    let mut r = 1.0;
+    while r <= 4.0 {
+        let mut a = 0.0;
+        while a < std::f32::consts::TAU {
+            if let Some(s) = crossing_at(x + r * a.cos(), z + r * a.sin()) {
+                return Some(s);
+            }
+            a += std::f32::consts::FRAC_PI_4;
+        }
+        r += 1.0;
+    }
+    None
 }
 
 /// If `(x, z)` is river water on a clean, *useful*, *walkable* narrow crossing, return the centred
@@ -346,22 +348,20 @@ fn deck_mesh(half_x: f32, seed: u32) -> Mesh {
 mod tests {
     use super::*;
 
-    /// Every river must end up with at least one deck — the greedy narrowest-first pick is
-    /// allowed to favour clean crossings, but a whole river with no bridge strands invader
-    /// camps (and players) on long detours. Checked generically against the actual river
-    /// centrelines: each course must have a deck within reach of one of its sample points.
+    /// The core invariant of the rework: a bridge exists ONLY where a path crosses the river. Every
+    /// placed deck must therefore sit on a road — its centre reads as on-road in the baked field.
+    /// (A river no road crosses simply gets no deck now; that's intended — a bridge to nowhere was
+    /// the bug. At least one crossing is bridged, since the trunks fan out across the island.)
     #[test]
-    fn every_river_gets_a_bridge() {
+    fn every_bridge_is_on_a_road() {
         let s = spans();
-        assert!(s.len() >= 3, "expected at least one bridge per river, got {}", s.len());
-        for (ri, river) in crate::worldmap::rivers_world().into_iter().enumerate() {
-            let nearest = river
-                .iter()
-                .map(|&(rx, rz)| s.iter().map(|b| (b.cx - rx).hypot(b.cz - rz)).fold(f32::INFINITY, f32::min))
-                .fold(f32::INFINITY, f32::min);
+        assert!(!s.is_empty(), "expected at least one road→river crossing to be bridged, got 0");
+        for b in s {
             assert!(
-                nearest < 18.0,
-                "river {ri} has no bridge within reach (nearest deck {nearest:.1} world units)"
+                crate::roads::on_road(b.cx, b.cz),
+                "bridge at ({:.1}, {:.1}) is not on a road — bridges must only sit where a path crosses",
+                b.cx,
+                b.cz
             );
         }
     }

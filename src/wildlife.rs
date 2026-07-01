@@ -277,6 +277,15 @@ fn animal_brain(
                     }
                 }
             }
+            // Drop any target the predator can't actually WALK to because a river cuts between
+            // them. Predators move by local steering (no A*/bridge-finding), so a target across the
+            // water just parks them at the bank forever (the "wolves stuck at the far shore" bug).
+            // Straight-line probe: impassable if it crosses carved water with no bridge deck on it.
+            if let Some((tp, _, _)) = tgt {
+                if river_between(a.pos, tp) {
+                    tgt = None;
+                }
+            }
             if let Some((tp, prey, npc)) = tgt {
                 // Entering the hunt (idle/graze → hunt): a low stalk-growl, the audible "you've
                 // been seen" tell before the charge. Only on the transition edge so a sustained
@@ -775,6 +784,23 @@ fn pick_wander(a: &mut Animal) {
     a.target = a.home + Vec2::new(ang.cos() * r, ang.sin() * r);
     a.mode = Mode::Wander;
     a.timer = rng_range(&mut a.rng, 4.0, 9.0);
+}
+
+/// Does an IMPASSABLE river cut the straight line from `from` to `to`? Predators steer locally
+/// (no A*, no bridge-finding), so a target on the far bank strands them at the shore. A point is
+/// impassable water when the terrain reads no ground AND there's no bridge deck to stand on — the
+/// same footing test movers use. Sampled coarsely (~1.5u) — good enough to reject cross-river hunts.
+fn river_between(from: Vec2, to: Vec2) -> bool {
+    let steps = (from.distance(to) / 1.5).ceil().max(1.0) as i32;
+    for i in 1..steps {
+        let p = from.lerp(to, i as f32 / steps as f32);
+        if crate::worldmap::ground_at_world(p.x, p.y).is_none()
+            && crate::bridges::deck_y_at(p.x, p.y).is_none()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// The species that HUNT the hero (chase + bite) rather than fleeing → `(aggro radius, bite

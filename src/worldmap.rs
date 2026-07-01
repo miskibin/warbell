@@ -224,14 +224,14 @@ struct Region {
 }
 
 const REGIONS: [Region; 6] = [
-    Region { x: 26.0, z: 24.0, r: 31.0, biome: TB::Snow, peak: 10 }, // NW snow massif
-    // NE dunes — shifted NW (112,28 → 101,10), same radius, so the dune field grows toward the snow
-    // massif and fills the wide grass corridor that ran along the top coast (north reach now hits
-    // the beach). It keeps a natural grass seam between snow and desert (~13 base at z24) instead of
-    // swallowing it. Biased NORTH on purpose: the castle sits at base z54, so a blob centred lower
-    // would bulge its southern arc onto the keep — at z10 the dunes bottom out near z28 (x72),
-    // leaving the castle safe-ring (south edge ~z36) on clean grass.
-    Region { x: 101.0, z: 10.0, r: 34.0, biome: TB::Desert, peak: 0 },
+    Region { x: 26.0, z: 24.0, r: 33.0, biome: TB::Snow, peak: 10 }, // NW snow massif (r 31→33: shrink the empty snow↔desert grass seam)
+    // NE dunes — shifted NW (112,28 → 101,10), so the dune field grows toward the snow massif and
+    // fills the grass corridor along the top coast. Radius 34→38 to close the empty grass seam
+    // between snow and desert (players noted the wide bare strip there): with snow at r33 the seam
+    // shrinks from ~10 to ~4 base, and region_at's wobble/fray makes the two biomes meet on an
+    // organic edge instead of a clean grass gutter. Still biased NORTH so the dunes don't bulge onto
+    // the keep — at z10 the south reach is ~z48, clear of the castle safe-ring (south edge ~z36).
+    Region { x: 101.0, z: 10.0, r: 38.0, biome: TB::Desert, peak: 0 },
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
     // the safe-zone fray instead of a 33-unit trek). Raised to a real MOUNTAIN height (the tallest
     // biome by far) — `terrace_inland` relaxes the inland faces to ≤1-class steps so the nav-grid
@@ -611,6 +611,13 @@ fn is_lake(x: f32, z: f32) -> bool {
     dx * dx + dz * dz < 1.0
 }
 
+/// Shallow marsh pools ("rozlewiska") — the lowest dips of the swamp fill with standing water so the
+/// marsh reads as wetland, not a flat green sheet. Blobby low-frequency noise thresholded so pools
+/// are occasional puddles, not a flooded plain. Only consulted inside a swamp region (`classify`).
+fn swamp_pool(x: f32, z: f32) -> bool {
+    noise_a(x * 0.34 - 3.0, z * 0.34 + 6.0) + noise_b(x * 0.55 + 2.0, z * 0.55 - 1.0) * 0.5 < -0.7
+}
+
 fn edge_fray(x: f32, z: f32) -> f32 {
     (x * 0.5 + z * 0.35 + 1.3).sin() * 1.1
         + (x * 0.9 - z * 0.82 + 4.0).sin() * 1.6
@@ -802,12 +809,24 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         if reg.biome == TB::Swamp && dc < SAFE_R {
             return Some((TB::Grass, 1));
         }
+        // Marsh pools: the lowest swamp dips fill with water (carved like a river → sea shows
+        // through). Roads/nudge already keep off water, so paths route around the puddles.
+        if reg.biome == TB::Swamp && swamp_pool(x, z) {
+            return None;
+        }
         if reg.peak > 0 {
             return Some((reg.biome, mountain_height(x, z, reg)));
         }
-        // Flat biomes still get the inland-hills field: dunes in the desert, wooded rises in
-        // the forest; the swamp stays marsh-flat.
-        let max = if matches!(reg.biome, TB::Swamp | TB::Lava) { 1 } else { 3 };
+        // Flat biomes get the inland-hills field: dunes in the desert, wooded rises in the forest.
+        // The swamp now gets gentle micro-relief too (max 2 = low hummocks between the pools) so it
+        // reads as bumpy wetland instead of a dead-flat sheet; lava stays perfectly flat.
+        let max = if reg.biome == TB::Lava {
+            1
+        } else if reg.biome == TB::Swamp {
+            2
+        } else {
+            3
+        };
         return Some((reg.biome, inland_hills(x, z, dc, max)));
     }
     let h = inland_hills(x, z, dc, 4);
@@ -1230,7 +1249,12 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     let wz = z * MAP_SCALE - GZ;
     let road_s = crate::roads::road_strength(wx, wz);
     if road_s > 0.0 {
-        col = mix3(col, lin3(p.road_dirt), road_s * 0.85);
+        // Rock ground is dark grey-slate, so the warm path tint barely showed — trails through the
+        // mountains read as invisible. On rock, blend HARDER and toward a lighter packed-earth so
+        // the road pops against the crags; other biomes keep the softer authored tint.
+        let rocky = matches!(tile_biome_world(wx, wz), Some(Biome::Rocky));
+        let (road_col, road_blend) = if rocky { (0xba9057u32, 0.95) } else { (p.road_dirt, 0.85) };
+        col = mix3(col, lin3(road_col), road_s * road_blend);
     }
     let yard_s = crate::castle::yard_strength(wx, wz);
     if yard_s > 0.0 {
@@ -1396,7 +1420,11 @@ pub fn build_step(
         26 => crate::bridges::populate(commands, meshes, std_mats),
         27 => crate::distant_isles::build(commands, meshes, std_mats),
         28 => crate::rival::build(commands, meshes, images, std_mats),
-        29 => bs_swamp_pools(commands, meshes, std_mats),
+        // 29 was bs_swamp_pools — flat 2-D teal water DISCS laid on the marsh floor. Players read
+        // them as ugly "green/teal plates" (and they landed on paths). Removed: the swamp now has
+        // real CARVED marsh pools (`swamp_pool` in `classify` → actual water depressions) plus the
+        // algae ground tint, which give the wet read in 3-D instead of a flat decal.
+        29 => {}
         _ => {}
     }
 }
@@ -1647,57 +1675,6 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
         &|x, z| tile_top_y_world(x, z),
         meadow_affinity,
     );
-}
-
-/// Standing bog-water pools scattered across the swamp — the surest "wet" signal (the ground sheen
-/// alone reads subtly). Flat glossy dark-teal discs laid a hair above the muck: low roughness + the
-/// IBL/sun glint make them read as still water between the reeds/lily-pads (player: "mokre bagno").
-/// Swamp tiles only (not the Blight, whose mire is trampled dry earth); kept off build plots/bridges.
-fn bs_swamp_pools(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
-    let water_mat = std_mats.add(StandardMaterial {
-        // Dark murky teal; semi-transparent so the muck tints through at the rim like shallow water.
-        base_color: Color::srgba(0x21 as f32 / 255.0, 0x33 as f32 / 255.0, 0x2c as f32 / 255.0, 0.86),
-        perceptual_roughness: 0.12, // glassy → mirrors the sky/sun = the "wet" read
-        reflectance: 0.6,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
-        ..default()
-    });
-    // A unit disc lying flat (normal +Y); scaled per-pool. Circle's mesh faces +Z, so tip it up.
-    let disc: Vec<Handle<Mesh>> = (0..3)
-        .map(|v| meshes.add(Circle::new(1.0).mesh().resolution(10 + v * 2).build()))
-        .collect();
-    for iz in 0..ROWS {
-        for ix in 0..COLS {
-            let Some((TB::Swamp, h)) = tile_at(ix, iz) else { continue };
-            let mut rng = tileworld_core::rng::Mulberry32::new((iz * COLS + ix) as u32 ^ 0x9a7d_31b1);
-            if rng.next() > 0.24 {
-                continue; // ~1 pool per ~4 swamp tiles → frequent but not a solid sheet
-            }
-            let wx = ix as f32 - GX + 0.5 + (rng.next() as f32 - 0.5) * 0.6;
-            let wz = iz as f32 - GZ + 0.5 + (rng.next() as f32 - 0.5) * 0.6;
-            if crate::bridges::near_bridge(wx, wz, 0.6)
-                || crate::camps::in_clearing(wx, wz)
-                || crate::town::near_build_plot(wx, wz)
-            {
-                continue;
-            }
-            let r = 0.55 + rng.next() as f32 * 0.95;
-            let v = (rng.next() * 3.0) as usize % 3;
-            commands.spawn((
-                Mesh3d(disc[v].clone()),
-                MeshMaterial3d(water_mat.clone()),
-                Transform {
-                    // A hair above the tile top so it films over the muck without z-fighting.
-                    translation: Vec3::new(wx, tile_top_y_world(wx, wz) + 0.03, wz),
-                    rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
-                        * Quat::from_rotation_z(rng.next() as f32 * std::f32::consts::TAU),
-                    scale: Vec3::new(r, r * (0.8 + rng.next() as f32 * 0.5), 1.0),
-                },
-                crate::biome::BiomeEntity,
-            ));
-        }
-    }
 }
 
 fn config_for(b: Biome) -> BiomeConfig {

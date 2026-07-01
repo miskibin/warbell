@@ -88,6 +88,22 @@ fn region_center(b: Biome) -> Vec2 {
 const WARDENS: [Biome; 5] =
     [Biome::Forest, Biome::Snow, Biome::Rocky, Biome::Desert, Biome::Swamp];
 
+/// Radius (world units) of the open glade kept TREE-FREE around each warden's lair. Wardens steer
+/// around solid trunks (they never phase through them), so a boss fought in dense woods shuffles
+/// between trees while the hero is blocked reaching it — the fight reads as broken. Clearing a glade
+/// at the lair gives an open arena. A touch wider than [`ROAM_RADIUS`] so the warden's whole passive
+/// roam stays clear. NB: only TRUNK trees (the blockers) are skipped in the scatter — low cover
+/// (bushes, walk-through rocks, grass, flowers) is KEPT, so the glade reads as a natural clearing,
+/// not a bald disc.
+pub const GLADE_R: f32 = 16.0;
+
+/// Is world `(wx, wz)` inside any warden's glade? The biome scatter pass calls this to drop
+/// trunk-trees (routing them to a low bush instead) so no tree-blocker lands in a boss arena.
+pub fn in_warden_glade(wx: f32, wz: f32) -> bool {
+    let p = Vec2::new(wx, wz);
+    WARDENS.iter().any(|&b| region_center(b).distance_squared(p) < GLADE_R * GLADE_R)
+}
+
 /// How a warden's signature attack resolves.
 #[derive(Clone, Copy, PartialEq)]
 enum Signature {

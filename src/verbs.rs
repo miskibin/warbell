@@ -1007,6 +1007,11 @@ fn populate_apple_orchard(
             || crate::camps::in_clearing(x, z)
             || crate::castle::in_footprint(x, z)
             || crate::bridges::near_bridge(x, z, 1.0)
+            // Keep orchard trees off the paths (this special orchard pass used to skip the road
+            // check the main scatter does, so apple trees landed dead-centre on a trail — they
+            // read as a walkable path but block it) and out of the warden glade.
+            || crate::roads::on_road(x, z)
+            || crate::boss::in_warden_glade(x, z)
         {
             continue;
         }

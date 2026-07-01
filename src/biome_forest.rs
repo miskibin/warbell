@@ -52,7 +52,11 @@ pub fn config() -> BiomeConfig {
         sun_pos: Vec3::new(16.0, 40.0, 10.0),
 
         seed: 2027,
-        tree_min_dist: 2.7,
+        // Tightened 2.7→2.5 so the +20% tree roll below actually PACKS denser woodland rather than
+        // overflowing into fallback bushes (a higher chance with the old spacing just drops more
+        // "too close" trees). Off-path forest is meant to be a thicket now — the new capillary
+        // trails (roads.rs) keep it threaded so the density never traps you.
+        tree_min_dist: 2.5,
         classes: vec![
             // Trees: broadleaf / birch / pine / columnar poplar / autumn-canopy / dead —
             // each living kind expanded into the TREE_TINTS hue spread (neutral / warm-dry
@@ -77,7 +81,7 @@ pub fn config() -> BiomeConfig {
                     v.push((build_tree_mesh(TreeKind::Dead), 0.06));
                     v
                 },
-                chance: 0.075,
+                chance: 0.09, // +20% (0.075→0.09): a denser home woodland (players wanted thicker forest).
                 // Wider spread than the old (0.85, 1.3): the canopy was reading as one
                 // even-height broccoli wall — silhouette variety beats more trees.
                 scale: (0.72 * TREE_SCALE, 1.42 * TREE_SCALE),
@@ -92,7 +96,7 @@ pub fn config() -> BiomeConfig {
                     .iter()
                     .map(|t| (crate::trees::tint_mesh(build_tree_mesh(TreeKind::Broadleaf), *t), 1.0))
                     .collect(),
-                chance: 0.005,
+                chance: 0.006, // +20% with the canopy (old-growth giants scale up to match).
                 scale: (1.75 * TREE_SCALE, 2.15 * TREE_SCALE),
                 tree: true,
                 block_radius: 0.0,

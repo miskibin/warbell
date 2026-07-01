@@ -83,9 +83,43 @@ Useful anchors for framing (castle at world origin, 1 tile = 1 unit):
 - Hero is small (~0.9u tall after `HERO_SCALE`); a camera ~1.5–2u away at y≈0.8–1.0
   looking at y≈0.45 fills the frame. Orks are ~1.3–1.6u; back off to 4–9u for a group.
 
-### Wide / overview shots — a high god-cam WASHES OUT; don't fight it
+### Whole-island MAP shot — the working recipe (top-down, clouds/haze/cull OFF)
 
-A static `FOREST_CAM` raised up to "see the whole island" reliably renders a flat white/pale
+A clean top-down map of the *entire* island DOES work — but only if you kill the three things
+that wash a naive god-cam out (haze, clouds, distance-cull) and shoot **near-vertical**, not
+oblique. The oblique god-cam fails because its line of sight runs off to the infinite hazed
+horizon; a near-straight-down cam sees only ground a few hundred units away, so turning fog off
+actually clears it. Proven recipe (this is the "zajebisty" island map):
+
+```bash
+BEVY_ASSET_ROOT=$PWD \
+  FOREST_SHOT=/tmp/island.png \
+  FOREST_CAM="0,300,60,0,0,28" \   # near-vertical over map centre; small z-offset avoids the straight-down gimbal
+  FOREST_NOCLOUDS=1 \              # MANDATORY: the y42-80 cloud layer otherwise blankets a top-down
+  FOREST_NOCULL=1 \               # MANDATORY: else distant trees(>~90u)/props(>75u)/cover(>55u) are culled → bare map
+  FOREST_NOHUD=1 \
+  FOREST_QUALITY=low \            # no bloom/DoF/godrays → flat, crisp, un-blown map
+  FOREST_FOG="4000,9000" \        # fog effectively off; only works BECAUSE the view is near-vertical
+  FOREST_TIME=0.28 \
+  timeout 570 xvfb-run -a -s "-screen 0 1600x1600x24" \
+  ./target/debug/tileworld_bevy_forest >/tmp/island.log 2>&1
+```
+
+- **Framing knobs**: `height ~300` + look-at `(0,0,28)` frames the whole island incl. the southern
+  Blight; drop to `height ~60` over a biome centre (near-vertical, e.g. `FOREST_CAM="-70,64,41,-70,1,37"`)
+  for a zoomed **region** map (same clouds/cull/fog flags). Keep the camera↔look-at horizontal
+  offset SMALL (steep) — the moment it tilts oblique the far side hazes to grey again.
+- **The four flags are the whole trick.** Miss `FOREST_NOCLOUDS` → white cloud-tops in frame;
+  miss `FOREST_NOCULL` → only the patch under the look-point has trees/rocks, rest reads bald;
+  miss `FOREST_QUALITY=low` → midday bloom blows out snow/sand; miss the fat `FOREST_FOG` → distant
+  terrain greys out. All four are capture-only — none changes the game.
+- Pale grey blocks at the frame corners over sea = the **distant backdrop isles** (`distant_isles.rs`)
+  on the horizon, not terrain — ignore them (or `FOREST_NOISLES=1` to drop them).
+
+### Wide / OBLIQUE overview shots — a high god-cam WASHES OUT; don't fight it
+
+(For a straight-down MAP use the recipe just above. This is about *oblique* high cams.) A static
+oblique `FOREST_CAM` raised up to "see the whole island" reliably renders a flat white/pale
 frame — three things compound at altitude and none is fixed by your change:
 - **Atmospheric haze** over the long view distance fogs distant terrain to the sky colour.
   `FOREST_FOG="clear,full"` (bigger numbers = thinner) only nibbles at it — it does **not**

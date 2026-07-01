@@ -38,6 +38,15 @@ const FOG_FULL: f32 = 127.0; // was 190 — pulled ~1/3 closer
 const SCATTER_DENSITY: f32 = 1.35;
 const COVER_DENSITY: f32 = 1.8;
 
+/// Terrain-aware TREE thinning. Real forests don't carpet cliffs — trees thin on steep faces and
+/// bare rock shows through. We estimate the local ground gradient and, above [`SLOPE_FREE`] (gentle
+/// rolling hills pass untouched), scale tree density down toward [`SLOPE_TREE_FLOOR`]. Only TREE
+/// classes are thinned; low cover/rocks stay, so a steep face reads as bare crag with a little scrub
+/// rather than a floating forest on a wall. (Gradient is world-Y per world-unit; `GROUND_STEP`=0.5.)
+const SLOPE_FREE: f32 = 0.35;
+const SLOPE_TREE_THIN: f32 = 1.2;
+const SLOPE_TREE_FLOOR: f32 = 0.1;
+
 /// Fog knobs: `FOREST_FOG="clear,full"` overrides at runtime (no rebuild). `clear` = the
 /// fully-clear radius; `full` = distance the fog reaches the horizon colour (smaller = thicker).
 fn fog_dist() -> (f32, f32) {
@@ -941,11 +950,22 @@ pub fn scatter_region(
                 continue;
             }
             let py = height_fn(cx, cz);
+            // Terrain-aware tree thinning: estimate the local ground gradient and drop TREE density
+            // on steep ground (cliffs, mountain faces, coastal ridges) so woods thin toward bare
+            // crag instead of carpeting a wall. Gentle rolling hills (< SLOPE_FREE) are untouched.
+            let tree_mult = {
+                let d = 1.6;
+                let gx = height_fn(cx + d, cz) - py; // forward diff off the already-sampled py (cheap)
+                let gz = height_fn(cx, cz + d) - py;
+                let slope = (gx * gx + gz * gz).sqrt() / d;
+                (1.0 - (slope - SLOPE_FREE).max(0.0) * SLOPE_TREE_THIN).clamp(SLOPE_TREE_FLOOR, 1.0)
+            };
             let roll = r.next();
             let mut acc = 0.0;
             let mut chosen: Option<&ClassHandles> = None;
             for c in &classes {
-                acc += c.chance * SCATTER_DENSITY;
+                let chance = if c.tree { c.chance * tree_mult } else { c.chance };
+                acc += chance * SCATTER_DENSITY;
                 if roll < acc {
                     chosen = Some(c);
                     break;
@@ -956,9 +976,13 @@ pub fn scatter_region(
                 let s = r.range(c.scale.0, c.scale.1);
                 if c.tree {
                     let p = Vec2::new(cx, cz);
-                    if tree_pts.iter().any(|q| q.distance_squared(p) < min_d2) {
-                        // Too close — drop the fallback prop (e.g. a bush) here instead. It's a
-                        // passive non-tree prop, so it merges into the chunk's props bucket.
+                    // Skip trunk-trees that fall inside a warden glade (the boss arena must stay
+                    // open) OR too close to a neighbour — drop the fallback prop (a bush) there
+                    // instead, so the spot keeps low cover and the glade doesn't read bald.
+                    if crate::boss::in_warden_glade(cx, cz)
+                        || tree_pts.iter().any(|q| q.distance_squared(p) < min_d2)
+                    {
+                        // Passive non-tree prop, so it merges into the chunk's props bucket.
                         if let Some(fb) = fallback {
                             let fi = pick_weighted(&fb.weights, r.next());
                             let fs = r.range(fb.scale.0, fb.scale.1);
@@ -1052,7 +1076,9 @@ pub fn scatter_region(
                     let z = gz + r.next();
                     if (river_guard && crate::water::on_river(x, z))
                         || !mask(x, z)
-                        || crate::roads::on_road(x, z)
+                        // near_road (not on_road): flat cover discs are wide, so reject any whose
+                        // body would overhang a trail even if its centre is just off it.
+                        || crate::roads::near_road(x, z, 0.9)
                     {
                         continue;
                     }

@@ -15,13 +15,19 @@
 //!
 //! Design: `docs/superpowers/specs/2026-06-30-organic-road-network-design.md`.
 
-use crate::worldmap::{ground_at_world, GX, GZ, MAP_SCALE};
+use crate::worldmap::{ground_at_world, is_river_world, GX, GZ, MAP_SCALE};
 use bevy::prelude::*;
 use std::sync::OnceLock;
 
 // ── Tunables ──────────────────────────────────────────────────────────────────────
-/// Road half-width (world units). Full-strength core within [`EDGE`]·HALF_W, fading to 0 at HALF_W.
-const HALF_W: f32 = 1.8;
+/// ARTERY half-width (world units) — the wide main roads (trunks / ring / landmark+camp spurs).
+/// Full-strength core within [`EDGE`]·HALF_W, fading to 0 at HALF_W. Also the brush's MAX radius
+/// (arteries are the widest curve), so [`RoadField::stamp`]'s bounding box / the pad use it.
+const HALF_W: f32 = 2.4;
+/// CAPILLARY half-width — the thin secondary trails that branch off the arteries to thread the
+/// space between main routes, so (almost) everywhere is reachable by *some* path without the map
+/// becoming all-road. Deliberately ~half an artery: a visible footpath, not a highway.
+const CAP_HALF_W: f32 = 1.15;
 /// Fraction of the half-width that stays full-strength packed earth before the soft edge begins.
 const EDGE: f32 = 0.45;
 /// Scatter (trees/props/cover) is rejected where the field exceeds this — keeps paths bare. Kept
@@ -33,16 +39,35 @@ const GROW_CUTOFF: f32 = 0.12;
 const SPEED_BONUS: f32 = 0.15;
 /// Below this field strength a road gives no speed help (so the soft fringe doesn't buff you).
 const SPEED_CUTOFF: f32 = 0.25;
-/// One wander waypoint roughly every N units of an edge (more → curvier).
-const WAYPOINT_SPACING: f32 = 15.0;
+/// One wander waypoint roughly every N units of an edge (more → curvier). Raised 15→20: the old
+/// spacing put a wander point every ~15u which, with the old amplitude, read as *too* serpentine —
+/// players complained the paths were a maze. Fewer control points = longer, calmer organic sweeps.
+const WAYPOINT_SPACING: f32 = 20.0;
 /// Lateral wander amplitude (world units), tapered to 0 at both endpoints so curves hit their nodes.
-const JITTER: f32 = 7.0;
+/// Dialled 7.0→4.5: still curves organically (it never goes straight), just stops snaking so hard
+/// that a short hop between two places becomes a long detour.
+const JITTER: f32 = 4.5;
 /// Centreline rasterisation grid cell (world units). Smaller = crisper edges, more memory.
 const CELL: f32 = 0.6;
-/// At most this many short spurs branch off the trunk/ring network to nearby minor POIs (camps).
-const SPUR_CAP: usize = 6;
-/// A spur is only drawn if its camp sits within this distance of the existing network.
-const SPUR_MAX_LEN: f32 = 36.0;
+/// At most this many spurs branch off the trunk/ring network to minor POIs (camps). Raised 6→12 so
+/// far-flung camps — e.g. the ork camp out at the rocky map edge — actually get a road, not just the
+/// handful nearest the network.
+const SPUR_CAP: usize = 12;
+/// A spur is only drawn if its camp sits within this distance of the existing network. Raised 36→70
+/// so an edge-of-map camp in the mountains still connects instead of being left roadless.
+const SPUR_MAX_LEN: f32 = 70.0;
+
+// ── Capillary network (thin space-filling trails) ───────────────────────────────────
+/// Sprout a capillary off an artery roughly every N units of arc length (jittered). Raised 21→30
+/// (and the recursive second-generation forking dropped) after the first pass read as a *random*
+/// thicket of stubs: fewer, single, clean side-trails that clearly lead off the road look
+/// purposeful, not like noise — while still putting most of the woods a short walk from a path.
+const CAP_SPACING: f32 = 30.0;
+/// Capillary branch length range (world units) — long enough to push into the woods between
+/// arteries, short enough to stay a side-trail, not a second trunk.
+const CAP_LEN: (f32, f32) = (15.0, 27.0);
+/// Hard cap on total capillaries (safety bound so a future denser network can't explode the bake).
+const CAP_CAP: usize = 160;
 
 // ── Mulberry32 (same deterministic RNG the scatter uses) ────────────────────────────
 struct Rng(u32);
@@ -84,9 +109,10 @@ impl RoadField {
         top * (1.0 - tz) + bot * tz
     }
 
-    /// Max-blend a round brush (radius `HALF_W`, full-strength core `core`) centred at `pt`.
-    fn stamp(&mut self, pt: Vec2, core: f32) {
-        let r = HALF_W;
+    /// Max-blend a round brush (radius `half`, full-strength core `core`) centred at `pt`. The
+    /// half-width is per-curve now (wide arteries vs thin capillaries), so it's passed in.
+    fn stamp(&mut self, pt: Vec2, half: f32, core: f32) {
+        let r = half;
         let minx = (((pt.x - r - self.ox) / CELL).floor() as i32).max(0);
         let maxx = (((pt.x + r - self.ox) / CELL).ceil() as i32).min(self.w as i32 - 1);
         let minz = (((pt.y - r - self.oz) / CELL).floor() as i32).max(0);
@@ -108,10 +134,53 @@ impl RoadField {
     }
 }
 
+/// The built network — `(centreline, half_width)` per curve — cached for the process. BOTH the
+/// rasterised strength field AND bridge placement derive from this, so they agree on where roads
+/// run (a deck only lands where an artery actually crosses a river).
+fn network() -> &'static [(Vec<Vec2>, f32)] {
+    static NET: OnceLock<Vec<(Vec<Vec2>, f32)>> = OnceLock::new();
+    NET.get_or_init(build_curves)
+}
+
 /// Process-lifetime cache. Built on first query (during the ground bake) and reused thereafter.
 fn field() -> &'static RoadField {
     static FIELD: OnceLock<RoadField> = OnceLock::new();
     FIELD.get_or_init(build_field)
+}
+
+/// World-XZ midpoints of every spot where an ARTERY centreline crosses river water. `bridges.rs`
+/// consumes these: a deck is laid at each, so a bridge exists ONLY where a path crosses the river,
+/// and every such crossing gets one. Capillaries are excluded — they're kept off the water (no
+/// orphan path plunging into a river without a deck), so only the wide main routes get bridged.
+pub fn river_crossings() -> Vec<Vec2> {
+    let mut out: Vec<Vec2> = Vec::new();
+    for (c, half) in network() {
+        if *half < HALF_W - 0.01 {
+            continue; // arteries only
+        }
+        // Walk the polyline; each contiguous run of river-water samples is one crossing → its midpoint.
+        let mut wet: Vec<Vec2> = Vec::new();
+        let flush = |wet: &mut Vec<Vec2>, out: &mut Vec<Vec2>| {
+            if !wet.is_empty() {
+                let mid = wet.iter().fold(Vec2::ZERO, |a, &b| a + b) / wet.len() as f32;
+                out.push(mid);
+                wet.clear();
+            }
+        };
+        for w in c.windows(2) {
+            let steps = (w[0].distance(w[1]) / 0.6).ceil().max(1.0) as usize;
+            for s in 0..=steps {
+                let p = w[0].lerp(w[1], s as f32 / steps as f32);
+                if is_river_world(p.x, p.y) {
+                    wet.push(p);
+                } else {
+                    flush(&mut wet, &mut out);
+                }
+            }
+        }
+        flush(&mut wet, &mut out);
+    }
+    out
 }
 
 // ── Public query API (all O(1) field samples) ──────────────────────────────────────
@@ -125,6 +194,17 @@ pub fn road_strength(wx: f32, wz: f32) -> f32 {
 /// scatter pass calls this to keep trees / props / ground-cover off the roads.
 pub fn on_road(wx: f32, wz: f32) -> bool {
     field().sample(wx, wz) > GROW_CUTOFF
+}
+
+/// Is `(wx, wz)` on OR within `pad` of a path? Probes the centre + four cardinal offsets, so a WIDE
+/// flat cover disc (swamp moss/lily "plates") whose CENTRE sits just off the road but whose body
+/// overhangs it is still rejected — `on_road` alone (centre-only) let those plates lap onto trails.
+pub fn near_road(wx: f32, wz: f32, pad: f32) -> bool {
+    on_road(wx, wz)
+        || on_road(wx + pad, wz)
+        || on_road(wx - pad, wz)
+        || on_road(wx, wz + pad)
+        || on_road(wx, wz - pad)
 }
 
 /// Movement multiplier at world `(wx, wz)`: 1.0 off-road, ramping to `1 + SPEED_BONUS` on a
@@ -146,13 +226,15 @@ fn biome_centres() -> [Vec2; 5] {
         .map(|(x, z): (f32, f32)| Vec2::new(x * MAP_SCALE - GX, z * MAP_SCALE - GZ))
 }
 
-/// Pull a wander waypoint back onto walkable land if it strayed onto water/off-map — unless it sits
-/// on a bridge, where crossing the river IS the point. Bounded; falls back to the straight line.
+/// Pull a wander waypoint back onto walkable land if it strayed onto water/off-map. Bounded; falls
+/// back to the straight line. NB: roads no longer special-case bridges here — the dependency now
+/// runs roads → bridges (a deck is placed wherever an artery crosses a river, see [`river_crossings`]),
+/// so the road just keeps its control points on land and the spline crosses narrow channels between
+/// them; the crossing is then bridged.
 fn nudge(p: Vec2, toward: Vec2) -> Vec2 {
     let mut q = p;
     for _ in 0..6 {
-        if ground_at_world(q.x, q.y).is_some() || crate::bridges::near_bridge(q.x, q.y, HALF_W + 1.5)
-        {
+        if ground_at_world(q.x, q.y).is_some() {
             return q;
         }
         q = q.lerp(toward, 0.45);
@@ -160,8 +242,9 @@ fn nudge(p: Vec2, toward: Vec2) -> Vec2 {
     toward
 }
 
-/// Build one organic curve from `a` to `b`: jittered waypoints (tapered at the ends), bridge
-/// centres in the corridor threaded in by position, smoothed through a Catmull-Rom spline.
+/// Build one organic curve from `a` to `b`: jittered waypoints (tapered at the ends), smoothed
+/// through a Catmull-Rom spline. Control points are kept on land; where the spline crosses a narrow
+/// river between them, [`river_crossings`] picks it up and `bridges.rs` lays a deck there.
 fn wander(a: Vec2, b: Vec2, seed: u32) -> Vec<Vec2> {
     let len = a.distance(b);
     let dir = (b - a).normalize_or_zero();
@@ -172,7 +255,7 @@ fn wander(a: Vec2, b: Vec2, seed: u32) -> Vec<Vec2> {
     let n = (len / WAYPOINT_SPACING).floor() as i32;
     let mut rng = Rng(seed);
 
-    // (t, point) controls between the endpoints — jittered waypoints…
+    // (t, point) controls between the endpoints — jittered waypoints, nudged onto land.
     let mut mids: Vec<(f32, Vec2)> = Vec::new();
     for i in 1..=n {
         let t = i as f32 / (n as f32 + 1.0);
@@ -180,16 +263,6 @@ fn wander(a: Vec2, b: Vec2, seed: u32) -> Vec<Vec2> {
         let amp = JITTER * (std::f32::consts::PI * t).sin();
         let off = perp * ((rng.next() * 2.0 - 1.0) * amp);
         mids.push((t, nudge(base + off, base)));
-    }
-    // …and any existing bridge that sits inside this edge's corridor, so a river crossing lands
-    // on a real deck. (Bridges follow the rivers, so this stays correct as rivers are reworked.)
-    let ab = b - a;
-    let len2 = ab.length_squared().max(1e-3);
-    for c in crate::bridges::centers() {
-        let t = (c - a).dot(ab) / len2;
-        if t > 0.05 && t < 0.95 && (a + ab * t).distance(c) < 16.0 {
-            mids.push((t, c));
-        }
     }
     mids.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -229,22 +302,18 @@ fn catmull(ctrl: &[Vec2]) -> Vec<Vec2> {
     out
 }
 
-/// Assemble the whole network — trunks (castle gate → each major place), a ring linking adjacent
-/// biomes, and a few capped spurs to nearby camps — as a list of dense centrelines.
-fn build_curves() -> Vec<Vec<Vec2>> {
+/// Assemble the whole network as `(centreline, half_width)` pairs: wide ARTERIES — trunks (castle
+/// gate → each major place), a ring linking adjacent biomes, landmark + capped camp spurs — plus a
+/// space-filling layer of thin CAPILLARY trails branching off the arteries so nearly everywhere is
+/// within a short walk of a path without the whole island reading as road.
+fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     let gates = crate::castle::gate_centers();
     let biomes = biome_centres();
     let seed = 0x51ED_2A37u32;
     let mut curves: Vec<Vec<Vec2>> = Vec::new();
 
-    // Trunks: each major destination reached from whichever castle gate faces it.
-    let mut majors: Vec<Vec2> = biomes.to_vec();
-    // Stop at the fortress GATE (on the wall line), NOT its CENTRE — a trunk run to the centre
-    // stamped road_dirt straight through the walls and buried the Blight courtyard's beaten-earth
-    // texture under flat path brown ("fortress ground texture gone").
-    majors.push(crate::ork_fortress::GATE);
-    majors.push(crate::rival::RIVAL_CENTRE);
-    for (i, t) in majors.iter().enumerate() {
+    // Trunks: each BIOME centre reached from whichever castle gate faces it.
+    for (i, t) in biomes.iter().enumerate() {
         let gate = *gates
             .iter()
             .min_by(|a, b| a.distance(*t).partial_cmp(&b.distance(*t)).unwrap())
@@ -259,6 +328,22 @@ fn build_curves() -> Vec<Vec<Vec2>> {
         let a = ring[i];
         let b = ring[(i + 1) % ring.len()];
         curves.push(wander(a, b, seed ^ (0x00B5_0000 + i as u32)));
+    }
+
+    // Fortress + rival keep: reached as a SPUR off the NEAREST existing road, NOT a separate gate
+    // trunk. Both sit in/near the NE desert, so a full trunk from a gate to each ran nearly PARALLEL
+    // to the desert biome trunk — the "double path" across the desert between our castle and the
+    // rival keep. Branching each off the closest road gives one clean fork instead. (Fortress stops
+    // at its GATE on the wall line, not its centre, so road_dirt doesn't bury the Blight courtyard.)
+    {
+        let net: Vec<Vec2> = curves.iter().flatten().copied().collect();
+        for (k, t) in [crate::ork_fortress::GATE, crate::rival::RIVAL_CENTRE].into_iter().enumerate() {
+            let near = *net
+                .iter()
+                .min_by(|a, b| a.distance(t).partial_cmp(&b.distance(t)).unwrap())
+                .unwrap();
+            curves.push(wander(near, t, seed ^ (0x00A0_0000 + k as u32)));
+        }
     }
 
     // Landmark spurs: every biome landmark gets its own path off the nearest network point. These
@@ -292,34 +377,103 @@ fn build_curves() -> Vec<Vec<Vec2>> {
         }
         curves.push(wander(near, camp, seed ^ (0x0077_0000 + k as u32)));
     }
-    curves
+
+    // Everything built so far is an ARTERY (wide). Now sprout the thin capillary layer off them,
+    // then tag widths and return the combined typed list.
+    let caps = sprout_capillaries(&curves, seed ^ 0x0CA9_F00D);
+    let mut out: Vec<(Vec<Vec2>, f32)> = curves.into_iter().map(|c| (c, HALF_W)).collect();
+    out.extend(caps.into_iter().map(|c| (c, CAP_HALF_W)));
+    out
+}
+
+/// Build the thin space-filling trails. Walk every artery and, at jittered arc-length intervals,
+/// branch a short trail off into the land beside it (alternating sides). A fraction of those sprout
+/// one shorter second-generation branch off their tip, pushing coverage into the pockets between
+/// arteries — like a river delta. Endpoints are nudged back onto walkable land; degenerate (all-
+/// water) branches are dropped. Capped at [`CAP_CAP`] for a bounded bake.
+fn sprout_capillaries(arteries: &[Vec<Vec2>], seed: u32) -> Vec<Vec<Vec2>> {
+    let mut rng = Rng(seed);
+    let mut caps: Vec<Vec<Vec2>> = Vec::new();
+
+    for (li, line) in arteries.iter().enumerate() {
+        // March along the polyline by arc length, dropping a root every CAP_SPACING (jittered).
+        let mut acc = 0.0;
+        let mut next = CAP_SPACING * (0.4 + rng.next() * 0.6); // random phase per artery
+        let mut ri = 0u32;
+        for w in line.windows(2) {
+            let seg = w[1] - w[0];
+            let seglen = seg.length();
+            if seglen < 1e-3 {
+                continue;
+            }
+            let tan = seg / seglen;
+            let perp = Vec2::new(-tan.y, tan.x);
+            acc += seglen;
+            while acc >= next {
+                if caps.len() >= CAP_CAP {
+                    return caps;
+                }
+                let pt = w[0].lerp(w[1], ((seglen - (acc - next)) / seglen).clamp(0.0, 1.0));
+                // Alternate sides so trails fan out both ways; tilt mostly perpendicular with a
+                // little forward/back lean so they don't all leave at a rigid right angle.
+                let side = if ri & 1 == 0 { 1.0 } else { -1.0 };
+                let tilt = (rng.next() - 0.5) * 1.1;
+                let dir = perp * side + tan * tilt;
+                let salt = (0xC0_0000 ^ (li as u32) << 8) ^ ri;
+                if let Some((poly, _tip)) = cap_branch(&mut rng, pt, dir, seed, salt) {
+                    caps.push(poly);
+                }
+                ri += 1;
+                next += CAP_SPACING * (0.7 + rng.next() * 0.6);
+            }
+        }
+    }
+    caps
+}
+
+/// One short capillary branch from `pt` leaving along `dir`, length in [`CAP_LEN`]. Returns the
+/// built centreline plus its tip (for a possible second generation), or `None` if the endpoint
+/// nudged back onto the start (surrounded by water / off-map), which would be a degenerate stub.
+fn cap_branch(rng: &mut Rng, pt: Vec2, dir: Vec2, seed: u32, salt: u32) -> Option<(Vec<Vec2>, Vec2)> {
+    let len = CAP_LEN.0 + rng.next() * (CAP_LEN.1 - CAP_LEN.0);
+    let end = nudge(pt + dir.normalize_or_zero() * len, pt);
+    if end.distance(pt) < 5.0 {
+        return None;
+    }
+    let poly = wander(pt, end, seed ^ salt.wrapping_mul(0x9E37_79B9));
+    // Capillaries never get a bridge (only arteries are bridged), so a trail must not cross a river
+    // — it would dead-end at the water or read as a path plunging in. Drop any that touches water.
+    if poly.iter().any(|p| is_river_world(p.x, p.y)) {
+        return None;
+    }
+    Some((poly, end))
 }
 
 /// Rasterise every curve into the strength grid (the one-time expensive step).
 fn build_field() -> RoadField {
-    let curves = build_curves();
+    let curves = network();
     let mut lo = Vec2::splat(f32::MAX);
     let mut hi = Vec2::splat(f32::MIN);
-    for c in &curves {
+    for (c, _) in curves {
         for p in c {
             lo = lo.min(*p);
             hi = hi.max(*p);
         }
     }
-    let pad = HALF_W + 3.0;
+    let pad = HALF_W + 3.0; // arteries are the widest brush — pad by the max half-width.
     lo -= pad;
     hi += pad;
     let w = (((hi.x - lo.x) / CELL).ceil() as usize) + 1;
     let h = (((hi.y - lo.y) / CELL).ceil() as usize) + 1;
     let mut f = RoadField { ox: lo.x, oz: lo.y, w, h, data: vec![0.0; w * h] };
 
-    let core = EDGE * HALF_W;
-    for c in &curves {
+    for (c, half) in curves {
+        let core = EDGE * half;
         for win in c.windows(2) {
             let (p0, p1) = (win[0], win[1]);
             let steps = (p0.distance(p1) / (CELL * 0.7)).ceil().max(1.0) as usize;
             for s in 0..=steps {
-                f.stamp(p0.lerp(p1, s as f32 / steps as f32), core);
+                f.stamp(p0.lerp(p1, s as f32 / steps as f32), *half, core);
             }
         }
     }
@@ -352,7 +506,7 @@ mod tests {
     #[test]
     fn stamp_peaks_at_centre_and_decays() {
         let mut f = RoadField { ox: -5.0, oz: -5.0, w: 17, h: 17, data: vec![0.0; 17 * 17] };
-        f.stamp(Vec2::ZERO, EDGE * HALF_W);
+        f.stamp(Vec2::ZERO, HALF_W, EDGE * HALF_W);
         let centre = f.sample(0.0, 0.0);
         let edge = f.sample(HALF_W * 0.9, 0.0);
         let off = f.sample(HALF_W + 2.0, 0.0);

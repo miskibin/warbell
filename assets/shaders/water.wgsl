@@ -32,8 +32,10 @@ struct WaterParams {
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> water: WaterParams;
-// R8 shore-distance field: 0 = land, 1 = ≥ SHORE_MAX tiles offshore (linear-filtered,
-// clamp-to-edge — the border texels are open sea, so off-texture samples read "deep").
+// R8 shore-distance field: 0 = land, 1 = ≥ SHORE_MAX tiles offshore (linear-filtered). Samples
+// OUTSIDE the field's UV [0,1] are forced to "deep" in the fragment (see `in_field`) — the island
+// touches the texture edge at its widest latitude, so relying on clamp-to-edge there smeared a
+// false shallow band across the open sea.
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var shore_tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var shore_samp: sampler;
 
@@ -144,7 +146,12 @@ fn fragment(
 
     // Distance to the nearest land tile, in tiles (0 on land, SHORE_MAX+ offshore).
     let uv = (p - water.region.xy) * water.region.zw;
-    let shore = textureSample(shore_tex, shore_samp, uv).r * SHORE_MAX;
+    // Outside the baked shore field = open ocean → force DEEP. Clamp-to-edge otherwise smears the
+    // texture's border column across the whole off-texture sea: where the island nears the texture
+    // edge (its widest latitude, z≈0) that column holds a small shore distance, so the clamp painted
+    // a bogus shallow+foam BAND straight across the open sea E↔W ("the white stripe through the map").
+    let in_field = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+    let shore = select(SHORE_MAX, textureSample(shore_tex, shore_samp, uv).r * SHORE_MAX, in_field);
     let fx = water.sky_tint.w;
 
     // Authored stylized palette (linear RGB): vivid turquoise lapping the banks,
