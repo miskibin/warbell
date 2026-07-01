@@ -226,7 +226,8 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // around the props instead of walking through them. Sized to the prop's solid ground mass.
     set(notice_board_parts(), Vec3::new(-3.3, 0.0, 4.4), 0.35, DecorGate::Always, Vec2::new(0.7, 0.18));
     set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::new(0.6, 0.3));
-    set(market_parts(), Vec3::new(5.3, 0.0, -2.9), 0.7, DecorGate::Always, Vec2::new(0.9, 0.7));
+    // (The old plaza market-goods pile lived here — removed; the merchant shop by the south gate
+    // (`villagers::shop_parts`) is now the town's single market focal point.)
     set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::new(0.62, 0.2));
     // A few lantern posts along the main lanes (thinned down — the bailey was getting busy).
     for (lx, lz, lyaw) in [
@@ -320,23 +321,6 @@ fn trough_parts() -> Vec<(Mesh, M)> {
         (bx(0.12, 0.14, 0.5, -0.42, 0.07, 0.0), M::Beam),
         (bx(0.12, 0.14, 0.5, 0.42, 0.07, 0.0), M::Beam),
     ]
-}
-
-/// Market goods by the plaza: stacked crates, a hooped barrel, grain sacks, a crop basket.
-fn market_parts() -> Vec<(Mesh, M)> {
-    let mut v: Vec<(Mesh, M)> = Vec::new();
-    v.push((bx(0.5, 0.5, 0.5, 0.0, 0.25, 0.0), M::Wood)); // crate
-    v.push((bx(0.44, 0.44, 0.44, 0.04, 0.72, -0.04), M::Wood)); // crate on top
-    v.push((bake(bx(0.48, 0.48, 0.48, 0.0, 0.24, 0.0), Vec3::new(0.75, 0.0, 0.35), 0.6, Vec3::ONE), M::Wood));
-    v.push((taper(0.24, 0.28, 0.6, 0.3).translated_by(Vec3::new(-0.65, 0.0, 0.3)), M::Wood)); // barrel
-    v.push((cyl(0.29, 0.05, -0.65, 0.15, 0.3), M::Beam)); // hoops
-    v.push((cyl(0.29, 0.05, -0.65, 0.46, 0.3), M::Beam));
-    for (sx, sz) in [(-0.2_f32, 0.7_f32), (0.25, 0.85)] {
-        v.push((taper(0.11, 0.2, 0.4, 0.2).translated_by(Vec3::new(sx, 0.0, sz)), M::Plaster)); // sacks
-    }
-    v.push((cyl(0.22, 0.16, 0.85, 0.08, -0.4), M::Beam)); // basket
-    v.push((bx(0.3, 0.12, 0.3, 0.85, 0.2, -0.4), M::Crop)); // greens in it
-    v
 }
 
 /// A plank bench on two block legs.

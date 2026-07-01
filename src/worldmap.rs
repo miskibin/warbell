@@ -1428,7 +1428,12 @@ pub fn build_step(
         12 => bs_grass_cover(commands, meshes, std_mats),
         13 => state.village_mats = Some(crate::castle::build(commands, meshes, images, std_mats)),
         14 => crate::camps::build(commands, meshes, images, std_mats, creature_mats),
-        15 => crate::villagers::populate(commands, meshes, std_mats, creature_mats),
+        15 => crate::villagers::populate(
+            commands,
+            meshes,
+            state.village_mats.as_ref().expect("castle (phase 13) runs before village props (phase 15)"),
+            creature_mats,
+        ),
         16 => crate::training_dummies::populate(commands, meshes, std_mats),
         17 => crate::wildlife::populate(commands, meshes, creature_mats),
         18 => crate::verbs::populate_ore(commands, meshes, std_mats),

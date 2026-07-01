@@ -21,6 +21,7 @@ use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
 use crate::biped::{BipedDrive, BipedMeshes, BipedRig};
+use crate::castle::{self, Mats, M};
 use crate::creature::{surf, Surf};
 use crate::critters::PartKind;
 use crate::palette::{lin, lin_scaled};
@@ -2086,30 +2087,60 @@ fn spec(kind: Kind, seed: u32, kid: bool) -> VSpec {
 pub fn populate(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    mats: &Mats,
     creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
-    // `mat` dresses the static PROPS (stall/well/woodpile) — they stay on the plain white
-    // material. `body_mat` is the textured creature material the villager BODIES draw against.
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    // `mats` is the castle's shared, procedurally-TEXTURED material set (plank wood, beams, stone,
+    // shingle…) — the static props (shop/well/woodpile) render one entity per `M` slot against it,
+    // exactly like `castle_decor` (auto-batched), so they read as mature as the rest of the bailey.
+    // `body_mat` is the textured creature material the villager BODIES draw against.
+    // `prop` bakes a multi-part prop to a world spot + yaw and spawns each material slot.
+    let mut prop = |commands: &mut Commands, meshes: &mut Assets<Mesh>, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32| {
+        for (m, slot) in parts {
+            commands.spawn((
+                Mesh3d(meshes.add(castle::bake(m, pos, yaw, Vec3::ONE))),
+                MeshMaterial3d(mats.get(slot)),
+                Transform::default(),
+                BiomeEntity,
+            ));
+        }
+    };
     let body_mat = crate::creature::make_creature_material(creature_mats);
     let mut rng: u32 = 0x5117_aced;
     let mut placed: Vec<Vec2> = Vec::new();
     let half = crate::castle::courtyard_half();
 
-    // A little market just outside the south gate: a striped stall (the visible counterpart to the
-    // menu shop). The keep gate is -Z. (No idle trader bodies — only real population walks the town.)
+    // The MERCHANT SHOP just outside the south gate — the visible counterpart to the `T`/`E` shop
+    // panel. A roofed, textured shopfront (see `shop_parts`) with a hanging coin sign + a stationary
+    // merchant behind the counter, so it reads unmistakably as a shop. Its open front faces the
+    // castle (where the player approaches from); `interaction::shop_anchor()` points at `market`.
     let south = crate::castle::gate_centers()[0];
     let market = south + Vec2::new(2.5, -5.0);
     let my = worldmap::ground_at_world(market.x, market.y).unwrap_or(0.0);
-    commands.spawn((
-        Mesh3d(meshes.add(market_stall_mesh())),
-        MeshMaterial3d(mat.clone()),
-        Transform::from_xyz(market.x, my, market.y),
-        BiomeEntity,
-    ));
-    // Solid stall — the 1.8-wide counter + posts block; the hero walks around it.
-    crate::blockers::add_box(market.x, market.y, 0.95, 0.4);
+    // Face the open front toward the castle (origin): from_rotation_y(yaw)*(+Z) points that way.
+    let to_castle = (Vec2::ZERO - market).normalize_or_zero();
+    let shop_yaw = to_castle.x.atan2(to_castle.y);
+    prop(commands, meshes, shop_parts(), Vec3::new(market.x, my, market.y), shop_yaw);
+    // Solid shopfront — counter + posts + back wall block; the hero routes around and stops at the
+    // interaction range to browse. Oriented box (yaw) so it hugs the rotated booth.
+    crate::blockers::add_obb(market.x, market.y, 1.6, 1.05, shop_yaw);
+    // The merchant: a stationary peasant planted behind the counter, facing the open front. Speed 0
+    // + wander 0 + `SceneActor` keep the wander/gather brain off it (same trick as `FOREST_VILLINE`).
+    // Ambient flavour (NOT `town.population`) → not saved, like the pilgrims/kids.
+    {
+        let mpos = market - to_castle * 0.18; // stand right behind the counter (head + shoulders show)
+        let kind = Kind::Peasant { skin: SKIN[2], tunic: 0x8a5a2e, hat: true }; // apron-brown, in a hat
+        let e = spawn(commands, meshes, &body_mat, kind, mpos, mpos, 0.0, 0.0, SCALE, 0x5a1e_00d1, false);
+        let ey = worldmap::ground_at_world(mpos.x, mpos.y).unwrap_or(0.0);
+        commands.entity(e).insert((
+            crate::scenes::SceneActor,
+            Transform {
+                translation: Vec3::new(mpos.x, ey, mpos.y),
+                rotation: Quat::from_rotation_y(shop_yaw),
+                scale: Vec3::splat(SCALE),
+            },
+        ));
+    }
 
     // Two wandering pilgrims who trek between the island's landmarks, hinting the way (see
     // `pilgrim_brain` / `pilgrim_hint`). They start just outside a gate and head off.
@@ -2133,24 +2164,14 @@ pub fn populate(
     let mut spots: Vec<Vec2> = vec![market, Vec2::new(0.0, 3.4)]; // market stall + keep steps
     if let Some(well) = courtyard_spot(&mut rng, half, &placed) {
         let wy = worldmap::ground_at_world(well.x, well.y).unwrap_or(0.0);
-        commands.spawn((
-            Mesh3d(meshes.add(well_mesh())),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(well.x, wy, well.y),
-            BiomeEntity,
-        ));
+        prop(commands, meshes, well_parts(), Vec3::new(well.x, wy, well.y), 0.0);
         crate::blockers::add_box(well.x, well.y, 0.5, 0.5);
         placed.push(well);
         spots.push(well);
     }
     if let Some(pile) = courtyard_spot(&mut rng, half, &placed) {
         let py = worldmap::ground_at_world(pile.x, pile.y).unwrap_or(0.0);
-        commands.spawn((
-            Mesh3d(meshes.add(woodpile_mesh())),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(pile.x, py, pile.y),
-            BiomeEntity,
-        ));
+        prop(commands, meshes, woodpile_parts(), Vec3::new(pile.x, py, pile.y), 0.4);
         crate::blockers::add_box(pile.x, pile.y, 0.6, 0.5);
         placed.push(pile);
         spots.push(pile);
@@ -2203,76 +2224,128 @@ pub fn populate(
     }
 }
 
-/// A small market stall: four posts, a striped awning, a plank counter, and a few goods crates.
-/// One merged vertex-coloured mesh against the shared white material.
-fn market_stall_mesh() -> Mesh {
-    const WOOD: u32 = 0x6b4a2a;
-    const DARK: u32 = 0x4a3322;
-    const RED: u32 = 0xb33a32;
-    const CREAM: u32 = 0xe7d8b0;
-    let mut parts = vec![
-        // counter
-        bx(1.8, 0.5, 0.6, v(0.0, 0.25, 0.0), lin(WOOD)),
-        bx(1.8, 0.08, 0.66, v(0.0, 0.5, 0.0), lin(DARK)),
-    ];
-    // four corner posts
-    for (px, pz) in [(-0.85f32, -0.28f32), (0.85, -0.28), (-0.85, 0.28), (0.85, 0.28)] {
-        parts.push(bx(0.08, 1.3, 0.08, v(px, 0.65, pz), lin(DARK)));
+/// The **merchant shop**: a roofed, open-front timber booth built local (open front +Z, base y=0) on
+/// the castle's shared TEXTURED [`Mats`] — plank counter, thick beam posts, a shingle gable roof, a
+/// striped awning, a low back wall + goods shelf, a hanging **coin sign** (the unmistakable "this is
+/// a shop" read), a pennant, and goods (crates/barrel/sacks/coin stacks/cloth). One entity per `M`
+/// slot, spawned + baked by `populate`'s `prop`. Replaces the old flat white stall.
+fn shop_parts() -> Vec<(Mesh, M)> {
+    use std::f32::consts::FRAC_PI_2;
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    // Counter along the open front (+Z), with a beam top lip.
+    v.push((castle::bx(3.0, 0.9, 0.5, 0.0, 0.45, 0.7), M::Wood));
+    v.push((castle::bx(3.15, 0.09, 0.6, 0.0, 0.92, 0.7), M::Beam));
+    // Four thick corner posts.
+    for (px, pz) in [(-1.5_f32, 0.9_f32), (1.5, 0.9), (-1.5, -0.9), (1.5, -0.9)] {
+        v.push((castle::bx(0.16, 2.1, 0.16, px, 1.05, pz), M::Beam));
     }
-    // striped awning (alternating red/cream slats) tilted forward
-    for s in 0..5 {
-        let c = if s % 2 == 0 { RED } else { CREAM };
-        let z = -0.5 + s as f32 * 0.26;
-        parts.push(tilt_slat(z, c));
-    }
-    // a couple of goods crates on the counter
-    parts.push(bx(0.3, 0.3, 0.3, v(-0.5, 0.65, 0.0), lin(0x8a6a3a)));
-    parts.push(bx(0.26, 0.26, 0.26, v(0.45, 0.63, 0.05), lin(0x9c7a44)));
-    group(parts)
+    // Low back wall + a top framing band + a plank goods shelf against it.
+    v.push((castle::bx(3.0, 1.5, 0.12, 0.0, 0.75, -0.95), M::Plaster));
+    v.push((castle::bx(3.1, 0.16, 0.18, 0.0, 1.5, -0.95), M::Beam));
+    v.push((castle::bx(2.6, 0.08, 0.3, 0.0, 1.05, -0.78), M::Wood));
+    // Shingle gable roof over the whole booth (overhangs front + back).
+    v.push((castle::gable(3.7, 2.5, 0.75, 2.1), M::HouseRoof));
+    // A solid sloped awning panel over the open front (red shingle-cloth) + a cream valance lip
+    // hanging off its front edge — reads as a market awning without the loose-plank look.
+    v.push((
+        castle::flat(
+            Cuboid::new(3.2, 0.06, 0.8)
+                .mesh()
+                .build()
+                .rotated_by(Quat::from_rotation_x(-0.5))
+                .translated_by(Vec3::new(0.0, 1.82, 1.18)),
+        ),
+        M::Roof,
+    ));
+    v.push((
+        castle::flat(
+            Cuboid::new(3.2, 0.22, 0.05)
+                .mesh()
+                .build()
+                .translated_by(Vec3::new(0.0, 1.5, 1.5)),
+        ),
+        M::Plaster,
+    )); // valance lip
+    // Hanging COIN SIGN on a bracket off the right side, reaching out over the front.
+    v.push((castle::bx(0.1, 0.1, 0.7, 1.55, 2.0, 1.35), M::Beam)); // bracket arm
+    v.push((castle::bx(0.04, 0.22, 0.04, 1.55, 1.82, 1.62), M::Iron)); // hanger
+    v.push((castle::bx(0.5, 0.42, 0.05, 1.55, 1.6, 1.62), M::Wood)); // board
+    v.push((
+        castle::flat(
+            Cylinder::new(0.15, 0.04)
+                .mesh()
+                .build()
+                .rotated_by(Quat::from_rotation_x(FRAC_PI_2))
+                .translated_by(Vec3::new(1.55, 1.6, 1.65)),
+        ),
+        M::Gold,
+    )); // coin glyph facing the street
+    // A pennant on the back-left post.
+    v.push((castle::bx(0.05, 0.5, 0.05, -1.5, 2.4, -0.9), M::Beam));
+    v.push((castle::bx(0.34, 0.24, 0.02, -1.31, 2.52, -0.9), M::Banner));
+    // Goods on the counter top (~y 1.0): crates, a sack, coin stacks.
+    v.push((castle::bx(0.36, 0.36, 0.36, -1.05, 1.15, 0.62), M::Wood));
+    v.push((castle::bx(0.3, 0.3, 0.3, -0.62, 1.12, 0.7), M::Wood));
+    v.push((castle::taper(0.12, 0.2, 0.34, 0.0).translated_by(Vec3::new(0.6, 0.97, 0.66)), M::Plaster));
+    v.push((castle::cyl(0.07, 0.06, 0.18, 1.0, 0.7), M::Gold));
+    v.push((castle::cyl(0.07, 0.045, 0.05, 1.0, 0.7), M::Gold));
+    // A hooped barrel on the ground beside the right post.
+    v.push((castle::taper(0.26, 0.3, 0.62, 0.0).translated_by(Vec3::new(1.98, 0.0, 0.5)), M::Wood));
+    v.push((castle::cyl(0.31, 0.05, 1.98, 0.16, 0.5), M::Beam));
+    v.push((castle::cyl(0.31, 0.05, 1.98, 0.48, 0.5), M::Beam));
+    // Shelf goods: two jars + a bolt of dyed cloth across the shelf.
+    v.push((castle::taper(0.06, 0.09, 0.18, 0.0).translated_by(Vec3::new(-0.6, 1.09, -0.8)), M::Plaster));
+    v.push((castle::taper(0.06, 0.09, 0.18, 0.0).translated_by(Vec3::new(-0.2, 1.09, -0.8)), M::Plaster));
+    v.push((castle::log_x(0.08, 0.7, 1.22, -0.8), M::Banner));
+    v
 }
 
-/// A stone well: a squat curb with a dark water hole, two posts, a crossbar, and a bucket.
-fn well_mesh() -> Mesh {
-    const STONE: u32 = 0x8a8f96;
-    const DARKW: u32 = 0x2a3338; // water in the shaft
-    const WOOD: u32 = 0x6b4a2a;
-    const DARK: u32 = 0x4a3322;
-    let parts = vec![
-        bx(0.9, 0.5, 0.9, v(0.0, 0.25, 0.0), lin(STONE)),  // curb
-        bx(0.6, 0.46, 0.6, v(0.0, 0.29, 0.0), lin(DARKW)), // water hole (sits proud of the curb top)
-        bx(0.1, 1.05, 0.1, v(-0.38, 1.0, 0.0), lin(WOOD)), // post
-        bx(0.1, 1.05, 0.1, v(0.38, 1.0, 0.0), lin(WOOD)),  // post
-        bx(0.92, 0.1, 0.12, v(0.0, 1.5, 0.0), lin(DARK)),  // crossbar
-        bx(0.22, 0.24, 0.22, v(0.0, 1.06, 0.0), lin(WOOD)), // hanging bucket
-    ];
-    group(parts)
+/// A stone **well** (textured): squared curb + light-stone rim, dark water, two beam posts under a
+/// little shingle cap, a winch axle, and an iron-banded bucket on a rope.
+fn well_parts() -> Vec<(Mesh, M)> {
+    vec![
+        (castle::bx(1.0, 0.5, 1.0, 0.0, 0.25, 0.0), M::Stone),        // curb
+        (castle::bx(1.08, 0.12, 1.08, 0.0, 0.52, 0.0), M::LightStone), // rim lip
+        (castle::bx(0.62, 0.42, 0.62, 0.0, 0.3, 0.0), M::Slit),       // dark water
+        (castle::bx(0.13, 1.3, 0.13, -0.42, 0.9, 0.0), M::Beam),      // post
+        (castle::bx(0.13, 1.3, 0.13, 0.42, 0.9, 0.0), M::Beam),       // post
+        (castle::bx(0.96, 0.14, 0.16, 0.0, 1.55, 0.0), M::Beam),      // crossbar
+        (castle::gable(1.25, 0.8, 0.4, 1.62), M::HouseRoof),          // shingle cap
+        (castle::log_x(0.05, 0.9, 1.5, 0.0), M::Beam),                // winch axle
+        (castle::bx(0.24, 0.26, 0.24, 0.0, 1.06, 0.0), M::Wood),      // bucket
+        (castle::bx(0.26, 0.06, 0.26, 0.0, 1.12, 0.0), M::Iron),      // iron band
+        (castle::bx(0.03, 0.42, 0.03, 0.0, 1.32, 0.0), M::Beam),      // rope
+    ]
 }
 
-/// A woodpile: stacked logs (boxes lying along Z), a pyramid 3-2-1.
-fn woodpile_mesh() -> Mesh {
-    const LOG: u32 = 0x7a5a32;
-    const LOG2: u32 = 0x6b4a2a;
-    let mut parts = Vec::new();
-    let rows: [(f32, &[f32]); 3] = [(0.15, &[-0.5, 0.0, 0.5]), (0.42, &[-0.25, 0.25]), (0.69, &[0.0])];
-    for (y, xs) in rows {
-        for (i, x) in xs.iter().enumerate() {
-            let c = if i % 2 == 0 { LOG } else { LOG2 };
-            parts.push(bx(0.24, 0.24, 1.0, v(*x, y, 0.0), lin(c)));
+/// A **woodpile** (textured): a 3-2-1 stack of dressed logs between two stakes, plus a chopping
+/// block with an axe sunk in it. Alternating `Wood`/`Beam` hues break up the stack.
+fn woodpile_parts() -> Vec<(Mesh, M)> {
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    for (ri, &(y, n)) in [(0.16_f32, 3i32), (0.45, 2), (0.74, 1)].iter().enumerate() {
+        for k in 0..n {
+            let z = (k as f32 - (n - 1) as f32 / 2.0) * 0.3;
+            let m = if (ri + k as usize) % 2 == 0 { M::Wood } else { M::Beam };
+            v.push((castle::log_x(0.15, 1.25, y, z), m));
         }
     }
-    group(parts)
-}
-
-/// One awning slat, tilted forward over the counter at row offset `z`.
-fn tilt_slat(z: f32, c: u32) -> Mesh {
-    tinted(
-        Cuboid::new(1.9, 0.05, 0.28)
-            .mesh()
-            .build()
-            .rotated_by(Quat::from_rotation_x(-0.35))
-            .translated_by(v(0.0, 1.4 + z * 0.18, z)),
-        lin(c),
-    )
+    for sx in [-0.68_f32, 0.68] {
+        v.push((castle::bx(0.1, 0.95, 0.1, sx, 0.47, 0.0), M::Beam)); // end stake
+    }
+    // Chopping block + axe beside the pile.
+    v.push((castle::cyl(0.28, 0.5, 1.0, 0.25, 0.35), M::Wood));
+    v.push((
+        castle::flat(
+            Cuboid::new(0.05, 0.5, 0.05)
+                .mesh()
+                .build()
+                .rotated_by(Quat::from_rotation_z(0.4))
+                .translated_by(Vec3::new(1.0, 0.62, 0.35)),
+        ),
+        M::Wood,
+    )); // axe haft
+    v.push((castle::bx(0.16, 0.13, 0.06, 0.87, 0.8, 0.35), M::Iron)); // axe head
+    v
 }
 
 /// Reject-sample an open courtyard tile (inside the walls, off the keep/houses, spread out).
