@@ -188,14 +188,20 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // `foot` = local collision half-extents `(hw, hd)` for the set piece, rotated by `yaw`; a
     // non-positive extent registers no collision (decorative-only). `sync_decor` puts the box in
     // once the piece is shown. Attached to the FIRST part only so the merged piece gets one box.
-    // Very small props (thin posts/poles — lanterns, the guild banner) carry NO collision: a
-    // 0.14-wide post snags the hero for no reason. Only props with a real footprint block; below
-    // this half-extent a piece is decorative-only and you slip right past it.
+    // A prop blocks the hero only if its footprint is BOTH non-thin AND chunky by area. Two floors:
+    //  * MIN_SOLID (half-extent) drops THIN props — posts/poles/boards (lanterns, guild banner,
+    //    notice board): a 0.14-wide post snags the hero for no reason.
+    //  * MIN_SOLID_AREA (hw*hd) drops SMALL-but-square standing props — the corner braziers and the
+    //    weapon-display pegs. These read as furniture but are tiny; players kept walking into them
+    //    in the dark for no gameplay payoff. By footprint area they now register nothing, so you
+    //    slip right past. Chunky props (bench, trough, woodpile, market, shrine…) clear both floors
+    //    and stay solid.
     const MIN_SOLID: f32 = 0.2;
+    const MIN_SOLID_AREA: f32 = 0.09;
     let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
         let vis = if matches!(gate, DecorGate::Always) { Visibility::Inherited } else { Visibility::Hidden };
-        let solid =
-            (foot.x >= MIN_SOLID && foot.y >= MIN_SOLID).then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
+        let solid = (foot.x >= MIN_SOLID && foot.y >= MIN_SOLID && foot.x * foot.y >= MIN_SOLID_AREA)
+            .then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
         for (i, (m, slot)) in parts.into_iter().enumerate() {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(bake(m, pos, yaw, Vec3::ONE))),
@@ -237,8 +243,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // Laundry line = cloth hung overhead on a string between two thin posts — you walk UNDER it.
     // No collision (a 2.6-wide box across the lane just walls off the courtyard for no reason).
     set(laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1), Vec2::ZERO);
-    set(garden_parts(), Vec3::new(4.2, 0.0, 9.4), -0.2, DecorGate::House(6), Vec2::new(0.6, 0.48));
-    set(laundry_parts(), Vec3::new(10.0, 0.0, 10.2), -0.08, DecorGate::House(7), Vec2::ZERO);
+    // (Far-side duplicate garden + laundry cut — the bailey was over-dressed with junk stands.)
 
     // ── Upgrade set pieces ───────────────────────────────────────────────────────
     // The armory corner west of the plaza: racked spears + shields + a leather stand (tier 1),
