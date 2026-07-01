@@ -119,6 +119,12 @@ pub(crate) struct SfxBank {
     /// Heavy-beast bite SFX (bear/croc/golem). Two trimmed bear attack-impact roars
     /// (`bear-bite-1/2.ogg`) — deeper + louder than the snarls, picked at random per bite.
     beast_roars: Vec<Handle<AudioSource>>,
+    /// Ambush-snowman SLAM SFX (`snowman-{1,2}.ogg`) — two crunchy packed-snow attack grunts,
+    /// picked at random + pitch-jittered per slam.
+    snowman: Vec<Handle<AudioSource>>,
+    /// Ambush-snowman WAKE SFX (`snowman-wake-{1,2}.ogg`) — an evil snowman groaning up from a long
+    /// frozen sleep; picked at random when a dormant snowman lurches to life.
+    snowman_wake: Vec<Handle<AudioSource>>,
 }
 
 pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
@@ -163,6 +169,8 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
         warp_cast: asset.load("audio/warp-cast.ogg"),
         beast_snarls: ["audio/wolf-bite.ogg"].iter().map(|f| asset.load(*f)).collect(),
         beast_roars: ["audio/bear-bite-1.ogg", "audio/bear-bite-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        snowman: ["audio/snowman-1.ogg", "audio/snowman-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        snowman_wake: ["audio/snowman-wake-1.ogg", "audio/snowman-wake-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
     });
 }
 
@@ -364,6 +372,21 @@ pub(crate) fn play_cues(
                 if let Some(h) = stings.handle(Sting::Thunder) {
                     one_shot(&mut commands, h, Sting::Thunder.volume() * sfx, jitter(&mut seed, 0.12));
                 }
+            }
+            // A dormant snowman lurching to life — a dedicated "evil snowman waking from a frozen
+            // sleep" groan, a touch louder so the "it was a prop a second ago" scare lands. Spatial
+            // at the snowman. Not throttled: waking is a rare per-snowman event.
+            AudioCue::SnowmanWake(pos) => {
+                spatial_shot(&mut commands, pick(&bank.snowman_wake, &mut seed), 0.75 * voice, jitter(&mut seed, 0.06), pos);
+            }
+            // A snowman's slam landing on the hero — random of the two attack grunts, wide pitch
+            // jitter so a flurry never repeats. Shares the bite throttle so a clump of snowmen
+            // can't wall the mix. Spatial at the snowman.
+            AudioCue::SnowmanSlam(pos) => {
+                if !throttle.allow(T_BITE, now) {
+                    continue;
+                }
+                spatial_shot(&mut commands, pick(&bank.snowman, &mut seed), 0.6 * voice, jitter(&mut seed, 0.14), pos);
             }
             // Hero-mouth cues (grunts / jump / hurt / death / lines) are handled by `voice.rs`.
             _ => {}

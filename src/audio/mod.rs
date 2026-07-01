@@ -136,6 +136,12 @@ pub enum AudioCue {
     /// world position, the ~2 s "you've been seen" tell before the charge. Reuses the beast-snarl
     /// pool pitched DOWN so it reads as a warning, not a bite. Throttled like the other beasts.
     CreatureAggro(Vec3),
+    /// A dormant ambush snowman just lurched to life (hero stepped near / struck it) — a crunchy
+    /// packed-snow grunt pitched DOWN, at the snowman's world position (`snowman.rs`).
+    SnowmanWake(Vec3),
+    /// An awakened snowman's slam connecting on the hero — a random snowman attack grunt at its
+    /// world position (`snowman.rs`).
+    SnowmanSlam(Vec3),
 }
 
 /// Per-run gates for the "once" event voice lines (the old game's `spoken` key-set). Reset on

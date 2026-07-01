@@ -37,6 +37,13 @@ const FOG_FULL: f32 = 127.0; // was 190 — pulled ~1/3 closer
 /// frontier. Back these down if the enlarged + denser map stutters.
 const SCATTER_DENSITY: f32 = 1.35;
 const COVER_DENSITY: f32 = 1.8;
+/// Extra density in the OPEN woods (away from any path), on top of the base multipliers above.
+/// Scaled by `roads::openness` so the boost is full between the roads and fades to 0 at a trail
+/// edge — the forest reads thicker where there are no paths, without crowding the trails. Trees
+/// hit their `tree_min_dist` spacing first, so the extra tree rolls mostly become undergrowth
+/// (the fallback bush), thickening the *understorey* rather than fusing the canopy.
+const OPEN_SCATTER_BOOST: f32 = 0.35;
+const OPEN_COVER_BOOST: f32 = 0.45;
 
 /// Terrain-aware TREE thinning. Real forests don't carpet cliffs — trees thin on steep faces and
 /// bare rock shows through. We estimate the local ground gradient and, above [`SLOPE_FREE`] (gentle
@@ -960,12 +967,14 @@ pub fn scatter_region(
                 let slope = (gx * gx + gz * gz).sqrt() / d;
                 (1.0 - (slope - SLOPE_FREE).max(0.0) * SLOPE_TREE_THIN).clamp(SLOPE_TREE_FLOOR, 1.0)
             };
+            // Thicken the open woods: full boost between the roads, fading to none at a trail edge.
+            let density = SCATTER_DENSITY * (1.0 + OPEN_SCATTER_BOOST * crate::roads::openness(cx, cz));
             let roll = r.next();
             let mut acc = 0.0;
             let mut chosen: Option<&ClassHandles> = None;
             for c in &classes {
                 let chance = if c.tree { c.chance * tree_mult } else { c.chance };
-                acc += chance * SCATTER_DENSITY;
+                acc += chance * density;
                 if roll < acc {
                     chosen = Some(c);
                     break;
@@ -1092,7 +1101,10 @@ pub fn scatter_region(
                     // thins to bare on the worn/tan patches the albedo paints and clumps into
                     // dense flowery drifts in the lush hollows. This is what makes vegetation
                     // track the ground (and read as varied drifts, not an even sprinkle).
-                    if r.next() > patch.fertility {
+                    // Open woods (away from paths) lift the fertility gate so cover clumps thicker
+                    // there, tapering back to base at a trail edge.
+                    let fert = (patch.fertility * (1.0 + OPEN_COVER_BOOST * crate::roads::openness(x, z))).min(1.0);
+                    if r.next() > fert {
                         continue;
                     }
                     let py = height_fn(x, z);

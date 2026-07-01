@@ -96,8 +96,8 @@ mod scene;
 mod separation;
 mod shutters;
 mod siege;
+mod snowman;
 mod steer;
-mod storm;
 mod subtitles;
 mod succession;
 mod succession_alert;
@@ -271,14 +271,14 @@ fn main() {
         // Brand the running window (taskbar / title-bar / Alt-Tab). winit doesn't take the icon from
         // the exe's embedded resource (that's only the FILE icon), so we set it at runtime.
         .add_plugins(window_icon::WindowIconPlugin)
-        // Night-siege lightning flashes + delayed thunder (active only during a Wave). Standalone:
-        // the tuples above are at the `Plugins` arity-15 cap.
-        .add_plugins(storm::StormPlugin)
         // Cinematic lens: vignette + chromatic aberration (per-preset, in quality.rs) + film grain.
         // The per-biome colour grade itself rides in scene::advance_sky.
         .add_plugins(postfx::PostFxPlugin)
         // Rival AI stronghold: a second castle in the desert (Stronghold-Crusader-style opponent).
         // Standalone: the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(rival::RivalPlugin)
+        // Ambush snowmen: static snow-biome decor that wakes + slams when the hero nears or strikes
+        // it. Standalone — the tuples above are at the `Plugins` arity-15 cap.
+        .add_plugins(snowman::SnowmanPlugin)
         .run();
 }

@@ -550,7 +550,10 @@ fn build_boulder_mesh(variant: u32) -> Mesh {
 // hat with a red knitted band, and a drift skirt banked against his base (hides the
 // ball/ground seam). Base flush at y=0, ~1.15u tall (incl. hat) before the scatter
 // scales it. Built facing +Z; the scatter gives it a random yaw. Single merged mesh.
-fn build_snowman_mesh() -> Mesh {
+//
+// `pub(crate)` because `snowman.rs` reuses this exact mesh for the *interactive* ambush snowmen
+// (the scatter here only ever spawns the dumb-decor variant).
+pub(crate) fn build_snowman_mesh() -> Mesh {
     let mut parts: Vec<Mesh> = Vec::new();
 
     // ── Body: three stacked near-round snow balls (lightly squashed so they read packed).

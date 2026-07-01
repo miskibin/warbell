@@ -285,8 +285,9 @@ fn advance_sky(
     // re-filtering the static cubemap after boot (`freeze_ibl_filtering`), so intensity must ride
     // `EnvironmentMapLight`, which survives that, not `GeneratedEnvironmentMapLight`, which is removed.
     mut env_q: Query<&mut EnvironmentMapLight>,
-    mut grade_q: Query<&mut ColorGrading>,
-    mut bloom_q: Query<&mut Bloom>,
+    // ColorGrading + Exposure + Bloom all ride the single camera entity — combined into one query
+    // to stay under Bevy's 16-param system cap.
+    mut cam_fx_q: Query<(&mut ColorGrading, &mut Exposure, &mut Bloom)>,
     biome: Option<Res<SmoothBiomeAtmo>>,
     settings: Option<Res<crate::quality::GraphicsSettings>>,
     visual: Res<crate::visual::VisualSettings>,
@@ -457,8 +458,11 @@ fn advance_sky(
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
         .unwrap_or(0.15);
-    for mut g in &mut grade_q {
+    // Grade cut + camera exposure eased day 11.0 → night 10.3 (higher ev100 = darker, so this
+    // lifts the PBR-lit scene slightly after dark — the moody read still comes from the grade cut).
+    for (mut g, mut e, _) in &mut cam_fx_q {
         g.global.exposure = -night * night_stops;
+        e.ev100 = 11.0 - night * (11.0 - 10.3);
     }
 
     // Bloom: the camera's halo/glow, driven per-region + per-time so emissive things (fire,
@@ -474,7 +478,7 @@ fn advance_sky(
     let bloom = (bloom_base * bloom_scale * (1.0 + horizon * 0.5) * (1.0 + night * 0.25)
         * visual.bloom)
         .clamp(0.0, 0.45);
-    for mut b in &mut bloom_q {
+    for (_, _, mut b) in &mut cam_fx_q {
         b.intensity = bloom;
     }
 

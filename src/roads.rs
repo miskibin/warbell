@@ -207,6 +207,15 @@ pub fn near_road(wx: f32, wz: f32, pad: f32) -> bool {
         || on_road(wx, wz - pad)
 }
 
+/// "Openness" `[0,1]` for vegetation density: **1 in the open woods** (no road anywhere near),
+/// tapering to **0 at a path edge**. The scatter pass multiplies its extra density by this so the
+/// forest thickens *between* the roads while the ground right beside a trail stays a touch clearer
+/// (a natural cleared margin, not undergrowth crowding the path). Since the field is 0 beyond a
+/// road's half-width, this is 1 across almost the whole map — only the ~road-width fringe tapers.
+pub fn openness(wx: f32, wz: f32) -> f32 {
+    1.0 - (road_strength(wx, wz) / GROW_CUTOFF).clamp(0.0, 1.0)
+}
+
 /// Movement multiplier at world `(wx, wz)`: 1.0 off-road, ramping to `1 + SPEED_BONUS` on a
 /// centreline. The player moves a little faster when travelling by road.
 pub fn speed_mult(wx: f32, wz: f32) -> f32 {
