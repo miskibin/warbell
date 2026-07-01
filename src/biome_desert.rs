@@ -160,7 +160,8 @@ fn pad(rx: f32, ry: f32, rz: f32, tilt: f32, yaw: f32, center: Vec3, c: u32) -> 
 /// so the column reads ribbed, with a darker shaded core and a brighter front rib for
 /// volume, and a rounded green cap on top. Base flush at y=0; ~1.35u tall before the
 /// scatter scales it. `variant` 0 = single arm, 1 = two arms (classic), 2 = young stub.
-fn build_saguaro_mesh(variant: u32) -> Mesh {
+/// Pub so the standalone model viewer (`FOREST_VIEW=trees`) can show it as a choppable resource.
+pub fn build_saguaro_mesh(variant: u32) -> Mesh {
     let v = variant % 3;
     let (trunk_h, trunk_r) = match v {
         0 => (1.30, 0.13),

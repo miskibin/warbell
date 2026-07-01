@@ -33,12 +33,22 @@ struct Flame {
 
 /// Number of build plots seeded around the castle.
 pub const PLOT_COUNT: usize = 12;
-/// Starting wood so the player can build on day one.
-const START_WOOD: f64 = 16.0;
+/// Starting stipend so day one is a guided walk, not a scavenge: enough wood + stone to raise the
+/// first House (17 wood / 11.5 stone at one standing house) right away — the opening quest — with a
+/// margin for the Woodcutter's stone and the Quarry's wood as the tutorial chain bootstraps itself.
+const START_WOOD: f64 = 24.0;
+const START_STONE: f64 = 24.0;
 
 /// The settlement model (parity-tested core) as a Bevy Resource.
 #[derive(Resource)]
 pub struct TownRes(pub Town);
+
+/// Fired the instant the player raises a building in build mode. The quest layer reads it to
+/// complete the build objectives — keyed off the actual player action, so it's robust across
+/// difficulties (unlike a start-vs-current count, which a difficulty's bonus houses would trip).
+/// `None` = a House; `Some(kind)` = a producer (Farm / Woodcutter / Mine).
+#[derive(Message)]
+pub struct PlayerBuilt(pub Option<BuildKind>);
 
 impl Default for TownRes {
     fn default() -> Self {
@@ -223,6 +233,7 @@ impl Plugin for TownPlugin {
             .init_resource::<PendingBuildingDamage>()
             .init_resource::<BuildMode>()
             .init_resource::<PlotSpots>()
+            .add_message::<PlayerBuilt>()
             // Run AFTER economy's reset: its `bank.0.reset()` zeroes food/wood too, so the
             // START_WOOD grant must come last or it gets wiped (system-order race).
             .add_systems(
@@ -246,7 +257,7 @@ impl Plugin for TownPlugin {
             // Ungated, but self-gated on `Modal::None` inside: the palette + glow rings + the "[B]
             // Build" town prompt must be REAPED/hidden when play is left or a panel opens (a
             // `Modal::None` run-condition would just stop running and strand them over those screens).
-            .add_systems(Update, (sync_build_strip, sync_build_rings))
+            .add_systems(Update, (sync_build_strip, sync_build_rings, stage_build_for_shot))
             // The timber pad marks where the NEXT house will rise (visible even outside build mode).
             .add_systems(Update, sync_house_site_pad)
             // Trailer Director (F1 → "Build stronghold"): live, real-time construction timelapse.
@@ -515,6 +526,7 @@ fn reset_town(
     town.0.population += bonus;
     town.0.houses += bonus.div_ceil(POP_PER_HOUSE);
     bank.0.add_wood(START_WOOD);
+    bank.0.add_stone(START_STONE);
     // The world map isn't rebuilt on restart, so reap last run's building meshes +
     // flames here (the empty plot pads persist; TownRes is now all-Empty, so the
     // scene must match). Mirrors how succession_fx reaps graves on a new run.
@@ -1337,6 +1349,7 @@ fn build_place(
     mats: Option<Res<VillageMats>>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut built: MessageWriter<PlayerBuilt>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     existing: Query<(Entity, &BuildingMesh)>,
@@ -1366,6 +1379,7 @@ fn build_place(
                 }
                 spawn_building(&mut commands, &mut meshes, &mats.0, idx, k, &spots);
                 cues.write(crate::audio::AudioCue::UiSelect);
+                built.write(PlayerBuilt(Some(k)));
             } else {
                 let at = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
                 push_cant_afford(&mut floats, k.cost(), &bank.0, k.label(), at);
@@ -1376,6 +1390,7 @@ fn build_place(
             if town.0.build_house(&mut bank.0) {
                 let y = crate::worldmap::ground_at_world(site.x, site.y).unwrap_or(0.0);
                 cues.write(crate::audio::AudioCue::UiSelect);
+                built.write(PlayerBuilt(None));
                 floats.0.push(FloatReq {
                     world: Vec3::new(site.x, y + 3.0, site.y),
                     text: format!("\u{1f3e0} House raised \u{2014} beds for {POP_PER_HOUSE} more"),
@@ -1387,6 +1402,32 @@ fn build_place(
             }
         }
     }
+}
+
+/// Screenshot staging (`FOREST_BUILD=house|farm|lumber|mine`): hold build mode open with the named
+/// building selected and a free outer plot targeted, so a `FOREST_SHOT` frames the palette strip +
+/// a glowing plot ring for the quest-card screenshots. No-op otherwise; ungated (env-gated inside).
+fn stage_build_for_shot(
+    app: Res<State<AppState>>,
+    town: Res<TownRes>,
+    mut mode: ResMut<BuildMode>,
+) {
+    if *app.get() != AppState::Playing {
+        return;
+    }
+    let Ok(sel) = std::env::var("FOREST_BUILD") else { return };
+    let idx = match sel.as_str() {
+        "house" => 0,
+        "farm" => 1,
+        "lumber" | "woodcutter" => 2,
+        "mine" | "quarry" => 3,
+        _ => return,
+    };
+    mode.active = true;
+    mode.sel = idx;
+    // Aim at the first free outer plot so its ring swells (producers); House ignores target and
+    // lights its courtyard slot on its own.
+    mode.target = town.0.plots.iter().position(|p| p.is_buildable());
 }
 
 /// Red "can't afford" float naming exactly what's short — mirrors the strip hint so a press is

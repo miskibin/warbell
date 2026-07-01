@@ -238,6 +238,35 @@ fn setup(
         Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
     ));
 
+    // `FOREST_VIEW=trees` — the harvestable "chop these for wood" resources on the clean stage
+    // (quest-card art): a few tree kinds + a desert saguaro, no world scene around them. These use
+    // vertex-coloured meshes on a plain white `StandardMaterial` (like the `FOREST_TREELINE` hook),
+    // not the creature material, so we spawn them here and skip the hero model entirely.
+    if std::env::var("FOREST_VIEW").as_deref() == Ok("trees") {
+        let mat = std_mats.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.62,
+            reflectance: 0.5,
+            ..default()
+        });
+        let items: [Mesh; 4] = [
+            crate::trees::build_tree_mesh(crate::trees::TreeKind::Broadleaf),
+            crate::trees::build_tree_mesh(crate::trees::TreeKind::Pine),
+            crate::trees::build_tree_mesh(crate::trees::TreeKind::Birch),
+            crate::biome_desert::build_saguaro_mesh(1),
+        ];
+        let n = items.len();
+        for (i, mesh) in items.into_iter().enumerate() {
+            let x = (i as f32 - (n as f32 - 1.0) * 0.5) * 2.7;
+            commands.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_xyz(x, 0.0, 0.0).with_scale(Vec3::splat(1.15)),
+            ));
+        }
+        return;
+    }
+
     // The model itself, on the shared creature material. The root also carries `Hero`/`HeroHealth`
     // so the optional `hero_anim` preview (FOREST_VIEW_ANIM) has state to read; inert otherwise.
     let mat = crate::creature::make_hero_material(&mut creature_mats);

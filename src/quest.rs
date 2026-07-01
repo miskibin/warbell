@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 
 use tileworld_core::quest::{Objective, QuestLog, Reward, Signal, QUESTS};
-use tileworld_core::town_store::{BuildKind, START_HOUSES};
+use tileworld_core::town_store::BuildKind;
 
 use crate::audio::AudioCue;
 use crate::economy::Bank;
@@ -142,25 +142,33 @@ fn detect_gather(
     track.prev_stone = Some(stone);
 }
 
-/// Emit a build signal from current town state when that's the active objective — so a farm/house
-/// raised *early* still completes the quest the moment the chain reaches it.
-fn detect_builds(log: Res<QuestLogRes>, town: Res<TownRes>, mut sigs: MessageWriter<QuestSignal>) {
+/// Complete the build objectives. **Producers** (Farm/Woodcutter/Mine) are read from town *state*,
+/// so one raised *early* (build mode is open all through Prep) still completes its quest the moment
+/// the chain reaches it — never a soft-lock on an already-occupied plot. A **House** is read from
+/// the actual [`PlayerBuilt`](crate::town::PlayerBuilt) action instead (difficulty-proof: a bonus
+/// starting house on Easy would trip a start-vs-current count, but not a real build event).
+fn detect_builds(
+    log: Res<QuestLogRes>,
+    town: Res<TownRes>,
+    mut built: MessageReader<crate::town::PlayerBuilt>,
+    mut sigs: MessageWriter<QuestSignal>,
+) {
+    // Drain every frame (even off-objective) so the reader can't back up past its buffer.
+    let house_raised = built.read().any(|b| b.0.is_none());
+    let has_producer = |k: BuildKind| town.0.plots.iter().any(|p| p.is_built() && p.kind == Some(k));
     let Some(q) = log.0.current() else { return };
     match q.objective {
-        Objective::BuildFarm => {
-            let has_farm = town
-                .0
-                .plots
-                .iter()
-                .any(|p| p.is_built() && p.kind == Some(BuildKind::Farm));
-            if has_farm {
-                sigs.write(QuestSignal(Signal::FarmBuilt));
-            }
+        Objective::BuildFarm if has_producer(BuildKind::Farm) => {
+            sigs.write(QuestSignal(Signal::FarmBuilt));
         }
-        Objective::BuildHouse => {
-            if town.0.houses > START_HOUSES {
-                sigs.write(QuestSignal(Signal::HouseBuilt));
-            }
+        Objective::BuildLumber if has_producer(BuildKind::Lumber) => {
+            sigs.write(QuestSignal(Signal::LumberBuilt));
+        }
+        Objective::BuildMine if has_producer(BuildKind::Mine) => {
+            sigs.write(QuestSignal(Signal::MineBuilt));
+        }
+        Objective::BuildHouse if house_raised => {
+            sigs.write(QuestSignal(Signal::HouseBuilt));
         }
         _ => {}
     }
@@ -455,6 +463,7 @@ fn spawn_quest_panel(
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
     tex: Res<UiTextures>,
+    assets: Res<AssetServer>,
 ) {
     // Guard: the panel only opens with an active quest, but bail cleanly if the chain finished
     // between the keypress and this OnEnter.
@@ -524,6 +533,23 @@ fn spawn_quest_panel(
                     children![label(&fonts.semibold, q.why, 14.5, TEXT)],
                 ));
             });
+
+            // A real in-game screenshot of the action, when one's been captured — shows the player
+            // exactly what to look for (the build palette + a glowing plot), not just words.
+            if let Some(shot) = q.shot {
+                card.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(207.0), // 16:9 against the ~368px inner card width
+                        border: border(1.0),
+                        border_radius: radius(R_CARD),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    BorderColor::all(BORDER_SOFT),
+                    ImageNode::new(assets.load(shot)),
+                ));
+            }
 
             // How (the explanation + the action keycap line).
             panel_section(card, &fonts, "HOW", |c| {
