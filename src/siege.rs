@@ -422,12 +422,16 @@ const KEEP_HP_PER_NIGHT: f32 = 0.10;
 const KEEP_HP_NIGHT_CAP: f32 = 2.5;
 
 /// The keep's MAX HP for night `wave_index` (0-based): base × difficulty handicap × per-night
-/// reinforcement, clamped to [`KEEP_HP_NIGHT_CAP`]. `wave_index < 0` (pre-first-night) → base.
-pub fn keep_max_for(wave_index: i32, diff: Difficulty) -> f32 {
+/// reinforcement, clamped to [`KEEP_HP_NIGHT_CAP`], plus the flat Reinforced Keep upgrade bonus when
+/// owned. `wave_index < 0` (pre-first-night) → base. The `reinforced` term MUST be folded in here:
+/// this is an *absolute* recompute of `keep.max` on every night start, so a bonus applied only at
+/// purchase time (`economy::apply_effect`) is silently overwritten the next dusk without it.
+pub fn keep_max_for(wave_index: i32, diff: Difficulty, reinforced: bool) -> f32 {
     let base = KEEP_MAX_HP * mods_for(diff).keep_hp_mul;
     let nights = wave_index.max(0) as f32;
     let scale = (1.0 + KEEP_HP_PER_NIGHT * nights).min(KEEP_HP_NIGHT_CAP);
-    base * scale
+    let bonus = if reinforced { crate::economy::REINFORCE_BONUS } else { 0.0 };
+    base * scale + bonus
 }
 /// Keep self-repair during the prep breather (HP/s) — the day is a chance to recover.
 const KEEP_REPAIR_RATE: f32 = 12.0;
@@ -487,6 +491,15 @@ impl Siege {
     /// Ring in the night early (war bell / **B**): the reducer floors it to `MIN_PREP_SECONDS`.
     pub fn request_prep_skip(&mut self) {
         self.skip_requested = true;
+    }
+
+    /// Clear the reducer's scratch (prep/spawn timers, spawn count, pending skip) so a loaded run
+    /// re-arms a fresh Prep day from the current clock instead of inheriting the saved-over run's
+    /// stale countdown. Called by `savegame::apply_pending_load`.
+    pub fn rearm_scratch(&mut self) {
+        self.timers = WaveTimers::default();
+        self.spawned = 0;
+        self.skip_requested = false;
     }
 }
 
@@ -622,7 +635,7 @@ fn reset_siege(
     // Re-derive the keep's max from base × the difficulty handicap (so switching difficulty between
     // runs takes effect, and the Easy keep is genuinely tougher). At reset wave_index is -1 (pre
     // first night), so this is the un-reinforced base — it grows per night via `keep_max_for`.
-    keep.max = keep_max_for(siege.wave_index, diff);
+    keep.max = keep_max_for(siege.wave_index, diff, false);
     keep.hp = keep.max;
 }
 
@@ -799,6 +812,7 @@ fn run_director(
     mut keep: ResMut<KeepHp>,
     mut player: ResMut<crate::player::PlayerRes>,
     eco: Res<crate::economy::EconomyState>,
+    def: Res<crate::economy::Defenses>,
     mut town: ResMut<crate::town::TownRes>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     armory: Option<Res<InvaderArmory>>,
@@ -849,7 +863,7 @@ fn run_director(
                 siege.spawned = 0;
                 // Reinforce the keep for this night: its MAX HP scales with the night index, and
                 // the new headroom is granted as real HP (the town shored up the walls overnight).
-                let new_max = keep_max_for(siege.wave_index, siege.difficulty);
+                let new_max = keep_max_for(siege.wave_index, siege.difficulty, def.reinforced);
                 let delta = new_max - keep.max;
                 keep.max = new_max;
                 if delta > 0.0 {

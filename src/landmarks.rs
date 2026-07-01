@@ -29,7 +29,7 @@ use tileworld_core::buff_store::BuffKind;
 use crate::audio::AudioCue;
 use crate::biome::{Biome, BiomeEntity};
 use crate::combat_fx::{col_kill, FloatQueue, FloatReq};
-use crate::game_state::Modal;
+use crate::game_state::{AppState, Modal};
 use crate::inventory::{try_grant, Buffs, Inventory, Toasts};
 use crate::player::{HeroState, PlayerRes};
 use crate::ui::fonts::{label, FONT_LABEL, UiFonts};
@@ -315,6 +315,11 @@ impl Plugin for LandmarksPlugin {
         app.init_resource::<Discoveries>()
             .init_resource::<RuneTrial>()
             .add_message::<LandmarkInteract>()
+            // Wipe the found/completed tally on a fresh run — the freshly-rebuilt `Landmark` entities
+            // reset to undiscovered, but this resource is not `BiomeEntity` and otherwise leaks across
+            // runs, letting the all-found +75g bonus fire early (or never) in the next run.
+            .add_systems(OnExit(AppState::StartScreen), reset_discoveries)
+            .add_systems(OnExit(AppState::GameOver), reset_discoveries)
             // Beacon drift is a visual — runs even while the world is frozen, like the particles.
             .add_systems(Update, beacon_drift)
             // Light/snuff each beacon to mirror its landmark's "boost ready" state (ungated, so it
@@ -370,6 +375,14 @@ fn clear_around_landmarks(
             commands.entity(e).try_despawn();
         }
     }
+}
+
+/// New Game / Restart / Play Again: zero the found/completed tally (keep `total` — the landmark
+/// count is constant across runs, re-latched by `track_total` anyway). Mirrors the reset systems on
+/// every other earned run-state resource (economy, quests, siege, lives, rescues).
+fn reset_discoveries(mut disc: ResMut<Discoveries>) {
+    disc.found = 0;
+    disc.completed = false;
 }
 
 /// Latch the landmark count into [`Discoveries::total`] once they've spawned (drives the

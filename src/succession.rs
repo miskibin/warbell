@@ -245,7 +245,14 @@ fn drive_succession(
         }
         // Possess the body: drop one townsperson from the pool, despawn it, and stand the hero up
         // on its spot at full strength with a beat of spawn-protection.
-        town.0.population = town.0.population.saturating_sub(1);
+        // Guard the double-decrement: combat (`npc_damage_apply`) can kill the stolen body during the
+        // slow-mo beat, and that path already dropped population by one. Only decrement here if the
+        // body is still a live townsperson (or we're rising at the gate with no body picked) — a body
+        // that died mid-beat is `Dying`/gone, so `villagers.get` fails and we skip the second drop.
+        let already_counted = succ.steal_entity.is_some_and(|e| villagers.get(e).is_err());
+        if !already_counted {
+            town.0.population = town.0.population.saturating_sub(1);
+        }
         if let Some(e) = succ.steal_entity.take() {
             commands.entity(e).try_despawn();
         }

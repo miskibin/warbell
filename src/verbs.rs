@@ -267,6 +267,12 @@ impl ChopTree {
         Self { hp: TREE_HP, trunk_r }
     }
 
+    /// True once the tree has been chopped to 0 HP — used by cutters to bail before double-felling a
+    /// tree another actor already dropped this frame (the `Stump` insert that removes it is deferred).
+    pub fn felled(&self) -> bool {
+        self.hp <= 0.0
+    }
+
     /// Trunk-blocker radius — the woodcutter (`lumberjack.rs`) plants its swing just outside this
     /// so it stands at the bark, not an arm's length off it.
     pub fn trunk_r(&self) -> f32 {

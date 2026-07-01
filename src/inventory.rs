@@ -189,7 +189,7 @@ fn debug_bufftest(mut buffs: ResMut<Buffs>, time: Res<Time>) {
 fn debug_seed(mut inv: ResMut<Inventory>) {
     if std::env::var("FOREST_PANEL").ok().as_deref() == Some("inv") {
         for (id, n) in [("bread", 3), ("potion", 2), ("fur", 1), ("sword_iron", 1), ("leather_armor", 1), ("apple", 4)] {
-            inv.0.add(id, n); // fur auto-binds Z (slot 0)
+            inv.0.add(id, n); // fur auto-binds Y (slot 0)
         }
         inv.0.set_quick_bind(1, "potion"); // demo a manual bind: a heal pinned to T (slot 1)
     }

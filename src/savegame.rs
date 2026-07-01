@@ -412,6 +412,10 @@ fn apply_pending_load(
     siege.difficulty = data.difficulty;
     siege.wave_index = data.wave_index;
     siege.phase = GamePhase::Prep;
+    // Rearm the director's scratch timers/counters so the loaded Prep day starts a *fresh* countdown
+    // from the current clock, not the abandoned run's stale (possibly already-expired) prep_ends_at —
+    // which would otherwise fire BeginWave immediately and drop the resumed night with no prep time.
+    siege.rearm_scratch();
     keep.hp = data.keep_hp;
     keep.max = data.keep_max;
     lives.heirs = data.heirs;

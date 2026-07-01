@@ -1024,8 +1024,15 @@ fn npc_fight_back(
     mut hostiles: Query<
         (&Transform, &mut crate::player::Health, Option<&crate::wildlife::Animal>),
         (
-            Or<(With<crate::orks::Ork>, With<crate::wildlife::Animal>)>,
-            Without<Villager>,
+            // Rival soldiers/raiders carry `Villager` (for locomotion/anim) but neither `Ork` nor
+            // `Animal`, so they must be named explicitly here — and `Without<Villager>` must NOT be
+            // used (it would re-exclude those same rival bodies). The `Or` already keeps friendly
+            // townsfolk out (they carry none of these markers), mirroring `guard_combat`'s query.
+            Or<(
+                With<crate::orks::Ork>,
+                With<crate::wildlife::Animal>,
+                With<crate::rival::RivalSoldier>,
+            )>,
             Without<crate::dying::Dying>,
         ),
     >,

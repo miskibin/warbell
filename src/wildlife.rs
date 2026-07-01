@@ -923,8 +923,10 @@ const PLANS: [Plan; 13] = [
     Plan { species: Species::Elk, count: 8, cluster: 4, scale: 0.95, speed: 5.5, wander_speed: 1.4, flee_r: 13.0, wander_r: 12.0, gait: 10.0, swing: 0.55, bob: 0.05, place: Place::Forest },
     // Rabbit — grass, small clusters; very skittish + bouncy.
     Plan { species: Species::Rabbit, count: 10, cluster: 2, scale: 0.65, speed: 6.5, wander_speed: 1.6, flee_r: 16.0, wander_r: 8.0, gait: 14.0, swing: 0.5, bob: 0.12, place: Place::Grass },
-    // Boar — forest/frontier loners; mild flee.
-    Plan { species: Species::Boar, count: 5, cluster: 1, scale: 0.8, speed: 4.0, wander_speed: 1.0, flee_r: 8.0, wander_r: 10.0, gait: 11.0, swing: 0.5, bob: 0.04, place: Place::GrassOrForest },
+    // Boar — forest/frontier loners; a predator (charges the hero), so flee_r is unused (0.0) like
+    // the other hunters — `animal_brain`'s predator branch wins over the flee branch for any species
+    // with `predator_stats`, so a nonzero flee_r here would be dead data.
+    Plan { species: Species::Boar, count: 5, cluster: 1, scale: 0.8, speed: 4.0, wander_speed: 1.0, flee_r: 0.0, wander_r: 10.0, gait: 11.0, swing: 0.5, bob: 0.04, place: Place::GrassOrForest },
     // Wolf — forest packs; apex, ignores the camera.
     Plan { species: Species::Wolf, count: 6, cluster: 3, scale: 0.8, speed: 5.0, wander_speed: 1.4, flee_r: 0.0, wander_r: 16.0, gait: 12.0, swing: 0.6, bob: 0.04, place: Place::Forest },
     // Goat — rock highlands; nimble, roams the terraces.

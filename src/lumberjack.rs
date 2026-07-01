@@ -301,6 +301,13 @@ fn chop_work(
             commands.entity(self_e).try_remove::<ChopJob>();
             continue;
         };
+        // Already dropped to 0 HP by another cutter (or the hero) THIS frame — the `Stump` insert is
+        // deferred, so the tree is still queryable here. Bail before swinging, or this worker fells
+        // the same tree a second time and banks a second unearned log (mirrors `miner::pick_work`).
+        if tree.felled() {
+            commands.entity(self_e).try_remove::<ChopJob>();
+            continue;
+        }
         let tp = Vec2::new(ttf.translation.x, ttf.translation.z);
         let d = v.pos.distance(tp);
         // Reach is sized to THIS tree's trunk (thin sapling vs fat bole) so the cutter steps right

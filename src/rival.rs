@@ -1231,7 +1231,7 @@ fn rival_raid_brain(
     mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
     mut keep: ResMut<crate::siege::KeepHp>,
     mut notice: ResMut<crate::ui::notice::Notice>,
-    mut raiders: Query<(&mut RivalRaider, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
+    mut raiders: Query<(Entity, &mut RivalRaider, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
     townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>, Without<RivalRaider>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -1243,7 +1243,7 @@ fn rival_raid_brain(
     let goal = crate::siege::KEEP_POS;
     let folk: Vec<(Entity, Vec2)> =
         townsfolk.iter().map(|(e, t)| (e, Vec2::new(t.translation.x, t.translation.z))).collect();
-    for (mut rd, mut v, mut tf) in &mut raiders {
+    for (re, mut rd, mut v, mut tf) in &mut raiders {
         rd.atk_cd -= dt;
         let vpos = v.pos;
         // Nearest of our people (hero or townsperson) in sight.
@@ -1276,7 +1276,10 @@ fn rival_raid_brain(
                     struck = true;
                     match victim {
                         None => pending.0 += RAIDER_HERO_DMG,
-                        Some(ve) => npc_dmg.0.push(crate::villagers::NpcHit { victim: ve, amount: RAIDER_NPC_DMG, attacker: None }),
+                        // `attacker: Some(re)` so the struck townsperson fights back against the raider
+                        // like it does every other foe (raiders carry `RivalSoldier`, now in the
+                        // `npc_fight_back` hostile set) — mirrors `rival_combat`'s garrison strike.
+                        Some(ve) => npc_dmg.0.push(crate::villagers::NpcHit { victim: ve, amount: RAIDER_NPC_DMG, attacker: Some(re) }),
                     }
                 }
             } else {

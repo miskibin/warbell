@@ -237,6 +237,11 @@ impl Plugin for BossPlugin {
         app.init_resource::<PendingReward>()
             .init_resource::<CritTension>()
             .add_systems(PostStartup, spawn_wardens)
+            // Fresh in-process run (New Game / Restart / Play Again all exit StartScreen or GameOver
+            // without a GameLoaded): rebuild the full level-1 pantheon so a warden slain in a prior
+            // run isn't permanently gone (wardens aren't BiomeEntity, so the world rebuild skips them).
+            .add_systems(OnExit(AppState::StartScreen), respawn_wardens_on_new_run)
+            .add_systems(OnExit(AppState::GameOver), respawn_wardens_on_new_run)
             // On a loaded game, remove wardens the saved hero already slew (ungated; once per load).
             .add_systems(Update, despawn_slain_wardens)
             .add_systems(Update, boss_limbs) // limb sway keeps running while frozen
@@ -330,6 +335,24 @@ fn spawn_wardens(
             }
         });
     }
+}
+
+/// New Game / Restart / Play Again (a fresh in-process run — no `GameLoaded`, so `despawn_slain_wardens`
+/// never fires): despawn every warden and respawn all five at level 1, matching the boon flags that
+/// `Player::reset()` clears. Without this a warden killed in a prior run stays permanently gone for
+/// the rest of the process — its entity was `try_despawn`'d by the death-fade and is never rebuilt,
+/// since wardens carry no `BiomeEntity` tag for the world-rebuild sweep to catch. On a Continue this
+/// spawns fresh wardens too, then `despawn_slain_wardens` prunes the saved-slain ones the same frame.
+fn respawn_wardens_on_new_run(
+    mut commands: Commands,
+    existing: Query<Entity, With<Boss>>,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<crate::creature::CreatureMaterial>>,
+) {
+    for e in &existing {
+        commands.entity(e).try_despawn();
+    }
+    spawn_wardens(commands, meshes, materials);
 }
 
 /// On a loaded game, despawn any warden the saved hero has **already slain**. A warden isn't
@@ -616,7 +639,12 @@ fn boss_levelup(
 ) {
     let dawn = matches!(*prev, Some(GamePhase::Wave)) && siege.phase == GamePhase::Prep;
     *prev = Some(siege.phase);
-    if !dawn {
+    // Guard the fresh-run false trigger: this system is frozen (Modal gone) whenever we leave
+    // Playing, so a death mid-siege leaves `prev == Some(Wave)`. A New Game / Restart then resets
+    // Siege to Prep (wave_index = -1) and this would false-fire a level-up on day 1 before a single
+    // night is fought. A *real* dawn always follows a night, so wave_index is >= 0 then — mirrors
+    // the identical guard in `savegame::autosave_on_dawn`.
+    if !dawn || siege.wave_index < 0 {
         return;
     }
     for (mut b, mut h) in &mut q {

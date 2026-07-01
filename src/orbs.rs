@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 use tileworld_core::orb::{self, Orb, OrbKind, OrbStep, PlayerPose};
 
-use crate::game_state::Modal;
+use crate::game_state::{AppState, Modal};
 use crate::player::{HeroState, PlayerRes};
 
 /// A reward queued by combat on a kill — split into gold + xp orbs by [`spawn_queued_orbs`].
@@ -55,6 +55,11 @@ impl Plugin for OrbsPlugin {
         app.init_resource::<RewardBursts>()
             .init_resource::<OrbRng>()
             .add_systems(Startup, setup_orb_assets)
+            // Fresh run (New Game / Restart / Play Again): sweep in-flight motes and drop any queued
+            // bursts. They aren't `BiomeEntity` (so the world rebuild skips them) and would otherwise
+            // home onto the reset hero and bank last run's gold/xp into the new run.
+            .add_systems(OnExit(AppState::StartScreen), reset_orbs)
+            .add_systems(OnExit(AppState::GameOver), reset_orbs)
             .add_systems(
                 Update,
                 (spawn_queued_orbs, step_reward_orbs)
@@ -62,6 +67,14 @@ impl Plugin for OrbsPlugin {
                     .run_if(in_state(Modal::None)),
             );
     }
+}
+
+/// Despawn every in-flight reward orb and clear the pending-burst queue on a fresh run.
+fn reset_orbs(mut commands: Commands, orbs: Query<Entity, With<RewardOrb>>, mut bursts: ResMut<RewardBursts>) {
+    for e in &orbs {
+        commands.entity(e).try_despawn();
+    }
+    bursts.0.clear();
 }
 
 fn setup_orb_assets(

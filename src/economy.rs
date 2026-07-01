@@ -64,7 +64,7 @@ impl Default for EconomyState {
 }
 
 /// Reinforced-Keep bonus (forest's keep is 1500 base; +400 → 1900, healed to full).
-const REINFORCE_BONUS: f32 = 400.0;
+pub const REINFORCE_BONUS: f32 = 400.0;
 // (The old flat Tax Office stipend is gone: dawn gold is now the population tithe —
 // `town_store::Town::tithe`, paid in `siege::run_director` — and Tax Office doubles it.)
 
@@ -453,11 +453,14 @@ fn shop_interact(
     let now = time.elapsed_secs() as f64;
     let keyed: Vec<Entity> = acts.read().map(|a| a.0).collect();
     let mut acted = false;
+    // Built once per tick — the catalog is tiny but this system runs every frame the shop is open
+    // and both the BUY loop and the recolour loop scan it (was rebuilt per-button before).
+    let items = build_shop_items(&eco.unlocked_weapons);
 
     // BUY: a click or Enter/E focus activation (one per press).
     for (e, interaction, btn, _) in &buy_buttons {
         if *interaction == Interaction::Pressed || keyed.contains(&e) {
-            if let Some(item) = build_shop_items(&eco.unlocked_weapons).iter().find(|i| i.id == btn.0) {
+            if let Some(item) = items.iter().find(|i| i.id == btn.0) {
                 let price = discounted_price(item.price, discount);
                 // Need the gold AND room in the bag; otherwise no-op (TS refunds a full bag).
                 if player.0.gold >= price && inv.0.has_room_for(&[item.id]) {
@@ -500,7 +503,7 @@ fn shop_interact(
     // Recolour BUY lines: affordable = gold, too dear = grey.
     let gold = player.0.gold;
     for (_, _, btn, mut bg) in &mut buy_buttons {
-        let price = build_shop_items(&eco.unlocked_weapons)
+        let price = items
             .iter()
             .find(|i| i.id == btn.0)
             .map(|i| discounted_price(i.price, discount))

@@ -97,8 +97,9 @@ pub(crate) fn bounty_xp(v: OrkVariant) -> i64 {
 }
 
 /// Per-variant melee damage to the hero in this scene's combat units. The Grunt is the
-/// `ORK_DAMAGE` anchor; others scale by the `ork_config` damage ratio (Scout ≈5, Berserker
-/// ≈10). The Shaman casts `SHAMAN_BOLT_DAMAGE` instead, so this is unused for it.
+/// `ORK_DAMAGE` anchor; others scale by the `ork_config` damage ratio (with core's Scout 15 /
+/// Berserker 30 vs Grunt 24, that lands Scout ≈14, Berserker ≈27). The Shaman casts
+/// `SHAMAN_BOLT_DAMAGE` instead, so this is unused for it.
 pub(crate) fn variant_melee(v: OrkVariant) -> f32 {
     use tileworld_core::ork_config::{ork_config, OrkVariant as C};
     let grunt = ork_config(C::Grunt).damage as f32; // core ratio anchor (24); ORK_DAMAGE is the nerfed scene value

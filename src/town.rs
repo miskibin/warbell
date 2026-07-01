@@ -308,7 +308,9 @@ fn auto_assign_workers(
     spots: Res<PlotSpots>,
     siege: Option<Res<crate::siege::Siege>>,
     mut commands: Commands,
-    workers: Query<(Entity, &Worker)>,
+    // `Without<Dying>`: a dying worker's corpse must not read as still occupying its plot, or a live
+    // replacement can't be assigned until it despawns (mirrors the `idle` filter below).
+    workers: Query<(Entity, &Worker), Without<crate::dying::Dying>>,
     // Rallied guards are excluded: a guard that has answered the muster (`K`) stays fallen-in and
     // following the hero, off the labour pool, until the player stands the war party down.
     idle: Query<
@@ -381,7 +383,13 @@ fn auto_assign_workers(
 }
 
 /// Each frame, mark a plot `staffed` iff a posted, visible worker is on it.
-fn sync_staffed(mut town: ResMut<TownRes>, workers: Query<(&Worker, &Visibility)>) {
+fn sync_staffed(
+    mut town: ResMut<TownRes>,
+    // `Without<Dying>`: a worker killed mid-fade keeps its `Worker{at_post}` tag and stays
+    // `Visibility::Visible` for the ~1.4s death fade, so without this filter its plot reads staffed
+    // (and keeps yielding) while its worker is already dead.
+    workers: Query<(&Worker, &Visibility), Without<crate::dying::Dying>>,
+) {
     let n = town.0.plots.len();
     let mut staffed = vec![false; n];
     for (w, vis) in &workers {

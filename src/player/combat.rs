@@ -482,12 +482,15 @@ pub fn player_attack(
     let dt = time.delta_secs();
 
     // Lock-on: in third-person, snap toward the nearest enemy the instant a swing begins (FP aims by
-    // view, so it owns facing — no lock there). Computed once and reused for the light press and the
-    // heavy release below so both swings commit to the same foe.
-    let new_lock = if juice.fp.active {
-        None
-    } else {
+    // view, so it owns facing — no lock there). Only computed on the press/release edges that
+    // actually read it — otherwise this O(n) scan over every live foe ran every frame of a siege for
+    // a value that was discarded. (Both edges use the same value so a light→heavy combo locks one foe.)
+    let new_lock = if !juice.fp.active
+        && (buttons.just_pressed(MouseButton::Left) || buttons.just_released(MouseButton::Left))
+    {
         lock_target_angle(targets.iter().map(|t| t.1), hero.pos, hero.facing)
+    } else {
+        None
     };
 
     // Charging is gated on the same conditions as swinging: cursor locked (actually playing) and not

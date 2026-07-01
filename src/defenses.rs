@@ -175,7 +175,9 @@ fn defenders_fire(
     defenses: Res<Defenses>,
     mut orders: ResMut<DefenderBolts>,
     mut emitters: Query<&mut Defender>,
-    invaders: Query<(Entity, &Transform), With<WaveInvader>>,
+    // `Without<Dying>`: don't lock a shot (and burn the cooldown) onto a fading corpse — a killed
+    // invader stays a valid `WaveInvader` for ~1.4s. Matches `step_defender_bolts`'s own query.
+    invaders: Query<(Entity, &Transform), (With<WaveInvader>, Without<crate::dying::Dying>)>,
 ) {
     if siege.phase != GamePhase::Wave {
         return;
@@ -296,7 +298,9 @@ fn batter_towers(
     time: Res<Time>,
     siege: Res<Siege>,
     mut towers: Query<&mut Defender>,
-    invaders: Query<&Transform, With<WaveInvader>>,
+    // `Without<Dying>`: a defeated invader keeps its position for the ~1.4s death fade; without this
+    // it would keep gnawing on a tower after it's dead, per the corpse-filtering rule in `dying.rs`.
+    invaders: Query<&Transform, (With<WaveInvader>, Without<crate::dying::Dying>)>,
 ) {
     if siege.phase != GamePhase::Wave {
         return;

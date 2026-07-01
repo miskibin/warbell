@@ -28,7 +28,7 @@ use bevy::prelude::*;
 use crate::biome::{AtmoSample, BiomeAmbience, BiomeEntity, GroundDetail, ParticleKind};
 use crate::critters::PartKind;
 use crate::firelight::{self, FireLight};
-use crate::game_state::Modal;
+use crate::game_state::{AppState, Modal};
 use crate::orks::{Armory, Faction, OrkPart, OrkVariant};
 use crate::palette::lin;
 use crate::player::{HeroState, PendingHeroDamage};
@@ -211,6 +211,14 @@ impl Plugin for OrkFortressPlugin {
             .add_systems(Update, (wobble_flames, drift_smoke, denizen_limbs, quality_lod, gate_beacon))
             // Ungated (once per load): reconcile the fortress to pristine on a Continue/Load.
             .add_systems(Update, reset_fortress_on_load)
+            // Fresh in-process run (New Game / Restart / Play Again route through StartScreen, and
+            // GameOver -> fresh): clear the transient assault flags so the win condition is reachable
+            // again — the world rebuild respawns every fortress entity, so only these flags leak.
+            .add_systems(
+                OnExit(AppState::StartScreen),
+                reset_fortress_on_new_run,
+            )
+            .add_systems(OnExit(AppState::GameOver), reset_fortress_on_new_run)
             // Sim carries the freeze gate, per the game_state contract.
             .add_systems(
                 Update,
@@ -615,7 +623,9 @@ pub fn build(
         let pos = at(*t);
         let rot = ry(yaw) * Quat::from_rotation_z(lean);
         spawn_solid(commands, meshes, &timber_mat, tower_mesh(&mut rng), pos, rot);
-        crate::blockers::add(t.x, t.y, 1.2);
+        // Box, not circle: radius 1.2 > the ≤1.0 bound `blockers::is_blocked`'s neighbour-only scan
+        // assumes for circles, so a circle here could be missed a tile out. A box has no such bound.
+        crate::blockers::add_box(t.x, t.y, 1.2, 1.2);
         commands.spawn((
             WarTower {
                 muzzle: pos + rot * Vec3::new(0.0, 5.1, 0.0),
@@ -704,7 +714,9 @@ pub fn build(
         Transform { translation: spire_pos, rotation: spire_rot, scale: Vec3::splat(SPIRE_SCALE) },
         BiomeEntity,
     ));
-    crate::blockers::add(SPIRE_AT.x, SPIRE_AT.y, 1.8 * SPIRE_SCALE);
+    // Box, not circle: this footprint (~2.07) far exceeds the ≤1.0 circle bound, so a plain circle
+    // would be silently missed by `is_blocked` two-plus tiles out. A box is tested directly.
+    crate::blockers::add_box(SPIRE_AT.x, SPIRE_AT.y, 1.8 * SPIRE_SCALE, 1.8 * SPIRE_SCALE);
     let brazier = spire_pos + spire_rot * (Vec3::new(0.45, 12.05, -0.3) * SPIRE_SCALE);
     commands.spawn((
         Mesh3d(meshes.add(flame_mesh(1.5))),
@@ -740,7 +752,8 @@ pub fn build(
     //    across the strait at dusk ARE the fortress's voice). ──
     let fire = at(BONFIRE_AT);
     spawn_solid(commands, meshes, &mat, bonfire_base_mesh(), fire, Quat::IDENTITY);
-    crate::blockers::add(BONFIRE_AT.x, BONFIRE_AT.y, 1.1);
+    // Box, not circle: radius 1.1 > the ≤1.0 circle bound the neighbour-only scan assumes.
+    crate::blockers::add_box(BONFIRE_AT.x, BONFIRE_AT.y, 1.1, 1.1);
     commands.spawn((
         Mesh3d(meshes.add(flame_mesh(2.3))),
         MeshMaterial3d(flame_mat.clone()),
@@ -2908,6 +2921,20 @@ fn reset_fortress_on_load(
     crate::blockers::remove_box_near(GATE.x, GATE.y, 0.6);
     crate::blockers::add_obb(GATE.x, GATE.y, 3.2, 0.5, 0.0);
     spawn_garrison_denizens(&mut commands, &patrols.armory);
+}
+
+/// Fresh in-process run (New Game / Restart / Play Again all funnel through `StartScreen` without a
+/// `GameLoaded`, so `reset_fortress_on_load` never fires for them): clear the transient assault
+/// flags. The `biome::PendingBuild` world rebuild despawns + respawns every fortress `BiomeEntity`
+/// (Warlord, garrison, denizens, patrols) and re-adds the shut gate blocker via `build()`, so only
+/// these two leaked resource flags need resetting here. Without this the breach prompt/beacon stay
+/// suppressed forever after one victory (`AssaultState.breached` sticks true across the run).
+fn reset_fortress_on_new_run(
+    mut assault: ResMut<AssaultState>,
+    mut director: ResMut<crate::cinematic::DirectorState>,
+) {
+    assault.breached = false;
+    director.gate_open = false;
 }
 
 /// Show + pulse the breach beacon while the hero is in range of the unbroken gate; hide it once
