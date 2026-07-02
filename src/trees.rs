@@ -445,30 +445,66 @@ fn build_pine() -> Mesh {
         (1.36, 0.37, 0.50, -0.04, -0.03, 2.7, FOLIAGE_MID),
         (1.72, 0.25, 0.44, 0.02, 0.03, 3.4, FOLIAGE_LIGHT),
     ];
-    for (base_y, r, h, tx, tz, yaw, c) in tiers {
+    for (i, (base_y, r, h, tx, tz, yaw, c)) in tiers.into_iter().enumerate() {
         // The drooping skirt: a shallow, slightly wider cone hung under the tier base with its
         // APEX DOWN (flipped), so its visible outer surface faces down-and-out — the facet-shading
         // bake then paints it as the shadowed underside of a sagging bough. (An upright skirt cone
         // faces up-out and bakes BRIGHT — it read as odd pale rings between tiers, verified.)
         let skirt = Cone { radius: r * 1.12, height: 0.2 }
             .mesh()
-            .resolution(7)
+            .resolution(9)
             .build()
             .rotated_by(Quat::from_euler(EulerRot::XYZ, std::f32::consts::PI + tx, yaw + 0.4, tz))
             .translated_by(Vec3::new(0.0, base_y - 0.03, 0.0));
-        parts.push(tinted(skirt, lin(FOLIAGE_DARK)));
+        parts.push(tinted(ruffled(skirt, 31 + i as u32 * 7, 0.20), lin(FOLIAGE_DARK)));
         let m = Cone { radius: r, height: h }
             .mesh()
-            .resolution(7)
+            .resolution(9)
             .build()
             .rotated_by(Quat::from_euler(EulerRot::XYZ, tx, yaw, tz))
             .translated_by(Vec3::new(0.0, h * 0.5 + base_y, 0.0));
-        parts.push(tinted(m, lin(c)));
+        parts.push(tinted(ruffled(m, 113 + i as u32 * 13, 0.20), lin(c)));
     }
     // The sunlit leader spike capping the spire (~2.4u total — towers over the broadleaves).
-    parts.push(tinted(cone_at(0.11, 0.34, 2.05, 7, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
+    parts.push(tinted(ruffled(cone_at(0.11, 0.34, 2.05, 7, Vec3::ZERO), 9, 0.25), lin(FOLIAGE_LIGHT)));
 
     merged(parts)
+}
+
+/// Organic "ruffle" for conifer boughs: deterministically jitter a mesh's vertices, scaled by
+/// each vertex's radial distance from the Y axis, so the apex/centre stay pinned while the rim
+/// breaks into an irregular hand-modelled silhouette (a clean `Cone` reads as a mechanical
+/// "choinka" — player feedback, twice). The offset is keyed on the QUANTISED VERTEX POSITION
+/// (not the vertex index), so coincident vertices shared between the side fan and the base cap
+/// move identically and the mesh stays watertight. Runs before `flat_shaded`, which then turns
+/// the ragged geometry into crisp uneven facets.
+fn ruffled(mut m: Mesh, seed: u32, amp: f32) -> Mesh {
+    use bevy::mesh::VertexAttributeValues;
+    if let Some(VertexAttributeValues::Float32x3(pos)) = m.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+    {
+        for p in pos.iter_mut() {
+            let r = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            if r < 1e-4 {
+                continue;
+            }
+            let k = amp * r;
+            let mut s = seed
+                ^ (((p[0] * 512.0).round() as i32 as u32).wrapping_mul(0x9E37_79B9))
+                ^ (((p[1] * 512.0).round() as i32 as u32).wrapping_mul(0x85EB_CA6B))
+                ^ (((p[2] * 512.0).round() as i32 as u32).wrapping_mul(0xC2B2_AE35));
+            let mut rr = || {
+                s = s.wrapping_add(0x6d2b_79f5);
+                let mut t = s;
+                t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+                t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
+                (t ^ (t >> 14)) as f32 / 4_294_967_296.0
+            };
+            p[0] += (rr() - 0.5) * 2.0 * k;
+            p[2] += (rr() - 0.5) * 2.0 * k;
+            p[1] += (rr() - 0.5) * 1.6 * k;
+        }
+    }
+    m
 }
 
 // ── Poplar / cypress — slim columnar flame: tall narrow stack of foliage blobs ──────────
