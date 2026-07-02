@@ -16,6 +16,7 @@
 
 mod aftermath;
 mod ambient_life;
+mod atmospherics;
 mod audio;
 mod banner;
 mod biped;
@@ -265,6 +266,9 @@ fn main() {
         // quality.rs (`god_rays`); same custom-post-pass family as dof/outline. Standalone call
         // because the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(godrays::GodRaysPlugin)
+        // Cinematic atmospherics post pass (height fog + sun in-scatter + cloud light patches).
+        // Toggled per-preset alongside god-rays in quality.rs; same custom-post-pass family.
+        .add_plugins(atmospherics::AtmosphericsPlugin)
         // Last-of-the-line alert (heir-count stinger + persistent banner). Standalone: the tuples
         // above are at the `Plugins` arity-15 cap.
         .add_plugins(succession_alert::SuccessionAlertPlugin)

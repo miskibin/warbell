@@ -50,7 +50,10 @@ pub struct Dof {
 
 /// A tasteful default; tunable live in the Debug panel.
 pub fn default_dof() -> Dof {
-    Dof { focal: 28.0, range: 75.0, far_ramp: 130.0, max_radius: 17.0, near: NEAR, debug_view: 0.0 }
+    // 2026-07 cinematic pass: range 30 / far_ramp 90 (was 75/130) — the old sharp band was so
+    // wide the DoF never visibly fired in normal play; now the fore/background actually melt
+    // while the hero + a generous mid-ground stay sharp. max_radius 20 (was 17) for a softer melt.
+    Dof { focal: 28.0, range: 30.0, far_ramp: 90.0, max_radius: 20.0, near: NEAR, debug_view: 0.0 }
 }
 
 pub struct DofPlugin;

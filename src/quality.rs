@@ -493,7 +493,8 @@ fn apply_quality(
     let ao = s.ssao.level();
     let smaa = s.antialias.smaa();
     let normal_prepass = ao.is_some() || s.outline;
-    let needs_depth = s.depth_of_field || ao.is_some() || s.outline;
+    // god_rays counts: the atmospherics pass (gated with it) reads the prepass depth.
+    let needs_depth = s.depth_of_field || ao.is_some() || s.outline || god;
     // Keep the Ultra (god-rays) bloom lift; otherwise the authored intensity.
     let bloom_intensity = if god { 0.42 } else { defaults.bloom_intensity };
 
@@ -528,6 +529,14 @@ fn apply_quality(
             e.insert(crate::godrays::default_godrays());
         } else {
             e.remove::<crate::godrays::GodRays>();
+        }
+
+        // Cinematic atmospherics (height fog + in-scatter + cloud light patches): rides the
+        // god-rays gate — the same "premium look" tier — via the same component-toggle mechanism.
+        if god {
+            e.insert(crate::atmospherics::default_atmospherics());
+        } else {
+            e.remove::<crate::atmospherics::Atmospherics>();
         }
 
         // Cinematic lens: a static edge vignette only. Chromatic aberration is OFF by default (user

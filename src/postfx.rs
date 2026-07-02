@@ -16,7 +16,9 @@ use crate::combat_fx::HitFeedback;
 /// vignette, which is a UI overlay). Inserted on the premium presets by `quality::apply_quality`;
 /// live-tunable in the F1 panel.
 pub fn default_vignette() -> Vignette {
-    Vignette { intensity: 0.34, radius: 0.78, smoothness: 1.6, ..default() } // 0.34 (was 0.26) — a touch stronger
+    // 0.26 (was 0.34): the atmospherics haze already frames the image; the heavier vignette
+    // stacked on it read as dusk in broad daylight (2026-07 cinematic pass).
+    Vignette { intensity: 0.26, radius: 0.78, smoothness: 1.6, ..default() }
 }
 
 // Chromatic aberration is disabled by default (user preference) — the component is no longer
@@ -38,7 +40,9 @@ pub struct LookSettings {
 
 impl Default for LookSettings {
     fn default() -> Self {
-        Self { saturation: 1.1, chromatic: 0.0 } // chromatic off by default (component not inserted anyway)
+        // 0.98 (was 1.1) — 2026-07 cinematic pass: the filmic reference look is gently
+        // desaturated; the atmospherics haze now carries the colour mood instead.
+        Self { saturation: 0.98, chromatic: 0.0 } // chromatic off by default (component not inserted anyway)
     }
 }
 

@@ -65,12 +65,12 @@ impl Default for GodRays {
     fn default() -> Self {
         Self {
             sun_color: Vec3::new(1.0, 0.83, 0.55), // a touch warmer/golden
-            intensity: 1.05,
+            intensity: 1.15, // was 1.05 — the shafts should READ, not hint (1.3 smeared: verified)
             sun_screen: Vec2::new(0.5, 0.35),
-            decay: 0.974, // longer shafts (was 0.96 — rays died too close to the sun)
+            decay: 0.978, // longer shafts (was 0.974 → 0.96 — rays died too close to the sun)
             density: 0.85, // march further toward the sun so the shafts reach across the sky
             weight: 0.10,
-            threshold: 0.62,
+            threshold: 0.60, // was 0.62; 0.50 fed mid-tones into the march → vertical smear curtains
             num_samples: 48.0,
             fade: 0.0, // starts off; the driver raises it when the sun is up and in frame
         }
@@ -147,7 +147,9 @@ fn drive_godrays(
         let align = fwd.dot(dir);
         // On-screen gate: full when the sun is roughly in front, easing to 0 as it moves to the
         // side/behind (a generous band so shafts still streak in from a just-off-screen sun).
-        let onscreen = smoothstep(0.20, 0.60, align);
+        // Widened (was 0.20..0.60): the cinematic look leans on the rays, so they should hold
+        // almost until the sun leaves the side of the frame instead of dying at a half-turn.
+        let onscreen = smoothstep(0.05, 0.50, align);
         gr.fade = daylight * onscreen;
         gr.sun_color = sun_color;
 

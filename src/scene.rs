@@ -491,7 +491,9 @@ fn advance_sky(
     // lifts the PBR-lit scene slightly after dark — the moody read still comes from the grade cut).
     for (mut g, mut e, _) in &mut cam_fx_q {
         g.global.exposure = -night * night_stops;
-        e.ev100 = 11.0 - night * (11.0 - 10.3);
+        // Day base 10.85 (was 11.0) — 2026-07 cinematic pass: the airy high-key reference read
+        // needed the day scene lifted ~0.15 stop (the atmospherics haze eats a little light).
+        e.ev100 = 10.85 - night * (10.85 - 10.3);
     }
 
     // Bloom: the camera's halo/glow, driven per-region + per-time so emissive things (fire,
@@ -580,10 +582,17 @@ fn setup_camera(
     let (yaw, pitch, _) = cam_tf.rotation.to_euler(EulerRot::YXZ);
 
     let mut grading = ColorGrading::default();
-    grading.global.post_saturation = 1.1; // driven live by grade.rs from LookSettings; kept in sync
-    grading.shadows.contrast = 1.05;
-    grading.midtones.contrast = 1.5;
-    grading.highlights.contrast = 1.03;
+    grading.global.post_saturation = 0.98; // driven live by grade.rs from LookSettings; kept in sync
+    // Filmic soften (2026-07 cinematic pass): the old 1.5 midtone contrast + 1.1 saturation
+    // read as harsh/oversaturated next to the reference look — muted greens, soft highlights.
+    grading.global.temperature = 0.03; // faint warm white-balance lean
+    grading.shadows.contrast = 1.02;
+    grading.midtones.contrast = 1.22;
+    grading.highlights.contrast = 0.98;
+
+    // Gentle shadow lift (film-style faded blacks): the cinematic reference keeps its shadow
+    // side airy — crushed blacks were a big part of the old "harsh" read.
+    grading.shadows.gain = 1.05;
 
     commands.spawn((
         Camera3d::default(),
@@ -599,7 +608,7 @@ fn setup_camera(
         Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), near: 0.04, far: 230.0, ..default() }),
         cam_tf,
         Hdr,
-        Exposure { ev100: 11.0 },
+        Exposure { ev100: 10.85 },
         Tonemapping::AgX,
         // SSAO + SMAA path (mutually exclusive with MSAA). Bevy's built-in DepthOfField is
         // gone — it silently no-op'd next to SSAO and only did a single focal plane. Depth
@@ -639,7 +648,9 @@ fn setup_camera(
         DistanceFog {
             color: SKY,
             directional_light_color: Color::srgb(1.0, 0.93, 0.78),
-            directional_light_exponent: 12.0,
+            // 7 (was 12): a wider sun-toward-camera in-scatter lobe — the haze catches the
+            // light across a broad band of the frame instead of a tight sun-adjacent glow.
+            directional_light_exponent: 7.0,
             falloff: FogFalloff::ExponentialSquared { density: FOG_DENSITY },
         },
         GeneratedEnvironmentMapLight { environment_map: env, intensity: IBL_INTENSITY, ..default() },
