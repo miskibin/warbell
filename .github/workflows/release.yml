@@ -116,3 +116,60 @@ jobs:
             dist/Warbell-${{ github.ref_name }}-setup.msi
           fail_on_unmatched_files: false
           generate_release_notes: true
+
+      # Hand the packaged build to the itch.io publish job below. We ship the
+      # archive (not the raw dir) because workflow artifacts strip the Linux
+      # executable bit; the tar.gz preserves it.
+      - name: Upload artifact for itch.io
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}.zip
+            dist/${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+
+  # Push both platform builds to itch.io (https://miskibin.itch.io/warbell) via butler.
+  # Needs the BUTLER_API_KEY repo secret (itch.io → Settings → API keys); if it's absent
+  # (e.g. a fork) the job warns and skips instead of failing the release. Channels
+  # `windows` / `linux` are created by butler on first push; --userversion stamps the
+  # tag's version so the itch.io app can diff/auto-update between releases.
+  itch:
+    name: Publish to itch.io
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+      ITCH_TARGET: miskibin/warbell
+    steps:
+      - name: Warn if BUTLER_API_KEY is not configured
+        if: env.BUTLER_API_KEY == ''
+        run: echo "::warning::BUTLER_API_KEY secret not set — skipping itch.io publish"
+
+      - name: Download build artifacts
+        if: env.BUTLER_API_KEY != ''
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Install butler
+        if: env.BUTLER_API_KEY != ''
+        run: |
+          curl -fsSL -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
+          unzip -q butler.zip -d butler
+          chmod +x butler/butler
+          ./butler/butler -V
+
+      - name: Push to itch.io
+        if: env.BUTLER_API_KEY != ''
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Re-extract so butler pushes plain directories (better patch diffing than
+          # pushing the archives themselves). The Windows zip has no wrapper dir
+          # (Compress-Archive of dir/*); the Linux tar wraps everything in the
+          # artifact-name dir, hence --strip-components.
+          mkdir -p push/windows push/linux
+          unzip -q dist/tileworld-windows-x86_64/tileworld-windows-x86_64.zip -d push/windows
+          tar -xzf dist/tileworld-linux-x86_64/tileworld-linux-x86_64.tar.gz -C push/linux --strip-components=1
+          ./butler/butler push push/windows "$ITCH_TARGET:windows" --userversion "$VERSION"
+          ./butler/butler push push/linux "$ITCH_TARGET:linux" --userversion "$VERSION"

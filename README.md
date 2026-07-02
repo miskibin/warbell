@@ -11,6 +11,8 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 
 [**▶ Website**](https://miskibin.github.io/warbell/) · [**⬇ Download for Windows**](https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi) · [**Changelog**](https://miskibin.github.io/warbell/changelog.html)
 
+<a href="https://miskibin.itch.io/warbell"><img src="https://static.itch.io/images/badge-color.svg" alt="Available on itch.io" height="40"></a>
+
 
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/e54e45fd-5f4d-4230-bf76-b6040ae66cce" />
 
@@ -19,6 +21,7 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 ## Play
 
 - **Windows:** download [**`Warbell-Setup.msi`**](https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi) and run it. The installer is self-signed, so Windows SmartScreen shows "Unknown Publisher" — click **More info → Run anyway**.
+- **itch.io:** [**miskibin.itch.io/warbell**](https://miskibin.itch.io/warbell) — Windows & Linux builds, pushed automatically on every release (works with the [itch.io app](https://itch.io/app) for auto-updates).
 - **From source** (any platform): see [Build from source](#build-from-source) below.
 
 |  |  |  |
