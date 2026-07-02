@@ -6,6 +6,18 @@ on:
   push:
     tags:
       - "v*"
+  # Manual fallback for sessions that can't push tags (e.g. Claude Code on the web,
+  # whose git proxy only permits its own work branch): dispatch on main with the tag
+  # name, and action-gh-release creates the tag at the dispatched commit itself.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z); created at the dispatched commit if it doesn't exist"
+        required: true
+
+env:
+  # The single source of the tag name: the pushed tag ref, or the dispatch input.
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: write # create the release + upload artifacts
@@ -62,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 6.0.2
-          wix build installer/tileworld.wxs -arch x64 -d SourceDir="$env:GITHUB_WORKSPACE" -o "dist/Warbell-${{ github.ref_name }}-setup.msi"
+          wix build installer/tileworld.wxs -arch x64 -d SourceDir="$env:GITHUB_WORKSPACE" -o "dist/Warbell-${{ env.RELEASE_TAG }}-setup.msi"
 
       # Self-sign the MSI so it carries an Authenticode signature (Digital Signatures tab shows
       # "Warbell (self-signed)"). NOTE: a self-signed cert does NOT chain to a trusted root, so
@@ -83,7 +95,7 @@ jobs:
           $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
           Write-Host "Using signtool: $($signtool.FullName)"
-          $msi = "dist/Warbell-${{ github.ref_name }}-setup.msi"
+          $msi = "dist/Warbell-${{ env.RELEASE_TAG }}-setup.msi"
           & $signtool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint `
             /tr http://timestamp.digicert.com /td SHA256 $msi
           if ($LASTEXITCODE -ne 0) { throw "signtool sign failed ($LASTEXITCODE)" }
@@ -104,7 +116,7 @@ jobs:
       - name: Stable-name MSI copy (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Copy-Item "dist/Warbell-${{ github.ref_name }}-setup.msi" "dist/Warbell-Setup.msi"
+        run: Copy-Item "dist/Warbell-${{ env.RELEASE_TAG }}-setup.msi" "dist/Warbell-Setup.msi"
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
@@ -120,18 +132,22 @@ jobs:
         id: notes
         shell: bash
         run: |
-          f="docs/release-notes/${GITHUB_REF_NAME}.md"
+          f="docs/release-notes/${RELEASE_TAG}.md"
           if [ -f "$f" ]; then echo "path=$f" >> "$GITHUB_OUTPUT"; fi
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          # On a tag push this matches the ref (no-op); on workflow_dispatch it makes
+          # the action create the tag at the dispatched commit.
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           # The MSI line only matches on the Windows runner; on Linux it is skipped silently
           # thanks to fail_on_unmatched_files: false.
           files: |
             dist/${{ matrix.artifact }}.zip
             dist/${{ matrix.artifact }}.tar.gz
-            dist/Warbell-${{ github.ref_name }}-setup.msi
+            dist/Warbell-${{ env.RELEASE_TAG }}-setup.msi
             dist/Warbell-Setup.msi
           fail_on_unmatched_files: false
           # body_path is ignored when empty (no notes file committed for this tag),
@@ -185,7 +201,7 @@ jobs:
       - name: Push to itch.io
         if: env.BUTLER_API_KEY != ''
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           # Re-extract so butler pushes plain directories (better patch diffing than
           # pushing the archives themselves). The Windows zip has no wrapper dir
           # (Compress-Archive of dir/*); the Linux tar wraps everything in the
