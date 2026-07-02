@@ -3,6 +3,9 @@ members = ["crates/core"]
 
 [package]
 name = "tileworld_bevy_forest"
+# The one source of the release version (build.rs embeds it; the MSI binds to it).
+# Bumping it on main cuts a release: .github/workflows/release-on-bump.yml tags
+# and releases any version that lands here without a matching v* tag.
 version = "0.16.1"
 edition = "2024"
 

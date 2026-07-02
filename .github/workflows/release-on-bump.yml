@@ -1,0 +1,50 @@
+name: Release on version bump
+
+# Cut a release when the version in Cargo.toml changes on main and no tag exists
+# for it yet. This is how a session that cannot push tags or dispatch workflows
+# (e.g. Claude Code on the web — its git proxy only permits the session's work
+# branch, and the integration token can't hit the dispatch API) still cuts a
+# release: merge the version bump to main and this workflow calls release.yml,
+# which creates the tag at the merge commit. On a dev-machine release
+# (scripts/release.ps1 pushes the tag alongside the bump) the tag-exists check
+# makes this a no-op, so the tag-push-triggered run stays the only one.
+on:
+  push:
+    branches: [main]
+    paths: ["Cargo.toml"]
+
+permissions:
+  contents: write # release.yml creates the tag + release and uploads artifacts
+
+jobs:
+  check:
+    name: Check for an unreleased version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: v
+        run: |
+          ver=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)
+          [ -n "$ver" ] || { echo "could not read version from Cargo.toml"; exit 1; }
+          tag="v$ver"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "Tag $tag already exists — nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No tag for version $ver yet — releasing $tag."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    name: Release
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.check.outputs.tag }}
+    secrets: inherit # BUTLER_API_KEY for the itch.io publish job

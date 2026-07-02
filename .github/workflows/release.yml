@@ -14,6 +14,14 @@ on:
       tag:
         description: "Release tag (vX.Y.Z); created at the dispatched commit if it doesn't exist"
         required: true
+  # Called by release-on-bump.yml when a Cargo.toml version bump lands on main
+  # without a matching tag (the tag-free release path for web sessions).
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z); created at the called commit if it doesn't exist"
+        required: true
+        type: string
 
 env:
   # The single source of the tag name: the pushed tag ref, or the dispatch input.
