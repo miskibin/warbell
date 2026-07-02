@@ -149,6 +149,7 @@ fn drive_interaction(
     mut next_modal: ResMut<NextState<Modal>>,
     mut cues: MessageWriter<AudioCue>,
     mut feedback: ResMut<HitFeedback>,
+    mut bell_ring: ResMut<crate::castle::BellRing>,
     time: Res<Time>,
     mut offered: ResMut<crate::audio::director::OfferedReply>,
     mut voices: ResMut<crate::audio::director::VoiceManager>,
@@ -171,7 +172,7 @@ fn drive_interaction(
     let mut candidates: Vec<(InteractKind, Vec2, f32, bool)> = vec![
         (InteractKind::Upgrades, Vec2::ZERO, KEEP_DIST, true),
         (InteractKind::Shop, shop_anchor(), SHOP_DIST, true),
-        (InteractKind::WarBell, Vec2::new(0.0, 6.0), BELL_DIST, siege.phase == GamePhase::Prep),
+        (InteractKind::WarBell, crate::castle::BELL_POS, BELL_DIST, siege.phase == GamePhase::Prep),
     ];
     // A villager jab on offer: the prompt anchors where the speaker stood (expiry is handled by
     // `tick_chains`; here we only range-gate it).
@@ -245,6 +246,7 @@ fn drive_interaction(
             InteractKind::WarBell => {
                 siege.request_prep_skip();
                 cues.write(AudioCue::WarBell);
+                bell_ring.0 = Some(time.elapsed_secs()); // rock the bronze (castle::swing_bell)
                 feedback.trauma = (feedback.trauma + 0.3).min(1.0);
             }
             InteractKind::TalkBack => {

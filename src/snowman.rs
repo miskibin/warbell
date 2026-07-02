@@ -284,6 +284,7 @@ fn snowman_brain(
                         sn.atk_cd = SLAM_CD;
                         sn.slam_at = now;
                         pending.0 += SLAM_DMG;
+                        pending.1 = (hpos - sn.pos).normalize_or_zero(); // directional hit-shake
                         cues.write(AudioCue::SnowmanSlam(head(sn.pos)));
                     }
                 } else if let Some(step) = steer::advance(sn.pos, sn.facing, hpos, SPEED * dt, BODY_R, cur_y, MAX_TURN * dt) {

@@ -406,6 +406,7 @@ fn animal_brain(
                                 });
                             } else {
                                 pending.0 += bite;
+                                pending.1 = (hero.pos - a.pos).normalize_or_zero(); // directional hit-shake
                             }
                             // Snarl as it bites — the creature-side SFX so an attack isn't silent.
                             let big = matches!(

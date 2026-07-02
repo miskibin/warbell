@@ -154,6 +154,10 @@ fn step_bolts(
             BoltStep::Fly(p) => tf.translation = p,
             BoltStep::Hit => {
                 pending.0 += b.damage;
+                // Bolt travel direction (bolt → hero, XZ) so the burst shoves the camera along it.
+                pending.1 = (Vec2::new(target.x, target.z)
+                    - Vec2::new(tf.translation.x, tf.translation.z))
+                .normalize_or_zero();
                 if let Some(fx) = &fx {
                     spawn_burst(&mut commands, fx, tf.translation, false);
                 }

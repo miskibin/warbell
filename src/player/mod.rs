@@ -223,8 +223,13 @@ pub struct HeroState {
 /// Damage the orks have dealt the hero since the last health tick. Orks accumulate onto it
 /// (`+=`); [`health::apply_hero_damage`] drains it once per frame. Mirrors the TS store-
 /// mediated combat channel — no collision events.
+///
+/// `.1` is the world-XZ direction the last queued blow TRAVELLED (attacker → hero, normalized;
+/// `Vec2::ZERO` = source unknown). Attack sites set it alongside the damage; `apply_hero_damage`
+/// reads it once to bias the hit screen-shake AWAY from the attacker, then clears it with the
+/// damage. Hazards with no attacker (swamp poison, fall damage) leave it zero → unbiased shake.
 #[derive(Resource, Default)]
-pub struct PendingHeroDamage(pub f32);
+pub struct PendingHeroDamage(pub f32, pub Vec2);
 
 /// Present when a scripted demo (`FOREST_DEMO=explore`) owns the hero's locomotion — [`movement`]
 /// yields so it doesn't fight the script (which writes pos/facing/anim directly). Lets a `FOREST_TPS`

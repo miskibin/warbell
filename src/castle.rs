@@ -1160,21 +1160,155 @@ fn longhouse_parts(roof: M) -> Vec<(Mesh, M)> {
     v
 }
 
-const BELL_POST_H: f32 = 1.6;
+// ── The war bell ─────────────────────────────────────────────────────────────────
+// Split in two: a static baked STAND (steps/posts/braces/roof, `bell_frame_parts`) and a live
+// swinging assembly hinged at the crossbeam (`spawn_bell_swing` + `swing_bell`) — the bell,
+// clapper and pull-rope are real entities so ringing it actually rocks the bronze.
 
-fn bell_parts() -> Vec<(Mesh, M)> {
-    let beam_y = BELL_POST_H - 0.06;
+/// World-XZ of the war bell. Shared with `interaction.rs`'s ring zone so the prompt and the prop
+/// can never drift apart. Moved off the keep's doorstep (it stood hard against the north face at
+/// (0,6)) out to the plaza's south-east quarter — its own station, clear of the keep in shots.
+pub const BELL_POS: Vec2 = Vec2::new(4.5, 7.5);
+/// Frame yaw — angles the crossbeam so the bell's swing plane faces the keep-door approach.
+const BELL_YAW: f32 = -0.55;
+/// Crossbeam-centre height the swing assembly hinges at (world Y over `BELL_POS`).
+const BELL_PIVOT_Y: f32 = 2.2;
+
+/// The bell STAND only: two stone steps, a pair of posts with knee braces, the crossbeam and a
+/// small shingle cap. Static — baked like every other castle part.
+fn bell_frame_parts() -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
-    v.push((bx(1.5, 0.14, 0.5, 0.0, 0.07, 0.0), M::Beam)); // sill
-    for sx in [-0.6_f32, 0.6] {
-        v.push((bx(0.12, BELL_POST_H, 0.12, sx, BELL_POST_H / 2.0, 0.0), M::Beam));
+    v.push((bx(2.1, 0.18, 1.35, 0.0, 0.09, 0.0), M::DarkStone)); // lower step
+    v.push((bx(1.7, 0.16, 1.0, 0.0, 0.26, 0.0), M::Stone)); // upper step
+    for sx in [-1.0_f32, 1.0] {
+        v.push((bx(0.16, 2.0, 0.16, sx * 0.75, 1.34, 0.0), M::Beam)); // post (0.34 → 2.34)
+        // Knee brace: leans from the post up into the crossbeam centre.
+        v.push((
+            bx(0.09, 1.0, 0.09, 0.0, 0.0, 0.0)
+                .rotated_by(Quat::from_rotation_z(sx * 0.62))
+                .translated_by(Vec3::new(sx * 0.45, 1.72, 0.0)),
+            M::Beam,
+        ));
     }
-    v.push((bx(1.5, 0.14, 0.16, 0.0, beam_y, 0.0), M::Beam)); // crossbeam
-    v.push((bx(0.1, 0.18, 0.1, 0.0, beam_y - 0.14, 0.0), M::BronzeDark)); // yoke
-    v.push((taper(0.17, 0.36, 0.55, beam_y - 0.5), M::Bronze)); // bell body
-    v.push((cyl(0.37, 0.07, 0.0, beam_y - 0.78, 0.0), M::BronzeDark)); // lip
-    v.push((bx(0.08, 0.2, 0.08, 0.0, beam_y - 0.66, 0.0), M::BronzeDark)); // clapper
+    v.push((bx(1.9, 0.16, 0.18, 0.0, BELL_PIVOT_Y, 0.0), M::Beam)); // crossbeam (the hinge line)
+    v.push((gable(2.5, 1.15, 0.45, 2.34), M::HouseRoof)); // weather cap
     v
+}
+
+/// Tags the hinged headstock + bell assembly (rocked by [`swing_bell`]).
+#[derive(Component)]
+pub struct BellSwing;
+/// Tags the clapper + pull-rope pivot — swings on the same hinge with lag/overshoot so the
+/// ball visibly hammers the sound-bow.
+#[derive(Component)]
+pub struct BellClapper;
+
+/// Elapsed-secs timestamp of the last ring (E press in `interaction.rs`, or the night arriving on
+/// its own — see [`swing_bell`]). `None` once the toll has decayed. Transient VFX — not saved.
+#[derive(Resource, Default)]
+pub struct BellRing(pub Option<f32>);
+
+/// The moving half of the war bell: two pivot entities hinged at the crossbeam centre — the
+/// headstock + bronze bell under `BellSwing`, the clapper + hanging pull-rope under `BellClapper`.
+/// All part meshes are LOCAL to the hinge (pivot at the origin), so a single rotation swings them.
+fn spawn_bell_swing(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
+    let base = Transform::from_translation(Vec3::new(BELL_POS.x, BELL_PIVOT_Y, BELL_POS.y))
+        .with_rotation(Quat::from_rotation_y(BELL_YAW));
+    // (mesh, material) parts of the bell proper: wooden headstock, bronze profile with a proper
+    // shoulder-waist-flare curve, dark crown + sound-bow lip, one gold accent band.
+    let bell_parts: Vec<(Mesh, M)> = vec![
+        (bx(0.55, 0.22, 0.22, 0.0, -0.09, 0.0), M::Beam), // headstock the bell hangs off
+        (cyl(0.08, 0.14, 0.0, -0.27, 0.0), M::BronzeDark), // crown knob
+        (taper(0.17, 0.31, 0.30, -0.49), M::Bronze), // shoulder
+        (cyl(0.32, 0.05, 0.0, -0.62, 0.0), M::Gold), // accent band
+        (taper(0.31, 0.37, 0.34, -0.81), M::Bronze), // waist
+        (taper(0.37, 0.50, 0.22, -1.09), M::Bronze), // sound-bow flare
+        (cyl(0.52, 0.08, 0.0, -1.22, 0.0), M::BronzeDark), // lip
+    ];
+    let clapper_parts: Vec<(Mesh, M)> = vec![
+        (bx(0.07, 0.85, 0.07, 0.0, -0.62, 0.0), M::BronzeDark), // arm
+        (
+            flat(Mesh::from(Sphere::new(0.11).mesh().ico(1).unwrap())
+                .translated_by(Vec3::new(0.0, -1.06, 0.0))),
+            M::BronzeDark,
+        ), // ball
+        (cyl(0.028, 0.62, 0.0, -1.42, 0.0), M::Straw), // pull rope, through the mouth
+        (cyl(0.055, 0.1, 0.0, -1.76, 0.0), M::Beam), // rope-end grip
+    ];
+    for (tag, parts) in [(true, bell_parts), (false, clapper_parts)] {
+        let mut e = commands.spawn((base, Visibility::default(), BiomeEntity));
+        if tag {
+            e.insert(BellSwing);
+        } else {
+            e.insert(BellClapper);
+        }
+        e.with_children(|p| {
+            for (m, slot) in parts {
+                p.spawn((
+                    Mesh3d(meshes.add(m)),
+                    MeshMaterial3d(mats.get(slot)),
+                    Transform::default(),
+                ));
+            }
+        });
+    }
+}
+
+/// Rock the war bell. Idle: a whisper of wind sway so the prop never reads frozen. Rung: a hard
+/// decaying toll swing; the clapper runs the same hinge with lag + overshoot (clamped to the
+/// sound-bow) so it visibly hammers the wall. Also TOLLS the bell when the night arrives on its
+/// own — prep ran out un-rung — because the bell IS the night's announcement either way.
+/// Ungated VFX (keeps swinging over freezes), like the chimney smoke.
+fn swing_bell(
+    time: Res<Time>,
+    siege: Res<crate::siege::Siege>,
+    mut ring: ResMut<BellRing>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut prev_phase: Local<Option<crate::siege::GamePhase>>,
+    mut belltest: Local<Option<bool>>,
+    mut q: Query<(&mut Transform, Has<BellClapper>), Or<(With<BellSwing>, With<BellClapper>)>>,
+) {
+    let now = time.elapsed_secs();
+    // `FOREST_BELLTEST=1`: re-toll on a loop so a shot/clip can frame the swing without a keypress
+    // (a `FOREST_WAVE` boot starts already IN the wave — no Prep→Wave edge ever fires).
+    if *belltest.get_or_insert_with(|| std::env::var("FOREST_BELLTEST").is_ok())
+        && !ring.0.is_some_and(|t| now - t <= 12.0)
+    {
+        ring.0 = Some(now);
+        cues.write(crate::audio::AudioCue::WarBell);
+    }
+    // Natural nightfall (Prep → Wave with no recent player ring) still swings + tolls. The 10s
+    // guard covers the E-ring case: the skip floors prep to ~3s, so the phase edge lands while
+    // that ring's swing is still live — don't double-toll it.
+    let was = prev_phase.replace(siege.phase);
+    if was.is_some_and(|w| w != siege.phase)
+        && siege.phase == crate::siege::GamePhase::Wave
+        && !ring.0.is_some_and(|t| now - t < 10.0)
+    {
+        ring.0 = Some(now);
+        cues.write(crate::audio::AudioCue::WarBell);
+    }
+    // Toll fully decayed → back to idle sway.
+    if ring.0.is_some_and(|t| now - t > 9.0) {
+        ring.0 = None;
+    }
+    let sway = 0.015 * (now * 0.8).sin();
+    let (bell, clapper) = match ring.0 {
+        Some(t0) => {
+            let dt = now - t0;
+            let damp = (-dt * 0.55).exp();
+            let b = 0.55 * damp * (dt * 7.0).sin();
+            // The clapper lags the bell and over-swings, clamped to the sound-bow's inner wall
+            // (≈0.38 rad of relative travel) so the ball never pokes through the bronze.
+            let c_raw = 0.85 * damp * (dt * 7.0 - 0.6).sin();
+            (b, b + (c_raw - b).clamp(-0.38, 0.38))
+        }
+        None => (0.0, 0.0),
+    };
+    for (mut tf, is_clapper) in &mut q {
+        let theta = sway + if is_clapper { clapper } else { bell };
+        tf.rotation = Quat::from_rotation_y(BELL_YAW) * Quat::from_rotation_x(theta);
+    }
 }
 
 fn torch_parts() -> Vec<(Mesh, M)> {
@@ -1484,7 +1618,7 @@ pub fn build(
     for (i, (x, z)) in houses().into_iter().enumerate() {
         spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_center(x, z), HOUSE_SCALE, CastleKind::House(i as u8));
     }
-    spawn(bell_parts(), Vec3::new(0.0, 0.0, 6.0), 0.0, Vec3::ONE, CastleKind::Always);
+    spawn(bell_frame_parts(), Vec3::new(BELL_POS.x, 0.0, BELL_POS.y), BELL_YAW, Vec3::ONE, CastleKind::Always);
 
     // Torches: gate torches reveal with the gate; the keep-door pair is always lit.
     for (x, z, rot) in gates() {
@@ -1505,6 +1639,10 @@ pub fn build(
     spawn(hay_corner_parts(), Vec3::new(10.0, 0.0, 6.0), -0.5, Vec3::ONE, CastleKind::Always);
     spawn(cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::Always);
     spawn(well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::Always);
+
+    // The bell's live swinging half (bronze + clapper/rope) — separate hinged entities, after the
+    // last `spawn` closure call so the `commands`/`meshes` borrows are free again.
+    spawn_bell_swing(commands, meshes, &mats);
 
     // Pooled flicker-lights at each torch flame — the `torch_parts` geometry is emissive-only, so
     // the gates/keep door read flat in the dark without these. Tagged with the SAME `CastlePart`
@@ -1926,11 +2064,12 @@ fn window_glow(
 pub struct CastlePlugin;
 impl Plugin for CastlePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CastleBuilt>().add_systems(
+        app.init_resource::<CastleBuilt>().init_resource::<BellRing>().add_systems(
             Update,
             (
                 drift_smoke,
                 peck_hens,
+                swing_bell,
                 // Reconcile-on-load runs before sync so the same frame re-registers from the
                 // loaded flags after last run's stale boxes are dropped.
                 reconcile_castle_blockers_on_load.before(sync_castle),

@@ -379,8 +379,14 @@ fn spawn_model(
             let m = crate::peasant_model::peasant_biped_meshes(kind, 0xd8a06a, tunic, 0x3a2a18, false, desert);
             let h = m.upload(meshes);
             commands.entity(root).insert(crate::biped::BipedDrive::default());
-            // Off-hand empty: peasants carry only their trade tool.
-            crate::biped::spawn_biped(commands, root, mat, h, 1.06, 1.0, 0.15, 0.3, -0.06, None);
+            // Off-hand mount matches `villagers::build_biped_body` — only the guard mesh set
+            // carries a shield, so this stays empty-handed for the worker kinds.
+            let shield_xf = Transform {
+                translation: Vec3::new(0.0, 0.0, 0.14),
+                rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
+                ..default()
+            };
+            crate::biped::spawn_biped(commands, root, mat, h, 1.06, 1.0, 0.15, 0.3, -0.06, Some(shield_xf));
         }
         // The studio quadruped animals on the shared quad skeleton (Phase 4). `FOREST_VIEW=
         // animal:wolf|dog|horse|deer|camel|bear|polar` picks the species (default wolf). Rest/idle

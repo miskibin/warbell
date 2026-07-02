@@ -2584,6 +2584,10 @@ fn step_warp_bolts(
             BoltStep::Fly(p) => tf.translation = p,
             BoltStep::Hit => {
                 pending.0 += BOLT_DMG;
+                // Bolt travel direction (bolt → hero, XZ) → directional hit-shake.
+                pending.1 = (Vec2::new(target.x, target.z)
+                    - Vec2::new(tf.translation.x, tf.translation.z))
+                .normalize_or_zero();
                 if let Some(fx) = &fx {
                     crate::player::spawn_burst(&mut commands, fx, tf.translation, false);
                 }

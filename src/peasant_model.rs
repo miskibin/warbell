@@ -7,7 +7,7 @@
 //! Each peasant carries ONLY the tool of his trade on the **right hand's `Sword` pivot** (built +Y
 //! like the hero/ork weapons so the shared rest rotation holds them carried): woodcutter → axe,
 //! farmer → hoe, miner → pickaxe, guard → sword; the unemployed go empty-handed. The off-hand
-//! (`Shield` pivot) is left empty — no belt pouch or other prop.
+//! (`Shield` pivot) is empty for civilians; the GUARD mounts a round livery shield there.
 //!
 //! Every part carries a [`Surf`] code (baked into the vertex-colour alpha by [`crate::creature::surf`])
 //! so the shared `CreatureMaterial` shader textures cloth/metal/skin correctly — without it every part
@@ -402,10 +402,26 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         None // unemployed — empty handed
     };
 
-    // Left hand stays empty — a peasant carries ONLY the tool of his trade (axe / hoe / pick / sword),
-    // nothing in the off-hand. The old belt-pouch prop hung off every villager regardless of trade and
-    // read as a random item, so it's gone.
-    let shield = None;
+    // Left hand: WORKERS stay empty (a peasant carries only his trade tool — the old belt-pouch
+    // read as random junk and is gone). GUARDS mount a round livery shield: soldier kit that reads
+    // "militia" at siege distance (blue = ours, crimson = the rival's, same split as the tabard).
+    // The biped animator carries the hero's EDGE-ON shield pose (tuned for the knight's heater), so
+    // the disc bakes a +Y counter-rotation to still show its face — same trick as the ork buckler.
+    let shield = if guard {
+        let livery = if desert { LIVERY_CRIMSON } else { LIVERY_BLUE };
+        Some(
+            group(vec![
+                frustum(0.24, 0.24, 0.04, v(0.0, 0.0, 0.0), WOOD, Surf::Cloth), // wooden disc
+                frustum(0.25, 0.25, 0.016, v(0.0, -0.014, 0.0), LEATHER, Surf::Cloth), // rim backing
+                frustum(0.17, 0.17, 0.048, v(0.0, 0.0, 0.0), livery, Surf::Cloth), // livery field
+                cone(0.06, 0.08, v(0.0, 0.045, 0.0), Quat::IDENTITY, Vec3::ONE, PLATE, Surf::Metal), // boss
+            ])
+            .rotated_by(Quat::from_rotation_x(FRAC_PI_2)) // disc face → +Z (shield-local)
+            .rotated_by(Quat::from_rotation_y(1.15)), // counter the hero pose's edge-on carry
+        )
+    } else {
+        None
+    };
 
     BipedMeshes {
         hips,

@@ -1063,6 +1063,7 @@ fn invader_brain(
                     } else {
                         o.atk_cd = orks::ORK_ATTACK_CD * frenzy_cd;
                         pending.0 += orks::variant_melee(o.variant) * dmg_scale;
+                        pending.1 = to.normalize_or_zero(); // blow direction → directional hit-shake
                     }
                 } else if at_guard {
                     // Trading blows with a town-guard (armour blunts the hit).

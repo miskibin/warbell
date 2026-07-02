@@ -191,6 +191,7 @@ fn drift_embers(time: Res<Time>, mut commands: Commands, mut q: Query<(Entity, &
 fn flicker_fire_lights(
     time: Res<Time>,
     clock: Option<Res<SkyClock>>,
+    mut dark_at: Local<Option<f32>>,
     mut q: Query<(&FireLight, &mut PointLight)>,
 ) {
     let t = time.elapsed_secs();
@@ -198,11 +199,25 @@ fn flicker_fire_lights(
     // No clock yet (e.g. start screen, before the world is built) → treat the fire as lit.
     let night = clock.map(|c| scene::night_of(c.t)).unwrap_or(1.0);
     let ramp = 0.12 + 0.88 * night;
+    // Nightfall flare: the moment full dark lands, every fire ROARS up (~+55%) and settles back
+    // over a few seconds — the torches answering the night, part of the nightfall beat. The
+    // timestamp arms on the day→dark edge and clears when day returns.
+    if night > 0.92 {
+        if dark_at.is_none() {
+            *dark_at = Some(t);
+        }
+    } else if night < 0.5 {
+        *dark_at = None;
+    }
+    let flare = dark_at.map_or(0.0, |t0| {
+        let dt = t - t0;
+        ((dt / 0.4).min(1.0)) * (-dt / 2.8).exp() // quick catch, slow settle
+    });
     for (fl, mut light) in &mut q {
         // Two desynced waves → a restless, non-periodic flicker (mirrors `camps::flicker_flames`).
         let flick = 1.0
             + (t * 7.3 + fl.phase).sin() * 0.12
             + (t * 15.0 + fl.phase * 1.7).sin() * 0.06;
-        light.intensity = fl.base * ramp * flick;
+        light.intensity = fl.base * ramp * flick * (1.0 + 0.55 * flare);
     }
 }

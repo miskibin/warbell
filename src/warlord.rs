@@ -187,6 +187,7 @@ fn warlord_brain(
                 if hero_d < CRIT_RANGE {
                     crit.0 = true;
                     pending.0 += CRIT_LETHAL; // negated if the hero blocks / dodges
+                    pending.1 = (hero.pos - w.pos).normalize_or_zero(); // directional hit-shake
                     cues.write(crate::audio::AudioCue::Slam);
                 }
                 if let Some(fx) = &fx {
@@ -233,6 +234,7 @@ fn warlord_brain(
                     w.atk_anim = now;
                     if hero_hit {
                         pending.0 += MELEE_DMG;
+                        pending.1 = (hero.pos - w.pos).normalize_or_zero(); // directional hit-shake
                     }
                 }
             }

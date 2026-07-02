@@ -484,6 +484,7 @@ fn ork_brain(
                     } else {
                         o.atk_cd = ORK_ATTACK_CD * if frenzied { 0.6 } else { 1.0 };
                         pending.0 += variant_melee(o.variant) * dmg_mul;
+                        pending.1 = (hero.pos - o.pos).normalize_or_zero(); // directional hit-shake
                     }
                     // Trigger the strike animation (club chop / staff jab) — `ork_limbs` reads this.
                     o.atk_anim = time.elapsed_secs();
@@ -1122,12 +1123,21 @@ pub(crate) fn ork_biped_meshes(variant: OrkVariant, faction: Faction) -> crate::
         group(club_parts)
     };
 
-    // Round wooden shield: disc facing +Z + two iron studs (mounted on the left hand by spawn_biped).
+    // Round wooden shield (mounted on the left hand by spawn_biped). The biped animator carries
+    // the SHARED hero shield pose — tuned EDGE-ON for the knight's heater (previs choice) — so a
+    // flat disc under it reads as a floating stick from the front. Bake a +Y counter-rotation into
+    // the mesh so the ork's buckler still shows its face, and dress it (boss + rim + studs) so it
+    // reads as a shield at siege distance.
     let shield = group(vec![
-        cyl(0.2, 0.04, v(0.0, 0.0, 0.0), rx(HPI), wood),
-        cyl(0.022, 0.018, v(0.0, 0.06, 0.022), rx(HPI), iron),
-        cyl(0.022, 0.018, v(0.0, -0.07, 0.022), rx(HPI), iron),
-    ]);
+        cyl(0.26, 0.045, v(0.0, 0.0, 0.0), rx(HPI), wood), // disc
+        cyl(0.27, 0.018, v(0.0, 0.0, -0.018), rx(HPI), dark), // dark rim backing
+        orb(0.065, v(0.0, 0.0, 0.03), iron), // centre boss
+        cyl(0.022, 0.02, v(0.0, 0.17, 0.02), rx(HPI), iron), // studs
+        cyl(0.022, 0.02, v(0.0, -0.17, 0.02), rx(HPI), iron),
+        cyl(0.022, 0.02, v(0.17, 0.0, 0.02), rx(HPI), iron),
+        cyl(0.022, 0.02, v(-0.17, 0.0, 0.02), rx(HPI), iron),
+    ])
+    .rotated_by(Quat::from_rotation_y(1.15));
 
     BipedMeshes {
         hips,

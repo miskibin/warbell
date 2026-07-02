@@ -364,6 +364,29 @@ fn advance_sky(
     // bright, then ramps the world into a dark moonlit night.
     let night = 1.0 - smoothstep(-0.22, 0.08, elev);
 
+    // ── Nightfall surge ── the war-dusk moment: as the sun dives through the just-below-horizon
+    // band RIGHT before the wave (the bell's plunge, or the last ~15% of a natural prep), the sky
+    // catches fire — ember horizon, blood-warm key, hotter bloom — then drains into the navy
+    // night. Gated on the siege countdown (`urgency`) so an ordinary daytime sunset never reads
+    // as a threat; only the night the orks ride in on burns.
+    let urgency = match siege.as_deref() {
+        Some(s) => match s.phase {
+            GamePhase::Wave => 1.0,
+            GamePhase::Prep => {
+                let prog = crate::siege::prep_progress(
+                    s.prep_seconds_left,
+                    crate::siege::mods_for(s.difficulty),
+                );
+                smoothstep(0.80, 0.92, prog)
+            }
+            _ => 0.0,
+        },
+        None => 0.0,
+    };
+    // Ember band peaks with the sun a few degrees under the horizon (elev ≈ −0.05..−0.25).
+    let ember = (1.0 - smoothstep(-0.16, 0.04, elev)) * smoothstep(-0.30, -0.10, elev);
+    let surge = ember * urgency;
+
     // Per-biome mood tint, only in daylight (night stays the tuned moonlit look).
     let tint = biome.and_then(|b| b.0);
     let bw = day * BIOME_TINT_W;
@@ -394,6 +417,10 @@ fn advance_sky(
             smoothstep(0.0, 0.62, elev),
         );
         light.color = lerp_col(warm, Color::srgb(0.55, 0.66, 1.0), night * 0.8);
+        // War-dusk: the below-horizon sun feeds the Atmosphere's glow — push it blood-ember and
+        // brighter through the surge so the horizon band burns as the night falls.
+        light.color = lerp_col(light.color, Color::srgb(1.0, 0.28, 0.10), surge * 0.65);
+        light.illuminance += 2200.0 * surge;
         // Biome tint: warm the desert sun, cool the snow, etc., and nudge brightness toward
         // the biome's authored sun lux (desert brighter, swamp dimmer) — daytime only.
         if let Some(t) = tint {
@@ -430,6 +457,8 @@ fn advance_sky(
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.
     ambient.color = lerp_col(ambient.color, Color::srgb(1.0, 0.80, 0.62), horizon * 0.40);
+    // War-dusk surge: the whole fill leans ember for the plunge, so the ground catches it too.
+    ambient.color = lerp_col(ambient.color, Color::srgb(1.0, 0.52, 0.30), surge * 0.35);
     // Biome tint on the ambient fill colour (brightness stays on the scene's tuned curve). Held to
     // a FRACTION of the full tint weight: the ambient fill lights every surface uniformly — near
     // and far alike — so a full-strength biome tint here reads as a flat colour "wall" over the
@@ -476,6 +505,7 @@ fn advance_sky(
     // Tune live with the F1 → "bloom (master)" slider; `visual.bloom` rides on top of this curve.
     let bloom_base = settings.map(|s| if s.god_rays { 0.30 } else { 0.22 }).unwrap_or(0.22);
     let bloom = (bloom_base * bloom_scale * (1.0 + horizon * 0.5) * (1.0 + night * 0.25)
+        * (1.0 + surge * 0.9) // war-dusk: everything bright haloes as the night falls
         * visual.bloom)
         .clamp(0.0, 0.45);
     for (_, _, mut b) in &mut cam_fx_q {
@@ -486,6 +516,8 @@ fn advance_sky(
     // is lifted off near-black so the world isn't swallowed by black fog after dark.
     let mut fog_col = lerp_col(Color::srgb(0.06, 0.08, 0.15), FOG_DAY, day);
     fog_col = lerp_col(fog_col, Color::srgb(1.0, 0.5, 0.3), horizon * 0.6);
+    // War-dusk surge: the haze itself goes deep ember while the sun dives, then drains to navy.
+    fog_col = lerp_col(fog_col, Color::srgb(0.55, 0.16, 0.07), surge * 0.55);
     // Biome tint on the daytime fog/haze colour (snow pale-cool, desert warm, Blight blood-red).
     if let Some(t) = tint {
         fog_col = lerp_col(fog_col, t.sky, bw);
@@ -517,7 +549,11 @@ fn advance_sky(
         // Sun-toward-camera in-scatter glow — warm by day, but faded out into the plain fog
         // colour after dark (else the below-horizon "sun" paints a warm-orange dusk band on
         // the night horizon).
-        fog.directional_light_color = lerp_col(light_glow_color(high), fog_col, night);
+        fog.directional_light_color = lerp_col(
+            lerp_col(light_glow_color(high), fog_col, night),
+            Color::srgb(1.0, 0.35, 0.12),
+            surge * 0.7, // war-dusk: keep the sun-toward-camera band burning through the plunge
+        );
     }
 }
 

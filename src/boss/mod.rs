@@ -458,6 +458,7 @@ fn boss_brain(
                 if hero_d < CRIT_RANGE {
                     crit.0 = true;
                     pending.0 += CRIT_LETHAL; // negated entirely if the hero is blocking / dodging
+                    pending.1 = (hero.pos - b.pos).normalize_or_zero(); // directional hit-shake
                     cues.write(crate::audio::AudioCue::Slam);
                 }
                 if let Some(fx) = &fx {
@@ -493,6 +494,7 @@ fn boss_brain(
                     b.atk_cd = MELEE_CD;
                     b.atk_anim = now;
                     pending.0 += melee_dmg(b.level);
+                    pending.1 = (hero.pos - b.pos).normalize_or_zero(); // directional hit-shake
                 }
             }
             // Begin a telegraphed critical when off cooldown and the hero is in striking range.
@@ -523,6 +525,7 @@ fn boss_brain(
                     Signature::Shock => {
                         if hero_d < SIG_SHOCK_RADIUS {
                             pending.0 += sig_dmg;
+                            pending.1 = (hero.pos - b.pos).normalize_or_zero(); // directional hit-shake
                         }
                         if let Some(fx) = &fx {
                             crate::player::spawn_shockwave(

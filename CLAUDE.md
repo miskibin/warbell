@@ -19,6 +19,23 @@ source of truth. Do not look for or cite "the old game".)
 > pointers). If you spot a code comment still describing the old static-viewer state, it's stale —
 > fix it.
 
+## Models / subagents
+
+**Main session runs Fable** — best model, worth it for the reasoning-heavy work (architecture,
+gameplay logic, tricky edits). Fable is expensive, so **don't burn it on grunt work.** Delegate
+token-heavy, low-judgement tasks to an **Opus subagent** (cheaper) via the `Agent` tool with
+`model: "opus"`:
+
+- **Codebase exploration** — broad "where is X / how does Y work" fan-out reads (use the `Explore`
+  agent with `model: "opus"`).
+- **Visual debugging** — capture-harness runs (`FOREST_SHOT`/`FOREST_CLIP`), reading back
+  screenshots, iterating on a shot until it looks right.
+- Any bulk, mechanical, or high-token-low-insight task (log sifting, wide grep sweeps, repetitive
+  edits).
+
+Rule of thumb: **Fable decides, Opus fetches.** If the task is mostly "read a lot / look at a lot"
+and little judgement, hand it to an Opus subagent and keep the conclusion, not the file dumps.
+
 ## Commands
 
 ```bash
@@ -146,6 +163,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_AUDIOTEST` / `FOREST_GRADETEST` | isolate audio / reactive-grade for testing |
 | `FOREST_FLOATTEST=1` | continuously stage sample floating combat numbers near the hero (style preview) |
 | `FOREST_FLAGTEST=1` | park one cloth banner in open air at `(0, 6, -22)` to frame the flutter in isolation (`banner.rs`). NB the cloth streams along world ≈`(0.9, 0, -0.43)` — shoot from a spot perpendicular to that or it reads edge-on |
+| `FOREST_BELLTEST=1` | re-toll the war bell on a ~12s loop (swing + clapper + SFX) so a shot/clip frames the ring without a keypress (`castle::swing_bell`); the bell stands at `castle::BELL_POS` (4.5, 7.5) |
 | `BEVY_ASSET_ROOT` | point at this dir if running the binary from elsewhere (WGSL loads from `assets/shaders/`) |
 
 ## Architecture

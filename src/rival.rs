@@ -989,7 +989,10 @@ fn rival_combat(
                     sol.atk_cd = SOLDIER_ATK_CD;
                     v.atk_anim = now; // fire the swing clip (read by villager_drive)
                     match victim {
-                        None => pending.0 += SOLDIER_DMG,
+                        None => {
+                            pending.0 += SOLDIER_DMG;
+                            pending.1 = to.normalize_or_zero(); // directional hit-shake
+                        }
                         Some(ve) => npc_dmg.0.push(crate::villagers::NpcHit { victim: ve, amount: SOLDIER_DMG, attacker: Some(e) }),
                     }
                 }
@@ -1275,7 +1278,10 @@ fn rival_raid_brain(
                     v.atk_anim = now;
                     struck = true;
                     match victim {
-                        None => pending.0 += RAIDER_HERO_DMG,
+                        None => {
+                            pending.0 += RAIDER_HERO_DMG;
+                            pending.1 = to.normalize_or_zero(); // directional hit-shake
+                        }
                         // `attacker: Some(re)` so the struck townsperson fights back against the raider
                         // like it does every other foe (raiders carry `RivalSoldier`, now in the
                         // `npc_fight_back` hostile set) — mirrors `rival_combat`'s garrison strike.

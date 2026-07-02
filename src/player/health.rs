@@ -32,7 +32,7 @@ pub fn apply_hero_damage(
     crit.0 = false;
 
     let Ok((hero, mut hh)) = hero_q.single_mut() else {
-        pending.0 = 0.0;
+        *pending = Default::default();
         return;
     };
     let p = &mut player.0;
@@ -48,7 +48,7 @@ pub fn apply_hero_damage(
             color: crate::combat_fx::col_block(),
             scale: if is_crit { 1.2 } else { 0.9 },
         });
-        pending.0 = 0.0;
+        *pending = Default::default();
     }
 
     // ── Take queued ork damage (unless already down / dodging) ──
@@ -89,13 +89,19 @@ pub fn apply_hero_damage(
         if !blocking {
             feedback.flash = 0.35;
         }
-        feedback.trauma = (feedback.trauma + if dead { 0.5 } else { 0.22 }).min(1.0);
+        feedback.trauma = (feedback.trauma + if dead { 0.5 } else { 0.28 }).min(1.0);
+        // Steer the shake ALONG the blow (attacker → hero) so a hit visibly knocks the camera
+        // away from its source; an unattributed hazard (`.1 == ZERO`) keeps the chaos shake.
+        if pending.1.length_squared() > 1e-6 {
+            feedback.shake_dir = pending.1.normalize();
+        }
+        crate::combat_fx::add_fov_kick(&mut feedback, if dead { 2.0 } else { 0.8 });
 
         if !blocking {
             cues.write(if dead { AudioCue::HeroDeath } else { AudioCue::HeroHurt });
         }
     }
-    pending.0 = 0.0;
+    *pending = Default::default();
 
     // Death itself (HP → 0, `dead_since` armed by `core::Player::damage`) is now handed off to the
     // succession beat (`succession::drive_succession`): it slows the world, swings the camera to the
