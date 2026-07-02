@@ -1,3 +1,4 @@
+
 <div align="center">
 
 # ⚔️ Warbell
@@ -12,6 +13,9 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 [**▶ Website**](https://miskibin.github.io/warbell/) · [**⬇ Download for Windows**](https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi) · [**Changelog**](https://miskibin.github.io/warbell/changelog.html)
 
 <a href="https://miskibin.itch.io/warbell"><img src="https://static.itch.io/images/badge-color.svg" alt="Available on itch.io" height="40"></a>
+
+
+<img width="426" height="240" alt="0702(6)" src="https://github.com/user-attachments/assets/2e965d5c-cfb7-40d5-87ff-a78d101d443f" />
 
 
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/e54e45fd-5f4d-4230-bf76-b6040ae66cce" />
