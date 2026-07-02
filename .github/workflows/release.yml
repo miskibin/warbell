@@ -97,6 +97,15 @@ jobs:
           Write-Host "Timestamp        : $($sig.TimeStamperCertificate.Subject)"
           if (-not $sig.SignerCertificate) { throw "MSI is not signed" }
 
+      # The website's download button resolves releases/latest/download/Warbell-Setup.msi —
+      # a STABLE filename. scripts/release.ps1 attaches it when releasing from a dev machine,
+      # but a tag pushed without the script (e.g. from a cloud session) must not leave the
+      # latest release missing that asset, so CI attaches a stable-named copy too.
+      - name: Stable-name MSI copy (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item "dist/Warbell-${{ github.ref_name }}-setup.msi" "dist/Warbell-Setup.msi"
+
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -104,6 +113,15 @@ jobs:
           cp ${{ matrix.binary }} dist/${{ matrix.artifact }}/
           cp -r assets dist/${{ matrix.artifact }}/assets
           tar -C dist -czf dist/${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+
+      # Handwritten player-facing notes, when the release commit carries them
+      # (docs/release-notes/<tag>.md). Falls back to GitHub's auto-generated notes.
+      - name: Locate handwritten release notes
+        id: notes
+        shell: bash
+        run: |
+          f="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then echo "path=$f" >> "$GITHUB_OUTPUT"; fi
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -114,8 +132,12 @@ jobs:
             dist/${{ matrix.artifact }}.zip
             dist/${{ matrix.artifact }}.tar.gz
             dist/Warbell-${{ github.ref_name }}-setup.msi
+            dist/Warbell-Setup.msi
           fail_on_unmatched_files: false
-          generate_release_notes: true
+          # body_path is ignored when empty (no notes file committed for this tag),
+          # in which case auto-generated notes fill the body instead.
+          body_path: ${{ steps.notes.outputs.path }}
+          generate_release_notes: ${{ steps.notes.outputs.path == '' }}
 
       # Hand the packaged build to the itch.io publish job below. We ship the
       # archive (not the raw dir) because workflow artifacts strip the Linux
