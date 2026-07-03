@@ -28,8 +28,8 @@ use crate::water::WaterMaterial;
 
 /// Distance fog: clear within this many tiles of the camera, ramping to full by [`FOG_FULL`].
 /// Pushed out ×1.4 with the enlarged island so view distance keeps pace.
-const FOG_CLEAR: f32 = 57.0; // was 85 — pulled ~1/3 closer (more aggressive fog)
-const FOG_FULL: f32 = 127.0; // was 190 — pulled ~1/3 closer
+const FOG_CLEAR: f32 = 68.0; // was 85 → 57 — eased back out (near objects should read clear)
+const FOG_FULL: f32 = 145.0; // was 190 → 127 — eased back out with the 2026-07 visibility pass
 
 /// Scatter density multipliers — the original TS game was denser. `SCATTER_DENSITY`
 /// scales every main-class per-tile chance; `COVER_DENSITY` scales the ground-cover
@@ -722,17 +722,18 @@ fn spawn_chunks(
     mat: &Handle<StandardMaterial>,
     chunks: std::collections::HashMap<(i32, i32), ChunkBucket>,
 ) {
-    // Cover cuts out abruptly at 55 units — small ground cover (grass/flowers/mushrooms) is a tiny
+    // Cover cuts out abruptly at 62 units — small ground cover (grass/flowers/mushrooms) is a tiny
     // speck at range, so culling it trims overdraw + distant aliased clutter with little visible loss.
-    // The cutoff is pushed PAST the fog start (FOG_BASE_START ≈ 40) so a chunk vanishes inside the
-    // haze, not in crystal-clear air — earlier (38u) the cutoff sat in front of the fog ramp, so you
-    // could watch each flower chunk snap in/out as you walked. An ABRUPT range (empty crossfade band,
-    // `is_abrupt()` true) is deliberate: a non-empty band routes the chunk through the
-    // dithered-crossfade pipeline (per-fragment `discard`), which defeats early-z on these large
-    // merged meshes. Collapsing both margins keeps it abrupt while preserving `use_aabb: true`.
+    // The cutoff is pushed PAST the fog start (FOG_BASE_START ≈ 56 after the 2026-07 visibility
+    // pass; was 55u vs start 46) so a chunk vanishes inside the haze, not in crystal-clear air —
+    // earlier (38u) the cutoff sat in front of the fog ramp, so you could watch each flower chunk
+    // snap in/out as you walked. An ABRUPT range (empty crossfade band, `is_abrupt()` true) is
+    // deliberate: a non-empty band routes the chunk through the dithered-crossfade pipeline
+    // (per-fragment `discard`), which defeats early-z on these large merged meshes. Collapsing both
+    // margins keeps it abrupt while preserving `use_aabb: true`.
     let cover_range = bevy::camera::visibility::VisibilityRange {
         start_margin: 0.0..0.0,   // always visible up close
-        end_margin: 55.0..55.0,   // abrupt cutoff at 55 world units — inside the fog ramp so it hides
+        end_margin: 62.0..62.0,   // abrupt cutoff at 62 world units — inside the fog ramp so it hides
         use_aabb: true,
     };
     for (key, bucket) in chunks {
@@ -767,7 +768,7 @@ fn spawn_chunks(
                     bevy::camera::visibility::VisibilityRange {
                         start_margin: 0.0..0.0,
                         // 75u: props are low bushes/rocks — small enough at range that the abrupt
-                        // cutoff hides in the fog ramp (FOG_CLEAR 85 → FOG_FULL 190). Tighter than
+                        // cutoff hides in the fog ramp (FOG_BASE_START 56 → END 142). Tighter than
                         // trees (kept at 180), which are tall enough that an earlier cull would read
                         // as a "forest edge" on a clear day (fog can push past 300 in clear biomes).
                         end_margin: 75.0..75.0,

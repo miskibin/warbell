@@ -81,12 +81,17 @@ pub(crate) const K: f32 = 0.42; // previs-unit → rig scale
 pub(crate) const HH: f32 = 0.28; // (legacy; unused)
 pub(crate) const Y_HIPS: f32 = 1.05; // spine root = previs waist 2.5 × K
 pub(crate) const O_TORSO: f32 = 0.0; // torso pivot = hips (waist)
-pub(crate) const O_NECK: f32 = 0.60; // torso → neck (head shrunk ⇒ sits a touch lower)
+// 2026-07 humanization pass: the previs figure read stocky/big-headed (head ≈24% of height).
+// Neck + shoulders raised, shoulders narrowed a touch, arms lengthened back toward natural reach,
+// and the head shrunk (see `head_mesh`) — closer to real human proportions (head ≈19%, higher
+// shoulder line) while keeping Y_HIPS/leg pivots untouched (the animator + ground contact depend
+// on those exactly).
+pub(crate) const O_NECK: f32 = 0.68; // torso → neck (raised: longer torso, higher head)
 pub(crate) const O_HEAD: f32 = 0.0;
-pub(crate) const O_SHOULDER_Y: f32 = 0.563; // torso → shoulder (previs 1.34 × K)
-pub(crate) const SHOULDER_DX: f32 = 0.386; // half shoulder span (previs 0.92 × K)
-pub(crate) const O_ELBOW: f32 = -0.358; // shoulder → elbow (arms shortened ~13%)
-pub(crate) const O_HAND: f32 = -0.497; // elbow → hand (arms shortened ~13%)
+pub(crate) const O_SHOULDER_Y: f32 = 0.62; // torso → shoulder (raised shoulder line)
+pub(crate) const SHOULDER_DX: f32 = 0.36; // half shoulder span (narrowed from 0.386)
+pub(crate) const O_ELBOW: f32 = -0.40; // shoulder → elbow (re-lengthened from the −13% trim)
+pub(crate) const O_HAND: f32 = -0.54; // elbow → hand (re-lengthened from the −13% trim)
 pub(crate) const HIP_DX: f32 = 0.193; // half hip span (previs 0.46 × K)
 pub(crate) const O_HIP_Y: f32 = 0.021; // hips → hip joint (previs 0.05 × K)
 pub(crate) const O_KNEE: f32 = -0.483; // hip → knee (previs 1.15 × K)
@@ -570,9 +575,9 @@ fn gk(parts: Vec<Mesh>) -> Mesh {
 /// Hips: a slim gambeson pelvis, the brown belt, and the pale gambeson skirt hanging to mid-thigh.
 fn hips_mesh(s: &Skin) -> Mesh {
     gk(vec![
-        at(tplate(1.0, 0.4, 1.04, 1.12, 1.1, 0.08), v(0.0, -0.18, 0.0), s.metal), // fauld
-        at(rbx(1.08, 0.2, 1.02, 0.05), v(0.0, -0.08, 0.0), PLEATHER_DK), // belt
-        part(lathe(&[[0.0, 0.13], [0.16, 0.1], [0.16, -0.02], [0.0, -0.05]], 10), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.0, 0.55), s.trim), // buckle
+        at(tplate(0.9, 0.4, 0.9, 1.1, 1.08, 0.08), v(0.0, -0.18, 0.0), s.metal), // fauld (slimmed — human pelvis, not a barrel)
+        at(rbx(0.96, 0.2, 0.9, 0.05), v(0.0, -0.08, 0.0), PLEATHER_DK), // belt
+        part(lathe(&[[0.0, 0.13], [0.16, 0.1], [0.16, -0.02], [0.0, -0.05]], 10), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.0, 0.48), s.trim), // buckle
         at(tplate(0.5, 0.6, 0.06, 1.4, 1.0, 0.03), v(0.0, -0.64, 0.42), PTABARD), // tabard front (shorter — a flap, not a belly)
         at(tplate(0.5, 0.6, 0.06, 1.4, 1.0, 0.03), v(0.0, -0.64, -0.42), PTABARD_DK), // tabard back
     ])
@@ -582,29 +587,31 @@ fn hips_mesh(s: &Skin) -> Mesh {
 /// sleeveless tabard (front + back panels — the grey sides show), per the reference.
 fn torso_mesh(s: &Skin) -> Mesh {
     let mut parts = vec![
-        at(tplate(1.12, 1.55, 1.06, 1.18, 1.12, 0.16), v(0.0, 0.0, 0.0), PLEATHER), // gambeson chest
-        at(tplate(0.22, 1.24, 0.12, 0.5, 1.0, 0.05), v(0.0, 0.16, 0.5), PLEATHER), // chest keel
+        // Slimmed + V-tapered (2026-07 humanization): narrower waist, shallower barrel, a touch
+        // more taper up to the chest so the torso reads as a body, not a crate.
+        at(tplate(1.0, 1.55, 0.86, 1.3, 1.1, 0.16), v(0.0, 0.0, 0.0), PLEATHER), // gambeson chest
+        at(tplate(0.22, 1.24, 0.12, 0.5, 1.0, 0.05), v(0.0, 0.16, 0.42), PLEATHER), // chest keel
         at(lathe(&[[0.0, 0.34], [0.5, 0.3], [0.56, 0.08], [0.5, 0.0], [0.0, 0.0]], 16), v(0.0, 1.45, 0.0), s.metal_lt), // gorget
         // ── back detail (the 3rd-person camera sees this most) ──
-        at(tplate(0.9, 0.66, 0.1, 0.92, 1.0, 0.05), v(0.0, 0.9, -0.5), s.metal), // shoulder-blade backplate
-        at(tplate(0.14, 1.36, 0.1, 0.5, 1.0, 0.04), v(0.0, 0.1, -0.5), s.metal_dk), // spine ridge
-        at(rbx(1.06, 0.13, 0.08, 0.03), v(0.0, 1.02, -0.5), PLEATHER_DK), // upper back strap
-        at(rbx(1.06, 0.13, 0.08, 0.03), v(0.0, 0.42, -0.5), PLEATHER_DK), // lower back strap
-        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.42, 1.02, -0.52), s.trim), // strap buckle (upper)
-        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.42, 0.42, -0.52), s.trim), // strap buckle (lower)
-        at(rbx(0.13, 0.13, 0.06, 0.02), v(0.5, 0.95, 0.46), s.trim), // side cuirass buckle R
-        at(rbx(0.13, 0.13, 0.06, 0.02), v(-0.5, 0.95, 0.46), s.trim), // side cuirass buckle L
+        at(tplate(0.82, 0.66, 0.1, 0.92, 1.0, 0.05), v(0.0, 0.9, -0.44), s.metal), // shoulder-blade backplate
+        at(tplate(0.14, 1.36, 0.1, 0.5, 1.0, 0.04), v(0.0, 0.1, -0.44), s.metal_dk), // spine ridge
+        at(rbx(0.94, 0.13, 0.08, 0.03), v(0.0, 1.02, -0.44), PLEATHER_DK), // upper back strap
+        at(rbx(0.94, 0.13, 0.08, 0.03), v(0.0, 0.42, -0.44), PLEATHER_DK), // lower back strap
+        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.38, 1.02, -0.46), s.trim), // strap buckle (upper)
+        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.38, 0.42, -0.46), s.trim), // strap buckle (lower)
+        at(rbx(0.13, 0.13, 0.06, 0.02), v(0.46, 0.95, 0.4), s.trim), // side cuirass buckle R
+        at(rbx(0.13, 0.13, 0.06, 0.02), v(-0.46, 0.95, 0.4), s.trim), // side cuirass buckle L
     ];
     // Signature chest device per armor (silhouette/identity beyond the recolour).
     match s.style {
         ArmorStyle::Gold => {
             // Gilded chest boss + a rivet ring.
-            parts.push(part(lathe(&[[0.0, 0.2], [0.13, 0.13], [0.17, 0.0], [0.0, -0.03]], 12), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.55, 0.53), s.trim));
+            parts.push(part(lathe(&[[0.0, 0.2], [0.13, 0.13], [0.17, 0.0], [0.0, -0.03]], 12), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.55, 0.46), s.trim));
         }
         ArmorStyle::Dragon => {
             // A row of bone scale-spikes up the chest centre.
             for i in 0..3 {
-                parts.push(part(cone(0.08, 0.2, 5), Vec3::ONE, rx(-PI / 2.0), v(0.0, 0.35 + i as f32 * 0.34, 0.52), s.trim));
+                parts.push(part(cone(0.08, 0.2, 5), Vec3::ONE, rx(-PI / 2.0), v(0.0, 0.35 + i as f32 * 0.34, 0.45), s.trim));
             }
         }
         _ => {}
@@ -649,14 +656,16 @@ fn head_mesh(s: &Skin) -> Mesh {
         }
         _ => {}
     }
-    gk(parts).scaled_by(Vec3::splat(0.85)) // shrink the head (was reading too big)
+    // 0.72 (was 0.85): a properly human head-to-body ratio — the single biggest "bobblehead vs
+    // human" lever on this figure. Pairs with the raised neck/shoulder line (see PROPORTIONS).
+    gk(parts).scaled_by(Vec3::splat(0.72))
 }
 
 /// Shoulder: a rounded steel pauldron cap + the upper arm (steel, tapering to the elbow). 1.3 HH.
 fn shoulder_mesh(sign: f32, s: &Skin) -> Mesh {
     let mut parts = vec![
-        part(lathe(&[[0.0, 0.32], [0.22, 0.29], [0.4, 0.18], [0.5, 0.03], [0.5, -0.14], [0.4, -0.22], [0.2, -0.24], [0.0, -0.24]], 16), Vec3::ONE, xyz(0.05, 0.0, sign * 0.12), v(0.0, -0.18, 0.02), s.metal_lt), // draping pauldron
-        at(tplate(0.46, 0.68, 0.5, 0.92, 0.94, 0.08), v(0.0, -0.77, 0.0), s.metal), // rerebrace (shortened)
+        part(lathe(&[[0.0, 0.32], [0.21, 0.28], [0.37, 0.17], [0.46, 0.03], [0.46, -0.14], [0.37, -0.22], [0.19, -0.24], [0.0, -0.24]], 16), Vec3::ONE, xyz(0.05, 0.0, sign * 0.12), v(0.0, -0.18, 0.02), s.metal_lt), // draping pauldron (slimmed a touch)
+        at(tplate(0.42, 0.78, 0.46, 0.92, 0.94, 0.08), v(0.0, -0.87, 0.0), s.metal), // rerebrace (re-lengthened for the longer arm)
     ];
     // Dragon plate: two bone spikes jut out the top of each pauldron.
     if s.style == ArmorStyle::Dragon {
@@ -669,23 +678,23 @@ fn shoulder_mesh(sign: f32, s: &Skin) -> Mesh {
 /// Elbow: the forearm vambrace (steel) + a dark gauntlet fist at the wrist. Forearm 1.2 HH.
 fn elbow_mesh(_sign: f32, s: &Skin) -> Mesh {
     gk(vec![
-        at(lathe(&[[0.0, 0.26], [0.2, 0.22], [0.28, 0.08], [0.28, 0.0], [0.0, 0.0]], 14), v(0.0, 0.0, 0.04), s.metal_lt), // couter
-        at(tplate(0.44, 0.73, 0.48, 0.78, 0.82, 0.08), v(0.0, -0.75, 0.0), s.metal), // vambrace (shortened)
-        at(tplate(0.46, 0.4, 0.52, 0.8, 0.86, 0.06), v(0.0, -1.13, 0.0), PGLOVE), // gauntlet
-        at(rbx(0.42, 0.16, 0.46, 0.05), v(0.0, -1.08, 0.16), s.metal_dk), // knuckle
+        at(lathe(&[[0.0, 0.26], [0.2, 0.22], [0.26, 0.08], [0.26, 0.0], [0.0, 0.0]], 14), v(0.0, 0.0, 0.04), s.metal_lt), // couter
+        at(tplate(0.4, 0.82, 0.44, 0.78, 0.82, 0.08), v(0.0, -0.84, 0.0), s.metal), // vambrace (re-lengthened for the longer arm)
+        at(tplate(0.44, 0.4, 0.48, 0.8, 0.86, 0.06), v(0.0, -1.24, 0.0), PGLOVE), // gauntlet
+        at(rbx(0.4, 0.16, 0.44, 0.05), v(0.0, -1.19, 0.15), s.metal_dk), // knuckle
     ])
 }
 
 /// Thigh: a steel cuisse tapering toward the knee. 1.4 HH.
 fn hip_mesh(_sign: f32, s: &Skin) -> Mesh {
-    gk(vec![at(tplate(0.52, 1.18, 0.62, 1.18, 1.12, 0.1), v(0.0, -1.13, 0.0), s.metal)]) // cuisse
+    gk(vec![at(tplate(0.46, 1.18, 0.54, 1.16, 1.1, 0.1), v(0.0, -1.13, 0.0), s.metal)]) // cuisse (slimmed)
 }
 
 /// Knee + shin: a steel poleyn cap + the greave column. 1.5 HH.
 fn knee_mesh(s: &Skin) -> Mesh {
     gk(vec![
-        at(lathe(&[[0.0, 0.34], [0.18, 0.3], [0.33, 0.16], [0.36, 0.0], [0.0, 0.0]], 14), v(0.0, -0.2, 0.16), s.metal_lt), // poleyn
-        at(tplate(0.5, 1.12, 0.58, 0.78, 0.84, 0.09), v(0.0, -1.14, 0.0), s.metal), // greave
+        at(lathe(&[[0.0, 0.32], [0.17, 0.28], [0.3, 0.15], [0.33, 0.0], [0.0, 0.0]], 14), v(0.0, -0.2, 0.14), s.metal_lt), // poleyn
+        at(tplate(0.44, 1.12, 0.5, 0.78, 0.84, 0.09), v(0.0, -1.14, 0.0), s.metal), // greave (slimmed)
     ])
 }
 
