@@ -224,33 +224,76 @@ struct Region {
     biome: TB,
     /// centre height class for mountain biomes (0 = flat biome).
     peak: i32,
+    /// Tiered-mesa mode (map-character overhaul pass 1): the region's bulk becomes flat shelves
+    /// separated by multi-class SHEER walls (`mesa_height`), exempt from `terrace_inland`, with
+    /// the authored `passes` corridors as the only climbable ways up. `false` keeps the legacy
+    /// smooth-terraced `mountain_height` (everything ≤1-class walkable).
+    cliffy: bool,
+    /// Authored pass corridors for a cliffy region (empty otherwise). The FIRST pass is the
+    /// castle-facing main ascent — roads target its mouth (`biome_road_targets`).
+    passes: &'static [Pass],
 }
 
+/// One authored pass corridor through a cliffy region's mesa walls: a smooth ≤1-class ramp
+/// staircase from the region rim to the summit, cut radially along `ang`.
+struct Pass {
+    /// Direction (base-space radians) from the region CENTRE toward the pass mouth on the rim.
+    ang: f32,
+    /// Corridor half-width in base tiles at the rim (angular width shrinks toward the centre
+    /// like `ramp_class`'s, so the walls converge into a climbing canyon).
+    half: f32,
+}
+
+/// Snow massif passes: SE main ascent facing the castle + an E ramp toward the desert (the
+/// snow↔desert ring road threads it). Angles are `atan2(target_z − reg.z, target_x − reg.x)`.
+const SNOW_PASSES: [Pass; 2] = [
+    Pass { ang: 0.578, half: 3.0 },  // SE, toward the castle (main ascent)
+    Pass { ang: -0.184, half: 2.4 }, // E, toward the desert dunes
+];
+/// Rock range passes: WNW main ascent (mouth at base ≈(86,39), a clear 20+ base units from the
+/// castle — due-west would run the ramp straight into the castle safe-zone's grass fray, which
+/// force-flattens class-1 bays into the corridor) + the N slot canyon toward the desert
+/// (compression→release: the desert↔rock ring road runs its floor). The SW rim by the lake is
+/// deliberately passless — that wall is the waterfall cliff (vista pass).
+const ROCK_PASSES: [Pass; 2] = [
+    Pass { ang: -2.60, half: 3.0 }, // WNW, toward the castle side (main ascent)
+    // N canyon toward the desert. NOT -1.88 (straight at the desert centre): the rival
+    // stronghold's forced-flat plateau (world (66,-88), r 30) sits on that line and cuts
+    // class-1 bays across the ramp; -1.60 exits the canyon ~34 world units east of the fort —
+    // the ring road passes the rival's walls, then climbs the slot.
+    Pass { ang: -1.60, half: 2.4 },
+];
+
 const REGIONS: [Region; 6] = [
-    Region { x: 26.0, z: 24.0, r: 33.0, biome: TB::Snow, peak: 10 }, // NW snow massif (r 31→33: shrink the empty snow↔desert grass seam)
+    // NW snow massif (r 31→33: shrink the empty snow↔desert grass seam). peak 10→18 + cliffy
+    // (pass 1): tiered mesa shelves + sheer walls, climbable only via SNOW_PASSES. 18 (not the
+    // first attempt's 13): at 13 the tier walls came out 1–1.5u and the massif still read as a
+    // smooth white dome (verification FAIL) — 18 gives 2u walls (ladder 2/6/10/14/18) that
+    // register as cliff bands even white-on-white in haze. Rock stays taller (22).
+    Region { x: 26.0, z: 24.0, r: 33.0, biome: TB::Snow, peak: 18, cliffy: true, passes: &SNOW_PASSES },
     // NE dunes — shifted NW (112,28 → 101,10), so the dune field grows toward the snow massif and
     // fills the grass corridor along the top coast. Radius 34→38 to close the empty grass seam
     // between snow and desert (players noted the wide bare strip there): with snow at r33 the seam
     // shrinks from ~10 to ~4 base, and region_at's wobble/fray makes the two biomes meet on an
     // organic edge instead of a clean grass gutter. Still biased NORTH so the dunes don't bulge onto
     // the keep — at z10 the south reach is ~z48, clear of the castle safe-ring (south edge ~z36).
-    Region { x: 101.0, z: 10.0, r: 38.0, biome: TB::Desert, peak: 0 },
+    Region { x: 101.0, z: 10.0, r: 38.0, biome: TB::Desert, peak: 0, cliffy: false, passes: &[] },
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
-    // the safe-zone fray instead of a 33-unit trek). Raised to a real MOUNTAIN height (the tallest
-    // biome by far) — `terrace_inland` relaxes the inland faces to ≤1-class steps so the nav-grid
-    // still climbs the taller bulk; the seaward coastal band stays sheer, reading as cliff peaks.
-    Region { x: 116.0, z: 57.0, r: 34.0, biome: TB::Rock, peak: 18 },
+    // the safe-zone fray instead of a 33-unit trek). peak 18→22 + cliffy (pass 1): the tallest
+    // biome is now a real tiered MESA — flat shelves, 2.5u sheer walls between them, climbable
+    // only via ROCK_PASSES; `terrace_inland` exempts it (`cliff_exempt_base`).
+    Region { x: 116.0, z: 57.0, r: 34.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
     // MAP_SCALE 2.2 bump. Snow/desert radii stay (their shared seam is already tuned tight).
-    Region { x: 32.0, z: 80.0, r: 36.0, biome: TB::Forest, peak: 0 }, // SW forest
-    Region { x: 72.0, z: 92.0, r: 29.0, biome: TB::Swamp, peak: 0 }, // S swamp
+    Region { x: 32.0, z: 80.0, r: 36.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // SW forest
+    Region { x: 72.0, z: 92.0, r: 29.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // S swamp
     // Eastern marsh arm: fills the open grass strip that ran between the S swamp and the
     // rocky mine range (world x +30…+66, z +15…+60), so the marsh laps right up to the
     // foot of the mines instead of leaving a grass corridor. Rock's mountain priority in
     // `region_at` auto-clips the east edge (the mines stay rock), and the castle safe-ring
     // forces grass at the centre, so this only eats the in-between grass.
-    Region { x: 102.0, z: 78.0, r: 24.0, biome: TB::Swamp, peak: 0 },
+    Region { x: 102.0, z: 78.0, r: 24.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] },
 ];
 
 struct Plateau {
@@ -281,13 +324,16 @@ const ASH_ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
 /// deliberately DIFFERENT arrangement from the home island, so the world reads as a new place
 /// even before the palette/atmosphere land. Mirror was dropped (it desyncs colour-vs-class +
 /// bridges/town-plots); bespoke positions + the noise reseed do the layout work instead.
+// Ashlands stays on the legacy smooth-terraced mountains (cliffy: false) for now — the mesa
+// treatment is tuned for the home island first; give the charcoal massif its own pass set when
+// the Ashlands gets its character pass.
 const ASH_REGIONS: [Region; 6] = [
-    Region { x: 24.0, z: 54.0, r: 32.0, biome: TB::Rock, peak: 18 }, // W charcoal massif (home put it E)
-    Region { x: 112.0, z: 26.0, r: 28.0, biome: TB::Snow, peak: 9 }, // NE ashfall drifts
-    Region { x: 110.0, z: 82.0, r: 30.0, biome: TB::Desert, peak: 0 }, // SE bleached dunes
-    Region { x: 58.0, z: 92.0, r: 26.0, biome: TB::Forest, peak: 0 }, // S burnt grove
-    Region { x: 96.0, z: 48.0, r: 18.0, biome: TB::Lava, peak: 0 }, // E lava field (the signature biome)
-    Region { x: 70.0, z: 14.0, r: 20.0, biome: TB::Swamp, peak: 0 }, // N sulfur seep
+    Region { x: 24.0, z: 54.0, r: 32.0, biome: TB::Rock, peak: 18, cliffy: false, passes: &[] }, // W charcoal massif (home put it E)
+    Region { x: 112.0, z: 26.0, r: 28.0, biome: TB::Snow, peak: 9, cliffy: false, passes: &[] }, // NE ashfall drifts
+    Region { x: 110.0, z: 82.0, r: 30.0, biome: TB::Desert, peak: 0, cliffy: false, passes: &[] }, // SE bleached dunes
+    Region { x: 58.0, z: 92.0, r: 26.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // S burnt grove
+    Region { x: 96.0, z: 48.0, r: 18.0, biome: TB::Lava, peak: 0, cliffy: false, passes: &[] }, // E lava field (the signature biome)
+    Region { x: 70.0, z: 14.0, r: 20.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // N sulfur seep
 ];
 
 /// Which world a run generates. `u8` on the wire (0 = Home, default) so it rides the save +
@@ -768,6 +814,187 @@ fn mountain_height(x: f32, z: f32, reg: &Region) -> i32 {
     h.clamp(1, peak)
 }
 
+// ── Tiered mesas (cliffy peak regions — map-character overhaul pass 1) ─────────────
+/// Normalised radial "altitude" 0..1 into a cliffy region, with noise-distorted distance so the
+/// tier rims wave organically instead of drawing concentric circles.
+fn mesa_t(x: f32, z: f32, reg: &Region) -> f32 {
+    let dc = (x - reg.x).hypot(z - reg.z) + noise_a(x * 0.33, z * 0.33) * 3.2;
+    (1.0 - dc / reg.r).clamp(0.0, 1.0)
+}
+
+/// Fraction of the way up each tier begins (`mesa_height` ladder). 5 tiers: broad low shelves,
+/// a small summit cap.
+const MESA_TIERS: [f32; 5] = [0.15, 0.34, 0.54, 0.74, 0.91];
+
+/// Tiered mesa height for a `cliffy` region: flat shelves separated by multi-class SHEER walls
+/// (rock peak 22 → shelf classes 2/7/12/17/22 = 2.5u cliffs between shelves at `GROUND_STEP`
+/// 0.5). Both the nav-grid (`can_step`) and the hero (`hero_can_step`) refuse >1-class climbs,
+/// so the walls block everyone with zero new logic — downward ledges stay droppable (one-way
+/// descents off a shelf work). The authored pass corridors are the only ways UP; outside the
+/// lowest tier a 1–2-class apron ring meets the surrounding terrain smoothly.
+fn mesa_height(x: f32, z: f32, reg: &Region) -> i32 {
+    if let Some(rc) = pass_class(x, z, reg) {
+        return rc;
+    }
+    let t = mesa_t(x, z, reg);
+    if t < MESA_TIERS[0] {
+        // Foot apron: low fringe so the mesa rises out of walkable ground, not a moat of cliff.
+        return if t > MESA_TIERS[0] * 0.5 { 2 } else { 1 };
+    }
+    let span = (reg.peak - 2).max(1) as f32;
+    let n = MESA_TIERS.len();
+    let mut tier = 0;
+    for (i, th) in MESA_TIERS.iter().enumerate() {
+        if t >= *th {
+            tier = i;
+        }
+    }
+    2 + (span * tier as f32 / (n - 1) as f32).round() as i32
+}
+
+/// Smooth ≤1-class ramp staircase inside any of a cliffy region's authored [`Pass`] corridors
+/// (None outside them). Same angular-corridor construction as [`ramp_class`], but per authored
+/// pass instead of the single castle-facing default. The corridor walls — the jump between this
+/// ramp and the neighbouring mesa shelf — read as a climbing canyon for free.
+fn pass_class(x: f32, z: f32, reg: &Region) -> Option<i32> {
+    let dx = x - reg.x;
+    let dz = z - reg.z;
+    let dc = dx.hypot(dz);
+    if dc >= reg.r {
+        return None;
+    }
+    for p in reg.passes {
+        let mut da = (dz.atan2(dx) - p.ang) % std::f32::consts::TAU;
+        if da < -std::f32::consts::PI {
+            da += std::f32::consts::TAU;
+        }
+        if da > std::f32::consts::PI {
+            da -= std::f32::consts::TAU;
+        }
+        let half_ang = (p.half / dc.max(1.5)).min(std::f32::consts::PI);
+        if da.abs() < half_ang {
+            let span = (reg.peak - 2).max(1) as f32;
+            let step_len = reg.r / span;
+            let cls = 2 + ((reg.r - dc) / step_len).floor() as i32;
+            return Some(cls.clamp(2, reg.peak));
+        }
+    }
+    None
+}
+
+/// True if base `(x, z)` classifies into a cliffy mesa region OR one of its pass corridors —
+/// these tiles are EXEMPT from `terrace_inland`'s ≤1-class relaxation (the shelf walls are the
+/// point, and relaxing a corridor tile toward a neighbouring low bay would break the staircase)
+/// and from the climbability test (the corridors' own smoothness is covered by
+/// `mesa_passes_climb_to_the_summit`).
+fn cliff_exempt_base(x: f32, z: f32) -> bool {
+    if matches!(region_at(x, z), Some(ri) if {
+        let r = &active_map().regions[ri];
+        r.cliffy && r.peak > 0
+    }) {
+        return true;
+    }
+    active_map().regions.iter().any(|r| r.cliffy && r.peak > 0 && pass_class(x, z, r).is_some())
+}
+
+/// True near (within `pad` base tiles outside) a cliffy region's rim — the flat "contrast apron"
+/// band: tall only reads tall next to flat, so the rolling inland hills are suppressed there.
+fn near_cliffy_rim(x: f32, z: f32, pad: f32) -> bool {
+    active_map().regions.iter().any(|r| {
+        r.cliffy && r.peak > 0 && {
+            let d = (x - r.x).hypot(z - r.z);
+            (r.r - 2.0..r.r + pad).contains(&d)
+        }
+    })
+}
+
+/// True inside (with margin) any cliffy region — plateaus skip these (a smooth plateau cone
+/// punched into the mesa tiers would carve a walkable breach through the walls).
+fn in_cliffy(x: f32, z: f32) -> bool {
+    active_map()
+        .regions
+        .iter()
+        .any(|r| r.cliffy && r.peak > 0 && (x - r.x).hypot(z - r.z) < r.r + 2.0)
+}
+
+// ── Cliffy-mesa exports (roads / placement) ──────────────────────────────────────
+/// Base-space mouth of a pass corridor: just outside the region rim along the pass angle.
+fn pass_mouth_base(reg: &Region, p: &Pass) -> (f32, f32) {
+    (reg.x + p.ang.cos() * (reg.r + 1.0), reg.z + p.ang.sin() * (reg.r + 1.0))
+}
+
+/// World-space centres of the active map's five primary biome regions (the road network's
+/// trunk/ring skeleton — index 5, the home marsh arm, is deliberately not a road anchor).
+pub fn biome_centres_world() -> [Vec2; 5] {
+    let rs = active_map().regions;
+    std::array::from_fn(|i| Vec2::new(rs[i].x * MAP_SCALE - GX, rs[i].z * MAP_SCALE - GZ))
+}
+
+/// Where the trunk road for biome region `i` should END: the region centre — or, for a cliffy
+/// mesa, the castle-facing pass MOUTH (`passes[0]`): a painted road must never run up the shelf
+/// walls; the pass trail (`pass_trails_world`) continues the route to the summit.
+pub fn biome_road_target(i: usize) -> Vec2 {
+    let reg = &active_map().regions[i];
+    if reg.cliffy && !reg.passes.is_empty() {
+        let (mx, mz) = pass_mouth_base(reg, &reg.passes[0]);
+        Vec2::new(mx * MAP_SCALE - GX, mz * MAP_SCALE - GZ)
+    } else {
+        Vec2::new(reg.x * MAP_SCALE - GX, reg.z * MAP_SCALE - GZ)
+    }
+}
+
+/// Ring-road node for biome region `i` when the segment approaches from `other` (world): flat
+/// regions anchor at their centre; a cliffy mesa anchors at whichever pass mouth lies nearest
+/// the approach, so the ring threads a pass gate instead of climbing the walls (the desert↔rock
+/// segment runs the N slot canyon this way).
+pub fn biome_ring_node(i: usize, other: Vec2) -> Vec2 {
+    let reg = &active_map().regions[i];
+    if !reg.cliffy || reg.passes.is_empty() {
+        return Vec2::new(reg.x * MAP_SCALE - GX, reg.z * MAP_SCALE - GZ);
+    }
+    reg.passes
+        .iter()
+        .map(|p| {
+            let (mx, mz) = pass_mouth_base(reg, p);
+            Vec2::new(mx * MAP_SCALE - GX, mz * MAP_SCALE - GZ)
+        })
+        .min_by(|a, b| a.distance(other).partial_cmp(&b.distance(other)).unwrap())
+        .unwrap()
+}
+
+/// The pass-corridor trails (world-space polylines, mouth → summit) of every cliffy region on
+/// the active map — painted by `roads` as mountain tracks, so the only ways up the mesas read
+/// as marked routes.
+pub fn pass_trails_world() -> Vec<Vec<Vec2>> {
+    let mut out = Vec::new();
+    for reg in active_map().regions {
+        if !reg.cliffy || reg.peak <= 0 {
+            continue;
+        }
+        for p in reg.passes {
+            let mut pts = Vec::new();
+            let mut dc = reg.r + 1.0;
+            while dc > 2.0 {
+                pts.push(Vec2::new(
+                    (reg.x + p.ang.cos() * dc) * MAP_SCALE - GX,
+                    (reg.z + p.ang.sin() * dc) * MAP_SCALE - GZ,
+                ));
+                dc -= 2.0;
+            }
+            out.push(pts);
+        }
+    }
+    out
+}
+
+/// True on a HIGH shelf (or high ramp stretch) inside a cliffy mesa (world coords) — placement
+/// that must stay trivially reachable from the road level (the ruins landmarks) rejects these.
+pub fn cliff_shelf_world(wx: f32, wz: f32) -> bool {
+    let bx = (wx + GX) / MAP_SCALE;
+    let bz = (wz + GZ) / MAP_SCALE;
+    cliff_exempt_base(bx, bz) && ground_at_world(wx, wz).is_some_and(|y| y > 0.9)
+}
+
 fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     // The Blight: the walkable ork-fortress landmass south of the old coast (shape + heights
     // live in `ork_fortress.rs`). Checked BEFORE the island shape — it deliberately extends
@@ -821,7 +1048,8 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
             return Some((b, ch));
         }
     }
-    let ph = plateau_height(x, z);
+    // Plateaus skip cliffy mesa regions (a smooth plateau cone would breach the tier walls).
+    let ph = if in_cliffy(x, z) { 0 } else { plateau_height(x, z) };
     if ph > 0 {
         // A plateau inside a flat biome blob keeps that biome (desert mesa, forest highland);
         // out on the frontier it's a grass plateau.
@@ -830,6 +1058,16 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
             _ => TB::Grass,
         };
         return Some((b, ph));
+    }
+    // Pass corridors claim their tiles INDEPENDENT of the wobbled region membership:
+    // `region_at`'s wobble (±4.8) otherwise punches frontier-grass bays into a corridor's lower
+    // ramp — 3–4-class holes in the only walkable ascent up a mesa.
+    for reg in active_map().regions {
+        if reg.cliffy && reg.peak > 0 {
+            if let Some(cls) = pass_class(x, z, reg) {
+                return Some((reg.biome, cls));
+            }
+        }
     }
     if let Some(ri) = region_at(x, z) {
         let reg = &active_map().regions[ri];
@@ -842,12 +1080,14 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         // reads wet from the algae ground tint + reeds instead; standing water stays for the rivers
         // and the deliberate lake, which are big enough to render as real water.)
         if reg.peak > 0 {
-            return Some((reg.biome, mountain_height(x, z, reg)));
+            let h = if reg.cliffy { mesa_height(x, z, reg) } else { mountain_height(x, z, reg) };
+            return Some((reg.biome, h));
         }
         // Flat biomes get the inland-hills field: dunes in the desert, wooded rises in the forest.
         // The swamp now gets gentle micro-relief too (max 2 = low hummocks between the pools) so it
         // reads as bumpy wetland instead of a dead-flat sheet; lava stays perfectly flat.
-        let max = if reg.biome == TB::Lava {
+        // Next to a mesa rim the hills flatten to a contrast APRON — tall reads tall beside flat.
+        let max = if near_cliffy_rim(x, z, 8.0) || reg.biome == TB::Lava {
             1
         } else if reg.biome == TB::Swamp {
             2
@@ -856,7 +1096,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         };
         return Some((reg.biome, inland_hills(x, z, dc, max)));
     }
-    let h = inland_hills(x, z, dc, 4);
+    let h = if near_cliffy_rim(x, z, 8.0) { 1 } else { inland_hills(x, z, dc, 4) };
     let forest_n = noise_a(x, z) * noise_b(x + 7.0, z - 3.0);
     if forest_n > 0.35 {
         return Some((TB::Forest, h));
@@ -907,12 +1147,16 @@ fn build_grid() -> Arc<Grid> {
 /// castle safe-zone / town plots (class 1) and every approach lane stay open.
 fn terrace_inland(v: &mut [Option<(TB, i32)>]) {
     // Precompute the coastal-band mask once (dist_from_coast is an 8-ray probe — too costly to
-    // recompute per relaxation pass).
+    // recompute per relaxation pass). Cliffy mesa regions are exempt too: their multi-class
+    // shelf walls are DELIBERATE (map-character overhaul pass 1) — the authored pass corridors
+    // are generated as smooth ≤1-class ramps, so climbability inside a mesa is by construction,
+    // not by relaxation.
     let band: Vec<bool> = (0..(COLS * ROWS) as usize)
         .map(|i| {
             let ix = (i as i32) % COLS;
             let iz = (i as i32) / COLS;
-            dist_from_coast(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) <= 7
+            let (bx, bz) = (ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE);
+            dist_from_coast(bx, bz) <= 7 || cliff_exempt_base(bx, bz)
         })
         .collect();
     // Iterate to a fixpoint: each pass terraces an offending tile down one class toward its
@@ -977,18 +1221,43 @@ pub fn is_grass_world(wx: f32, wz: f32) -> bool {
 fn is_lava_world(wx: f32, wz: f32) -> bool {
     matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Lava))
 }
-/// Smoothed terrain height at integer grid CORNER `(cx, cz)`: the mean flat-top Y of the up-to-four
-/// LAND tiles that meet at that corner (water / off-map tiles are skipped, so a coastal corner sits
-/// at land height instead of being dragged down toward the sea). `None` when no land tile touches
-/// the corner. This is what turns the discrete per-tile height classes into a *continuous*
-/// heightfield: adjacent tiles share their boundary corners, so their tops flow into one slope
-/// rather than a stepped wall (the old Minecraft-block look).
-fn corner_top_y(cx: i32, cz: i32) -> Option<f32> {
+/// Smoothed terrain height at integer grid CORNER `(cx, cz)` **as seen from a tile of class
+/// `h_ref`**: the mean flat-top Y of the corner's land tiles that are CLUSTER-CONNECTED to
+/// `h_ref` — chained by ≤1-class links. On terraced ground every corner tile chains together,
+/// so this is exactly the old whole-corner mean (continuous slopes, no Minecraft steps). But
+/// across a mesa tier wall (≥2-class jump, cliffy regions only — `terrace_inland` forbids it
+/// elsewhere) the shelves split into separate clusters: each keeps its own crisp corner height,
+/// the surface becomes DISCONTINUOUS across the wall edge, and `build_terrain_chunk` spans the
+/// gap with a vertical cliff quad. Without this split the corner averaging melted every
+/// authored mesa cliff into a smooth slope (pass-1 verification FAIL).
+/// `None` when no land tile at the corner chains to `h_ref` (callers fall back to the tile's
+/// own flat top).
+fn corner_top_y_for(cx: i32, cz: i32, h_ref: i32) -> Option<f32> {
+    let mut hs: [Option<i32>; 4] = [None; 4];
+    for (k, (ax, az)) in [(cx - 1, cz - 1), (cx, cz - 1), (cx - 1, cz), (cx, cz)].into_iter().enumerate() {
+        hs[k] = tile_at(ax, az).map(|(_, h)| h);
+    }
+    // Seed with tiles ≤1 class from the reference, then chain outward (≤4 tiles → 3 passes).
+    let mut inc = [false; 4];
+    for k in 0..4 {
+        inc[k] = matches!(hs[k], Some(h) if (h - h_ref).abs() <= 1);
+    }
+    for _ in 0..3 {
+        for k in 0..4 {
+            if inc[k] {
+                continue;
+            }
+            let Some(h) = hs[k] else { continue };
+            if (0..4).any(|j| inc[j] && matches!(hs[j], Some(hj) if (h - hj).abs() <= 1)) {
+                inc[k] = true;
+            }
+        }
+    }
     let mut sum = 0.0_f32;
     let mut n = 0u32;
-    for (ax, az) in [(cx - 1, cz - 1), (cx, cz - 1), (cx - 1, cz), (cx, cz)] {
-        if let Some((_, h)) = tile_at(ax, az) {
-            sum += (h - 1) as f32 * GROUND_STEP;
+    for k in 0..4 {
+        if inc[k] {
+            sum += (hs[k].unwrap() - 1) as f32 * GROUND_STEP;
             n += 1;
         }
     }
@@ -1043,10 +1312,10 @@ fn smooth_surface_y(wx: f32, wz: f32) -> Option<f32> {
     let (_, h) = tile_at(ix, iz)?;
     let flat = (h - 1) as f32 * GROUND_STEP;
     let (fx, fz) = (gx - ix as f32, gz - iz as f32);
-    let c00 = corner_top_y(ix, iz).unwrap_or(flat);
-    let c10 = corner_top_y(ix + 1, iz).unwrap_or(flat);
-    let c01 = corner_top_y(ix, iz + 1).unwrap_or(flat);
-    let c11 = corner_top_y(ix + 1, iz + 1).unwrap_or(flat);
+    let c00 = corner_top_y_for(ix, iz, h).unwrap_or(flat);
+    let c10 = corner_top_y_for(ix + 1, iz, h).unwrap_or(flat);
+    let c01 = corner_top_y_for(ix, iz + 1, h).unwrap_or(flat);
+    let c11 = corner_top_y_for(ix + 1, iz + 1, h).unwrap_or(flat);
     let a = c00 + (c10 - c00) * fx;
     let b = c01 + (c11 - c01) * fx;
     Some(a + (b - a) * fz)
@@ -1969,13 +2238,14 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             }
             let flat = (h - 1) as f32 * GROUND_STEP;
 
-            // Smoothed corner heights (mean of the LAND tiles at each corner) → continuous slopes,
-            // no stepped elevation walls. World-XZ corners + per-corner gradient normals + colours.
+            // Smoothed corner heights (cluster mean at each corner, as seen from THIS tile's
+            // class) → continuous slopes on terraced ground; across a mesa tier wall the
+            // clusters split and the gap gets a vertical cliff quad below.
             let cy = [
-                corner_top_y(ix, iz).unwrap_or(flat),
-                corner_top_y(ix + 1, iz).unwrap_or(flat),
-                corner_top_y(ix + 1, iz + 1).unwrap_or(flat),
-                corner_top_y(ix, iz + 1).unwrap_or(flat),
+                corner_top_y_for(ix, iz, h).unwrap_or(flat),
+                corner_top_y_for(ix + 1, iz, h).unwrap_or(flat),
+                corner_top_y_for(ix + 1, iz + 1, h).unwrap_or(flat),
+                corner_top_y_for(ix, iz + 1, h).unwrap_or(flat),
             ];
             let cxz = [
                 (ix as f32 - GX, iz as f32 - GZ),
@@ -1984,10 +2254,10 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 (ix as f32 - GX, iz as f32 + 1.0 - GZ),
             ];
             let cn = |cx: i32, cz: i32| {
-                let e = corner_top_y(cx + 1, cz).unwrap_or(flat);
-                let w = corner_top_y(cx - 1, cz).unwrap_or(flat);
-                let s = corner_top_y(cx, cz + 1).unwrap_or(flat);
-                let n = corner_top_y(cx, cz - 1).unwrap_or(flat);
+                let e = corner_top_y_for(cx + 1, cz, h).unwrap_or(flat);
+                let w = corner_top_y_for(cx - 1, cz, h).unwrap_or(flat);
+                let s = corner_top_y_for(cx, cz + 1, h).unwrap_or(flat);
+                let n = corner_top_y_for(cx, cz - 1, h).unwrap_or(flat);
                 nrm3([w - e, 2.0, n - s])
             };
             let cnn = [cn(ix, iz), cn(ix + 1, iz), cn(ix + 1, iz + 1), cn(ix, iz + 1)];
@@ -2017,12 +2287,6 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                     &mut indices, &mut positions, &mut normals, &mut colors,
                 );
                 for (dx, dz) in NB {
-                    if tile_at(ix + dx, iz + dz).is_some() {
-                        continue; // land neighbour → tops meet, no skirt
-                    }
-                    if is_river((ix + dx) as f32 / MAP_SCALE, (iz + dz) as f32 / MAP_SCALE) {
-                        continue; // river edge → the marching-squares cell owns this bank
-                    }
                     // Edge corner indices for this side (CCW corner order 0,1,2,3).
                     let (a, b, n): (usize, usize, [f32; 3]) = match (dx, dz) {
                         (1, 0) => (1, 2, [1.0, 0.0, 0.0]),
@@ -2030,6 +2294,39 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                         (0, 1) => (2, 3, [0.0, 0.0, 1.0]),
                         _ => (0, 1, [0.0, 0.0, -1.0]),
                     };
+                    if let Some((_, hn)) = tile_at(ix + dx, iz + dz) {
+                        // Land neighbour: on terraced ground the shared cluster corners meet and
+                        // no skirt is needed. Across a mesa tier wall the corner clusters SPLIT
+                        // (see `corner_top_y_for`) — the higher shelf owns the vertical cliff
+                        // face down to the lower shelf's edge.
+                        let cg = |i: usize| match i {
+                            0 => (ix, iz),
+                            1 => (ix + 1, iz),
+                            2 => (ix + 1, iz + 1),
+                            _ => (ix, iz + 1),
+                        };
+                        let nflat = (hn - 1) as f32 * GROUND_STEP;
+                        let (ga, gb) = (cg(a), cg(b));
+                        let na_y = corner_top_y_for(ga.0, ga.1, hn).unwrap_or(nflat);
+                        let nb_y = corner_top_y_for(gb.0, gb.1, hn).unwrap_or(nflat);
+                        if cy[a] > na_y + 0.01 || cy[b] > nb_y + 0.01 {
+                            quad(
+                                [
+                                    [cxz[a].0, cy[a], cxz[a].1],
+                                    [cxz[b].0, cy[b], cxz[b].1],
+                                    [cxz[b].0, nb_y.min(cy[b]), cxz[b].1],
+                                    [cxz[a].0, na_y.min(cy[a]), cxz[a].1],
+                                ],
+                                n,
+                                [wall_top, wall_top, wall_bot, wall_bot],
+                                &mut indices, &mut positions, &mut normals, &mut colors,
+                            );
+                        }
+                        continue;
+                    }
+                    if is_river((ix + dx) as f32 / MAP_SCALE, (iz + dz) as f32 / MAP_SCALE) {
+                        continue; // river edge → the marching-squares cell owns this bank
+                    }
                     quad(
                         [[cxz[a].0, cy[a], cxz[a].1], [cxz[b].0, cy[b], cxz[b].1], [cxz[b].0, SEA_Y, cxz[b].1], [cxz[a].0, SEA_Y, cxz[a].1]],
                         n,
@@ -2137,7 +2434,13 @@ mod tests {
     /// for "NPCs stuck at the mountain near the castle" — guarded by `terrace_inland`.
     #[test]
     fn inland_terrain_is_climbable() {
-        let band = |ix: i32, iz: i32| dist_from_coast(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) <= 7;
+        let skip = |ix: i32, iz: i32| {
+            let (bx, bz) = (ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE);
+            // Seaward coastal cliffs and the cliffy mesa regions are DELIBERATELY sheer; the
+            // mesas' walkability is guaranteed by their pass corridors instead
+            // (`mesa_passes_climb_to_the_summit`).
+            dist_from_coast(bx, bz) <= 7 || cliff_exempt_base(bx, bz)
+        };
         let mut cliffs: Vec<((i32, i32), (i32, i32), i32, i32)> = Vec::new();
         for iz in 0..ROWS {
             for ix in 0..COLS {
@@ -2146,8 +2449,8 @@ mod tests {
                 for (dx, dz) in [(1, 0), (0, 1)] {
                     let (nx, nz) = (ix + dx, iz + dz);
                     let Some((_, nh)) = tile_at(nx, nz) else { continue };
-                    if band(ix, iz) || band(nx, nz) {
-                        continue; // seaward cliffs are deliberately sheer
+                    if skip(ix, iz) || skip(nx, nz) {
+                        continue;
                     }
                     if (h - nh).abs() >= 2 {
                         cliffs.push(((ix, iz), (nx, nz), h, nh));
@@ -2161,6 +2464,83 @@ mod tests {
             cliffs.len(),
             &cliffs[..cliffs.len().min(8)]
         );
+    }
+
+    /// Every authored pass corridor must be a continuous ≤1-class staircase from open ground at
+    /// the mouth to the region's summit class — the corridors are the ONLY guaranteed ways up a
+    /// cliffy mesa, so a single sheer step in one walls off the whole range for NPCs + the hero.
+    #[test]
+    fn mesa_passes_climb_to_the_summit() {
+        for reg in MAP_HOME.regions.iter().filter(|r| r.cliffy && r.peak > 0) {
+            for (pi, p) in reg.passes.iter().enumerate() {
+                // Sample the corridor centreline FINELY (¼-tile steps) from just outside the
+                // mouth to the centre; consecutive distinct grid tiles are then 8-neighbours,
+                // matching the nav-grid's 8-direction steps. (A greedy axis-walk is WRONG here —
+                // it fronts-loads all the dominant-axis steps and leaves the corridor.)
+                let to_grid = |dc: f32| {
+                    let bx = reg.x + p.ang.cos() * dc;
+                    let bz = reg.z + p.ang.sin() * dc;
+                    ((bx * MAP_SCALE) as i32, (bz * MAP_SCALE) as i32)
+                };
+                let start_dc = reg.r + 2.0;
+                let steps = (start_dc * MAP_SCALE * 4.0) as i32;
+                let (mut last, mut prev) = {
+                    let g = to_grid(start_dc);
+                    (g, tile_at(g.0, g.1).map(|(_, h)| h).unwrap_or(1))
+                };
+                let mut max_seen = prev;
+                let mut worst = (0, (0, 0), 0, 0);
+                for s in 1..=steps {
+                    let dc = start_dc * (1.0 - s as f32 / steps as f32);
+                    let (cx, cz) = to_grid(dc);
+                    if (cx, cz) == last {
+                        continue;
+                    }
+                    last = (cx, cz);
+                    let Some((_, h)) = tile_at(cx, cz) else {
+                        panic!("pass {pi} of {:?} region crosses non-land at grid ({cx},{cz})", reg.biome)
+                    };
+                    if (h - prev).abs() > worst.0 {
+                        worst = ((h - prev).abs(), (cx, cz), prev, h);
+                    }
+                    max_seen = max_seen.max(h);
+                    prev = h;
+                }
+                assert!(
+                    worst.0 <= 1,
+                    "pass {pi} of {:?} region has a {}-class step ({}→{}) at grid {:?} (base {:.1},{:.1})",
+                    reg.biome,
+                    worst.0,
+                    worst.2,
+                    worst.3,
+                    worst.1,
+                    worst.1.0 as f32 / MAP_SCALE,
+                    worst.1.1 as f32 / MAP_SCALE
+                );
+                assert!(
+                    max_seen >= reg.peak - 1,
+                    "pass {pi} of {:?} region tops out at class {max_seen} (peak {})",
+                    reg.biome,
+                    reg.peak
+                );
+            }
+        }
+    }
+
+    /// The mesa summits must be reachable from the castle by the real nav-grid A* — the
+    /// end-to-end guarantee that the pass corridors + bridges connect: miners, wardens' hunters
+    /// and the hero all route with `can_step`, so an unreachable summit means broken content.
+    #[test]
+    fn mesa_summits_reachable_from_castle() {
+        for reg in MAP_HOME.regions.iter().filter(|r| r.cliffy && r.peak > 0) {
+            let summit = Vec2::new(reg.x * MAP_SCALE - GX, reg.z * MAP_SCALE - GZ);
+            let path = crate::navgrid::path_to_budget(Vec2::new(0.0, -8.0), summit, 120_000);
+            assert!(
+                !path.is_empty(),
+                "no nav-grid route castle → {:?} summit at {summit:?}",
+                reg.biome
+            );
+        }
     }
 }
 

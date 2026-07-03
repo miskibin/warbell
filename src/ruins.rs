@@ -669,6 +669,9 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
                     || crate::castle::in_footprint(x, z)
                     || crate::rival::near_fort(x, z)
                     || Vec2::new(x, z).distance(crate::ork_fortress::CENTRE) < 30.0
+                    // Mesa shelves are flat (the flatness grade LOVES them) but sit behind
+                    // sheer walls — a landmark up there is unreachable from its road spur.
+                    || crate::worldmap::cliff_shelf_world(x, z)
                 {
                     continue;
                 }

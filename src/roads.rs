@@ -228,11 +228,13 @@ pub fn speed_mult(wx: f32, wz: f32) -> f32 {
 }
 
 // ── Network construction (runs once, inside `build_field`) ──────────────────────────
-/// The five biome region centres in WORLD space. Base coords mirror `worldmap::REGIONS`
-/// (snow / desert / rock / forest / swamp); `world = base·MAP_SCALE − G`.
+/// The five biome region centres in WORLD space — now read from `worldmap` (was a hardcoded
+/// mirror of `REGIONS` that silently went stale on every region retune). Centres are the ring
+/// SKELETON only; actual road endpoints go through `worldmap::biome_road_target` /
+/// `biome_ring_node`, which swap a cliffy mesa's centre for a pass MOUTH so no road paints up
+/// the shelf walls.
 fn biome_centres() -> [Vec2; 5] {
-    [(26.0, 24.0), (101.0, 10.0), (116.0, 57.0), (32.0, 80.0), (72.0, 92.0)]
-        .map(|(x, z): (f32, f32)| Vec2::new(x * MAP_SCALE - GX, z * MAP_SCALE - GZ))
+    crate::worldmap::biome_centres_world()
 }
 
 /// Pull a wander waypoint back onto walkable land if it strayed onto water/off-map. Bounded; falls
@@ -321,21 +323,27 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     let seed = 0x51ED_2A37u32;
     let mut curves: Vec<Vec<Vec2>> = Vec::new();
 
-    // Trunks: each BIOME centre reached from whichever castle gate faces it.
+    // Trunks: each BIOME reached from whichever castle gate faces it. Cliffy mesas are
+    // trunked to their castle-facing pass MOUTH, not the (summit) centre.
     for (i, t) in biomes.iter().enumerate() {
         let gate = *gates
             .iter()
             .min_by(|a, b| a.distance(*t).partial_cmp(&b.distance(*t)).unwrap())
             .unwrap();
-        curves.push(wander(gate, *t, seed ^ (i as u32).wrapping_mul(0x9E37_79B9)));
+        curves.push(wander(gate, crate::worldmap::biome_road_target(i), seed ^ (i as u32).wrapping_mul(0x9E37_79B9)));
     }
 
     // Ring: connect biome centres to their angular neighbours so you can circle the island.
-    let mut ring = biomes.to_vec();
-    ring.sort_by(|a, b| a.y.atan2(a.x).partial_cmp(&b.y.atan2(b.x)).unwrap());
+    // Centres only SORT the ring; each segment's actual endpoints come from `biome_ring_node`,
+    // which swaps a cliffy mesa for the pass mouth facing the segment's other end — the
+    // desert↔rock leg threads the N slot canyon gate instead of climbing the mesa.
+    let mut ring: Vec<(usize, Vec2)> = biomes.iter().copied().enumerate().collect();
+    ring.sort_by(|a, b| a.1.y.atan2(a.1.x).partial_cmp(&b.1.y.atan2(b.1.x)).unwrap());
     for i in 0..ring.len() {
-        let a = ring[i];
-        let b = ring[(i + 1) % ring.len()];
+        let (ia, ca) = ring[i];
+        let (ib, cb) = ring[(i + 1) % ring.len()];
+        let a = crate::worldmap::biome_ring_node(ia, cb);
+        let b = crate::worldmap::biome_ring_node(ib, ca);
         curves.push(wander(a, b, seed ^ (0x00B5_0000 + i as u32)));
     }
 
@@ -392,6 +400,10 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     let caps = sprout_capillaries(&curves, seed ^ 0x0CA9_F00D);
     let mut out: Vec<(Vec<Vec2>, f32)> = curves.into_iter().map(|c| (c, HALF_W)).collect();
     out.extend(caps.into_iter().map(|c| (c, CAP_HALF_W)));
+    // Pass trails LAST and deliberately outside the spur/capillary source net: the mesa ramp
+    // corridors get a painted mid-width track (mouth → summit), but nothing may branch off one
+    // sideways — a spur or capillary sprouting off a ramp would paint straight up a cliff face.
+    out.extend(crate::worldmap::pass_trails_world().into_iter().map(|c| (c, 1.15)));
     out
 }
 
