@@ -26,7 +26,7 @@ const STEP_FREQ: f32 = 7.0;
 /// momentum/weight instead of snapping to full speed and stopping dead.
 const ACCEL: f32 = 14.0;
 const DECEL: f32 = 9.0;
-const PLAYER_R: f32 = 0.22;
+pub(super) const PLAYER_R: f32 = 0.22;
 /// Walking down a terrace drops the ground a full height class (`worldmap::GROUND_STEP` 0.5) under
 /// the body in one tile. Without a snap the body floats above the new-lower ground for a frame or
 /// two each step, flicking `on_ground` off→on → the walk/fall anim strobes all the way down a
@@ -40,6 +40,24 @@ const STEP_SNAP: f32 = 0.55;
 /// Read by [`anim`] to drive the dash-swipe lunge progress.
 pub(crate) const DASH_TIME: f32 = 0.16;
 
+// ── Dodge roll (Alt) — the Witcher-style evade, available from the first minute (no boon gate,
+// unlike the Sand-Dash art): a quick ground somersault along the move input (a backward dive with
+// none), i-framed through the tuck, priced in stamina so it trades against blocking. ──
+/// Seconds the roll takes start-to-finish.
+pub(crate) const ROLL_TIME: f32 = 0.42;
+/// World units the roll covers (clipped early at walls/cliffs — see the path walk in
+/// [`player_roll`]).
+const ROLL_DIST: f32 = 2.7;
+/// Stamina spent per roll (same pool as block/arts — you can't roll-spam AND hold a guard).
+const ROLL_STAMINA: f32 = 25.0;
+/// Seconds of invulnerability from the roll's start — covers the tuck, not the recovery, so a
+/// late roll still eats the follow-up blow (the timing is the skill).
+const ROLL_IFRAME: f32 = 0.30;
+/// Height (world units) of the tumble pivot — the body's centre of mass while tucked. The root
+/// (feet origin) orbits this point through the somersault so the ball rolls in place instead of
+/// cartwheeling about the ankles.
+const ROLL_PIVOT_H: f32 = 0.5;
+
 // ── Hazards (ported from Character.tsx) ──
 /// A fall shorter than this lands free; beyond it hurts.
 const FALL_SAFE: f32 = 1.1;
@@ -52,6 +70,128 @@ const SWAMP_POISON_INTERVAL: f32 = 2.5;
 
 fn key_axis(keys: &ButtonInput<KeyCode>, pos: KeyCode, neg: KeyCode) -> f32 {
     (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f32
+}
+
+/// Camera-relative WASD/arrow move direction on the ground plane (world XZ, normalized), or
+/// `None` when no move key is held. Shared by [`player_move`] and the [`player_roll`] arm so the
+/// roll dives exactly the way the player is steering.
+fn move_input(keys: &ButtonInput<KeyCode>, cam: Option<&Transform>) -> Option<Vec2> {
+    let mut fwd = cam.map(|c| *c.forward()).unwrap_or(Vec3::NEG_Z);
+    fwd.y = 0.0;
+    if fwd.length_squared() < 1e-6 {
+        fwd = Vec3::NEG_Z;
+    }
+    fwd = fwd.normalize();
+    let right = Vec3::new(-fwd.z, 0.0, fwd.x);
+    let fwd_amt = (key_axis(keys, KeyCode::KeyW, KeyCode::KeyS)
+        + key_axis(keys, KeyCode::ArrowUp, KeyCode::ArrowDown))
+    .clamp(-1.0, 1.0);
+    let rgt_amt = (key_axis(keys, KeyCode::KeyD, KeyCode::KeyA)
+        + key_axis(keys, KeyCode::ArrowRight, KeyCode::ArrowLeft))
+    .clamp(-1.0, 1.0);
+    let dir = fwd * fwd_amt + right * rgt_amt;
+    (dir.length_squared() > 1e-6).then(|| Vec2::new(dir.x, dir.z).normalize())
+}
+
+/// Arm the **dodge roll** on Alt: pick the dive direction (move input, else a backward dive away
+/// from the facing), walk the path for footing/blockers so a wall or cliff-lip clips it short,
+/// spend the stamina, grant the i-frames, and cancel any swing/charge — a roll is a full commit.
+/// [`player_move`] then owns the slide + tumble while `roll_t >= 0.0`; [`anim`] tucks the limbs.
+/// Runs *before* `player_move` so the roll owns locomotion from its very first frame.
+#[allow(clippy::too_many_arguments)]
+pub fn player_roll(
+    time: Res<Time>,
+    mode: Res<PlayMode>,
+    keys: Res<ButtonInput<KeyCode>>,
+    orbit: Res<super::camera::OrbitCam>,
+    player: Res<PlayerRes>,
+    fp: Res<FirstPerson>,
+    fx: Option<Res<super::CombatFx>>,
+    mut commands: Commands,
+    mut cues: MessageWriter<AudioCue>,
+    mut feedback: ResMut<crate::combat_fx::HitFeedback>,
+    cam_q: Query<&Transform, (With<Camera3d>, Without<Hero>)>,
+    mut hero_q: Query<(&mut Hero, &mut super::HeroHealth)>,
+    mut next_test: Local<f32>,
+) {
+    let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
+    let idle = hero.roll_t < 0.0 && hero.dash_t < 0.0 && hero.on_ground;
+    // Debug/capture hook: `FOREST_ROLLTEST=1` re-arms a forward roll on a ~1.8s loop (no keypress
+    // under a capture; skips the pointer-lock/stamina gates) so a `FOREST_TPS` clip can frame the
+    // somersault — same pattern as `FOREST_BELLTEST`.
+    let test_fire = *mode == PlayMode::Play
+        && idle
+        && std::env::var("FOREST_ROLLTEST").is_ok()
+        && time.elapsed_secs() >= *next_test;
+    // FP is excluded: the somersault would cartwheel the viewmodel arms across the lens.
+    let manual = *mode == PlayMode::Play
+        && player.0.is_alive()
+        && orbit.locked
+        && !fp.active
+        && idle
+        && hh.stamina >= ROLL_STAMINA
+        && keys.just_pressed(KeyCode::AltLeft);
+    if !manual && !test_fire {
+        return;
+    }
+    if test_fire {
+        *next_test = time.elapsed_secs() + 1.8;
+    }
+
+    // Dive along the live move input; with none, a backward dive AWAY from the facing (still
+    // eyeing the foe — the classic create-space dodge). The test loop always dives forward.
+    let input = move_input(&keys, cam_q.single().ok());
+    let facing_fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
+    let (dir, back) = match (input, test_fire) {
+        (Some(d), _) => (d, false),
+        (None, true) => (facing_fwd, false),
+        (None, false) => (-facing_fwd, true),
+    };
+
+    // Walk the path in steps: every sample must have footing within one terrace class of the
+    // last (no tumbling off a cliff / into water) and stay clear of solid props — the roll stops
+    // at the last good sample, so rolling at a wall gives a short hop, not a clip-through.
+    let from = hero.pos;
+    let mut to = from;
+    let mut ref_y = hero.y;
+    for k in 1..=8 {
+        let cand = from + dir * (ROLL_DIST * k as f32 / 8.0);
+        let footing_ok = hero_can_stand(cand.x, cand.y, PLAYER_R, ref_y);
+        if !footing_ok || blockers::any_within(cand.x, cand.y, PLAYER_R) {
+            break;
+        }
+        to = cand;
+        ref_y = footing(cand.x, cand.y).unwrap_or(ref_y);
+    }
+
+    hh.stamina -= ROLL_STAMINA;
+    hh.regen_pause = hh.regen_pause.max(0.45);
+    hh.iframe_until = time.elapsed_secs() + ROLL_IFRAME;
+    hero.roll_from = from;
+    hero.roll_to = to;
+    hero.roll_t = 0.0;
+    hero.roll_back = back;
+    // A forward roll faces its travel; the backward dive keeps eyes on the foe.
+    if !back {
+        hero.facing = dir.x.atan2(dir.y);
+    }
+    // A roll is a full commit: it cancels the swing, the charge, any buffered chain and the
+    // combo clock — you traded offense for the escape.
+    hero.attacking = false;
+    hero.heavy = false;
+    hero.queued = false;
+    hero.lock_face = None;
+    hero.lunge_left = 0.0;
+    hero.charge_t = -1.0;
+    hero.combo = 0;
+    hero.combo_until = 0.0;
+    cues.write(AudioCue::Dash); // the evade whoosh (shared with Sand-Dash)
+    crate::combat_fx::add_fov_kick(&mut feedback, 0.8);
+    // Kick-off dust where the dive launches from.
+    if let Some(fx) = fx {
+        let at = Vec3::new(from.x, hero.y + 0.25, from.y);
+        super::combat::spawn_dust_puff(&mut commands, &fx, at, 5);
+    }
 }
 
 pub(super) fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
@@ -90,7 +230,7 @@ fn hero_can_stand(x: f32, z: f32, r: f32, cur_y: f32) -> bool {
 /// `ref_y` is the hero's *body* height (`hero.y`), not the ground under him: while falling past a
 /// ledge that keeps the just-departed high tile in his radius, the high tile stays within
 /// `MAX_STEP` of his airborne body, so it doesn't snag him at the lip.
-fn hero_can_step(x: f32, z: f32, r: f32, ref_y: f32) -> bool {
+pub(super) fn hero_can_step(x: f32, z: f32, r: f32, ref_y: f32) -> bool {
     const OFF: [(f32, f32); 5] = [(0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
     OFF.iter().all(|(dx, dz)| {
         matches!(footing(x + dx * r, z + dz * r), Some(y) if y <= ref_y + steer::MAX_STEP)
@@ -171,6 +311,7 @@ pub fn player_move(
         hero.moving = false;
         hero.vel = Vec2::ZERO;
         hero.dash_t = -1.0; // cancel any in-flight dash (no corpse / frozen-hero skating)
+        hero.roll_t = -1.0; // cancel any in-flight roll (same rule; rotation rights next Play frame)
         // The rig (hips joint in `anim`) owns the idle/walk bob — keep the root on the ground.
         tf.translation = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
         write_state(&mut state, &hero);
@@ -179,6 +320,43 @@ pub fn player_move(
     }
 
     let dt = time.delta_secs().min(0.05);
+
+    // ── Dodge roll: while a roll is armed (by `player_roll`), the roll OWNS locomotion — the body
+    // slides `roll_from → roll_to` while the ROOT tumbles through a full somersault about the tucked
+    // centre of mass (the feet-origin orbits `ROLL_PIVOT_H`, so the ball rolls in place instead of
+    // cartwheeling about the ankles). `anim` tucks the limbs; the tumble spins backward for the
+    // no-input backward dive. ──
+    if hero.roll_t >= 0.0 {
+        hero.roll_t += dt;
+        let u = (hero.roll_t / ROLL_TIME).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - u) * (1.0 - u); // mild ease-out: springs off the line, settles to land
+        hero.pos = hero.roll_from.lerp(hero.roll_to, e);
+        hero.y = footing(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
+        hero.vel_y = 0.0;
+        hero.on_ground = true;
+        hero.moving = false;
+        // The somersault: a full 2π pitch swept between 10%..90% of the roll (flat at both ends so
+        // the tuck-in / stand-up carry the transition), spun the other way for a backward dive.
+        let spin = {
+            let s = ((u - 0.10) / 0.80).clamp(0.0, 1.0);
+            s * s * (3.0 - 2.0 * s) // smoothstep — no snap at either end
+        };
+        let theta = std::f32::consts::TAU * spin * if hero.roll_back { -1.0 } else { 1.0 };
+        let rot = Quat::from_rotation_y(hero.facing) * Quat::from_rotation_x(theta);
+        let center = Vec3::new(hero.pos.x, hero.y + ROLL_PIVOT_H, hero.pos.y);
+        tf.translation = center - rot * (Vec3::Y * ROLL_PIVOT_H);
+        tf.rotation = rot;
+        if u >= 1.0 {
+            hero.roll_t = -1.0; // done — hand locomotion back to input next frame
+            // Exit with travel momentum so a forward roll flows straight into the run.
+            let dir = (hero.roll_to - hero.roll_from).normalize_or_zero();
+            hero.vel = dir * SPEED * if hero.roll_back { 0.3 } else { 0.85 };
+        } else {
+            hero.vel = Vec2::ZERO;
+        }
+        write_state(&mut state, &hero);
+        return;
+    }
 
     // ── Sand Dash slide: while a dash is armed (by `arts::player_arts`), the dash OWNS locomotion —
     // the body skates `dash_from → dash_to` over DASH_TIME with an ease-out (explosive launch, glide
@@ -219,26 +397,9 @@ pub fn player_move(
     *was_swamp = in_swamp;
 
     // ── Camera-relative move vector, flattened to the ground plane ──
-    let mut fwd = cam_q.single().map(|c| *c.forward()).unwrap_or(Vec3::NEG_Z);
-    fwd.y = 0.0;
-    if fwd.length_squared() < 1e-6 {
-        fwd = Vec3::NEG_Z;
-    }
-    fwd = fwd.normalize();
-    let right = Vec3::new(-fwd.z, 0.0, fwd.x);
-
-    let fwd_amt = (key_axis(&keys, KeyCode::KeyW, KeyCode::KeyS)
-        + key_axis(&keys, KeyCode::ArrowUp, KeyCode::ArrowDown))
-    .clamp(-1.0, 1.0);
-    let rgt_amt = (key_axis(&keys, KeyCode::KeyD, KeyCode::KeyA)
-        + key_axis(&keys, KeyCode::ArrowRight, KeyCode::ArrowLeft))
-    .clamp(-1.0, 1.0);
-
-    let mut move_dir = fwd * fwd_amt + right * rgt_amt;
-    let moving = move_dir.length_squared() > 1e-6;
-    if moving {
-        move_dir = move_dir.normalize();
-    }
+    let input = move_input(&keys, cam_q.single().ok());
+    let move_dir = input.unwrap_or(Vec2::ZERO);
+    let moving = input.is_some();
     hero.moving = moving;
 
     // ── Horizontal motion with axis-separated terrain + prop collision ──
@@ -260,7 +421,7 @@ pub fn player_move(
         * crate::roads::speed_mult(hero.pos.x, hero.pos.y)
         // Winding up a Heavy Strike commits you: slowed feet while the charge builds.
         * if hero.charge_t > super::combat::CHARGE_GRACE { super::combat::CHARGE_MOVE_MULT } else { 1.0 };
-    let desired = if moving { Vec2::new(move_dir.x, move_dir.z) * want_speed } else { Vec2::ZERO };
+    let desired = if moving { move_dir * want_speed } else { Vec2::ZERO };
     let ramp = if moving { ACCEL } else { DECEL }; // faster to start than to stop
     let new_vel = hero.vel + (desired - hero.vel) * (dt * ramp).min(1.0);
     hero.vel = new_vel;
@@ -312,7 +473,7 @@ pub fn player_move(
         // locked foe (a soft aim-assist), and the player's own steer here always overpowers it, so it
         // never feels like the game wrenches the body off where you're pointing.
         if moving && !fp.active {
-            let want = move_dir.x.atan2(move_dir.z);
+            let want = move_dir.x.atan2(move_dir.y);
             hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
         }
     }

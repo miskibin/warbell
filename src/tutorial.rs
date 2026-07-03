@@ -596,8 +596,9 @@ fn tab_combat(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas
         },
         |r| {
             section(r, fonts, "SWORDPLAY", |c| {
-                point(c, fonts, atlas, Some("LMB"), None, "Attack", "Swing your blade. Levels, better weapons and crits all raise the damage.");
-                point(c, fonts, atlas, Some("RMB"), None, "Block", "Raise the shield to stop incoming damage completely \u{2014} it drains stamina, so don't hold it forever.");
+                point(c, fonts, atlas, Some("LMB"), None, "Attack", "Swing your blade \u{2014} chained swings combo (1-2-3), each step faster and harder. Levels, weapons and crits raise the damage.");
+                point(c, fonts, atlas, Some("RMB"), None, "Block / Parry", "Raise the shield to stop incoming damage \u{2014} it drains stamina. Raise it the INSTANT a blow lands to PARRY: free, staggers the foe, and your next strike counters for a guaranteed crit.");
+                point(c, fonts, atlas, Some("Alt"), None, "Dodge roll", "Tuck and roll clear of a blow \u{2014} brief invulnerability at the start, costs stamina. No direction held rolls you backward.");
                 c.spawn(Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,

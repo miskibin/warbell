@@ -379,7 +379,8 @@ fn controls_pane(p: &mut Pane<'_>, fonts: &UiFonts, fp: &FirstPerson) {
     for (keys, action) in [
         ("W A S D", "Move"),
         ("LMB", "Attack"),
-        ("RMB", "Block"),
+        ("RMB", "Block / Parry"),
+        ("Alt", "Dodge roll"),
         ("E", "Interact"),
         ("F", "Loot"),
         ("I", "Satchel"),

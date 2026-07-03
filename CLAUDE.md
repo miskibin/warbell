@@ -164,6 +164,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_FLOATTEST=1` | continuously stage sample floating combat numbers near the hero (style preview) |
 | `FOREST_FLAGTEST=1` | park one cloth banner in open air at `(0, 6, -22)` to frame the flutter in isolation (`banner.rs`). NB the cloth streams along world ≈`(0.9, 0, -0.43)` — shoot from a spot perpendicular to that or it reads edge-on |
 | `FOREST_BELLTEST=1` | re-toll the war bell on a ~12s loop (swing + clapper + SFX) so a shot/clip frames the ring without a keypress (`castle::swing_bell`); the bell stands at `castle::BELL_POS` (4.5, 7.5) |
+| `FOREST_ROLLTEST=1` | re-arm the hero's **Alt dodge-roll** (forward, along the facing) on a ~1.8s loop so a `FOREST_TPS` shot/clip frames the somersault without a keypress (`player/movement.rs::player_roll`); skips the pointer-lock/stamina gates |
 | `BEVY_ASSET_ROOT` | point at this dir if running the binary from elsewhere (WGSL loads from `assets/shaders/`) |
 
 ## Architecture

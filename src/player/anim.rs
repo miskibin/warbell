@@ -22,7 +22,7 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
-use super::combat::{ATTACK_DURATION, CHARGE_GRACE, CHARGE_THRESHOLD};
+use super::combat::{CHARGE_GRACE, CHARGE_THRESHOLD};
 use super::{Hero, HeroHealth, HeroPart, Joint};
 
 fn e3(x: f32, y: f32, z: f32) -> Quat {
@@ -381,6 +381,31 @@ fn dash_pose(p: f32) -> Pose {
     po.el_l = Jp::r(rx(-0.85));
     po.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
     po
+}
+
+/// **Dodge roll** — the tucked-ball pose held through the somersault. The ROOT owns the actual
+/// tumble (a full 2π pitch about the centre of mass, in `movement::player_move`); this just folds
+/// the limbs into the tuck: chin down, knees hauled to the chest, arms wrapped in, shield/sword
+/// pulled tight so nothing flails through the spin. Blended in/out by the roll envelope in
+/// [`hero_anim`] so the stand-up flows back into locomotion.
+fn roll_pose() -> Pose {
+    let mut p = rest();
+    p.hips = Jp { t: Some(Vec3::new(0.0, 0.74, 0.0)), r: rx(0.35) };
+    p.torso = Jp::r(rx(1.0));
+    p.head = Jp::r(rx(0.55)); // chin tucked
+    p.hip_l = Jp::r(e3(-1.7, 0.0, 0.06));
+    p.hip_r = Jp::r(e3(-1.75, 0.0, -0.06));
+    p.knee_l = Jp::r(rx(2.15));
+    p.knee_r = Jp::r(rx(2.2));
+    p.foot_l = Jp::r(rx(0.5));
+    p.foot_r = Jp::r(rx(0.5));
+    p.sh_l = Jp::r(e3(-0.9, 0.0, -0.45));
+    p.el_l = Jp::r(rx(-1.9));
+    p.sh_r = Jp::r(e3(-0.85, 0.0, 0.45));
+    p.el_r = Jp::r(rx(-1.8));
+    p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
+    p.sword = Jp::r(e3(2.4, 0.3, 0.0));
+    p
 }
 
 // ── Jump (physics height → studio airtime formulas) ─────────────────────────────────────
@@ -834,7 +859,7 @@ pub fn hero_anim(
     *block_amt += (block_target - *block_amt) * (dt * 10.0).min(1.0);
     let block_amt = block_amt.clamp(0.0, 1.0);
 
-    let attack = hero.attacking.then(|| attack_phase((hero.attack_t / ATTACK_DURATION).clamp(0.0, 1.0)));
+    let attack = hero.attacking.then(|| attack_phase((hero.attack_t / hero.attack_dur).clamp(0.0, 1.0)));
     let gesture = dir.gesture.map(|g| gesture_pose(g, now - dir.gesture_start));
     let fp_amt = fp.blend.clamp(0.0, 1.0);
 
@@ -845,6 +870,12 @@ pub fn hero_anim(
     let loco = loco_pose(now, hero.walk_phase, moving, hero.run_amt.clamp(0.0, 1.0));
     let pose = if hero.victory {
         victory_pose(now)
+    } else if hero.roll_t >= 0.0 {
+        // Dodge roll: fold into the tuck through the somersault's core, unfolding at both ends so
+        // the dive-in / stand-up carry the transition (the root owns the actual tumble).
+        let u = (hero.roll_t / super::movement::ROLL_TIME).clamp(0.0, 1.0);
+        let w = smoothstep(u / 0.15) * smoothstep((1.0 - u) / 0.18);
+        loco.lerp(&roll_pose(), w)
     } else if hero.dash_t >= 0.0 {
         // Sand Dash slide: play the dash-swipe lunge, easing back into locomotion at the blink's tail.
         let p = (hero.dash_t / super::movement::DASH_TIME).clamp(0.0, 1.0);

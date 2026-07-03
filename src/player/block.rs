@@ -42,6 +42,11 @@ pub fn player_block(
     // The block SFX is NOT fired here — raising the shield is silent. The knock plays only when
     // a hit is actually absorbed (see `health::apply_hero_damage`), matching `playerStore.ts`.
     let want = buttons.pressed(MouseButton::Right) && !hh.block_locked && hh.stamina > 0.0;
+    if want && !hh.blocking {
+        // Rising edge — stamp the raise so a blow landing within the parry window of it PARRIES
+        // (see `health::apply_hero_damage`): the timed guard, not the held one, earns the riposte.
+        hh.guard_raised_at = time.elapsed_secs();
+    }
     if want {
         hh.blocking = true;
         hh.stamina = (hh.stamina - BLOCK_DRAIN * dt).max(0.0);

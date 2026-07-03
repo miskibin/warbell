@@ -32,13 +32,49 @@ const LOCK_RANGE: f32 = 3.0; // a touch past ATTACK_RANGE so a circled foe is gr
 const LOCK_DOT: f32 = -0.2; // ~200° front arc — leans toward a foe at your side, but never to your back
 const LOCK_TURN_RATE: f32 = 6.0; // rad/s — a measured lean (was 9: read as a sudden snap), still under the 15 move-steer so input wins
 
-/// Nearest live enemy within [`LOCK_RANGE`] and the front [`LOCK_DOT`] arc, as a facing angle.
-/// Picks the closest so a knight in a melee commits to the foe he's actually next to.
-fn lock_target_angle<'a>(
+// ── Combo chain (the Witcher 1-2-3 flow) ──
+// Successive swings chained inside the window step through the three studio clips in a fixed
+// sequence (overhead → slash → thrust) instead of rolling one at random: each later step whips
+// out faster and hits harder, so mashing with rhythm *flows* — and a mid-swing press is buffered
+// (`Hero::queued`) so the chain never drops an input. A gap, a roll or a Heavy resets to step 1.
+/// Seconds after a swing completes within which the next press continues the chain.
+const COMBO_WINDOW: f32 = 0.9;
+/// Per-step swing-duration multiplier — steps 2/3 are snappier.
+const COMBO_DUR: [f32; 3] = [1.0, 0.86, 0.78];
+/// Per-step damage multiplier — the chain rewards staying on the offense.
+const COMBO_DMG: [f64; 3] = [1.0, 1.12, 1.28];
+
+// ── Attack magnetism (gap-closer) ──
+// A swing that starts with the committed target a step or two out of reach GLIDES the hero onto
+// it across the wind-up (the Witcher attack-step): budgeted at swing start from the target's
+// range, spent at a fixed rate while the blade winds, halted at sword's length / a wall / a
+// terrace lip. Kills the "whiffing at air just out of range" feel; third-person only (in FP the
+// view owns the body — a hidden glide underfoot reads as motion sickness).
+/// Engage when the target stands within this range at swing start (past it you're not "almost
+/// in reach", you're closing — walk).
+const LUNGE_ENGAGE: f32 = 4.6;
+/// …and stop the glide at this range — sword's length, matching the keep-out shove.
+const LUNGE_STOP: f32 = 1.35;
+/// Hard cap on glide distance per swing.
+const LUNGE_CAP: f32 = 2.8;
+/// Glide speed (units/s) — ~4× walk, fast enough to arrive before the blade lands.
+const LUNGE_SPEED: f32 = 14.0;
+/// Swing phase past which the glide cuts (the blade has landed; recovery never slides).
+const LUNGE_END_PHASE: f32 = 0.55;
+
+// ── Riposte ──
+/// Seconds after a timed parry (see `health`) in which the next swing is the RIPOSTE — a
+/// guaranteed-crit counter-thrust at ×[`RIPOSTE_MULT`] damage.
+pub(crate) const RIPOSTE_WINDOW: f32 = 1.1;
+const RIPOSTE_MULT: f64 = 2.2;
+
+/// Nearest live enemy within [`LOCK_RANGE`] and the front [`LOCK_DOT`] arc, as `(facing angle,
+/// distance)`. Picks the closest so a knight in a melee commits to the foe he's actually next to.
+fn lock_target<'a>(
     gts: impl Iterator<Item = &'a GlobalTransform>,
     origin: Vec2,
     facing: f32,
-) -> Option<f32> {
+) -> Option<(f32, f32)> {
     let fwd = Vec2::new(facing.sin(), facing.cos());
     let mut best: Option<(f32, f32)> = None; // (dist², angle)
     for gt in gts {
@@ -56,7 +92,57 @@ fn lock_target_angle<'a>(
             best = Some((d2, dir.x.atan2(dir.y)));
         }
     }
-    best.map(|(_, a)| a)
+    best.map(|(d2, a)| (a, d2.sqrt()))
+}
+
+/// The swing's committed aim `(facing angle, distance)`: the SOFT-LOCK target when one is ringed
+/// (so the blow lands on what the ring shows), else the nearest-in-arc pick (e.g. wildlife, which
+/// the soft-lock deliberately ignores). Drives both the facing lean and the gap-closer budget.
+fn aim_pick<'a>(
+    gts: impl Iterator<Item = &'a GlobalTransform>,
+    hero: &Hero,
+) -> Option<(f32, f32)> {
+    if let Some(tp) = hero.soft_pos {
+        let to = tp - hero.pos;
+        let d = to.length();
+        if d > 1e-3 {
+            return Some((to.x.atan2(to.y), d));
+        }
+    }
+    lock_target(gts, hero.pos, hero.facing)
+}
+
+/// Start a swing (fresh press, buffered chain step, or the charged Heavy): stamps the combo step
+/// + its speed/variant, commits the aim lean, arms the gap-closer glide, and consumes a pending
+/// riposte. `fp` = first-person (view owns facing → no lean, no glide).
+fn begin_swing(hero: &mut Hero, heavy: bool, aim: Option<(f32, f32)>, now: f32, fp: bool) {
+    hero.attacking = true;
+    hero.attack_t = 0.0;
+    hero.hit_dealt = false;
+    hero.queued = false;
+    hero.heavy = heavy;
+    hero.lock_face = if fp { None } else { aim.map(|(a, _)| a) };
+    // A timed parry armed the counter: the very next (light) swing is the riposte.
+    hero.riposte = !heavy && now < hero.riposte_until;
+    hero.riposte_until = 0.0;
+    if heavy {
+        hero.attack_variant = HEAVY_VARIANT;
+        hero.attack_dur = ATTACK_DURATION;
+        // A Heavy is its own statement — the chain restarts after it.
+        hero.combo = 0;
+        hero.combo_until = 0.0;
+    } else {
+        hero.combo = if now <= hero.combo_until { (hero.combo + 1) % 3 } else { 0 };
+        if hero.riposte {
+            hero.combo = 2; // the riposte IS the counter-thrust (step 3's clip + snap)
+        }
+        hero.attack_variant = hero.combo;
+        hero.attack_dur = ATTACK_DURATION * COMBO_DUR[hero.combo as usize];
+    }
+    hero.lunge_left = match aim {
+        Some((_, d)) if !fp && d <= LUNGE_ENGAGE && d > LUNGE_STOP => (d - LUNGE_STOP).min(LUNGE_CAP),
+        _ => 0.0,
+    };
 }
 
 /// Deterministic crit-roll source — one roll per swing. mulberry32 ("feels-the-same", no
@@ -313,6 +399,11 @@ pub fn setup_combat_fx(
     });
 }
 
+/// A small tan dust scuff (dodge-roll kick-off) — ground motes only, no flash/glow.
+pub(crate) fn spawn_dust_puff(commands: &mut Commands, fx: &CombatFx, at: Vec3, n: u32) {
+    spawn_motes(commands, &fx.mesh, &fx.dust, at, n, 1.2, 0.42, 0.35);
+}
+
 /// Sand-Dash afterimage: a line of low tan dust puffs strung along the blink path — subtle,
 /// short-lived motes that read as a sand-trail behind the teleport.
 pub(crate) fn spawn_dash_trail(commands: &mut Commands, fx: &CombatFx, from: Vec3, to: Vec3) {
@@ -447,7 +538,7 @@ pub fn player_attack(
     mut commands: Commands,
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
-    mut hero_q: Query<(&mut Hero, &mut HeroHealth)>,
+    mut hero_q: Query<(&mut Hero, &mut HeroHealth, &mut Transform), Without<Camera3d>>,
     mut targets: Query<
         (
             Entity,
@@ -473,61 +564,44 @@ pub fn player_attack(
         ),
     >,
 ) {
-    let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
-    if *mode != PlayMode::Play || !player.0.is_alive() {
+    let Ok((mut hero, mut hh, mut hero_tf)) = hero_q.single_mut() else { return };
+    if *mode != PlayMode::Play || !player.0.is_alive() || hero.roll_t >= 0.0 {
+        // Out of play, down, or mid dodge-roll (the roll cancelled the swing on arm).
         hero.attacking = false;
         hero.charge_t = -1.0;
         hero.lock_face = None;
+        hero.queued = false;
+        hero.lunge_left = 0.0;
         return;
     }
     let dt = time.delta_secs();
-
-    // Lock-on: in third-person, snap toward the nearest enemy the instant a swing begins (FP aims by
-    // view, so it owns facing — no lock there). Only computed on the press/release edges that
-    // actually read it — otherwise this O(n) scan over every live foe ran every frame of a siege for
-    // a value that was discarded. (Both edges use the same value so a light→heavy combo locks one foe.)
-    // Commit the swing to the SOFT-LOCK target (the ringed foe you've been facing) when there is one —
-    // so the blow lands on what the ring shows. Fall back to the nearest-in-arc pick otherwise (e.g.
-    // swinging at wildlife, which the soft-lock deliberately ignores).
-    let new_lock = if !juice.fp.active
-        && (buttons.just_pressed(MouseButton::Left) || buttons.just_released(MouseButton::Left))
-    {
-        if let Some(tp) = hero.soft_pos {
-            let to = tp - hero.pos;
-            Some(to.x.atan2(to.y))
-        } else {
-            lock_target_angle(targets.iter().map(|t| t.1), hero.pos, hero.facing)
-        }
-    } else {
-        None
-    };
+    let now_s = time.elapsed_secs();
 
     // Charging is gated on the same conditions as swinging: cursor locked (actually playing) and not
     // guarding (the shield takes priority).
     let can_act = orbit.locked && !hh.blocking;
 
-    // ── Heavy-Strike charge on the LMB hold ──────────────────────────────────────────────────────
-    // A press fires the normal light swing (unchanged) AND arms a charge. Holding past
-    // `CHARGE_THRESHOLD` and releasing fires a separate Heavy swing. Since 0.8s > the 0.45s swing,
-    // the heavy never overlaps the light — they read as a light→heavy combo, not a double-swing.
+    // ── Presses: start a swing, or buffer the chain ─────────────────────────────────────────────
+    // A press with no swing in flight starts one (aimed at the soft-lock/nearest foe — the O(n)
+    // scan runs only at swing starts, never per-frame). A press DURING a swing is buffered
+    // (`queued`) and fires the instant this swing ends, so mashing chains the combo fluidly
+    // instead of dropping inputs. Every press also arms the Heavy charge.
     if can_act && buttons.just_pressed(MouseButton::Left) {
-        // Start the light swing (only if one isn't already mid-flight — can't restart in place).
         if !hero.attacking {
-            hero.attacking = true;
-            hero.attack_t = 0.0;
-            hero.hit_dealt = false;
-            hero.heavy = false;
-            hero.lock_face = new_lock; // commit the swing to the nearest foe (None = no target → hold facing)
-            // Roll a random studio attack clip (0 overhead chop / 1 horizontal slash / 2 forward
-            // thrust) so successive swings vary instead of replaying one canned slash.
-            hero.attack_variant = (rng.unit() * 3.0).floor().clamp(0.0, 2.0) as u8;
+            let aim = if juice.fp.active { None } else { aim_pick(targets.iter().map(|t| t.1), &hero) };
+            begin_swing(&mut hero, false, aim, now_s, juice.fp.active);
             // Only the exertion grunt fires on the wind-up (and only ~34% of the time — voice gates
             // it). The whoosh is DEFERRED to hit resolution so a connecting blow plays its impact
             // alone and a whiff plays the whoosh alone — never both (Character.tsx).
             cues.write(AudioCue::HeroGruntSwing);
+        } else {
+            hero.queued = true; // buffered — the chain continues the frame this swing ends
         }
         hero.charge_t = 0.0; // arm the charge from this press (>= 0.0 = charging)
     }
+    // ── Heavy-Strike charge on the LMB hold ──────────────────────────────────────────────────────
+    // Holding past `CHARGE_THRESHOLD` and releasing fires a separate Heavy swing. Since 0.8s > the
+    // 0.45s swing, the heavy never overlaps the light — they read as a light→heavy combo.
     // While armed (`charge_t >= 0.0`): build the hold, or resolve it on release / loss of control.
     if hero.charge_t >= 0.0 {
         if buttons.pressed(MouseButton::Left) && can_act {
@@ -540,12 +614,8 @@ pub fn player_attack(
                 && hh.stamina >= HEAVY_STAMINA_COST
             {
                 hh.stamina -= HEAVY_STAMINA_COST;
-                hero.attacking = true;
-                hero.attack_t = 0.0;
-                hero.hit_dealt = false;
-                hero.heavy = true;
-                hero.lock_face = new_lock; // commit the heavy to the nearest foe too
-                hero.attack_variant = HEAVY_VARIANT;
+                let aim = if juice.fp.active { None } else { aim_pick(targets.iter().map(|t| t.1), &hero) };
+                begin_swing(&mut hero, true, aim, now_s, juice.fp.active);
                 cues.write(AudioCue::HeroGruntSwing);
                 cues.write(AudioCue::Slam); // a beefier release whoosh for the heavy wind-up
             }
@@ -562,11 +632,51 @@ pub fn player_attack(
         hero.facing = super::movement::lerp_angle(hero.facing, target, (dt * LOCK_TURN_RATE).min(1.0));
     }
     hero.attack_t += dt;
-    let phase = hero.attack_t / ATTACK_DURATION;
+    let phase = hero.attack_t / hero.attack_dur;
+
+    // ── Attack magnetism: glide onto the committed foe across the wind-up ──
+    // Spend the budget armed at swing start, halting at sword's length of the live soft target, a
+    // wall, or a terrace lip (the same step rule the walk obeys, so the glide can't go anywhere
+    // the hero couldn't walk).
+    if hero.lunge_left > 0.0 {
+        let arrived =
+            phase >= LUNGE_END_PHASE || hero.soft_pos.is_some_and(|tp| tp.distance(hero.pos) <= LUNGE_STOP);
+        if arrived {
+            hero.lunge_left = 0.0;
+        } else {
+            let step = (LUNGE_SPEED * dt).min(hero.lunge_left);
+            let dir = Vec2::new(hero.facing.sin(), hero.facing.cos());
+            let n = hero.pos + dir * step;
+            let r = super::movement::PLAYER_R;
+            if super::movement::hero_can_step(n.x, n.y, r, hero.y) && !crate::blockers::any_within(n.x, n.y, r) {
+                hero.pos = n;
+                hero.lunge_left -= step;
+            } else {
+                hero.lunge_left = 0.0; // something solid in the way — the blade lands from here
+            }
+        }
+    }
+    // Keep the render in step with this frame's glide + aim-lean (movement wrote the pre-swing
+    // pose earlier in the chain; without this the body lags the logic by a frame mid-lunge).
+    hero_tf.translation.x = hero.pos.x;
+    hero_tf.translation.z = hero.pos.y;
+    hero_tf.rotation = Quat::from_rotation_y(hero.facing);
+
     if phase >= 1.0 {
         hero.attacking = false;
         hero.heavy = false; // swing done — the next light swing must not inherit the heavy tag
+        hero.riposte = false;
         hero.lock_face = None; // release the facing lock so move-steer takes over again
+        hero.lunge_left = 0.0;
+        hero.combo_until = now_s + COMBO_WINDOW; // the chain clock runs from the swing's settle
+        // A buffered press chains the next combo step immediately — no dropped inputs.
+        if hero.queued && can_act {
+            let aim = if juice.fp.active { None } else { aim_pick(targets.iter().map(|t| t.1), &hero) };
+            begin_swing(&mut hero, false, aim, now_s, juice.fp.active);
+            cues.write(AudioCue::HeroGruntSwing);
+        } else {
+            hero.queued = false;
+        }
         return;
     }
     if hero.hit_dealt || phase < HIT_PHASE {
@@ -585,13 +695,19 @@ pub fn player_attack(
     // Difficulty handicap: Easy gives the hero extra melee punch on top of everything else.
     let diff = juice.siege.as_ref().map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
     let dmg_mul = crate::siege::mods_for(diff).hero_dmg_mul as f64;
-    let base = (player.0.attack_damage + mods.weapon_bonus()) * mods.power_mult(now) * dmg_mul;
+    // Combo steps 2/3 hit harder (variant == combo step for light swings; a Heavy skips it).
+    let combo_mult = if hero.heavy { 1.0 } else { COMBO_DMG[hero.attack_variant.min(2) as usize] };
+    let base =
+        (player.0.attack_damage + mods.weapon_bonus()) * mods.power_mult(now) * dmg_mul * combo_mult;
     // Broadcast the cone so ore/dummies share this swing (non-crit damage).
     mods.publish_swing(origin, fwd, base.round() as f32);
-    // A charged Heavy is a GUARANTEED crit at ×HEAVY_MULT — the `crit` flag below then drives the
-    // crit knockback/float/freeze/juice. A normal swing rolls its crit as before.
+    // A charged Heavy is a GUARANTEED crit at ×HEAVY_MULT; a RIPOSTE (the counter-thrust a timed
+    // parry buys) a guaranteed crit at ×RIPOSTE_MULT — the `crit` flag below then drives the crit
+    // knockback/float/freeze/juice. A normal swing rolls its crit as before.
     let (dmg_f, crit) = if hero.heavy {
         (base * HEAVY_MULT, true)
+    } else if hero.riposte {
+        (base * RIPOSTE_MULT, true)
     } else {
         roll_crit(base, player.0.crit_chance, rng.unit())
     };
@@ -1051,7 +1167,7 @@ pub fn hero_blade_trail(
 ) {
     let Some(fx) = fx else { return };
     let Ok(hero) = hero_q.single() else { return };
-    let phase = if hero.attacking { hero.attack_t / ATTACK_DURATION } else { -1.0 };
+    let phase = if hero.attacking { hero.attack_t / hero.attack_dur } else { -1.0 };
     if !(0.25..0.55).contains(&phase) {
         *last_tip = None; // only across the fast sweep, where the blade actually whips through
         return;
