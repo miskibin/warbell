@@ -137,6 +137,18 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// Master on/off for the cinematic haze pass (F1 debug panel). `true` by default. When `false`
+/// — or while build mode is active — [`drive_atmospherics`] forces `fade = 0`, and the shader
+/// early-returns the untouched frame (see the `fade <= 0.001` guard in `atmospherics.wgsl`).
+#[derive(Resource)]
+pub struct AtmosphericsEnabled(pub bool);
+
+impl Default for AtmosphericsEnabled {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 pub struct AtmosphericsPlugin;
 
 impl Plugin for AtmosphericsPlugin {
@@ -145,6 +157,7 @@ impl Plugin for AtmosphericsPlugin {
             ExtractComponentPlugin::<Atmospherics>::default(),
             UniformComponentPlugin::<Atmospherics>::default(),
         ))
+        .init_resource::<AtmosphericsEnabled>()
         .add_systems(Update, drive_atmospherics);
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -168,6 +181,8 @@ impl Plugin for AtmosphericsPlugin {
 /// MAIN app (mutates the component before extract), like `godrays::drive_godrays`.
 fn drive_atmospherics(
     time: Res<Time>,
+    enabled: Res<AtmosphericsEnabled>,
+    build_mode: Res<crate::town::BuildMode>,
     sun: Query<&GlobalTransform, With<Sun>>,
     mut cams: Query<(&GlobalTransform, &Camera, &DistanceFog, &mut Atmospherics)>,
 ) {
@@ -178,7 +193,9 @@ fn drive_atmospherics(
     // Full haze by day, eased down to a thin floor at night — the fog COLOUR already turns
     // navy after dark (DistanceFog), so the residual keeps night depth without a grey veil.
     let daylight = smoothstep(-0.05, 0.20, dir.y);
-    let fade = 0.30 + 0.70 * daylight;
+    // Kill the haze entirely when toggled off in the panel, or while placing buildings — the
+    // build palette wants a clean, unhazed read of the plots. fade=0 makes the shader no-op.
+    let fade = if !enabled.0 || build_mode.active { 0.0 } else { 0.30 + 0.70 * daylight };
 
     for (cam_tf, cam, fog, mut atmo) in &mut cams {
         let view = cam_tf.to_matrix();

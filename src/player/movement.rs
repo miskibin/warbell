@@ -205,7 +205,7 @@ pub fn player_roll(
     hero.charge_t = -1.0;
     hero.combo = 0;
     hero.combo_until = 0.0;
-    cues.write(AudioCue::Dash); // the evade whoosh (shared with Sand-Dash)
+    cues.write(AudioCue::Roll); // the gritty dodge-roll tumble grunt (own clip, not the Dash whoosh)
     crate::combat_fx::add_fov_kick(&mut feedback, 0.8);
     // Kick-off dust where the dive launches from.
     if let Some(fx) = fx {

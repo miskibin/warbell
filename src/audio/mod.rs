@@ -53,6 +53,9 @@ pub enum AudioCue {
     Swing,
     /// The hero's Sand-Dash warden art — a compressed-air whoosh as he blinks forward.
     Dash,
+    /// The hero's dodge-roll (Alt) — a gritty Witcher-style tumble grunt (own clip, not the Dash
+    /// whoosh), pitch-jittered per roll so back-to-back evades never sound stamped.
+    Roll,
     /// The hero's Bramble-Sweep warden art — an expanding circular energy/shockwave burst.
     Sweep,
     /// The hero's Ground-Slam warden art — a heavy stone-fist impact (random of two takes).
@@ -303,7 +306,7 @@ impl Default for AudioConfig {
             call_max: 70.0,
             sfx_vol: 0.6,
             voice_vol: 0.6,
-            music_vol: 0.22,
+            music_vol: 0.154, // 0.22 authored bed, dropped 30% for a quieter default mix
             narration_vol: 0.57,
             combat_music: 1.0,
         }

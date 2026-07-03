@@ -428,6 +428,23 @@ fn is_land_shape(x: f32, z: f32) -> bool {
     r + coast < 1.0
 }
 
+/// Smooth signed distance-ish to the SEA (the real land/water shoreline) at a base-space corner,
+/// in rough base-tile units: `>0` inland, `<0` offshore, `~0` on the waterline. It's the union of
+/// the island ellipse margin and the ork-fortress Blight apron (`max` = "most inside" wins), so it
+/// matches the SAME coastline both landmasses are drawn from — the marching-squares shore cut welds
+/// straight onto it. Uses the exact `is_land_shape` ellipse+fray so its sign never disagrees with
+/// the per-tile `classify`. The ellipse margin is scaled by `ISLAND_RZ` into ~tile units so it's
+/// comparable to `blight_edge_base`; the crossing interpolation is scale-invariant, so the shore
+/// position is unaffected by the exact factor.
+fn sea_field(x: f32, z: f32) -> f32 {
+    let dx = (x - CX).abs() / ISLAND_RX;
+    let dz = (z - CZ).abs() / ISLAND_RZ;
+    let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
+    let coast = noise_a(x, z) * 0.08;
+    let ellipse = (1.0 - (r + coast)) * ISLAND_RZ;
+    ellipse.max(crate::ork_fortress::blight_edge_base(x, z))
+}
+
 fn dist_from_coast(x: f32, z: f32) -> i32 {
     let mut min = 10;
     const DIRS: [(f32, f32); 8] =
@@ -1905,26 +1922,42 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 corner_water(ix + 1, iz + 1),
                 corner_water(ix, iz + 1),
             ];
-            let rs = [cwat[0].0, cwat[1].0, cwat[2].0, cwat[3].0];
-            let wetn = rs.iter().filter(|&&s| s < 0.0).count();
             let has_river = cwat.iter().any(|c| c.1);
+            // Biome of this cell (land tile here, or nearest land neighbour) — drives colour, skirt
+            // tone, the material-sheet routing AND the low-coast smooth-shore decision below.
+            let here = tile_at(ix, iz);
+            let coast_biome = here.or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)));
+            // LOW wetland sea-coast — flat (h≤1) Swamp / Blight mud flats meeting the OPEN SEA — gets
+            // the smooth marching-squares shore the rivers already use, instead of the per-tile square
+            // skirt that stepped the marsh↔sea boundary into visible tile "kwadraty" (player report).
+            // Gated to h≤1 so the deliberate sheer seaward MOUNTAIN cliffs (coast_hill / h≥2) keep
+            // their per-tile face, and skipped at river mouths (has_river) — those already cut clean.
+            let low_wet_coast = !has_river
+                && matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
+                && cwat.iter().any(|c| c.0 < 0.0); // touches sea
+            // Corner water field: the real river/lake SDF, OR — on a low wetland coast — a smooth SEA
+            // SDF so the contour follows the true shoreline instead of snapping to the tile grid
+            // (`corner_water` hands the open sea a flat constant, which is what staircased it).
+            let rs = if low_wet_coast {
+                let sf = |cx: i32, cz: i32| sea_field(cx as f32 / MAP_SCALE, cz as f32 / MAP_SCALE);
+                [sf(ix, iz), sf(ix + 1, iz), sf(ix + 1, iz + 1), sf(ix, iz + 1)]
+            } else {
+                [cwat[0].0, cwat[1].0, cwat[2].0, cwat[3].0]
+            };
+            let wetn = rs.iter().filter(|&&s| s < 0.0).count();
             // A saddle (two DIAGONALLY-opposite wet corners) is ambiguous to contour; treat it as
             // solid land — a sub-tile river pinch over-extends land a hair, but it never spikes.
             let saddle = wetn == 2 && (rs[0] < 0.0) == (rs[2] < 0.0);
-            // Only RIVER cells (incl. the mouth, where sea corners also read as water) get the cut;
-            // a plain coast tile keeps the existing per-tile beach skirt below.
-            let cut = (1..=3).contains(&wetn) && !saddle && has_river;
+            // River cells (incl. the mouth, where sea corners also read as water) OR a low wetland
+            // sea-coast get the smooth contour cut; a plain coast tile keeps the per-tile beach skirt.
+            let cut = (1..=3).contains(&wetn) && !saddle && (has_river || low_wet_coast);
 
-            // Render this cell iff it has land to show: a real land tile here, OR a river-water cell
-            // whose DRY corners form the far bank. Take the biome from the land tile (or nearest land
-            // neighbour) so colour, skirt tone, and the material-sheet routing are right.
-            let here = tile_at(ix, iz);
+            // Render this cell iff it has land to show: a real land tile here, OR a water cell whose
+            // DRY corners form the far bank.
             if wetn == 4 || (here.is_none() && !cut) {
-                continue; // fully under the river / open sea-lake with no bank here
+                continue; // fully under the water with no bank here
             }
-            let (tb, h) = here
-                .or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)))
-                .unwrap_or((TB::Grass, 1));
+            let (tb, h) = coast_biome.unwrap_or((TB::Grass, 1));
             if !keep(tb) {
                 continue;
             }

@@ -23,11 +23,11 @@ use std::sync::OnceLock;
 /// ARTERY half-width (world units) — the wide main roads (trunks / ring / landmark+camp spurs).
 /// Full-strength core within [`EDGE`]·HALF_W, fading to 0 at HALF_W. Also the brush's MAX radius
 /// (arteries are the widest curve), so [`RoadField::stamp`]'s bounding box / the pad use it.
-const HALF_W: f32 = 2.4;
+const HALF_W: f32 = 1.7;
 /// CAPILLARY half-width — the thin secondary trails that branch off the arteries to thread the
 /// space between main routes, so (almost) everywhere is reachable by *some* path without the map
 /// becoming all-road. Deliberately ~half an artery: a visible footpath, not a highway.
-const CAP_HALF_W: f32 = 1.15;
+const CAP_HALF_W: f32 = 0.85;
 /// Fraction of the half-width that stays full-strength packed earth before the soft edge begins.
 const EDGE: f32 = 0.45;
 /// Scatter (trees/props/cover) is rejected where the field exceeds this — keeps paths bare. Kept

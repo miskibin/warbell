@@ -83,6 +83,9 @@ pub(crate) struct SfxBank {
     blocks: Vec<Handle<AudioSource>>,
     /// Sand-Dash whoosh — a compressed-air burst as the hero blinks forward (warden art).
     dash: Handle<AudioSource>,
+    /// Dodge-roll tumble grunt (`dodge-roll.ogg`) — a gritty medieval combat-roll take (silence
+    /// trimmed, loudness-matched). The hero's Alt evade, distinct from the Sand-Dash whoosh.
+    roll: Handle<AudioSource>,
     /// Bramble-Sweep burst — an expanding circular energy wave (warden art).
     sweep: Handle<AudioSource>,
     /// Ground-Slam impacts — two heavy stone-fist takes, picked at random per slam.
@@ -146,6 +149,7 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
         wood_crack: asset.load("audio/wood-crack.ogg"),
         blocks: ["audio/block-1.ogg", "audio/block-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         dash: asset.load("audio/sand-dash.ogg"),
+        roll: asset.load("audio/dodge-roll.ogg"),
         sweep: asset.load("audio/bramble-sweep.ogg"),
         slams: ["audio/ground-slam-1.ogg", "audio/ground-slam-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         ui: asset.load("audio/menu-select.ogg"),
@@ -249,6 +253,8 @@ pub(crate) fn play_cues(
             AudioCue::Block => one_shot(&mut commands, pick(&bank.blocks, &mut seed), 0.45 * sfx, jitter(&mut seed, 0.1)),
             // Sand-Dash whoosh — punchy, tiny pitch jitter so repeat dashes don't sound stamped.
             AudioCue::Dash => one_shot(&mut commands, bank.dash.clone(), 0.6 * sfx, jitter(&mut seed, 0.06)),
+            // Dodge-roll tumble grunt — wide-ish pitch jitter so a flurry of rolls varies.
+            AudioCue::Roll => one_shot(&mut commands, bank.roll.clone(), 0.7 * sfx, jitter(&mut seed, 0.10)),
             // Bramble-Sweep — the expanding energy-wave burst.
             AudioCue::Sweep => one_shot(&mut commands, bank.sweep.clone(), 0.6 * sfx, jitter(&mut seed, 0.05)),
             // Ground-Slam — random of the two heavy impacts, wide pitch jitter so repeats vary.

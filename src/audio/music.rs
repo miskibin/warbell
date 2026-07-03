@@ -21,9 +21,9 @@ use crate::siege::{GamePhase, Siege, WAVES};
 /// startup; only the chosen one's volume rides up during the day. (The two hymns are the old
 /// hurdy-gurdy night clips, re-tagged as day music.)
 const DAY_TRACKS: [&str; 3] = [
-    "audio/music-bed.ogg",   // the original day bed
-    "audio/day-hymn-1.ogg",  // Hurdy-Gurdy Hymn (1)
+    "audio/day-hymn-1.ogg",  // Hurdy-Gurdy Hymn (1) — the DEFAULT day track (index 0, opening day)
     "audio/day-hymn-2.ogg",  // Hurdy-Gurdy Hymn (2)
+    "audio/music-bed.ogg",   // the original day bed
 ];
 
 /// The night track — ALWAYS the same dread every night (no per-night roll).
@@ -35,6 +35,9 @@ const COMBAT_FADE: f32 = 1.5;
 const NIGHT_FADE: f32 = 0.9;
 /// How far the day bed ducks under a full combat swell (1.0 = combat plays solo).
 const BED_DUCK: f32 = 1.0;
+/// Extra trim on the daytime bed only (night/menu keep the full `music_vol`) — daytime music sits
+/// quieter under the world SFX by default.
+const DAY_GAIN: f32 = 0.8;
 
 /// Which music loop a sink is.
 #[derive(Component, Clone, Copy)]
@@ -90,9 +93,7 @@ pub(crate) fn setup_music(asset: Res<AssetServer>, mut commands: Commands) {
 pub(crate) struct DriverFlags {
     /// Was the siege in its `Wave` phase last frame? (dawn = Wave→Prep edge).
     prev_wave: bool,
-    /// Was the title screen up last frame? (run start = StartScreen→Playing edge).
-    prev_on_menu: bool,
-    /// Has the first frame run? (first-frame day-track roll + instant menu swell).
+    /// Has the first frame run? (instant menu swell on boot).
     booted: bool,
     /// Eased warden-fight swell, toward `MusicState.warden_active` (0 = no warden engaged).
     warden: f32,
@@ -127,21 +128,17 @@ pub(crate) fn update_music(
     };
     let on_menu = *app.get() == AppState::StartScreen;
 
-    // Roll a fresh DAY track at every "new day" so the day music varies: at each dawn (Wave→Prep
-    // edge), the moment a run BEGINS (title screen → Playing), AND on the very first frame. The
-    // run-start / first-frame rolls are what make **day 1** vary — before, `day_pick` defaulted to
-    // 0 (the bed) and only the dawn edge re-rolled it, so the opening day was always the same bed
-    // while every later day differed.
+    // Roll a fresh DAY track at each dawn (Wave→Prep edge) so later days vary — but the OPENING day
+    // deliberately keeps `day_pick`'s default (index 0 = the default hymn) so every run starts on the
+    // same chosen track. Only re-roll from the second day on.
     let dawn = !is_wave && flags.prev_wave;
-    let run_started = flags.prev_on_menu && !on_menu;
-    if !flags.booted || dawn || run_started {
+    if dawn {
         // Mix the clock into the seed so the pick isn't identical every launch (`frand` self-seeds
         // a zero state); on the run-start roll the menu dwell time gives real entropy.
         *seed ^= time.elapsed_secs().to_bits().rotate_left(13).wrapping_add(0x9e37_79b9);
         *day_pick = (frand(&mut seed) * DAY_TRACKS.len() as f32) as usize % DAY_TRACKS.len();
     }
     flags.prev_wave = is_wave;
-    flags.prev_on_menu = on_menu;
 
     // Ease the mix scalars: combat (daytime ork fight), night (the siege wave), and blight
     // (the hero standing in Gnashfang Hold's mire — the one biome with its own theme).
@@ -177,7 +174,7 @@ pub(crate) fn update_music(
     }
     flags.booted = true;
     let (h, n, b, a, m, w) = (*heat, *night, *blight, *arid, *menu, flags.warden);
-    let day = cfg.music_vol * (1.0 - n); // day tracks fade out as night rises
+    let day = cfg.music_vol * DAY_GAIN * (1.0 - n); // day tracks fade out as night rises
 
     for (layer, mut sink) in &mut q {
         let v = match layer {

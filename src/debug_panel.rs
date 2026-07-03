@@ -65,6 +65,9 @@ struct Cheats<'w> {
     /// Live look knobs (saturation / grain / chromatic), edited by the Render section. Rides here
     /// because `panel_ui` is already at the 16-param ceiling.
     look: ResMut<'w, crate::postfx::LookSettings>,
+    /// Master on/off for the cinematic haze pass, edited by the Fog section. Rides here for the
+    /// same 16-param-ceiling reason.
+    atmo_enabled: ResMut<'w, crate::atmospherics::AtmosphericsEnabled>,
 }
 
 pub struct DebugPanelPlugin;
@@ -145,6 +148,8 @@ fn panel_ui(
             Option<&mut VolumetricFog>,
             // Cinematic vignette (built-in post effect) — absent on the Low preset, so optional.
             Option<&mut Vignette>,
+            // Cinematic haze post pass — absent on the Low preset (component stripped), so optional.
+            Option<&mut crate::atmospherics::Atmospherics>,
         ),
         With<Camera3d>,
     >,
@@ -265,6 +270,7 @@ fn panel_ui(
                 mut outline,
                 mut volfog,
                 mut vignette,
+                mut atmo,
             )) = cam.single_mut()
             {
                 egui::CollapsingHeader::new("Fog").default_open(true).show(ui, |ui| {
@@ -302,6 +308,26 @@ fn panel_ui(
                         ui.add(egui::Slider::new(&mut fv.scattering_asymmetry, 0.0..=0.99).text("forward (toward sun)"));
                         ui.add(egui::Slider::new(&mut fv.light_intensity, 0.0..=4.0).text("brightness"));
                         ui.add(egui::Slider::new(&mut fv.absorption, 0.0..=1.0).text("absorption (darkening)"));
+                    }
+
+                    // ── Cinematic haze (the atmospherics post pass: height fog + cloud light
+                    // patches). Off automatically while build mode is active; the master toggle
+                    // here is the manual kill-switch. `fade` itself is driven per-frame, so we
+                    // edit only the authored look fields (which the driver leaves alone).
+                    ui.separator();
+                    ui.label("Cinematic haze (post pass)");
+                    ui.checkbox(&mut cheats.atmo_enabled.0, "enabled (off during build mode)");
+                    if let Some(atmo) = atmo.as_mut() {
+                        ui.add(egui::Slider::new(&mut atmo.density, 0.0..=0.05).text("density"));
+                        ui.add(egui::Slider::new(&mut atmo.height_falloff, 0.0..=0.3).text("height falloff"));
+                        ui.add(egui::Slider::new(&mut atmo.fog_start, 0.0..=120.0).text("fog-free radius"));
+                        ui.add(egui::Slider::new(&mut atmo.fog_max, 0.0..=1.0).text("max opacity"));
+                        ui.add(egui::Slider::new(&mut atmo.inscatter_exp, 1.0..=20.0).text("sun-glow tightness"));
+                        ui.add(egui::Slider::new(&mut atmo.noise_strength, 0.0..=1.0).text("density noise"));
+                        ui.add(egui::Slider::new(&mut atmo.cloud_strength, 0.0..=0.4).text("cloud-patch depth"));
+                        ui.add(egui::Slider::new(&mut atmo.cloud_scale, 0.001..=0.05).text("cloud-patch scale"));
+                    } else {
+                        ui.weak("pass off (Low graphics preset)");
                     }
                 });
 
