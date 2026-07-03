@@ -32,11 +32,11 @@ const SWING_CONE_DOT: f32 = 0.5;
 /// How many boulders to seed across the rock biome. Plentiful so the town's stone miner
 /// (`miner.rs`) has boulders to work without starving the hero's own mining. Reject-sampling
 /// places as many as the rock region fits (a shortfall just logs — see `populate_ore`).
-const ORE_COUNT: u32 = 44;
-/// Seconds before a depleted boulder regrows in place. Deliberately slow (~18 min) — stone is a
-/// frontier resource, and a working miner shouldn't strip the map (cf. trees' 450s `TREE_REGROW`).
-/// 3× the old 360s so ore stays a destination worth ranging out for, not a topped-up vending machine.
-const ORE_REGROW: f32 = 1080.0;
+const ORE_COUNT: u32 = 64;
+/// Seconds before a depleted boulder regrows in place. Stone is still slower than trees (cf. 450s
+/// `TREE_REGROW`) so it stays a destination worth ranging out for, not a topped-up vending machine —
+/// just not the ~18min it was; eased back down toward the old 360s baseline (was tripled to 1080s).
+const ORE_REGROW: f32 = 540.0;
 
 /// Published by combat at each swing's hit-phase: the cone the blow sweeps. Mining (and later
 /// the training dummies) test their targets against it, sharing the player's one swing.

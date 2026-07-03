@@ -14,6 +14,20 @@ const MIN_Y: f32 = 0.4;
 const LOOK_SMOOTH: f32 = 18.0;
 const MOVE_SMOOTH: f32 = 12.0;
 
+// ── Cinematic free-roam (toggle with C) ──
+/// A slow, heavily-damped fly for filming/screenshots: crawl speed + long glide-out so pans and
+/// dollies read as deliberate camera moves instead of debug darting. Mouse sensitivity is also
+/// scaled down so a look eases around. Toggled by [`CinematicCam`]; only in FreeRoam.
+const CINE_MOVE_SPEED: f32 = 5.0;
+const CINE_LOOK_SMOOTH: f32 = 3.5;
+const CINE_MOVE_SMOOTH: f32 = 2.2;
+const CINE_SENS_MULT: f32 = 0.45;
+
+/// Cinematic free-roam toggle (C key). Off = the normal snappy debug fly; on = the slow, floaty
+/// filming glide. Only meaningful in [`crate::player::PlayMode::FreeRoam`].
+#[derive(Resource, Default)]
+pub struct CinematicCam(pub bool);
+
 /// Marks the camera as fly-controllable. Mouse/keys drive the `target_*`/desired velocity;
 /// the live `yaw`/`pitch`/`vel` chase those targets with damping for cinematic motion.
 #[derive(Component)]
@@ -44,8 +58,27 @@ pub struct ControlsPlugin;
 
 impl Plugin for ControlsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, fly_camera);
+        app.init_resource::<CinematicCam>()
+            .add_systems(Update, (toggle_cinematic, fly_camera).chain());
     }
+}
+
+/// **C** flips the cinematic free-roam glide on/off (only in FreeRoam — in Play, C is unused here).
+fn toggle_cinematic(
+    keys: Res<ButtonInput<KeyCode>>,
+    mode: Res<crate::player::PlayMode>,
+    mut cine: ResMut<CinematicCam>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    time: Res<Time>,
+) {
+    if *mode != crate::player::PlayMode::FreeRoam || !keys.just_pressed(KeyCode::KeyC) {
+        return;
+    }
+    cine.0 = !cine.0;
+    notice.push(
+        if cine.0 { "Cinematic camera" } else { "Free camera" },
+        time.elapsed_secs_f64(),
+    );
 }
 
 fn fly_camera(
@@ -55,6 +88,7 @@ fn fly_camera(
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     egui_wants: Res<crate::debug_panel::EguiWantsPointer>,
+    cine: Res<CinematicCam>,
     mut cam_q: Query<(&mut Transform, &mut FlyCam)>,
     mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
@@ -79,18 +113,24 @@ fn fly_camera(
 
     let looking = buttons.pressed(MouseButton::Right) && !over_ui;
     let dt = time.delta_secs();
+    // Cinematic mode swaps in the slow, floaty constants (crawl speed + long glide, lighter mouse).
+    let (look_smooth, move_smooth, move_speed, sens) = if cine.0 {
+        (CINE_LOOK_SMOOTH, CINE_MOVE_SMOOTH, CINE_MOVE_SPEED, SENSITIVITY * CINE_SENS_MULT)
+    } else {
+        (LOOK_SMOOTH, MOVE_SMOOTH, MOVE_SPEED, SENSITIVITY)
+    };
     // Exponential smoothing factors, frame-rate independent. Clamped to [0,1] so a long
     // frame (e.g. the per-frame stall during clip capture) can't overshoot past the target.
-    let look_a = (1.0 - (-LOOK_SMOOTH * dt).exp()).clamp(0.0, 1.0);
-    let move_a = (1.0 - (-MOVE_SMOOTH * dt).exp()).clamp(0.0, 1.0);
+    let look_a = (1.0 - (-look_smooth * dt).exp()).clamp(0.0, 1.0);
+    let move_a = (1.0 - (-move_smooth * dt).exp()).clamp(0.0, 1.0);
 
     for (mut tf, mut cam) in &mut cam_q {
         // Mouse drives the *target* look; the rendered yaw/pitch lag behind it so flicks and
         // jitter resolve into a smooth glide.
         if looking {
             let d = motion.delta;
-            cam.target_yaw -= d.x * SENSITIVITY;
-            cam.target_pitch = (cam.target_pitch - d.y * SENSITIVITY).clamp(-1.54, 1.54);
+            cam.target_yaw -= d.x * sens;
+            cam.target_pitch = (cam.target_pitch - d.y * sens).clamp(-1.54, 1.54);
         }
         cam.yaw += (cam.target_yaw - cam.yaw) * look_a;
         cam.pitch += (cam.target_pitch - cam.pitch) * look_a;
@@ -118,7 +158,7 @@ fn fly_camera(
             dir -= Vec3::Y;
         }
 
-        let speed = if keys.pressed(KeyCode::ShiftLeft) { MOVE_SPEED * SPRINT_MULT } else { MOVE_SPEED };
+        let speed = if keys.pressed(KeyCode::ShiftLeft) { move_speed * SPRINT_MULT } else { move_speed };
         let desired = dir.normalize_or_zero() * speed;
         let new_vel = cam.vel + (desired - cam.vel) * move_a;
         cam.vel = new_vel;

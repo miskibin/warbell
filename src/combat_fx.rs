@@ -9,6 +9,7 @@
 
 use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
+use bevy::ui::UiTransform;
 
 use crate::orks::Ork;
 use crate::player::Health;
@@ -114,6 +115,7 @@ fn spawn_floats(
                 top: Val::Px(-9999.0),
                 ..default()
             },
+            UiTransform::IDENTITY,
             GlobalZIndex(20),
             FloatText { anchor: r.world, born: now, color: r.color, scale: r.scale, len },
         ));
@@ -124,11 +126,11 @@ fn drive_floats(
     time: Res<Time>,
     mut commands: Commands,
     cam_q: Query<(&Camera, &GlobalTransform)>,
-    mut q: Query<(Entity, &FloatText, &mut Node, &mut TextColor, &mut TextFont, &mut TextShadow)>,
+    mut q: Query<(Entity, &FloatText, &mut Node, &mut UiTransform, &mut TextColor, &mut TextShadow)>,
 ) {
     let now = time.elapsed_secs();
     let Ok((cam, cam_tf)) = cam_q.single() else { return };
-    for (e, f, mut node, mut tc, mut tf, mut shadow) in &mut q {
+    for (e, f, mut node, mut ui_tf, mut tc, mut shadow) in &mut q {
         let t = now - f.born;
         let k = (t / FLOAT_LIFE).clamp(0.0, 1.0);
         if k >= 1.0 {
@@ -138,24 +140,29 @@ fn drive_floats(
         // Pop in fast with a slight overshoot, then settle at 1 (old FloatingText).
         let pop =
             if t < 0.16 { 0.6 + (t / 0.16) * 0.55 } else { (1.15 - (t - 0.16) * 1.6).max(1.0) };
-        // QUANTISE to whole pixels. Bevy mints a fresh 512² glyph atlas for EVERY distinct
-        // font_size and NEVER frees them — so animating the size continuously (a new value each
-        // frame, per number) leaked atlases without bound: multi-GB RAM/VRAM after a few nights of
-        // combat, VRAM overcommit, GPU pinned at 100%, ~12 fps. Rounding caps the distinct sizes to
-        // one atlas per integer px (≈30 total, reused for the app's life); the 1px pop steps are
-        // imperceptible. (Position below uses the same rounded `font` so centring stays exact.)
-        let font = (FLOAT_FONT * f.scale * pop).round();
-        tf.font_size = font.into(); // 0.19: TextFont::font_size is now FontSize (From<f32> = px)
+        // The pop is driven by UiTransform.scale, NOT font_size: Bevy mints a fresh 512² glyph
+        // atlas for every distinct font_size and NEVER frees them, so continuously animating the
+        // size (a new value nearly every frame, per number) leaked atlases without bound — this
+        // regressed past the old "round to whole px" mitigation once per-hit `scale` variety (crit/
+        // heavy/etc.) combined with the pop sweep to mint far more than the intended ~30 sizes,
+        // which is the periodic multi-hundred-ms freeze (a new atlas PAGE allocation) players saw
+        // roughly every ~10s in a long fight. `font_size` is now fixed at spawn (one atlas per
+        // categorical `scale`, never re-touched) and the whole pop/overshoot animation is a free UI
+        // transform scale — no new glyph rasterization, ever.
+        ui_tf.scale = Vec2::splat(pop);
         let fade = 1.0 - k * k;
         tc.0 = f.color.with_alpha(fade);
         shadow.color = Color::srgba(0.0, 0.0, 0.0, FLOAT_SHADOW_A * fade);
         let world = f.anchor + Vec3::Y * (FLOAT_RISE * k);
+        // Centring uses the FIXED spawn font size (UiTransform scales around the node's own centre,
+        // so the pop grows/shrinks in place — no re-centring needed as `pop` changes).
+        let base_font = (FLOAT_FONT * f.scale).round();
         match cam.world_to_viewport(cam_tf, world) {
             Ok(px) => {
                 node.display = Display::Flex;
                 // Roughly centre the glyphs on the anchor point.
-                node.left = Val::Px(px.x - font * 0.3 * f.len as f32);
-                node.top = Val::Px(px.y - font * 0.5);
+                node.left = Val::Px(px.x - base_font * 0.3 * f.len as f32);
+                node.top = Val::Px(px.y - base_font * 0.5);
             }
             Err(_) => node.display = Display::None,
         }

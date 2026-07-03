@@ -38,6 +38,13 @@ struct PerfClock {
 
 impl Plugin for PerftestPlugin {
     fn build(&self, app: &mut App) {
+        // FOREST_SPIKEWATCH=1: log every individual frame whose REAL delta exceeds 50ms, with the
+        // wall-clock gap since the previous spike — pinpoints periodic stutter (e.g. "every ~10s")
+        // that the 5s-smoothed PERF line averages away. Independent of FOREST_PERFTEST (checked
+        // BEFORE the early-return below) so it also works in a real, non-auto-exiting play session.
+        if std::env::var("FOREST_SPIKEWATCH").is_ok() {
+            app.add_systems(Update, perf_spike_watch);
+        }
         let Ok(raw) = std::env::var("FOREST_PERFTEST") else { return };
         let duration = raw.trim().parse::<f32>().unwrap_or(600.0).max(10.0);
         let speed = std::env::var("FOREST_PERFSPEED")
@@ -76,6 +83,18 @@ impl Plugin for PerftestPlugin {
             app.add_systems(Update, perf_despawn_trees);
         }
     }
+}
+
+/// See `FOREST_SPIKEWATCH` above.
+fn perf_spike_watch(time: Res<Time<Real>>, mut last_spike: Local<f32>) {
+    let dt = time.delta_secs();
+    if dt < 0.05 {
+        return;
+    }
+    let now = time.elapsed_secs();
+    let gap = if *last_spike > 0.0 { now - *last_spike } else { 0.0 };
+    info!("SPIKE t={now:>7.2} dt={:.1}ms gap_since_last={gap:>6.2}s", dt * 1000.0);
+    *last_spike = now;
 }
 
 fn perf_despawn_trees(

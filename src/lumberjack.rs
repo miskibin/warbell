@@ -240,10 +240,15 @@ fn assign_tree(
         .map(|(_, c)| *c)
         .filter(|c| orks.iter().any(|o| o.home().distance(*c) < 1.0))
         .collect();
-    for (e, worker, v) in &workers {
-        if town.0.plots.get(worker.idx).and_then(|p| p.kind) != Some(BuildKind::Lumber) {
-            continue; // farmers keep their field mime — only woodcutters roam
-        }
+    // Cap how many woodcutters get (re)assigned per tick — same fix as `miner::assign_ore`: this
+    // timer is shared/unstaggered (unlike the per-entity-jittered path replans elsewhere), so at a
+    // large population several idle woodcutters going jobless in the same tick would each run a full
+    // A* over up to `REACH_CHECK_K` candidates, bursting in one frame. One per tick trickles it out.
+    const MAX_ASSIGN_PER_TICK: usize = 1;
+    let jobless_woodcutters = workers
+        .iter()
+        .filter(|(_, worker, _)| town.0.plots.get(worker.idx).and_then(|p| p.kind) == Some(BuildKind::Lumber));
+    for (e, _worker, v) in jobless_woodcutters.take(MAX_ASSIGN_PER_TICK) {
         // Gather every eligible tree (safe ground, not blacklisted), nearest first.
         let mut cands: Vec<(Entity, Vec2, f32)> = trees
             .iter()

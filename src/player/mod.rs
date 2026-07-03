@@ -46,7 +46,7 @@ pub const HERO_SCALE: f32 = 0.6345;
 /// separate child *leaf* entity ([`HeroMesh`]), so first-person can hide the body meshes without
 /// hiding the arm joints that hang beneath the torso. (Hands / neck / feet are unanimated, so they
 /// carry no `HeroPart`.)
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Joint {
     Hips,
     Torso,
@@ -86,6 +86,39 @@ pub struct HeroMesh {
 /// staged gestures (the Director's "hide weapon"), and read by `combat::hero_blade_trail`.
 #[derive(Component)]
 pub struct HeroWeapon;
+
+/// Debug/capture hook: `FOREST_FPDBG=1` logs the FP viewmodel joints in CAMERA space every ~2s
+/// (x right, y up, -z forward; plus each joint's local +Y tip direction, i.e. where a blade
+/// points). Turns "why is the sword not in frame" from euler-guessing into arithmetic — read the
+/// numbers off a `FOREST_FP` capture run, then set the FP targets analytically (`anim.rs`).
+pub fn fp_debug_dump(
+    time: Res<Time>,
+    fp: Res<camera::FirstPerson>,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    parts: Query<(&HeroPart, &GlobalTransform)>,
+    mut next: Local<f32>,
+) {
+    if std::env::var("FOREST_FPDBG").is_err() || fp.blend < 0.9 || time.elapsed_secs() < *next {
+        return;
+    }
+    *next = time.elapsed_secs() + 2.0;
+    let Ok(cam_gt) = cam.single() else { return };
+    let inv = cam_gt.affine().inverse();
+    for (p, gt) in &parts {
+        if matches!(
+            p.joint,
+            Joint::Sword | Joint::Shield | Joint::ElbowR | Joint::ElbowL | Joint::ShoulderR | Joint::ShoulderL
+        ) {
+            let pos = inv.transform_point3(gt.translation());
+            // A point 0.5 rig-units up the joint's local +Y — for the sword that's along the blade.
+            let tip = inv.transform_point3(gt.transform_point(Vec3::Y * 0.5));
+            info!(
+                "FPDBG {:?} pos({:.2},{:.2},{:.2}) tip({:.2},{:.2},{:.2})",
+                p.joint, pos.x, pos.y, pos.z, tip.x, tip.y, tip.z
+            );
+        }
+    }
+}
 
 /// The hero's hot per-frame state (mutated directly each frame, never via events).
 #[derive(Component)]
@@ -416,6 +449,7 @@ impl Plugin for PlayerPlugin {
                     camera::fp_body_visibility, // FP viewmodel: keep arms/sword/shield, hide the rest
                     reskin_hero, // rebuild limb meshes when weapon/armor equip changes
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
+                    fp_debug_dump, // debug: FOREST_FPDBG=1 logs viewmodel joints in camera space
                     anim::hero_anim,
                     combat::update_sparks,
                     combat::update_fx_fades,

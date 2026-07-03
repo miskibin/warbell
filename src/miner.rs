@@ -182,10 +182,24 @@ fn assign_ore(
     }
     *retry_at = now + RETRY_SECS;
     let camps: Vec<Vec2> = crate::camps::cage_positions().iter().map(|(_, c)| *c).collect();
-    for (e, worker, v) in &workers {
-        if town.0.plots.get(worker.idx).and_then(|p| p.kind) != Some(BuildKind::Mine) {
-            continue; // farmers/woodcutters keep their own jobs — only miners roam to ore
-        }
+    // Cap how many miners get (re)assigned per tick: unlike every other roaming-job system in this
+    // codebase (lumberjack/villager path replans jitter per-entity via `e.to_bits() % 16`), this timer
+    // was a single shared `retry_at` — so whenever several miners went jobless at once (ore depleted,
+    // danger blacklist, a fight scattering them), the SAME frame paid for every one of them times up
+    // to `REACH_CHECK_K` candidates times a 20_000-node island-spanning A* each. That combinatorial
+    // burst was a measured 600ms-1.3s real freeze (verified via `cargo run --features profiling` +
+    // `tools/trace_summary.py`: a single `assign_ore` call was ~98% of the frozen frame's time).
+    // Capping to one miner per tick turns the burst into a smooth trickle — a miner waits at most a
+    // few extra RETRY_SECS ticks for a job, which is invisible, instead of the whole town's worth of
+    // A* searches landing in one frame.
+    const MAX_ASSIGN_PER_TICK: usize = 1;
+    // Filter to idle MINERS first (cheap — no A* yet): `workers` also carries farmers/woodcutters
+    // (anyone merely `Without<MineJob>`), so capping the raw iterator before this filter would often
+    // land on a non-miner and starve real miners of jobs. Only the expensive part below is capped.
+    let jobless_miners = workers
+        .iter()
+        .filter(|(_, worker, _)| town.0.plots.get(worker.idx).and_then(|p| p.kind) == Some(BuildKind::Mine));
+    for (e, _worker, v) in jobless_miners.take(MAX_ASSIGN_PER_TICK) {
         // Gather every live, eligible boulder (safe ground, not blacklisted), nearest first.
         let mut cands: Vec<(Entity, Vec2, f32)> = ores
             .iter()

@@ -880,6 +880,9 @@ pub fn hero_anim(
     mut land_at: Local<f32>,
     // Smoothed block weight (0 = open, 1 = full defend) so the brace eases in/out.
     mut block_amt: Local<f32>,
+    // FP turn-sway state: last frame's view yaw + the low-passed yaw rate (rad/s).
+    mut fp_prev_yaw: Local<f32>,
+    mut fp_sway_amt: Local<f32>,
 ) {
     let Ok((hero, hh)) = hero_q.single() else { return };
     let now = time.elapsed_secs();
@@ -923,6 +926,32 @@ pub fn hero_anim(
     // while running keeps the legs striding (a running attack), and a jump taken at speed becomes a
     // forward leap. (Priority: victory › attack › jump › block-blended locomotion.)
     let moving = hero.moving_amt.clamp(0.0, 1.0);
+
+    // ── First-person viewmodel: procedural weapon motion ──
+    // The FP arms have no clip of their own — without this they freeze at the static tuck and read
+    // "glued to the camera". Three small joint-space layers (radians), all camera-untouched (the FP
+    // eye stays rigid — motion-sickness guard): breath (idle heave), walk-bob (stride pump),
+    // turn-sway (weapon lags the view yaw).
+    let (fp_breath, fp_bob_v, fp_bob_l, fp_sway) = if fp_amt > 0.0 {
+        let breath = (now * 3.1).sin() * 0.018; // ~0.5 Hz idle heave
+        // Vertical pump at 2× stride (one dip per footfall), light lateral sway at 1×; a touch
+        // stronger at sprint. `walk_phase` is already a real-speed radian cycle.
+        // Amplitudes deliberately tiny: the FP camera is rigid, so at eye scale hundredths of a
+        // radian already read clearly — bigger flails the weapon across the lens. No sprint boost
+        // for the same reason (the run's own cadence via `walk_phase` is speed-up enough).
+        let stride = moving;
+        let bob_v = (hero.walk_phase * 2.0).sin() * 0.022 * stride;
+        let bob_l = hero.walk_phase.sin() * 0.015 * stride;
+        // Turn-sway: low-pass the view-yaw rate (hero.facing IS look_yaw in FP — the camera writes
+        // it) and tilt the weapon OPPOSITE the turn, recovering as the rate settles.
+        let yaw_rate = crate::steer::wrap_pi(hero.facing - *fp_prev_yaw) / dt.max(1e-3);
+        *fp_sway_amt += (yaw_rate.clamp(-8.0, 8.0) - *fp_sway_amt) * (dt * 9.0).min(1.0);
+        (breath, bob_v, bob_l, (*fp_sway_amt * -0.012).clamp(-0.07, 0.07))
+    } else {
+        *fp_sway_amt = 0.0;
+        (0.0, 0.0, 0.0, 0.0)
+    };
+    *fp_prev_yaw = hero.facing;
     // Combat stance feeds two extra locomotion axes (backpedal blend + pelvis-vs-torso twist);
     // both are 0 out of the stance, where this reduces exactly to the plain `loco_pose`. The
     // guard overlay then colours ALL stance locomotion (idle/walk/run) into the ready-to-fight
@@ -1005,21 +1034,36 @@ pub fn hero_anim(
                 if let Some((Some((sh, el)), _)) = gesture {
                     rot = if elbow { el } else { sh };
                 } else if attack.is_none() && fp_amt > 0.0 {
-                    // First-person sword viewmodel: raise the upper arm forward (out of the eye) but
-                    // bend the elbow hard so the hand + blade drop LOW into the bottom-right corner —
-                    // a classic FPS rest, not a blade filling the upper frame. Forward (not hanging)
-                    // keeps the hand ahead of the near plane so it doesn't clip.
-                    let target = if elbow { rx(-1.5) } else { e3(-0.12, 0.1, 0.18) };
+                    // First-person sword viewmodel — Skyrim-style ready: hilt low bottom-right,
+                    // blade angled up-and-inward, kept alive by breath/bob/sway instead of frozen.
+                    // NB the FP anchor-swap below moves this whole chain to the frame's RIGHT, so
+                    // the Y/Z angles here are authored for the swapped side (mirror of the rig's).
+                    let target = if elbow {
+                        rx(-1.30 + fp_bob_v * 0.6)
+                    } else {
+                        e3(-0.70 + fp_breath + fp_bob_v, 0.35 + fp_sway + fp_bob_l, -0.10)
+                    };
                     rot = rot.slerp(target, fp_amt);
+                }
+                // FP anchor-swap (shoulders only): the studio port left the rig HANDEDNESS mirrored
+                // — the joint named ShoulderR renders on the viewer's LEFT (three.js +Z-toward-
+                // viewer vs Bevy -Z-forward). Invisible in third person behind the low-poly
+                // silhouette, glaring at eye height (shield slab on the right = "holds the shield
+                // backwards"). Swap the two shoulder anchors across the body in FP so the sword
+                // reads bottom-RIGHT / shield bottom-LEFT like every FP melee game; third person
+                // keeps the rig as authored. Translation-only + fp-blended (the FP dolly-in masks
+                // the glide across).
+                if !elbow {
+                    let home = super::model::SHOULDER_DX; // spawn |x|; R sits at +x, L at -x
+                    tf.translation.x = lerp(home, -home, fp_amt);
                 }
             }
             Joint::Sword => {
-                // A long blade held tip-up towers into the upper frame even with the hand dropped low.
-                // In first person, lay it forward-and-down (blade points away, low across the corner)
-                // so only the hilt + a foreslope of blade reads, not a flagpole. Attack/block own it
-                // otherwise.
+                // FP ready: blade diagonal up-inward toward frame centre (Skyrim ready stance).
+                // X≈1.30 rises the hilt from the corner; Y sweeps the blade toward upper-centre
+                // (angles mirrored for the FP anchor-swap). Attack/block own it otherwise.
                 if attack.is_none() && block_amt < 0.5 && fp_amt > 0.0 {
-                    rot = rot.slerp(e3(2.6, -0.5, 0.0), fp_amt);
+                    rot = rot.slerp(e3(1.30 + fp_bob_v * 0.5, 0.60 + fp_sway, -0.15), fp_amt);
                 }
             }
             Joint::ShoulderL | Joint::ElbowL => {
@@ -1027,17 +1071,50 @@ pub fn hero_anim(
                 if let Some((_, Some((sh, el)))) = gesture {
                     rot = if elbow { el } else { sh };
                 } else if attack.is_none() && block_amt < 0.5 && fp_amt > 0.0 {
-                    // First-person shield viewmodel (mirror of the sword arm): upper arm forward, elbow
-                    // bent hard so the shield drops LOW into the bottom-left corner instead of a slab
-                    // filling the upper frame. Skipped while blocking — `defend_pose` braces the shield
-                    // flat in front, which should win.
-                    let target = if elbow { rx(-1.8) } else { e3(-0.5, -0.1, -0.18) };
+                    // First-person shield viewmodel (mirror of the sword arm): upper arm forward,
+                    // elbow bent so the shield rides LOW in the bottom-left corner, alive on the
+                    // same breath/bob/sway (angles mirrored for the FP anchor-swap). Skipped while
+                    // blocking — `defend_pose` braces the shield flat in front, which should win.
+                    let target = if elbow {
+                        rx(-1.25 + fp_bob_v * 0.6)
+                    } else {
+                        e3(-1.05 + fp_breath + fp_bob_v, 0.15 + fp_sway - fp_bob_l, 0.05)
+                    };
                     rot = rot.slerp(target, fp_amt);
                 }
+                // FP anchor-swap — see the ShoulderR note (shield chain moves to the frame's LEFT).
+                if !elbow {
+                    let home = -super::model::SHOULDER_DX;
+                    tf.translation.x = lerp(home, -home, fp_amt);
+                }
             }
+            // NB: no FP override on Joint::Shield — the rest carry keeps the shield edge-on along
+            // the forearm. Tilting it "open" here showed its BACK/strap side whenever the stride
+            // threw it into frame (the "holds the shield backwards" bug); the FP block pose
+            // (Task 2) is where the face turns to the camera deliberately.
             _ => {}
         }
         tf.rotation = rot;
+
+        // FP: the camera eye is rigid (no head-bob by design), so any hips/torso bob/lean/twist
+        // shakes the ENTIRE viewmodel across the lens — the run gait's torso pump alone swung the
+        // sword arm from frame-right to frame-LEFT ("macha mieczem" bug), and the loco hips-bob
+        // read as flailing. Flatten the trunk back to its rest carry in FP (the arm targets above
+        // are LOCAL to the torso, so a stable trunk keeps them pinned to the frame corners); the
+        // small controlled per-joint bob terms carry the walk feel instead. Also damps the attack
+        // clips' hip/torso drive (their forward shove pushes the chest into the near plane).
+        if fp_amt > 0.0 {
+            match part.joint {
+                Joint::Hips => {
+                    tf.translation = tf.translation.lerp(Vec3::new(0.0, 1.05, 0.0), fp_amt);
+                    tf.rotation = tf.rotation.slerp(Quat::IDENTITY, fp_amt * 0.8);
+                }
+                Joint::Torso => {
+                    tf.rotation = tf.rotation.slerp(Quat::IDENTITY, fp_amt * 0.9);
+                }
+                _ => {}
+            }
+        }
 
         // Landing squash folded over the locomotion pose right after touchdown (studio positive-knee
         // crouch: hips dip, knees bend, thighs settle back, feet flatten, torso leans in).
