@@ -1836,7 +1836,7 @@ pub struct BuildState {
 }
 
 /// Number of phases [`build_step`] walks through. The loading veil maps its progress bar onto this.
-pub const BUILD_STEPS: u32 = 32;
+pub const BUILD_STEPS: u32 = 33;
 
 /// Build the whole world in ONE call (terrain → scatter → castle → fortress → …). Used by the
 /// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0. The normal
@@ -1922,6 +1922,9 @@ pub fn build_step(
         // Bog dressing (pass 3): drowned trees/wisps/glow-mushrooms over the swamp pools + the
         // drowned tower + stilt hut. After bridges (boardwalk keep-out) and roads.
         31 => crate::bog::populate(commands, meshes, std_mats),
+        // Micro-POIs + flags (pass 4): story set-pieces along the arteries, the gallows on the
+        // Gnashfang approach, smoke + crows over the Hold, farmland around the castle.
+        32 => crate::poi::populate(commands, meshes, std_mats),
         _ => {}
     }
 }

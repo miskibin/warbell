@@ -72,7 +72,9 @@ const GUARD_RING_R: f32 = 12.0;
 /// and the rune-trial arena (the [`RUNE_R`] ring + the [`GUARD_RING_R`] guardian ring) has open
 /// ground. Tree scatter runs long before landmark placement (worldmap build phases 5–9 vs. 23), so
 /// trees otherwise crowd right up to a landmark.
-const LANDMARK_CLEAR_R: f32 = 13.0;
+/// 13 → 16 (map-character overhaul pass 4, sightline hygiene): a skyline flag hidden behind the
+/// treeline pulls nobody toward its road spur — clearing around a landmark is design work.
+const LANDMARK_CLEAR_R: f32 = 16.0;
 
 // ── Components / resources ────────────────────────────────────────────────────────
 

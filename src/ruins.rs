@@ -639,12 +639,14 @@ pub struct LandmarkSite {
 
 /// (biome, scale, footprint_radius) for each landmark. KEEP IN SYNC with the `specs` mesh table in
 /// [`populate_landmarks`] — same scale/foot_r per biome (that table also carries the mesh + box).
+// Scales bumped ~+20% (map-character overhaul pass 4): each landmark is its biome's skyline
+// FLAG — it has to break the treeline from the road, or the spur leading to it pulls nobody.
 const SITE_PARAMS: [(crate::biome::Biome, f32, f32); 5] = [
-    (crate::biome::Biome::Snow, 1.4, 1.0),
-    (crate::biome::Biome::Desert, 1.3, 2.0),
-    (crate::biome::Biome::Rocky, 1.3, 2.0),
-    (crate::biome::Biome::Forest, 1.2, 0.7),
-    (crate::biome::Biome::Swamp, 1.1, 0.8),
+    (crate::biome::Biome::Snow, 1.7, 1.0),
+    (crate::biome::Biome::Desert, 1.55, 2.0),
+    (crate::biome::Biome::Rocky, 1.55, 2.0),
+    (crate::biome::Biome::Forest, 1.5, 0.7),
+    (crate::biome::Biome::Swamp, 1.35, 0.8),
 ];
 
 /// The five landmark spots, chosen once (flattest valid candidate per biome) and cached. Decoupled
@@ -708,11 +710,11 @@ pub fn populate_landmarks(
     // half-extents (mesh-local, world-scaled below) hug each silhouette; footprint_radius is the
     // flatness-probe reach (now lives in `SITE_PARAMS` — keep both in sync).
     let specs: [(Biome, Mesh, f32, (f32, f32)); 5] = [
-        (Biome::Snow, build_frozen_spire_mesh(), 1.4, (0.7, 0.7)),
-        (Biome::Desert, build_sunken_pyramid_mesh(), 1.3, (1.15, 1.15)),
-        (Biome::Rocky, build_trilithon_mesh(), 1.3, (1.25, 0.55)), // wide arch, thin depth
-        (Biome::Forest, build_giant_dead_tree_mesh(), 1.2, (0.55, 0.55)),
-        (Biome::Swamp, build_swamp_sentinel_mesh(), 1.1, (0.65, 0.65)),
+        (Biome::Snow, build_frozen_spire_mesh(), 1.7, (0.7, 0.7)),
+        (Biome::Desert, build_sunken_pyramid_mesh(), 1.55, (1.15, 1.15)),
+        (Biome::Rocky, build_trilithon_mesh(), 1.55, (1.25, 0.55)), // wide arch, thin depth
+        (Biome::Forest, build_giant_dead_tree_mesh(), 1.5, (0.55, 0.55)),
+        (Biome::Swamp, build_swamp_sentinel_mesh(), 1.35, (0.65, 0.65)),
     ];
     // Spots are pre-chosen from the terrain (see `landmark_sites`); here we just plant the mesh.
     for (biome, mesh, scale, (box_hw, box_hd)) in specs {
