@@ -103,7 +103,8 @@ pub fn player_arts(
 ) {
     let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
 
-    if *mode != PlayMode::Play || !player.0.is_alive() || !orbit.locked {
+    // Mid dodge-roll the body is committed (and airborne through the tumble) — no casting.
+    if *mode != PlayMode::Play || !player.0.is_alive() || !orbit.locked || hero.roll_t >= 0.0 {
         return;
     }
 

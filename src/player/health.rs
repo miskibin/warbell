@@ -2,10 +2,17 @@
 //! blocking, at a stamina cost). Death (HP → 0) arms `core::Player::dead_since`; the *succession
 //! beat* that follows — slow-mo, camera swing, and the heir possessing the nearest townsperson —
 //! lives in [`crate::succession::drive_succession`]. This module just takes the hit + crumples.
+//!
+//! Also home to the timed **PARRY**: a blow absorbed within [`PARRY_WINDOW`] of the shield being
+//! RAISED (the RMB rising edge, stamped in [`super::block`]) costs no stamina, staggers + shoves
+//! the melee attackers off the shield, and arms the [`super::combat`] riposte — the guaranteed-
+//! crit counter-thrust. The held guard still blocks everything; only the *timed* one counters.
 
 use bevy::prelude::*;
 
 use crate::audio::AudioCue;
+use crate::orks::Ork;
+use crate::wildlife::Animal;
 
 use super::{Hero, HeroHealth, PendingHeroDamage, PlayerRes};
 
@@ -14,6 +21,19 @@ const CRIT_BLOCK_STAMINA: f32 = 55.0; // a parried warden CRITICAL nearly drains
 /// Seconds the hero takes to keel over once slain (the death "crumple", like the orks').
 const DEATH_FALL_SECS: f32 = 0.55;
 
+// ── Timed parry ──
+/// A blow landing within this many seconds of the shield RAISE parries (the timing skill).
+const PARRY_WINDOW: f32 = 0.22;
+/// Melee attackers within this range are staggered + shoved by a parry (covers the club/bite
+/// reach — a parried bolt/hazard staggers no one but still counters).
+const PARRY_STAGGER_R: f32 = 2.8;
+/// The parried attacker's next strike is pushed out this long — a longer stun than a crit's
+/// [`super::combat`] stagger, since a parry is earned.
+const PARRY_STAGGER_CD: f32 = 1.3;
+/// Shove (units/s) the parry throws the attacker back with.
+const PARRY_KNOCK: f32 = 10.0;
+
+#[allow(clippy::too_many_arguments)]
 pub fn apply_hero_damage(
     time: Res<Time>,
     mut pending: ResMut<PendingHeroDamage>,
@@ -21,7 +41,12 @@ pub fn apply_hero_damage(
     mut player: ResMut<PlayerRes>,
     buffs: Res<crate::inventory::Buffs>,
     inv: Res<crate::inventory::Inventory>,
-    mut hero_q: Query<(&Hero, &mut HeroHealth)>,
+    fx: Option<Res<super::CombatFx>>,
+    mut commands: Commands,
+    mut hitstop: ResMut<super::combat::HitStop>,
+    mut ork_q: Query<&mut Ork, Without<crate::dying::Dying>>,
+    mut animal_q: Query<&mut Animal, (Without<crate::dying::Dying>, Without<Ork>)>,
+    mut hero_q: Query<(&mut Hero, &mut HeroHealth)>,
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
@@ -31,7 +56,7 @@ pub fn apply_hero_damage(
     let is_crit = crit.0;
     crit.0 = false;
 
-    let Ok((hero, mut hh)) = hero_q.single_mut() else {
+    let Ok((mut hero, mut hh)) = hero_q.single_mut() else {
         *pending = Default::default();
         return;
     };
@@ -55,17 +80,67 @@ pub fn apply_hero_damage(
     if pending.0 > 0.0 && p.dead_since.is_none() {
         let mut dmg = pending.0;
         let blocking = hh.blocking;
+        let nowf = time.elapsed_secs();
+        let mut parried = false;
         if blocking {
             // A raised shield absorbs the hit COMPLETELY — the cost is stamina, not HP
-            // (`p.damage` no-ops on 0, so no hurt flash / death path fires). A parried CRITICAL
+            // (`p.damage` no-ops on 0, so no hurt flash / death path fires). A blocked CRITICAL
             // costs far more stamina (it nearly drains the guard), but it's what saves your life.
             dmg = 0.0;
             cues.write(AudioCue::Block); // shield knock — only when a hit is actually absorbed
-            let cost = if is_crit { CRIT_BLOCK_STAMINA } else { BLOCK_HIT_STAMINA };
-            hh.stamina = (hh.stamina - cost).max(0.0);
-            if hh.stamina <= 0.0 {
-                hh.block_locked = true;
-                hh.blocking = false;
+
+            // ── Timed PARRY: the guard went up within the window of this blow landing. Free (no
+            // stamina), staggers + shoves every melee attacker off the shield, and arms the
+            // riposte — the next swing is a guaranteed-crit counter-thrust. ──
+            if nowf - hh.guard_raised_at <= PARRY_WINDOW {
+                let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
+                // Anyone in club/bite reach of the shield's arc gets staggered: wind-up cancelled,
+                // next strike pushed way out, thrown back. (`-0.1` dot ≈ the guard's ~190° cover.)
+                let stagger = |pos: Vec2, kb: &mut Vec2, atk_cd: &mut f32, atk_anim: &mut f32, hit_recoil: &mut f32| {
+                    let to = pos - hero.pos;
+                    let d = to.length();
+                    if d > PARRY_STAGGER_R || d < 1e-3 || (to / d).dot(fwd) < -0.1 {
+                        return false;
+                    }
+                    *kb = (to / d) * PARRY_KNOCK;
+                    *atk_cd = atk_cd.max(PARRY_STAGGER_CD);
+                    *atk_anim = 0.0;
+                    *hit_recoil = nowf;
+                    true
+                };
+                for mut o in &mut ork_q {
+                    let pos = o.pos;
+                    let o = &mut *o;
+                    parried |= stagger(pos, &mut o.kb, &mut o.atk_cd, &mut o.atk_anim, &mut o.hit_recoil);
+                }
+                for mut a in &mut animal_q {
+                    let pos = a.pos;
+                    let a = &mut *a;
+                    parried |= stagger(pos, &mut a.kb, &mut a.atk_cd, &mut a.atk_anim, &mut a.hit_recoil);
+                }
+                // A blocked warden CRITICAL in the window always counts (the warden itself is too
+                // big to stagger, but the timing was made) — so is a caught bolt.
+                parried |= is_crit;
+            }
+            if parried {
+                // The reward: no stamina, a riposte armed, sparks off the shield, a beat of
+                // slow-mo — the "you felt that" moment of the guard game.
+                hero.riposte_until = nowf + super::combat::RIPOSTE_WINDOW;
+                let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
+                if let Some(fx) = fx.as_deref() {
+                    let at = Vec3::new(hero.pos.x + fwd.x * 0.7, hero.y + 1.1, hero.pos.y + fwd.y * 0.7);
+                    super::combat::spawn_burst(&mut commands, fx, at, false);
+                }
+                hitstop.remaining = hitstop.remaining.max(0.08);
+                feedback.trauma = (feedback.trauma + 0.25).min(1.0);
+                crate::combat_fx::add_fov_kick(&mut feedback, 1.0);
+            } else {
+                let cost = if is_crit { CRIT_BLOCK_STAMINA } else { BLOCK_HIT_STAMINA };
+                hh.stamina = (hh.stamina - cost).max(0.0);
+                if hh.stamina <= 0.0 {
+                    hh.block_locked = true;
+                    hh.blocking = false;
+                }
             }
         }
         // Layer the resist-buff (taken) + worn-armor (armor) mults onto the unblocked blow
@@ -73,17 +148,19 @@ pub fn apply_hero_damage(
         p.damage(dmg as f64, now, buffs.0.damage_taken_mult(now), inv.0.armor_damage_mult());
         let dead = p.hp <= 0.0;
 
-        // Combat juice: a floating number ("BLOCK" / "-N") + red flash + screen shake.
+        // Combat juice: a floating number ("PARRY!" / "BLOCK" / "-N") + red flash + screen shake.
         let head = Vec3::new(hero.pos.x, hero.y + 2.2, hero.pos.y);
-        let (text, color) = if blocking {
-            (if is_crit { "PARRY!".to_string() } else { "BLOCK".to_string() }, crate::combat_fx::col_block())
+        let (text, color) = if parried {
+            ("PARRY!".to_string(), crate::combat_fx::col_block())
+        } else if blocking {
+            ("BLOCK".to_string(), crate::combat_fx::col_block())
         } else if is_crit {
             // An unblocked critical one-shots — name it rather than dumping the overkill number.
             ("EXECUTED!".to_string(), crate::combat_fx::col_hero_hit())
         } else {
             (format!("-{}", dmg.round() as i32), crate::combat_fx::col_hero_hit())
         };
-        floats.0.push(crate::combat_fx::FloatReq { world: head, text, color, scale: 1.0 });
+        floats.0.push(crate::combat_fx::FloatReq { world: head, text, color, scale: if parried { 1.25 } else { 1.0 } });
         // A fully-blocked hit keeps the impact shake (shield knock) but skips the red
         // damage flash and the hurt grunt — no damage was taken.
         if !blocking {

@@ -905,7 +905,8 @@ fn spawn_start_screen(
                 let rows: &[(&[&str], &str)] = &[
                     (&["W", "A", "S", "D"], "Move"),
                     (&["LMB"], "Attack"),
-                    (&["RMB"], "Block"),
+                    (&["RMB"], "Block / Parry"),
+                    (&["Alt"], "Dodge roll"),
                     (&["E"], "Interact"),
                     (&["F"], "Loot"),
                     (&["I"], "Satchel"),

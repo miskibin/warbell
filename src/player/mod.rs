@@ -150,6 +150,85 @@ pub struct Hero {
     pub soft_target: Option<Entity>,
     /// World-XZ of `soft_target`, cached so the swing lock + ring don't re-query it. Transient.
     pub soft_pos: Option<Vec2>,
+    // ── Combo chain (the Witcher-style 1-2-3 flow; see `combat`) ──
+    /// This swing's duration (s) — combo steps 2/3 swing faster than step 1, so the phase math
+    /// divides by this instead of the flat `ATTACK_DURATION`. Reset per swing. Transient.
+    pub attack_dur: f32,
+    /// Current combo step 0/1/2 (overhead → slash → thrust). Advances while swings chain inside
+    /// [`combat::COMBO_WINDOW`]; resets on a gap, a roll, or a Heavy. Transient.
+    pub combo: u8,
+    /// `elapsed_secs` deadline to chain the next combo step (stamped when a swing completes).
+    pub combo_until: f32,
+    /// A mid-swing attack press was buffered — the next swing fires the instant this one ends,
+    /// so mashing chains fluidly instead of dropping inputs. Transient.
+    pub queued: bool,
+    // ── Attack magnetism (gap-closer) ──
+    /// World units of forward lunge left to spend across this swing's wind-up — set at swing
+    /// start from the soft-target's distance so the blow *steps into* the foe (the Witcher
+    /// attack-glide) instead of whiffing at air. `0` = no lunge. Transient.
+    pub lunge_left: f32,
+    // ── Parry / riposte ──
+    /// `elapsed_secs` until which the next swing is a RIPOSTE (granted by a timed parry in
+    /// [`health`]): a guaranteed-crit counter-thrust. Consumed at swing start. Transient.
+    pub riposte_until: f32,
+    /// Whether the *current* swing is the riposte counter (drives its damage). Transient.
+    pub riposte: bool,
+    // ── Dodge roll (Alt) ──
+    /// Seconds into the active dodge roll, or **`-1.0` when not rolling** (the sentinel, like
+    /// `dash_t`). Armed by [`movement::player_roll`]; [`movement::player_move`] slides the body
+    /// `roll_from → roll_to` and tumbles the root through a full somersault; [`anim`] tucks the
+    /// limbs. Transient — not saved.
+    pub roll_t: f32,
+    /// World-XZ endpoints of the active roll (only meaningful while `roll_t >= 0.0`).
+    pub roll_from: Vec2,
+    pub roll_to: Vec2,
+    /// `true` = a backward roll (no move input: the hero dives *away* while still facing the
+    /// foe), so the tumble spins the other way.
+    pub roll_back: bool,
+}
+
+impl Hero {
+    /// A fresh hero at rest — the single initializer shared by spawn + the new-run reset, so a
+    /// new transient field only needs adding here.
+    pub(crate) fn fresh(pos: Vec2, y: f32, facing: f32) -> Self {
+        Hero {
+            pos,
+            y,
+            facing,
+            vel: Vec2::ZERO,
+            vel_y: 0.0,
+            on_ground: true,
+            air_takeoff_y: y,
+            walk_phase: 0.0,
+            moving_amt: 0.0,
+            run_amt: 0.0,
+            moving: false,
+            attacking: false,
+            attack_t: 0.0,
+            hit_dealt: false,
+            attack_variant: 0,
+            victory: false,
+            charge_t: -1.0,
+            heavy: false,
+            dash_t: -1.0,
+            dash_from: Vec2::ZERO,
+            dash_to: Vec2::ZERO,
+            lock_face: None,
+            soft_target: None,
+            soft_pos: None,
+            attack_dur: combat::ATTACK_DURATION,
+            combo: 0,
+            combo_until: 0.0,
+            queued: false,
+            lunge_left: 0.0,
+            riposte_until: 0.0,
+            riposte: false,
+            roll_t: -1.0,
+            roll_from: Vec2::ZERO,
+            roll_to: Vec2::ZERO,
+            roll_back: false,
+        }
+    }
 }
 
 /// Hero **shield/stamina** state — only the block mechanic. HP, gold, XP/level and the combat
@@ -167,6 +246,10 @@ pub struct HeroHealth {
     /// `elapsed_secs` until which no weapon art may fire (the shared post-cast cooldown). Stamina
     /// gates *how many* casts you can afford; this just spaces them out so they can't fire same-frame.
     pub art_cd_until: f32,
+    /// `elapsed_secs` the shield was last RAISED (the RMB rising edge, stamped by
+    /// [`block::player_block`]). A blow that lands within [`health`]'s parry window of this is a
+    /// timed **parry** — staggers the attacker, costs no stamina, and arms the riposte.
+    pub guard_raised_at: f32,
 }
 
 impl Default for HeroHealth {
@@ -179,6 +262,7 @@ impl Default for HeroHealth {
             blocking: false,
             iframe_until: 0.0,
             art_cd_until: 0.0,
+            guard_raised_at: -100.0,
         }
     }
 }
@@ -320,6 +404,7 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 Update,
                 (
+                    movement::player_roll, // arm the Alt dodge-roll (before move so it owns this frame)
                     movement::player_move,
                     softlock::soft_lock, // pick + gently face the soft target, drive the ring (after move so input wins)
                     block::player_block,
@@ -359,6 +444,7 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
     let swing = |hero: &mut Hero, variant: u8| {
         hero.attacking = true;
         hero.attack_variant = variant;
+        hero.attack_dur = ATTACK_DURATION; // combo pacing off — a staged preview loops the base speed
         hero.attack_t = (hero.attack_t + dt) % ATTACK_DURATION;
     };
     match mode.as_str() {
@@ -430,32 +516,7 @@ fn spawn_hero(
                 scale: Vec3::splat(HERO_SCALE),
             },
             Visibility::Visible,
-            Hero {
-                pos,
-                y,
-                facing,
-                vel: Vec2::ZERO,
-                vel_y: 0.0,
-                on_ground: true,
-                air_takeoff_y: y,
-                walk_phase: 0.0,
-                moving_amt: 0.0,
-                run_amt: 0.0,
-                moving: false,
-                attacking: false,
-                attack_t: 0.0,
-                hit_dealt: false,
-                attack_variant: 0,
-                victory: false,
-                charge_t: -1.0,
-                heavy: false,
-                dash_t: -1.0,
-                dash_from: Vec2::ZERO,
-                dash_to: Vec2::ZERO,
-                lock_face: None,
-                soft_target: None,
-                soft_pos: None,
-            },
+            Hero::fresh(pos, y, facing),
             HeroHealth::default(),
         ))
         .id();
@@ -651,32 +712,7 @@ fn reset_player(
     let Ok((mut hero, mut tf, mut hh)) = hero_q.single_mut() else { return };
     let (pos, facing) = spawn_point();
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
-    *hero = Hero {
-        pos,
-        y,
-        facing,
-        vel: Vec2::ZERO,
-        vel_y: 0.0,
-        on_ground: true,
-        air_takeoff_y: y,
-        walk_phase: 0.0,
-        moving_amt: 0.0,
-        run_amt: 0.0,
-        moving: false,
-        attacking: false,
-        attack_t: 0.0,
-        hit_dealt: false,
-        attack_variant: 0,
-        victory: false,
-        charge_t: -1.0,
-        heavy: false,
-        dash_t: -1.0,
-        dash_from: Vec2::ZERO,
-        dash_to: Vec2::ZERO,
-        lock_face: None,
-        soft_target: None,
-        soft_pos: None,
-    };
+    *hero = Hero::fresh(pos, y, facing);
     tf.translation = Vec3::new(pos.x, y, pos.y);
     tf.rotation = Quat::from_rotation_y(facing);
     tf.scale = Vec3::splat(HERO_SCALE);

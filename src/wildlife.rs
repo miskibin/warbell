@@ -110,11 +110,13 @@ pub struct Animal {
     phase: f32,        // per-instance time offset (desyncs the animation)
     moving: bool,
     timer: f32,
-    /// Predator bite cooldown (s); a bite lands at ≤ 0 and resets it.
-    atk_cd: f32,
+    /// Predator bite cooldown (s); a bite lands at ≤ 0 and resets it. `pub(crate)`: the hero's
+    /// timed parry (`player::health`) pushes it out to stagger a parried beast.
+    pub(crate) atk_cd: f32,
     /// Timestamp (`elapsed_secs`) of the last strike; `animal_limbs` plays a lunge-bite / tail-
-    /// sting / arm-slam for the species' strike duration after it. `0` = none yet.
-    atk_anim: f32,
+    /// sting / arm-slam for the species' strike duration after it. `0` = none yet. `pub(crate)`:
+    /// zeroed by a parry to cancel the wind-up.
+    pub(crate) atk_anim: f32,
     /// Timestamp of the last blow the animal TOOK; drives a springy recoil-wobble (reuses
     /// `orks::recoil_tilt`). Stamped by `player::combat`. `0` = none.
     pub(crate) hit_recoil: f32,
