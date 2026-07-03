@@ -18,6 +18,25 @@ use super::{FirstPerson, Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes
 
 const SPEED: f32 = 3.5;
 const SPRINT_MULT: f32 = 1.75;
+
+// ── Combat stance (the Witcher "Alert Near") ──
+// With a soft-target near (`hero.soft_pos`, picked by `softlock`), the body stays SQUARE TO THE
+// FOE while WASD strafes/backpedals around it — WASD becomes pure velocity, facing tracks the
+// enemy. SPRINT breaks the stance (you turn and run, exactly Witcher 3's rule), first person is
+// exempt (the view owns facing there). Non-forward movement is slowed so circling/backpedaling
+// has weight instead of skating.
+/// Facing-track rate (rad/s) onto the foe while moving in the stance — quick enough to hold a
+/// circling ork, still under the free-run `TURN_RATE` so it reads as tracking, not a pin.
+const STANCE_TURN_RATE: f32 = 10.0;
+/// Speed multiplier at a pure SIDEWAYS strafe (±90° off facing)…
+const STANCE_STRAFE_MULT: f32 = 0.85;
+/// …and at a full BACKPEDAL (research: free-run speed reused backward reads skatey; grounded
+/// games run 0.7–0.9).
+const STANCE_BACK_MULT: f32 = 0.72;
+/// How much of the movement-vs-facing angle the legs actually take (the pelvis twist); the rest
+/// is carried by the crossing gait. Clamped to ±`STANCE_TWIST_MAX`.
+const STANCE_TWIST_FRAC: f32 = 0.8;
+const STANCE_TWIST_MAX: f32 = 0.7;
 const GRAVITY: f32 = 20.0;
 const JUMP_SPEED: f32 = 6.5;
 const TURN_RATE: f32 = 15.0; // snappier facing toward the move direction
@@ -312,6 +331,9 @@ pub fn player_move(
         hero.vel = Vec2::ZERO;
         hero.dash_t = -1.0; // cancel any in-flight dash (no corpse / frozen-hero skating)
         hero.roll_t = -1.0; // cancel any in-flight roll (same rule; rotation rights next Play frame)
+        hero.stance_amt = 0.0; // drop the combat stance (and its gait twist) with it
+        hero.strafe_twist = 0.0;
+        hero.back_amt = 0.0;
         // The rig (hips joint in `anim`) owns the idle/walk bob — keep the root on the ground.
         tf.translation = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
         write_state(&mut state, &hero);
@@ -410,6 +432,42 @@ pub fn player_move(
     hero.run_amt += (run_target - hero.run_amt) * (dt * 8.0).min(1.0);
     let cur_y = footing(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
 
+    // ── Combat stance: engaged while a soft-target is ringed and you're not sprinting (sprint =
+    // turn and run, breaking the stance) and not in first person. Smoothed so the anim twist and
+    // the camera's combat framing fade in/out instead of snapping. ──
+    let stance = hero.soft_pos.is_some() && !sprinting && !fp.active;
+    let stance_target = if stance { 1.0 } else { 0.0 };
+    hero.stance_amt += (stance_target - hero.stance_amt) * (dt * 8.0).min(1.0);
+    // How the movement points relative to the body: 1 = with the facing, −1 = straight back.
+    let facing_fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
+    let along = if moving { move_dir.dot(facing_fwd) } else { 1.0 };
+    // Non-forward movement is slower in the stance (strafe ×0.85 → backpedal ×0.72), scaled by
+    // the stance blend so the penalty eases with it.
+    let dir_mult = if along >= 0.0 {
+        STANCE_STRAFE_MULT + (1.0 - STANCE_STRAFE_MULT) * along
+    } else {
+        STANCE_STRAFE_MULT + (STANCE_STRAFE_MULT - STANCE_BACK_MULT) * along
+    };
+    let stance_speed_mult = 1.0 + (dir_mult - 1.0) * hero.stance_amt;
+
+    // ── Directional-gait drives for the animator: in the stance the pelvis+legs aim along the
+    // MOVEMENT (torso/head counter-rotate onto the foe in `anim`), wrapping at ±90° — past that
+    // the legs stay forward and the gait plays in REVERSE (a true backpedal; nobody twists their
+    // knees 180°). Smoothed here so `anim` stays stateless. ──
+    let (twist_target, back_target) = if stance && moving {
+        let rel = steer::wrap_pi(move_dir.x.atan2(move_dir.y) - hero.facing);
+        let (leg_rel, back) = if rel.abs() > std::f32::consts::FRAC_PI_2 {
+            (steer::wrap_pi(rel - std::f32::consts::PI), 1.0)
+        } else {
+            (rel, 0.0)
+        };
+        ((leg_rel * STANCE_TWIST_FRAC).clamp(-STANCE_TWIST_MAX, STANCE_TWIST_MAX), back)
+    } else {
+        (0.0, 0.0)
+    };
+    hero.strafe_twist += (twist_target - hero.strafe_twist) * (dt * 9.0).min(1.0);
+    hero.back_amt += (back_target - hero.back_amt) * (dt * 9.0).min(1.0);
+
     // ── Velocity ramp (momentum): accelerate toward the input target, slide to a stop on release —
     // instead of snapping to full speed / dead stop. ──
     let want_speed = SPEED
@@ -420,7 +478,9 @@ pub fn player_move(
         // Travelling by road is a little quicker than bushwhacking (baked road-field lookup).
         * crate::roads::speed_mult(hero.pos.x, hero.pos.y)
         // Winding up a Heavy Strike commits you: slowed feet while the charge builds.
-        * if hero.charge_t > super::combat::CHARGE_GRACE { super::combat::CHARGE_MOVE_MULT } else { 1.0 };
+        * if hero.charge_t > super::combat::CHARGE_GRACE { super::combat::CHARGE_MOVE_MULT } else { 1.0 }
+        // Combat stance: strafing/backpedaling around the ringed foe is slower than advancing.
+        * stance_speed_mult;
     let desired = if moving { move_dir * want_speed } else { Vec2::ZERO };
     let ramp = if moving { ACCEL } else { DECEL }; // faster to start than to stop
     let new_vel = hero.vel + (desired - hero.vel) * (dt * ramp).min(1.0);
@@ -467,14 +527,21 @@ pub fn player_move(
         } else {
             hero.vel.y = 0.0;
         }
-        // Steer toward the INPUT direction while pressing (hold the last facing through the slide). In
-        // first person the *view* owns facing (set in `player_camera`) so attacks fire where you aim.
-        // This stays live DURING a swing — `player_attack` only *gently* nudges facing toward the
-        // locked foe (a soft aim-assist), and the player's own steer here always overpowers it, so it
-        // never feels like the game wrenches the body off where you're pointing.
+        // Steer the facing. Free-run: toward the INPUT direction while pressing (hold the last
+        // facing through the slide). Combat stance: onto the RINGED FOE — the body stays square
+        // to it while WASD circles/backpedals (the movement itself is untouched; only the yaw
+        // target changes). In first person the *view* owns facing (set in `player_camera`) so
+        // attacks fire where you aim. This stays live DURING a swing — `player_attack` only
+        // *gently* nudges facing toward the locked foe, and the steer here overpowers it.
         if moving && !fp.active {
-            let want = move_dir.x.atan2(move_dir.y);
-            hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
+            let (want, rate) = match hero.soft_pos {
+                Some(tp) if stance && tp.distance_squared(hero.pos) > 1e-6 => {
+                    let to = tp - hero.pos;
+                    (to.x.atan2(to.y), STANCE_TURN_RATE)
+                }
+                _ => (move_dir.x.atan2(move_dir.y), TURN_RATE),
+            };
+            hero.facing = lerp_angle(hero.facing, want, (dt * rate).min(1.0));
         }
     }
 

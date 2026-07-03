@@ -270,6 +270,30 @@ pub(crate) fn loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
     idle_pose(t).lerp(&gait, m)
 }
 
+/// Combat-stance locomotion: [`loco_pose`] with two extra axes driven by `movement` —
+/// `back` (0..1) cross-fades toward the gait played in REVERSE phase (a backpedal: the hero
+/// steps backward while still facing the foe), and `twist` (radians) yaws the pelvis+legs
+/// toward the movement while the torso/head counter-rotate to stay square on the target — the
+/// classic lower-body-aims-along-movement / upper-body-faces-target split every lock-on game
+/// uses, here as a differential yaw on the existing joints.
+pub(crate) fn stance_loco_pose(t: f32, wp: f32, m: f32, run: f32, back: f32, twist: f32) -> Pose {
+    let mut p = loco_pose(t, wp, m, run);
+    if back > 0.001 {
+        // The same cycle run backward reads as stepping back; the mid-blend "gather step" as the
+        // two phases cancel is exactly what a person does reversing direction.
+        p = p.lerp(&loco_pose(t, -wp, m, run), back.clamp(0.0, 1.0));
+    }
+    if twist.abs() > 1e-3 {
+        // Hips carry the legs AND the torso (rig: hips → torso, hips → hip_l/r), so yawing the
+        // hips aims the whole lower body along the movement; the torso takes most of the counter
+        // and the head the remainder, landing the eyes exactly back on the foe.
+        p.hips.r = Quat::from_rotation_y(twist) * p.hips.r;
+        p.torso.r = Quat::from_rotation_y(-twist * 0.85) * p.torso.r;
+        p.head.r = Quat::from_rotation_y(-twist * 0.15) * p.head.r;
+    }
+    p
+}
+
 fn blend_t(a: Option<Vec3>, b: Option<Vec3>, s: f32) -> Option<Vec3> {
     match (a, b) {
         (Some(x), Some(y)) => Some(x.lerp(y, s)),
@@ -867,7 +891,16 @@ pub fn hero_anim(
     // while running keeps the legs striding (a running attack), and a jump taken at speed becomes a
     // forward leap. (Priority: victory › attack › jump › block-blended locomotion.)
     let moving = hero.moving_amt.clamp(0.0, 1.0);
-    let loco = loco_pose(now, hero.walk_phase, moving, hero.run_amt.clamp(0.0, 1.0));
+    // Combat stance feeds two extra locomotion axes (backpedal blend + pelvis-vs-torso twist);
+    // both are 0 out of the stance, where this reduces exactly to the plain `loco_pose`.
+    let loco = stance_loco_pose(
+        now,
+        hero.walk_phase,
+        moving,
+        hero.run_amt.clamp(0.0, 1.0),
+        hero.back_amt,
+        hero.strafe_twist,
+    );
     let pose = if hero.victory {
         victory_pose(now)
     } else if hero.roll_t >= 0.0 {

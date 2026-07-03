@@ -185,6 +185,21 @@ pub struct Hero {
     /// `true` = a backward roll (no move input: the hero dives *away* while still facing the
     /// foe), so the tumble spins the other way.
     pub roll_back: bool,
+    // ── Combat stance (Witcher "Alert Near" — see `movement`) ──
+    /// 0..1 smooth blend: 1 = the stance is engaged (a soft-target is near, not sprinting, not
+    /// FP) — the body squares to the foe while WASD strafes/backpedals. Drives the animator's
+    /// gait twist and the camera's combat framing. Transient — not saved.
+    pub stance_amt: f32,
+    /// Smoothed leg-yaw offset (radians): in the stance the pelvis+legs aim along the MOVEMENT
+    /// while the torso/head counter-rotate to stay on the foe. Wraps at ±90° (past that the gait
+    /// reverses instead — see `back_amt`). Written by [`movement`], read by [`anim`]. Transient.
+    pub strafe_twist: f32,
+    /// 0..1 smooth blend toward the BACKPEDAL gait (stance movement pointing behind the body):
+    /// the walk cycle plays in reverse so the hero steps backward while facing the foe. Transient.
+    pub back_amt: f32,
+    /// Live hostiles near the hero (within `softlock::THREAT_RANGE`, any direction) — written by
+    /// [`softlock`], read by the camera to scale its combat dolly with the size of the scrap.
+    pub threats: u32,
 }
 
 impl Hero {
@@ -227,6 +242,10 @@ impl Hero {
             roll_from: Vec2::ZERO,
             roll_to: Vec2::ZERO,
             roll_back: false,
+            stance_amt: 0.0,
+            strafe_twist: 0.0,
+            back_amt: 0.0,
+            threats: 0,
         }
     }
 }
@@ -453,6 +472,24 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.moving_amt = 1.0;
             hero.run_amt = 0.0;
             hero.walk_phase += dt * 7.0; // = movement::STEP_FREQ
+        }
+        "strafe" => {
+            // Combat-stance sideways step: legs twisted toward the movement, torso on the "foe".
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.run_amt = 0.0;
+            hero.walk_phase += dt * 7.0;
+            hero.stance_amt = 1.0;
+            hero.strafe_twist = 0.6;
+        }
+        "backpedal" => {
+            // Combat-stance retreat: the walk cycle in reverse, eyes still on the "foe".
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.run_amt = 0.0;
+            hero.walk_phase += dt * 7.0;
+            hero.stance_amt = 1.0;
+            hero.back_amt = 1.0;
         }
         "run" => {
             hero.moving = true;

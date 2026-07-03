@@ -167,7 +167,10 @@ fn emit(
         // Sprinting (run_amt → 1) throws more, faster dust, kicked back behind the heading so the
         // trail reads as churned-up sprint. A walk (run_amt ≈ 0) is unchanged (5 motes at 1.1).
         let run = hero.run_amt.clamp(0.0, 1.0);
-        let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
+        // Kick the dust back along the actual TRAVEL (velocity), not the facing — in the combat
+        // stance the two differ (body squared to the foe while strafing), and a facing-keyed kick
+        // would trail dust sideways off a backpedal.
+        let fwd = hero.vel.normalize_or_zero();
         let kick = p - Vec3::new(fwd.x, 0.0, fwd.y) * (0.22 * run);
         // Toned down (was 5 + run*5 motes @ 0.8 + run*0.3): a walk kicked up too much dust. Now
         // 3 motes @ 0.65 for a walk, ramping to 6 @ 0.9 at a full sprint.

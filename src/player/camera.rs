@@ -89,6 +89,10 @@ pub struct OrbitCam {
     /// Smoothed follow anchor (world, eye-height) — eased toward the hero so the rig glides behind him
     /// instead of rigidly tracking his exact position every frame. Snaps on a big jump (spawn/load).
     pub anchor: Vec3,
+    /// Smoothed combat dolly-out (world units) — eased toward the stance × threat-count target so
+    /// a foe wandering across the tally line can't pump the zoom. Kept here (not a system `Local`)
+    /// because `player_camera` sits at Bevy's 16-param ceiling.
+    pub combat: f32,
 }
 
 impl Default for OrbitCam {
@@ -106,6 +110,7 @@ impl Default for OrbitCam {
             locked: false,
             lead: Vec3::ZERO,
             anchor: Vec3::ZERO,
+            combat: 0.0,
         }
     }
 }
@@ -123,6 +128,21 @@ const VERT_GLIDE_RATE: f32 = 4.0;
 /// (degrees) at full run, eased by `hero.run_amt`.
 const SPRINT_DOLLY: f32 = 0.38;
 const SPRINT_FOV_DEG: f32 = 5.0;
+
+// ── Combat framing (the stance's camera) ──
+// The cardinal rule (GDC "50 Camera Mistakes"): the camera must NEVER fight the mouse — azimuth
+// stays 100% player-owned even in combat (auto-rotation + strafe steering is the classic spin
+// feedback loop). Instead the stance gets two gentle, non-rotational biases: the LOOK-TARGET
+// slides toward the ringed foe so both fighters share the frame, and the rig DOLLIES BACK a
+// touch, more as the scrap grows (the Witcher-mod "camera preset by enemy count" pattern).
+/// How far the framing slides toward the foe at full stance (world units; cf. the 0.42 shoulder).
+const COMBAT_LEAD: f32 = 0.55;
+/// Dolly-out (world units) by threat tier: a duel / a pair / a mob.
+const COMBAT_DOLLY_DUEL: f32 = 0.35;
+const COMBAT_DOLLY_GROUP: f32 = 0.9;
+const COMBAT_DOLLY_MOB: f32 = 1.3;
+/// FOV widen (degrees) per world-unit of combat dolly — a slight wide-angle as the fight grows.
+const COMBAT_FOV_PER_UNIT: f32 = 2.0;
 
 /// First-person sub-mode of [`PlayMode::Play`] (you still drive the knight). Toggled by the HUD
 /// eye button / **V** key. `blend` eases the third⇄first transition (a smooth dolly-in, never a
@@ -278,8 +298,17 @@ pub fn player_camera(
     // shows more of where you're going. Subtle — keeps him near centre. The target is low-passed
     // (lead_smooth) so a direction change (e.g. starting a diagonal) eases sideways instead of
     // snapping — an instant facing read jerks the camera the moment you press a strafe key.
-    let lead_target =
+    // In the COMBAT STANCE the lead slides toward the ringed foe instead of the heading, so both
+    // fighters share the frame — a framing bias only, never a rotation (see the combat constants).
+    let heading_lead =
         Vec3::new(hero.facing.sin(), 0.0, hero.facing.cos()) * (0.22 * hero.moving_amt.clamp(0.0, 1.0));
+    let lead_target = match hero.soft_pos {
+        Some(tp) if hero.stance_amt > 0.01 => {
+            let to = Vec3::new(tp.x - hero.pos.x, 0.0, tp.y - hero.pos.y);
+            heading_lead.lerp(to.clamp_length_max(1.0) * COMBAT_LEAD, hero.stance_amt.clamp(0.0, 1.0))
+        }
+        _ => heading_lead,
+    };
     let new_lead = orbit.lead + (lead_target - orbit.lead) * (1.0 - (-time.delta_secs() * 4.5).exp());
     orbit.lead = new_lead;
     // Camera glide: ease the followed anchor toward the hero. Snap on a big jump (spawn/respawn/load)
@@ -308,7 +337,16 @@ pub fn player_camera(
     let follow_target = orbit.anchor + orbit.lead + cam_right * SHOULDER_X;
     // Speed feel: sprinting dollies the camera back a touch (eased by `run_amt`).
     let r_speed = hero.run_amt.clamp(0.0, 1.0) * SPRINT_DOLLY;
-    let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist + r_tension + r_speed);
+    // Combat dolly: the stance eases the camera back — a touch for a duel, more as the scrap
+    // grows. Smoothed on the orbit so a foe crossing the threat-tally line can't pump the zoom.
+    let want_combat = hero.stance_amt.clamp(0.0, 1.0)
+        * match hero.threats {
+            0 | 1 => COMBAT_DOLLY_DUEL,
+            2 => COMBAT_DOLLY_GROUP,
+            _ => COMBAT_DOLLY_MOB,
+        };
+    orbit.combat += (want_combat - orbit.combat) * (1.0 - (-time.delta_secs() * 2.5).exp());
+    let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist + r_tension + r_speed + orbit.combat);
     let mut follow_eye =
         follow_target + Vec3::new(a.sin() * p.cos() * r, p.sin() * r, a.cos() * p.cos() * r);
     // Terrain clamp: never let the follow eye sink below the ground under it (a slope/ridge between
@@ -401,6 +439,8 @@ pub fn player_camera(
         let base = *base_fov.get_or_insert(p.fov);
         let kick = feedback.as_deref().map_or(0.0, |fb| fb.fov_kick) * damp;
         let speed_fov = hero.run_amt.clamp(0.0, 1.0) * SPRINT_FOV_DEG;
-        p.fov = base + (kick + speed_fov).to_radians();
+        // A slight wide-angle as the combat dolly pulls back, so a mob fight reads the arena.
+        let combat_fov = orbit.combat * COMBAT_FOV_PER_UNIT;
+        p.fov = base + (kick + speed_fov + combat_fov).to_radians();
     }
 }

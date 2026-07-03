@@ -24,6 +24,9 @@ pub struct TargetRing;
 /// Consider hostiles within this world-XZ distance (a bit past melee, so a closing foe is picked
 /// before you're on top of it).
 const SOFT_RANGE: f32 = 7.0;
+/// Hostiles within this range (ANY direction — a flanker counts) are tallied into `hero.threats`,
+/// which the camera reads to scale its combat dolly with the size of the scrap.
+const THREAT_RANGE: f32 = 9.0;
 /// Front-arc gate: `dir·facing` must exceed this. −0.15 ≈ a 190° arc — a foe circling to your side
 /// stays targeted, but one squarely behind you does not.
 const FRONT_DOT: f32 = -0.15;
@@ -85,20 +88,25 @@ pub fn soft_lock(
     if *mode != PlayMode::Play {
         hero.soft_target = None;
         hero.soft_pos = None;
+        hero.threats = 0;
         for (_, mut vis) in &mut ring_q {
             *vis = Visibility::Hidden;
         }
         return;
     }
 
-    // ── Pick the best hostile in the front arc within range ──
+    // ── Pick the best hostile in the front arc within range (tallying threats as we scan) ──
     let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
     let mut best: Option<(f32, Entity, Vec2)> = None; // (score — lower is better, entity, pos)
+    let mut threats = 0u32;
     for (e, gt) in &hostiles {
         let t = gt.translation();
         let pos = Vec2::new(t.x, t.z);
         let to = pos - hero.pos;
         let d = to.length();
+        if d <= THREAT_RANGE && d > 1e-3 {
+            threats += 1; // any-direction tally for the camera's combat dolly
+        }
         if d > SOFT_RANGE || d < 1e-3 {
             continue;
         }
@@ -114,6 +122,7 @@ pub fn soft_lock(
             best = Some((score, e, pos));
         }
     }
+    hero.threats = threats;
     match best {
         Some((_, e, pos)) => {
             hero.soft_target = Some(e);
