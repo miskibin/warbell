@@ -939,6 +939,7 @@ fn invader_brain(
     mut pending: ResMut<PendingHeroDamage>,
     mut guard_dmg: ResMut<crate::villagers::NpcDamage>,
     mut bolts: ResMut<BoltSpawns>,
+    mut ring: ResMut<crate::melee_ring::MeleeRing>,
     mut commands: Commands,
     town: Res<crate::town::TownRes>,
     plot_spots: Res<crate::town::PlotSpots>,
@@ -994,6 +995,19 @@ fn invader_brain(
             None
         };
         let chase_hero = see_hero && guard_tgt.is_none();
+        // Melee ring (see `melee_ring`): only token holders press the hero; the rest hold a
+        // prowling circle just outside club range so a horde surrounds instead of scrumming.
+        // Shamans keep their cast ring; a frenzied berserker is the exempt relentless elite.
+        // Guards/keep/buildings are never token-gated — the circle is for the hero fight only.
+        o.holding = false;
+        let mut hold_pt: Option<Vec2> = None;
+        if chase_hero && !o.shaman && !frenzied {
+            let engaged = ring.try_claim(e, rnow);
+            if !engaged && hero_d < crate::melee_ring::HOLD_ENGAGE {
+                o.holding = true;
+                hold_pt = Some(crate::melee_ring::hold_point(e, hero.pos, o.pos));
+            }
+        }
         // FORGIVING slice tuning: only ~1/3 of the warband (by id) are arsonists; the
         // rest still rush the keep. They make for the nearest standing building. The
         // keep's existing defenses (towers/archers/ballista) already auto-target ANY
@@ -1015,6 +1029,8 @@ fn invader_brain(
         };
         let target = if let Some((_, gp)) = guard_tgt {
             gp
+        } else if let Some(hp) = hold_pt {
+            hp // waiting on the melee ring — prowl the circle, don't press in
         } else if chase_hero {
             hero.pos
         } else if let Some((bidx, bpos)) = building_goal {
@@ -1027,7 +1043,7 @@ fn invader_brain(
             KEEP_POS
         };
         let atk_range = if o.shaman { orks::SHAMAN_CAST_RANGE } else { orks::ORK_ATTACK_RANGE };
-        let at_hero = chase_hero && o.pos.distance(hero.pos) < atk_range;
+        let at_hero = chase_hero && hold_pt.is_none() && o.pos.distance(hero.pos) < atk_range;
         let at_guard = guard_tgt.is_some_and(|(_, gp)| o.pos.distance(gp) < atk_range);
         // Keep damage requires being INSIDE the walls — an ork bunched at the wall ring chops
         // nothing (walls shield the keep; only buildings + the keep itself are attackable).
@@ -1064,6 +1080,8 @@ fn invader_brain(
                         o.atk_cd = orks::ORK_ATTACK_CD * frenzy_cd;
                         pending.0 += orks::variant_melee(o.variant) * dmg_scale;
                         pending.1 = to.normalize_or_zero(); // blow direction → directional hit-shake
+                        // Blow landed — hand the melee token to the next waiter (rotation).
+                        ring.release(e, rnow);
                     }
                 } else if at_guard {
                     // Trading blows with a town-guard (armour blunts the hit).
@@ -1125,8 +1143,10 @@ fn invader_brain(
             };
 
             // March toward the step target, steering around props/cliffs (faster than a patrol).
+            // A ring-holder PROWLS (slow circle around the fight) instead of charging.
             let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
-            let speed = o.speed * 1.4 * if frenzied { 1.4 } else { 1.0 };
+            let speed = o.speed
+                * if o.holding { crate::melee_ring::HOLD_SPEED } else { 1.4 * if frenzied { 1.4 } else { 1.0 } };
             match steer::advance(o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, orks::ORK_MAX_TURN * 1.6 * dt) {
                 Some(s) => {
                     o.facing = s.facing;

@@ -200,7 +200,15 @@ pub struct Hero {
     /// Live hostiles near the hero (within `softlock::THREAT_RANGE`, any direction) — written by
     /// [`softlock`], read by the camera to scale its combat dolly with the size of the scrap.
     pub threats: u32,
+    /// `elapsed_secs` until which the hero counts as IN COMBAT — refreshed whenever he lands a
+    /// blow on an enemy ([`combat`]/[`arts`]) or takes/blocks one ([`health`]). The combat stance
+    /// engages only while this holds (walking past a camp never squares you up; trading blows
+    /// does), lingering [`COMBAT_LINGER`]s past the last exchange. Transient — not saved.
+    pub combat_until: f32,
 }
+
+/// Seconds the "in combat" state lingers past the last blow dealt/taken (drives the stance).
+pub(crate) const COMBAT_LINGER: f32 = 6.0;
 
 impl Hero {
     /// A fresh hero at rest — the single initializer shared by spawn + the new-run reset, so a
@@ -246,6 +254,7 @@ impl Hero {
             strafe_twist: 0.0,
             back_amt: 0.0,
             threats: 0,
+            combat_until: 0.0,
         }
     }
 }
@@ -410,6 +419,7 @@ impl Plugin for PlayerPlugin {
                     anim::hero_anim,
                     combat::update_sparks,
                     combat::update_fx_fades,
+                    combat::update_light_fades, // impact flashes (kill/heavy/parry) decay + despawn
                     combat::hero_blade_trail,
                     combat::drive_hit_stop, // ungated: must resume the clock after the freeze
                     arts::apply_knock, // ungated: fold queued slam knockbacks into ork kb

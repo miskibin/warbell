@@ -193,6 +193,7 @@ pub fn player_arts(
     };
 
     let mut killed_any = false;
+    let mut any_struck = false;
     // Bramble Sweep sustain: a flat self-heal on cast, plus more per foe struck (added in-loop).
     let mut sweep_heal = 0.0f32;
     if matches!(art, Art::Sweep) {
@@ -214,6 +215,7 @@ pub fn player_arts(
         if !hit {
             continue;
         }
+        any_struck = true;
         hp.hp -= dmg;
         // Sweep lifesteal — heal for each foe the cleave bites (the bramble's sustain identity).
         if matches!(art, Art::Sweep) {
@@ -262,6 +264,10 @@ pub fn player_arts(
     }
     if killed_any {
         cues.write(AudioCue::Impact { kill: true });
+    }
+    // An art that bites an enemy opens/refreshes the IN-COMBAT window (drives the stance).
+    if any_struck {
+        hero.combat_until = now + super::COMBAT_LINGER;
     }
     // Bramble Sweep's field-medic aura: mend the warband around the hero, not just the hero —
     // so your guards/villagers survive a melee. Flat heal to each wounded ally in range; the

@@ -51,14 +51,15 @@ const COMBO_DMG: [f64; 3] = [1.0, 1.12, 1.28];
 // terrace lip. Kills the "whiffing at air just out of range" feel; third-person only (in FP the
 // view owns the body — a hidden glide underfoot reads as motion sickness).
 /// Engage when the target stands within this range at swing start (past it you're not "almost
-/// in reach", you're closing — walk).
-const LUNGE_ENGAGE: f32 = 4.6;
+/// in reach", you're closing — walk). Playtest-tuned DOWN from 4.6/2.8/14: the first cut yanked
+/// the hero across a third of the screen — "too aggressive". Now it's a step, not a launch.
+const LUNGE_ENGAGE: f32 = 3.2;
 /// …and stop the glide at this range — sword's length, matching the keep-out shove.
 const LUNGE_STOP: f32 = 1.35;
 /// Hard cap on glide distance per swing.
-const LUNGE_CAP: f32 = 2.8;
-/// Glide speed (units/s) — ~4× walk, fast enough to arrive before the blade lands.
-const LUNGE_SPEED: f32 = 14.0;
+const LUNGE_CAP: f32 = 1.6;
+/// Glide speed (units/s) — ~3× walk, arrives before the blade lands without reading as a yank.
+const LUNGE_SPEED: f32 = 10.0;
 /// Swing phase past which the glide cuts (the blade has landed; recovery never slides).
 const LUNGE_END_PHASE: f32 = 0.55;
 
@@ -292,6 +293,64 @@ pub(crate) struct Spark {
     life: f32,
     life0: f32,
     scale0: f32,
+    /// Elongate the mote along its velocity (a streak, not a ball) — metal glints + blood
+    /// droplets read as motion this way; dust/leaves/chips stay round and tumble.
+    stretch: bool,
+    /// Gravity (units/s²) — 9 for the standard arc; low (~2.5) for hanging embers.
+    grav: f32,
+}
+
+impl Spark {
+    fn new(vel: Vec3, life: f32, scale0: f32) -> Self {
+        Spark { vel, life, life0: life, scale0, stretch: false, grav: 9.0 }
+    }
+    fn streak(vel: Vec3, life: f32, scale0: f32) -> Self {
+        Spark { stretch: true, ..Spark::new(vel, life, scale0) }
+    }
+}
+
+/// A brief impact light — a point flash that decays over `life` then despawns. Sells the metal
+/// "spark" of a heavy blow / kill / parry against the scene's real lighting (cheap: no shadows,
+/// short range, one at a time in practice).
+#[derive(Component)]
+pub(crate) struct LightFade {
+    born: f32,
+    life: f32,
+    peak: f32,
+}
+
+/// Spawn one impact flash at `at`. Intensity in lumens (scene torches run 18–95k; a flash reads
+/// at ~15–30k over range ~6).
+pub(crate) fn spawn_impact_light(commands: &mut Commands, at: Vec3, color: Color, peak: f32, life: f32, now: f32) {
+    commands.spawn((
+        PointLight {
+            color,
+            intensity: peak,
+            range: 6.0,
+            radius: 0.1,
+            shadow_maps_enabled: false,
+            ..default()
+        },
+        Transform::from_translation(at),
+        LightFade { born: now, life, peak },
+    ));
+}
+
+/// Decay + despawn the impact flashes (quadratic fall-off so the pop is front-loaded).
+pub fn update_light_fades(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &LightFade, &mut PointLight)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, f, mut pl) in &mut q {
+        let k = (now - f.born) / f.life;
+        if k >= 1.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        pl.intensity = f.peak * (1.0 - k) * (1.0 - k);
+    }
 }
 
 /// Shared spark + impact-flash assets, built once. The faded planar effects (slash / shockwave /
@@ -425,7 +484,7 @@ pub(crate) fn spawn_sweep_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(fx.leaf.clone()),
             Transform::from_translation(at + Vec3::Y * 0.7).with_scale(Vec3::splat(0.55)),
-            Spark { vel, life: 0.55, life0: 0.55, scale0: 0.55 },
+            Spark::new(vel, 0.55, 0.55),
             bevy::light::NotShadowCaster,
         ));
     }
@@ -746,11 +805,13 @@ pub fn player_attack(
         if hero.heavy {
             spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
             spawn_burst(&mut commands, &fx, mid, true);
+            spawn_impact_light(&mut commands, mid, Color::srgb(1.0, 0.85, 0.5), 26_000.0, 0.18, now_s);
         }
         // A blood splat under the target on EVERY hit (small + brief), big + lingering on a kill.
         spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), dead, now_s);
         if dead {
             spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
+            spawn_impact_light(&mut commands, mid, Color::srgb(1.0, 0.9, 0.6), 18_000.0, 0.15, now_s);
         }
         hit_any = true;
         // Floating number above the target + a white hurt-flash on a survivor.
@@ -851,6 +912,11 @@ pub fn player_attack(
             }
         }
     }
+    // Landing a blow on an enemy opens/refreshes the IN-COMBAT window (drives the stance).
+    if !struck.is_empty() {
+        hero.combat_until = now_s + super::COMBAT_LINGER;
+    }
+
     // ── Cleave pass: splash a fraction of the swing to OTHER orks near a struck target ──
     // (upgrade-gated — `cleave` is 0 until the Champion node is bought, so this is a no-op).
     if player.0.cleave > 0.0 && !struck.is_empty() {
@@ -1002,7 +1068,7 @@ pub(crate) fn spawn_heal_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3)
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(fx.heal.clone()),
             Transform::from_translation(at).with_scale(Vec3::splat(0.6)),
-            Spark { vel, life: 0.5, life0: 0.5, scale0: 0.6 },
+            Spark::new(vel, 0.5, 0.6),
             bevy::light::NotShadowCaster,
         ));
     }
@@ -1030,7 +1096,7 @@ pub(crate) fn spawn_motes(
             Mesh3d(mesh.clone()),
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(at).with_scale(Vec3::splat(scale0)),
-            Spark { vel, life, life0: life, scale0 },
+            Spark::new(vel, life, scale0),
             bevy::light::NotShadowCaster,
         ));
     }
@@ -1048,7 +1114,52 @@ pub(crate) fn spawn_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3, kill
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(at).with_scale(Vec3::splat(scale0)),
-            Spark { vel, life: 0.45, life0: 0.45, scale0 },
+            Spark::streak(vel, 0.45, scale0),
+            bevy::light::NotShadowCaster,
+        ));
+    }
+    // A kill also sheds a few slow EMBERS — small hot motes on low gravity that hang and drift a
+    // beat after the burst is gone, so the payoff lingers instead of vanishing in half a second.
+    if kill {
+        for i in 0..5u32 {
+            let a = i as f32 * 2.399_963_2 + 0.9;
+            let vel = Vec3::new(a.cos() * 0.9, 1.3 + (i % 3) as f32 * 0.35, a.sin() * 0.9);
+            commands.spawn((
+                Mesh3d(fx.mesh.clone()),
+                MeshMaterial3d(fx.hit.clone()),
+                Transform::from_translation(at).with_scale(Vec3::splat(0.45)),
+                Spark { grav: 2.2, ..Spark::new(vel, 1.0, 0.45) },
+                bevy::light::NotShadowCaster,
+            ));
+        }
+    }
+}
+
+/// Parry clash — a directional SHEET of metal sparks off the shield face: streaks fanned back
+/// toward the attacker (`dir` = hero → attacker, world XZ) and up, plus a couple of hanging
+/// embers. Reads as steel-on-steel, distinct from the radial hit burst.
+pub(crate) fn spawn_clash(commands: &mut Commands, fx: &CombatFx, at: Vec3, dir: Vec2) {
+    let d3 = Vec3::new(dir.x, 0.0, dir.y);
+    let side = Vec3::new(-dir.y, 0.0, dir.x);
+    for i in 0..12u32 {
+        let f = (i as f32 / 11.0) * 2.0 - 1.0; // -1..1 across the fan
+        let vel = (d3 * (2.2 + (i * 29 % 7) as f32 * 0.28) + side * f * 2.1 + Vec3::Y * (1.4 + f.abs()))
+            * (0.85 + (i * 13 % 5) as f32 * 0.08);
+        commands.spawn((
+            Mesh3d(fx.mesh.clone()),
+            MeshMaterial3d(fx.kill.clone()),
+            Transform::from_translation(at).with_scale(Vec3::splat(0.5)),
+            Spark::streak(vel, 0.4, 0.5),
+            bevy::light::NotShadowCaster,
+        ));
+    }
+    for i in 0..3u32 {
+        let vel = d3 * 0.7 + Vec3::new(0.0, 1.0 + i as f32 * 0.3, 0.0);
+        commands.spawn((
+            Mesh3d(fx.mesh.clone()),
+            MeshMaterial3d(fx.hit.clone()),
+            Transform::from_translation(at).with_scale(Vec3::splat(0.4)),
+            Spark { grav: 2.2, ..Spark::new(vel, 0.8, 0.4) },
             bevy::light::NotShadowCaster,
         ));
     }
@@ -1065,11 +1176,13 @@ pub(crate) fn spawn_blood(commands: &mut Commands, fx: &CombatFx, at: Vec3, dir:
         let up = 0.6 + (i % 3) as f32 * 0.45;
         let mag = 0.6 + (i * 37 % 10) as f32 * 0.06;
         let vel = (dir3 * 1.2 + spread + Vec3::Y * up) * spd * mag;
+        // Mixed droplet sizes (fine spray + a few fat drops), streaked along their flight.
+        let sc = scale0 * (0.7 + (i * 13 % 7) as f32 * 0.09);
         commands.spawn((
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(fx.blood.clone()),
-            Transform::from_translation(at).with_scale(Vec3::splat(scale0)),
-            Spark { vel, life: 0.55, life0: 0.55, scale0 },
+            Transform::from_translation(at).with_scale(Vec3::splat(sc)),
+            Spark::streak(vel, 0.55, sc),
             bevy::light::NotShadowCaster,
         ));
     }
@@ -1088,7 +1201,7 @@ pub(crate) fn spawn_chips(commands: &mut Commands, fx: &CombatFx, at: Vec3, shat
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(fx.chip.clone()),
             Transform::from_translation(at).with_scale(Vec3::splat(scale0)),
-            Spark { vel, life, life0: life, scale0 },
+            Spark::new(vel, life, scale0),
             bevy::light::NotShadowCaster,
         ));
     }
@@ -1206,10 +1319,22 @@ pub fn update_sparks(
             commands.entity(e).despawn();
             continue;
         }
-        s.vel.y -= 9.0 * dt;
+        let g = s.grav;
+        s.vel.y -= g * dt;
         let v = s.vel;
         tf.translation += v * dt;
         let k = s.life / s.life0;
+        if s.stretch {
+            // A streak: orient the mote along its flight and elongate it by speed, so glints and
+            // droplets read as motion trails instead of floating balls. Thins as it fades.
+            let speed = v.length();
+            if speed > 1e-3 {
+                tf.rotation = Quat::from_rotation_arc(Vec3::Y, v / speed);
+                let len = (0.9 + speed * 0.35).min(3.2);
+                tf.scale = Vec3::new(s.scale0 * k * 0.55, s.scale0 * k * len, s.scale0 * k * 0.55);
+                continue;
+            }
+        }
         tf.scale = Vec3::splat(s.scale0 * k);
     }
 }

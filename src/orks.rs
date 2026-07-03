@@ -194,6 +194,10 @@ pub struct Ork {
     /// Timestamp of the last blow the ork TOOK; drives a brief springy recoil-wobble (the same
     /// read as the training dummies'). Stamped by `player::combat`. `0` = none.
     pub(crate) hit_recoil: f32,
+    /// This ork wants the hero but holds the melee ring WITHOUT an attack token this frame
+    /// (`melee_ring`): it prowls the circle at reduced speed instead of pressing in. Transient,
+    /// re-decided every frame by the brains; also read by `siege.rs`.
+    pub(crate) holding: bool,
     /// This ork is the camp shaman (casts bolts + heals instead of clubbing).
     pub(crate) shaman: bool,
     /// Heal cooldown (s) — shamans only.
@@ -293,6 +297,8 @@ pub struct OrksPlugin;
 
 impl Plugin for OrksPlugin {
     fn build(&self, app: &mut App) {
+        // The melee attack-token ring (shared with the siege invader brain — see `melee_ring`).
+        app.init_resource::<crate::melee_ring::MeleeRing>();
         app.add_systems(Update, (ork_limbs, ork_drive)); // limb anim keeps running while frozen
         app.add_systems(
             Update,
@@ -308,6 +314,7 @@ fn ork_brain(
     mut bolts: ResMut<crate::projectile::BoltSpawns>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut music: ResMut<crate::audio::MusicState>,
+    mut ring: ResMut<crate::melee_ring::MeleeRing>,
     mut was_clearing: Local<bool>,
     mut q: Query<
         (Entity, &mut Ork, &mut Transform, Option<&crate::player::Health>, Option<&crate::boss::Slowed>),
@@ -348,10 +355,21 @@ fn ork_brain(
             && o.home.distance(hero.pos) < ORK_LEASH;
         let atk_range = if o.shaman { SHAMAN_CAST_RANGE } else { ORK_ATTACK_RANGE };
         if see_hero {
-            o.target = hero.pos;
             o.brawl_target = None;
-            o.mode = if o.pos.distance(hero.pos) < atk_range { OrkMode::Attack } else { OrkMode::Hunt };
+            // Melee ring: only token holders press the hero — the rest prowl the waiting circle
+            // (slowed in Hunt below). Shamans cast from their own stand-off ring and a frenzied
+            // berserker is the exempt relentless elite (see `melee_ring`).
+            let engaged = o.shaman || frenzied || ring.try_claim(self_e, time.elapsed_secs());
+            o.holding = !engaged && o.pos.distance(hero.pos) < crate::melee_ring::HOLD_ENGAGE;
+            if o.holding {
+                o.target = crate::melee_ring::hold_point(self_e, hero.pos, o.pos);
+                o.mode = OrkMode::Hunt; // prowl toward the orbiting ring point
+            } else {
+                o.target = hero.pos;
+                o.mode = if o.pos.distance(hero.pos) < atk_range { OrkMode::Attack } else { OrkMode::Hunt };
+            }
         } else {
+            o.holding = false;
             // No hero — seek the nearest rival-faction ork near home to brawl.
             let mut rival: Option<(Entity, Vec2)> = None;
             let mut best = ORK_SIGHT;
@@ -429,7 +447,10 @@ fn ork_brain(
                 // HERO, follow an A* route (around walls); a rival brawl stays direct (close
                 // range, same clearing) so it doesn't thrash the pathfinder.
                 let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
-                let speed = o.speed * 1.4 * if frenzied { 1.4 } else { 1.0 } * slow_mul;
+                // A ring-holder PROWLS (slow circle around the fight); an engaged hunter charges.
+                let speed = o.speed
+                    * if o.holding { crate::melee_ring::HOLD_SPEED } else { 1.4 * if frenzied { 1.4 } else { 1.0 } }
+                    * slow_mul;
                 let step_target = if o.brawl_target.is_none() {
                     let now = time.elapsed_secs();
                     if o.hunt_cursor >= o.hunt_path.len()
@@ -485,6 +506,8 @@ fn ork_brain(
                         o.atk_cd = ORK_ATTACK_CD * if frenzied { 0.6 } else { 1.0 };
                         pending.0 += variant_melee(o.variant) * dmg_mul;
                         pending.1 = (hero.pos - o.pos).normalize_or_zero(); // directional hit-shake
+                        // Blow landed — hand the melee token to the next waiter (rotation).
+                        ring.release(self_e, time.elapsed_secs());
                     }
                     // Trigger the strike animation (club chop / staff jab) — `ork_limbs` reads this.
                     o.atk_anim = time.elapsed_secs();
@@ -1460,6 +1483,7 @@ impl Armory {
             atk_cd: 0.0,
             atk_anim: 0.0,
             hit_recoil: 0.0,
+            holding: false,
             shaman: st.shaman,
             heal_cd: rng_range(&mut rng, 0.0, SHAMAN_HEAL_CD),
             rng,

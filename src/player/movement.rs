@@ -62,16 +62,18 @@ pub(crate) const DASH_TIME: f32 = 0.16;
 // ── Dodge roll (Alt) — the Witcher-style evade, available from the first minute (no boon gate,
 // unlike the Sand-Dash art): a quick ground somersault along the move input (a backward dive with
 // none), i-framed through the tuck, priced in stamina so it trades against blocking. ──
-/// Seconds the roll takes start-to-finish.
-pub(crate) const ROLL_TIME: f32 = 0.42;
+/// Seconds the roll takes start-to-finish. (Playtest: 0.42/2.7 read as a stubby hop — now a
+/// longer, farther tumble, priced accordingly.)
+pub(crate) const ROLL_TIME: f32 = 0.5;
 /// World units the roll covers (clipped early at walls/cliffs — see the path walk in
 /// [`player_roll`]).
-const ROLL_DIST: f32 = 2.7;
+const ROLL_DIST: f32 = 3.4;
 /// Stamina spent per roll (same pool as block/arts — you can't roll-spam AND hold a guard).
-const ROLL_STAMINA: f32 = 25.0;
+/// Raised from 25: at 25 the roll was a near-free escape; ~2½ rolls now drain a level-1 pool.
+const ROLL_STAMINA: f32 = 38.0;
 /// Seconds of invulnerability from the roll's start — covers the tuck, not the recovery, so a
 /// late roll still eats the follow-up blow (the timing is the skill).
-const ROLL_IFRAME: f32 = 0.30;
+const ROLL_IFRAME: f32 = 0.34;
 /// Height (world units) of the tumble pivot — the body's centre of mass while tucked. The root
 /// (feet origin) orbits this point through the somersault so the ball rolls in place instead of
 /// cartwheeling about the ankles.
@@ -432,10 +434,12 @@ pub fn player_move(
     hero.run_amt += (run_target - hero.run_amt) * (dt * 8.0).min(1.0);
     let cur_y = footing(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
 
-    // ── Combat stance: engaged while a soft-target is ringed and you're not sprinting (sprint =
-    // turn and run, breaking the stance) and not in first person. Smoothed so the anim twist and
-    // the camera's combat framing fade in/out instead of snapping. ──
-    let stance = hero.soft_pos.is_some() && !sprinting && !fp.active;
+    // ── Combat stance: engaged while a soft-target is ringed AND blows have actually been traded
+    // (`combat_until` — landing a hit or taking one starts it, and it lingers a few seconds past
+    // the last exchange, so walking PAST a camp never squares you up). Sprint breaks it (turn and
+    // run); first person is exempt. Smoothed so the anim twist and the camera's combat framing
+    // fade in/out instead of snapping. ──
+    let stance = hero.soft_pos.is_some() && t < hero.combat_until && !sprinting && !fp.active;
     let stance_target = if stance { 1.0 } else { 0.0 };
     hero.stance_amt += (stance_target - hero.stance_amt) * (dt * 8.0).min(1.0);
     // How the movement points relative to the body: 1 = with the facing, −1 = straight back.

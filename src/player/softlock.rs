@@ -4,9 +4,11 @@
 //! camera lock. Your own movement always overrides (the turn only nudges while you stand), and the
 //! swing then commits to the same ringed foe (see `combat::player_attack`, which reads `soft_pos`).
 //!
-//! It engages purely from proximity to a THREAT (ork / boss / warlord / rival soldier within
-//! [`SOFT_RANGE`] in the front arc) — i.e. exactly when you're in a fight — and drops the instant no
-//! threat is in front, so exploring never auto-turns you at wildlife or workers.
+//! It engages purely from proximity to a THREAT (ork / boss / warlord / rival soldier / hunting
+//! predator within [`SOFT_RANGE`] in the front arc) — i.e. exactly when you're in a fight — and
+//! drops the instant no threat is in front. Wildlife counts ONLY for the hunting species
+//! (`wildlife::is_hostile_species` — wolf/bear/boar/scorpion/croc/golem); grazers never grab the
+//! ring, so exploring doesn't auto-turn you at deer or workers.
 
 use bevy::prelude::*;
 
@@ -16,6 +18,7 @@ use crate::dying::Dying;
 use crate::orks::Ork;
 use crate::rival::RivalSoldier;
 use crate::warlord::Warlord;
+use crate::wildlife::Animal;
 
 /// Marker on the single reusable target-ring entity (moved under the soft target each frame).
 #[derive(Component)]
@@ -74,9 +77,9 @@ pub fn soft_lock(
     time: Res<Time>,
     mut hero_q: Query<&mut Hero>,
     hostiles: Query<
-        (Entity, &GlobalTransform),
+        (Entity, &GlobalTransform, Option<&Animal>),
         (
-            Or<(With<Ork>, With<Boss>, With<Warlord>, With<RivalSoldier>)>,
+            Or<(With<Ork>, With<Boss>, With<Warlord>, With<RivalSoldier>, With<Animal>)>,
             Without<Dying>,
         ),
     >,
@@ -99,7 +102,11 @@ pub fn soft_lock(
     let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
     let mut best: Option<(f32, Entity, Vec2)> = None; // (score — lower is better, entity, pos)
     let mut threats = 0u32;
-    for (e, gt) in &hostiles {
+    for (e, gt, animal) in &hostiles {
+        // Wildlife: only the hunting species are foes — a deer/rabbit never grabs the ring.
+        if animal.is_some_and(|a| !crate::wildlife::is_hostile_species(a.species)) {
+            continue;
+        }
         let t = gt.translation();
         let pos = Vec2::new(t.x, t.z);
         let to = pos - hero.pos;

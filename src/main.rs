@@ -18,6 +18,7 @@ mod aftermath;
 mod ambient_life;
 mod atmospherics;
 mod meadow;
+mod melee_ring;
 mod audio;
 mod banner;
 mod biped;

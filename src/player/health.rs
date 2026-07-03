@@ -81,6 +81,12 @@ pub fn apply_hero_damage(
         let mut dmg = pending.0;
         let blocking = hh.blocking;
         let nowf = time.elapsed_secs();
+        // Taking (or blocking) a real blow opens/refreshes the IN-COMBAT window (drives the
+        // stance). Attacker-less hazards (swamp poison, fall damage) leave the blow direction
+        // zero — they hurt, but they're not a fight.
+        if pending.1.length_squared() > 1e-6 {
+            hero.combat_until = nowf + super::COMBAT_LINGER;
+        }
         let mut parried = false;
         if blocking {
             // A raised shield absorbs the hit COMPLETELY — the cost is stamina, not HP
@@ -128,8 +134,11 @@ pub fn apply_hero_damage(
                 hero.riposte_until = nowf + super::combat::RIPOSTE_WINDOW;
                 let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
                 if let Some(fx) = fx.as_deref() {
+                    // Steel-on-steel: a directional sheet of spark streaks off the shield face
+                    // plus a brief cool flash — reads as a CLASH, not a generic hit pop.
                     let at = Vec3::new(hero.pos.x + fwd.x * 0.7, hero.y + 1.1, hero.pos.y + fwd.y * 0.7);
-                    super::combat::spawn_burst(&mut commands, fx, at, false);
+                    super::combat::spawn_clash(&mut commands, fx, at, fwd);
+                    super::combat::spawn_impact_light(&mut commands, at, Color::srgb(0.95, 0.97, 1.0), 22_000.0, 0.18, nowf);
                 }
                 hitstop.remaining = hitstop.remaining.max(0.08);
                 feedback.trauma = (feedback.trauma + 0.25).min(1.0);
