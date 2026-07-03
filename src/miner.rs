@@ -61,7 +61,12 @@ const STALL_REPLAN_SECS: f32 = 1.5;
 /// abandons + briefly shuns the spot — a reactive trap A* keeps routing back into.
 const WEDGE_GIVEUP_SECS: f32 = 14.0;
 /// How many nearest candidate boulders `assign_ore` A*-probes for reachability before giving up.
-const REACH_CHECK_K: usize = 6;
+/// Was 6 — measured (via the `MINER_DBG` timing this file temporarily carries) that an unreachable
+/// candidate forces a FULL budget-exhausting search before moving to the next one, so the true
+/// worst case is `REACH_CHECK_K × NAV_NODES` node-expansions in a single frame. 6 tries × the old
+/// 20_000-node budget was the real multi-second freeze (up to several seconds), not a burst of
+/// several miners (already fixed separately by capping to one miner assigned per tick).
+const REACH_CHECK_K: usize = 3;
 /// Time allowed inside the direct-steer ring (≤6u of the boulder) without actually reaching it.
 /// A reachable rock is reached from 6u out in ~3–4s; a rock one terrace UP keeps the miner
 /// wall-following along the cliff face — `moving` stays true, so [`STALL_SECS`] never trips and
@@ -71,11 +76,14 @@ const CLOSE_GIVEUP_SECS: f32 = 8.0;
 const SFX_EARSHOT: f32 = 16.0;
 /// Close enough to the yard to dump the cart on the pile (matches `worker_steer`'s post reach).
 const HAUL_REACH: f32 = 1.8;
-/// A* node budget for the cross-island haul. `navgrid::NAV_MAX_NODES` (1400) is sized for the
-/// ~40-tile invader run and EXHAUSTS on the ~100-tile castle→Rocky trip — `find_path` then
-/// returns empty and the miner would beeline into the river. Unreachable goals drain the open
-/// set and exit early, so the generous budget only costs while a real route is being found.
-const NAV_NODES: u32 = 20_000;
+/// A* node budget for the cross-island haul. `navgrid::NAV_MAX_NODES` (6000, sized for the
+/// invader keep-march) EXHAUSTS on the longer castle→Rocky trip, so this stays above that — but
+/// was 20_000 until measured (real `--features profiling` trace + `MINER_DBG` timing) showing a
+/// SINGLE full-budget search (an unreachable candidate drains the whole open set before failing)
+/// cost 2.6-3.2 SECONDS, recurring every ~6s in a real session — the actual periodic freeze, not a
+/// multi-miner burst (that was a separate, already-fixed bug). Cut to keep the worst case
+/// (`REACH_CHECK_K` × this) well under a frame budget.
+const NAV_NODES: u32 = 6_000;
 /// Seconds between A* replans while marching (staggered per entity; the route is long + stable).
 const REPLAN_SECS: f32 = 2.5;
 
@@ -164,7 +172,7 @@ fn assign_ore(
     mut retry_at: Local<f32>,
     mut commands: Commands,
     workers: Query<
-        (Entity, &Worker, &Villager),
+        (Entity, &Worker, &Villager, Option<&OreSearchCooldown>),
         (
             With<Townsfolk>,
             Without<MineJob>,
@@ -196,10 +204,15 @@ fn assign_ore(
     // Filter to idle MINERS first (cheap — no A* yet): `workers` also carries farmers/woodcutters
     // (anyone merely `Without<MineJob>`), so capping the raw iterator before this filter would often
     // land on a non-miner and starve real miners of jobs. Only the expensive part below is capped.
-    let jobless_miners = workers
-        .iter()
-        .filter(|(_, worker, _)| town.0.plots.get(worker.idx).and_then(|p| p.kind) == Some(BuildKind::Mine));
-    for (e, _worker, v) in jobless_miners.take(MAX_ASSIGN_PER_TICK) {
+    // ALSO skip anyone still on `OreSearchCooldown`: a miner with genuinely no reachable ore right
+    // now (all candidates blocked/unreachable) was retrying the SAME up-to-`REACH_CHECK_K`-searches
+    // every `RETRY_SECS` — measured as a steady ~450ms hit every ~3s for over a minute straight, one
+    // specific stuck miner. Backing off on failure turns "guaranteed every tick" into "occasional".
+    let jobless_miners = workers.iter().filter(|(_, worker, _, cd)| {
+        town.0.plots.get(worker.idx).and_then(|p| p.kind) == Some(BuildKind::Mine)
+            && cd.is_none_or(|c| now >= c.until)
+    });
+    for (e, _worker, v, _cd) in jobless_miners.take(MAX_ASSIGN_PER_TICK) {
         // Gather every live, eligible boulder (safe ground, not blacklisted), nearest first.
         let mut cands: Vec<(Entity, Vec2, f32)> = ores
             .iter()
@@ -225,10 +238,25 @@ fn assign_ore(
         if let Some(oe) = chosen {
             commands
                 .entity(e)
-                .try_insert(MineJob { ore: oe, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 });
+                .try_insert(MineJob { ore: oe, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 })
+                .try_remove::<OreSearchCooldown>();
+        } else {
+            commands.entity(e).try_insert(OreSearchCooldown { until: now + ORE_SEARCH_BACKOFF_SECS });
         }
     }
 }
+
+/// Marker: this miner's last ore search found nothing reachable — back off before retrying (see
+/// `assign_ore`'s filter) instead of repeating the same expensive, still-doomed search every
+/// `RETRY_SECS`. Cleared the moment a search succeeds.
+#[derive(Component)]
+struct OreSearchCooldown {
+    until: f32,
+}
+/// How long a miner with no reachable ore waits before trying again. Long relative to
+/// `RETRY_SECS` (3s) on purpose — a blocked-off miner's situation doesn't usually resolve itself
+/// in the next few seconds (danger despawns / new ore regrowing both run on much longer clocks).
+const ORE_SEARCH_BACKOFF_SECS: f32 = 45.0;
 
 /// Walk the miner to its boulder and swing the pick on the cooldown; the depleting blow shatters
 /// the boulder (regrow scheduled via [`deplete_ore`]) and loads the cart ([`Carting`] — NO stone

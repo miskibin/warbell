@@ -76,8 +76,13 @@ const STALL_REPLAN_SECS: f32 = 1.5;
 /// into. Generous so a normal jam (one replan past a prop) recovers without ever tripping it.
 const WEDGE_GIVEUP_SECS: f32 = 12.0;
 /// How many nearest candidate trees `assign_tree` A*-probes for reachability before giving up —
-/// bounds the pathfinding cost while still skipping past a cluster of walled-off trees.
-const REACH_CHECK_K: usize = 8;
+/// bounds the pathfinding cost while still skipping past a cluster of walled-off trees. Was 8;
+/// halved after the sibling `miner::assign_ore` bug (an unreachable candidate forces a FULL
+/// budget-exhausting search before trying the next one, so worst case is `REACH_CHECK_K ×
+/// NAV_MAX_NODES` node-expansions in one frame) turned out to be the real periodic multi-second
+/// freeze. Trees are bounded to `WORK_R` (much smaller search space than ore's whole-island range),
+/// so this was never observed as severely here, but the architecture is identical — same caution.
+const REACH_CHECK_K: usize = 4;
 /// Inside this ring a worker just direct-steers, so [`pick_nearest_reachable`] takes the target
 /// without paying for an A* reachability probe.
 pub(crate) const CLOSE_RING: f32 = 6.0;
@@ -213,7 +218,7 @@ fn assign_tree(
     mut retry_at: Local<f32>,
     mut commands: Commands,
     workers: Query<
-        (Entity, &Worker, &Villager),
+        (Entity, &Worker, &Villager, Option<&ChopSearchCooldown>),
         (
             With<Townsfolk>,
             Without<ChopJob>,
@@ -245,10 +250,14 @@ fn assign_tree(
     // large population several idle woodcutters going jobless in the same tick would each run a full
     // A* over up to `REACH_CHECK_K` candidates, bursting in one frame. One per tick trickles it out.
     const MAX_ASSIGN_PER_TICK: usize = 1;
-    let jobless_woodcutters = workers
-        .iter()
-        .filter(|(_, worker, _)| town.0.plots.get(worker.idx).and_then(|p| p.kind) == Some(BuildKind::Lumber));
-    for (e, _worker, v) in jobless_woodcutters.take(MAX_ASSIGN_PER_TICK) {
+    // Also skip anyone on `ChopSearchCooldown` — same fix as `miner::assign_ore`'s backoff: a
+    // woodcutter with no reachable tree right now would otherwise retry the same doomed
+    // `REACH_CHECK_K`-candidate A* sweep every `RETRY_SECS` indefinitely.
+    let jobless_woodcutters = workers.iter().filter(|(_, worker, _, cd)| {
+        town.0.plots.get(worker.idx).and_then(|p| p.kind) == Some(BuildKind::Lumber)
+            && cd.is_none_or(|c| now >= c.until)
+    });
+    for (e, _worker, v, _cd) in jobless_woodcutters.take(MAX_ASSIGN_PER_TICK) {
         // Gather every eligible tree (safe ground, not blacklisted), nearest first.
         let mut cands: Vec<(Entity, Vec2, f32)> = trees
             .iter()
@@ -271,10 +280,21 @@ fn assign_tree(
         if let Some(te) = chosen {
             commands
                 .entity(e)
-                .try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 });
+                .try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 })
+                .try_remove::<ChopSearchCooldown>();
+        } else {
+            commands.entity(e).try_insert(ChopSearchCooldown { until: now + CHOP_SEARCH_BACKOFF_SECS });
         }
     }
 }
+
+/// Marker: this woodcutter's last tree search found nothing reachable — back off before retrying
+/// (mirrors `miner::OreSearchCooldown`) instead of repeating the same doomed search every tick.
+#[derive(Component)]
+struct ChopSearchCooldown {
+    until: f32,
+}
+const CHOP_SEARCH_BACKOFF_SECS: f32 = 45.0;
 
 /// Walk the woodcutter to its tree and swing the axe on the cooldown; the last blow topples the
 /// tree and shoulders the log ([`Hauling`] — NO wood is banked here; that happens back at the

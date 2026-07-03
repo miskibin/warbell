@@ -15,8 +15,16 @@
 //!
 //! Circles are bucketed by their centre tile; [`is_blocked`] scans only the query point's own
 //! tile + its 8 neighbours, so every circle radius MUST stay ≤ 1.0 (a larger one could reach a
-//! point two tiles from its centre and be missed). Boxes have no such bound — they're held in a
-//! flat list and tested directly (there are only a few dozen, so the linear scan is cheap).
+//! point two tiles from its centre and be missed). Boxes are ALSO tile-bucketed (every tile each
+//! box's circumscribing radius overlaps, computed once at insert time) — the old comment here
+//! claimed "only a few dozen [boxes], so the linear scan is cheap", but on the enlarged island
+//! (castle + fortress + rival stronghold walls, ~12 houses + producer plots, 5 camps' tents/
+//! cages/fires/banners, landmarks) that grew into the hundreds-to-low-thousands. A single
+//! pathfinding search explores up to tens of thousands of nodes, each checking several neighbours
+//! against `is_blocked`/`wall_at` — a per-call O(all boxes) scan there measured as a **multi-second
+//! real freeze** (`cargo run --features profiling` + `tools/trace_summary.py` pinned it: a single
+//! `miner::assign_ore` A* call, NOT a burst of several, cost 2.6+ seconds). Bucketing turns each
+//! query into an O(boxes-near-this-tile) lookup like circles already had.
 //!
 //! Lifecycle: [`reset`] at the top of every (re)build, [`add`]/[`add_box`]/[`add_obb`] during
 //! scatter/castle/camps, [`is_blocked`] per mover step.
@@ -28,18 +36,32 @@ use std::sync::{LazyLock, RwLock};
 static CIRCLES: LazyLock<RwLock<HashMap<(i32, i32), Vec<(f32, f32, f32)>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-/// Oriented-box obstacles: `[cx, cz, hw, hd, cos_yaw, sin_yaw]`. An axis-aligned box is just
-/// `cos=1, sin=0`. The point test rotates the query into the box's local frame.
-static BOXES: LazyLock<RwLock<Vec<[f32; 6]>>> = LazyLock::new(|| RwLock::new(Vec::new()));
+/// Oriented-box obstacles: `[cx, cz, hw, hd, cos_yaw, sin_yaw]`, bucketed by every tile the box's
+/// circumscribing radius overlaps (so a box is found from ANY tile it actually covers, including
+/// off-centre corners of a rotated box) — one entry duplicated across its covered tiles, same
+/// trade-off circles already make. An axis-aligned box is just `cos=1, sin=0`. The point test
+/// rotates the query into the box's local frame.
+static BOX_BUCKETS: LazyLock<RwLock<HashMap<(i32, i32), Vec<[f32; 6]>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 fn tile(wx: f32, wz: f32) -> (i32, i32) {
     (wx.floor() as i32, wz.floor() as i32)
 }
 
+/// Every tile coordinate a box (centred `cx,cz`, half-extents `hw,hd`) can possibly overlap —
+/// its rotation-agnostic circumscribing radius, so this over-covers a rotated box slightly rather
+/// than under-covering it (the exact OBB test at query time still rejects false candidates).
+fn box_tile_range(cx: f32, cz: f32, hw: f32, hd: f32) -> impl Iterator<Item = (i32, i32)> {
+    let diag = (hw * hw + hd * hd).sqrt();
+    let (tx0, tz0) = tile(cx - diag, cz - diag);
+    let (tx1, tz1) = tile(cx + diag, cz + diag);
+    (tx0..=tx1).flat_map(move |tx| (tz0..=tz1).map(move |tz| (tx, tz)))
+}
+
 /// Clear all blockers — call once before rebuilding the scene.
 pub fn reset() {
     CIRCLES.write().unwrap().clear();
-    BOXES.write().unwrap().clear();
+    BOX_BUCKETS.write().unwrap().clear();
 }
 
 /// Mark a solid circular obstacle of `radius` (world units) centred at `(wx, wz)`. A radius
@@ -77,18 +99,24 @@ pub fn add_obb(cx: f32, cz: f32, hw: f32, hd: f32, yaw: f32) {
     if hw <= 0.0 || hd <= 0.0 {
         return;
     }
-    BOXES.write().unwrap().push([cx, cz, hw, hd, yaw.cos(), yaw.sin()]);
+    let b = [cx, cz, hw, hd, yaw.cos(), yaw.sin()];
+    let mut buckets = BOX_BUCKETS.write().unwrap();
+    for t in box_tile_range(cx, cz, hw, hd) {
+        buckets.entry(t).or_default().push(b);
+    }
 }
 
-/// Remove every oriented-box obstacle whose centre lies within `eps` world-units of `(cx, cz)`,
-/// returning how many were dropped. Used to **swing the fortress gate open**: dropping the gate's
-/// OBB clears the wall-gap so A* (and the sallying ork column) can path straight through it. Pair
-/// with [`add_obb`] to re-register the box when the gate shuts again.
-pub fn remove_box_near(cx: f32, cz: f32, eps: f32) -> usize {
-    let mut boxes = BOXES.write().unwrap();
-    let before = boxes.len();
-    boxes.retain(|b| (b[0] - cx).hypot(b[1] - cz) > eps);
-    before - boxes.len()
+/// Remove every oriented-box obstacle whose centre lies within `eps` world-units of `(cx, cz)`.
+/// Used to **swing the fortress gate open**: dropping the gate's OBB clears the wall-gap so A*
+/// (and the sallying ork column) can path straight through it. Pair with [`add_obb`] to
+/// re-register the box when the gate shuts again. A box is duplicated across every tile its
+/// circumscribing radius overlaps (see [`box_tile_range`]), so this must sweep every bucket —
+/// every caller discards the return value, so no count is tracked.
+pub fn remove_box_near(cx: f32, cz: f32, eps: f32) {
+    let mut buckets = BOX_BUCKETS.write().unwrap();
+    for bucket in buckets.values_mut() {
+        bucket.retain(|b| (b[0] - cx).hypot(b[1] - cz) > eps);
+    }
 }
 
 /// True if any obstacle lies within `margin` world-units of `(wx, wz)` — a clearance test for
@@ -114,14 +142,28 @@ pub fn any_within(wx: f32, wz: f32, margin: f32) -> bool {
             }
         }
     }
-    let boxes = BOXES.read().unwrap();
-    boxes.iter().any(|b| {
-        let (ex, ez) = (wx - b[0], wz - b[1]);
-        let (cos, sin) = (b[4], b[5]);
-        let lx = cos * ex - sin * ez;
-        let lz = sin * ex + cos * ez;
-        lx.abs() <= b[2] + margin && lz.abs() <= b[3] + margin
-    })
+    let buckets = BOX_BUCKETS.read().unwrap();
+    let (tx, tz) = tile(wx, wz);
+    // Boxes are pre-registered under every tile they cover (see `box_tile_range`), so the query's
+    // own tile normally already has any overlapping box — the ±1 neighbourhood is just the same
+    // rounding-edge safety margin circles use, cheap since a tile's box bucket is small.
+    let reach = 1 + margin.max(0.0).ceil() as i32;
+    for dx in -reach..=reach {
+        for dz in -reach..=reach {
+            if let Some(bucket) = buckets.get(&(tx + dx, tz + dz)) {
+                for b in bucket {
+                    let (ex, ez) = (wx - b[0], wz - b[1]);
+                    let (cos, sin) = (b[4], b[5]);
+                    let lx = cos * ex - sin * ez;
+                    let lz = sin * ex + cos * ez;
+                    if lx.abs() <= b[2] + margin && lz.abs() <= b[3] + margin {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// True if `(wx, wz)` lies inside any solid obstacle (a circle or an oriented box).
@@ -142,15 +184,25 @@ pub fn is_blocked(wx: f32, wz: f32) -> bool {
             }
         }
     }
-    let boxes = BOXES.read().unwrap();
-    boxes.iter().any(|b| {
-        let (ex, ez) = (wx - b[0], wz - b[1]);
-        let (cos, sin) = (b[4], b[5]);
-        // Rotate the query into the box's local frame (inverse Y-rotation), then AABB-test.
-        let lx = cos * ex - sin * ez;
-        let lz = sin * ex + cos * ez;
-        lx.abs() <= b[2] && lz.abs() <= b[3]
-    })
+    let buckets = BOX_BUCKETS.read().unwrap();
+    let (tx, tz) = tile(wx, wz);
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            if let Some(bucket) = buckets.get(&(tx + dx, tz + dz)) {
+                for b in bucket {
+                    let (ex, ez) = (wx - b[0], wz - b[1]);
+                    let (cos, sin) = (b[4], b[5]);
+                    // Rotate the query into the box's local frame (inverse Y-rotation), then AABB-test.
+                    let lx = cos * ex - sin * ez;
+                    let lz = sin * ex + cos * ez;
+                    if lx.abs() <= b[2] && lz.abs() <= b[3] {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

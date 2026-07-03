@@ -140,6 +140,11 @@ fn skip_menu() -> bool {
         || std::env::var("FOREST_CLIP").is_ok()
         || std::env::var("FOREST_WAVE").is_ok()
         || std::env::var("FOREST_BIOME").is_ok()
+        // The whole point of the headless perf harness (`perftest.rs`) is measuring LIVE gameplay —
+        // sitting at the start screen (nothing simulating) silently produces meaningless numbers that
+        // still look plausible (entity/mesh counts come from the unconditional Startup world-build).
+        // Previously this only worked by accident when a run happened to also set FOREST_WAVE.
+        || std::env::var("FOREST_PERFTEST").is_ok()
 }
 
 // ── In-process fresh run (the "full reset", no relaunch) ─────────────────────────────────
