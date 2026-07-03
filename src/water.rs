@@ -121,6 +121,13 @@ pub struct WaterExt {
     #[texture(101)]
     #[sampler(102)]
     pub shore: Option<Handle<Image>>,
+    /// R8 bog mask (1 over the swamp's carved standing pools, same region mapping as `shore`):
+    /// the shader swaps the vivid river palette for still dark-olive murk + no foam there.
+    /// `None` (single-biome viewer water) → Bevy's 1×1 white fallback would murk EVERYTHING, so
+    /// the shader gates the lookup on the shore field being present too — pass both or neither.
+    #[texture(103)]
+    #[sampler(104)]
+    pub bog: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for WaterExt {

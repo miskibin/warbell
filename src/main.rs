@@ -114,6 +114,7 @@ mod tutorial;
 mod ui;
 mod verbs;
 mod vignettes;
+mod bog;
 mod villagers;
 mod visual;
 mod viewer;
@@ -195,6 +196,7 @@ fn main() {
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
         ))
+        .add_plugins(bog::BogPlugin) // swamp-pool will-o'-wisp hover anim (dressing spawned at build)
         .add_plugins(ambient_life::AmbientLifePlugin) // daytime butterflies + sky bird flock (visual charm)
         .add_plugins(fish::FishPlugin) // fish that glide under water near the hero + occasionally leap
         .add_plugins((

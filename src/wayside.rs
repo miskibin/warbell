@@ -168,7 +168,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let h_fence = meshes.add(fence());
     let h_shrine = meshes.add(shrine());
     let mut rng: u32 = 0x3a5f_11d7;
-    let mut spawn = |commands: &mut Commands, handle: &Handle<Mesh>, x: f32, y: f32, z: f32, yaw: f32, s: f32| {
+    let spawn = |commands: &mut Commands, handle: &Handle<Mesh>, x: f32, y: f32, z: f32, yaw: f32, s: f32| {
         commands.spawn((
             Mesh3d(handle.clone()),
             MeshMaterial3d(mat.clone()),

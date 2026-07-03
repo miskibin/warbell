@@ -691,6 +691,96 @@ fn is_lake(x: f32, z: f32) -> bool {
     lake_sd(x, z) < 0.0
 }
 
+// ── Swamp bog pools (map-character overhaul pass 3) ─────────────────────────────────
+/// Authored bog-pool blobs per flat swamp region, in REGION-LOCAL fractions of its radius:
+/// `(dx/r, dz/r, rx/r, rz/r)`. AUTHORED (like [`DELIBERATE_LAKE`]), not noise-thresholded —
+/// two attempts at deriving pools from a `noise_a` wetness field failed silently because the
+/// field's local range inside the swamp regions (max ≈ 0.06–0.37, measured) sits nowhere near
+/// its global amplitude, so any fixed threshold is phase-luck. Blobs guarantee pools exist,
+/// are big enough to render murky (≥ ~4 base tiles across — smaller reads as an all-white
+/// foam plate), and have genuinely deep centres for the bog dressing's gates; `noise_a` only
+/// waves their SHORES. Offsets avoid the S-swamp warden's arena direction (region-local
+/// ≈(0,−0.42) — see the keep-out below, which still hard-guards it).
+const POOL_BLOBS: [(f32, f32, f32, f32); 6] = [
+    (-0.38, -0.10, 0.24, 0.17),
+    (0.20, 0.30, 0.27, 0.20),
+    (0.45, -0.28, 0.17, 0.13),
+    (-0.42, 0.38, 0.16, 0.21),
+    (0.02, 0.66, 0.15, 0.12),
+    (-0.10, 0.20, 0.13, 0.10),
+];
+
+/// World-space keep-out around the swamp warden's arena — a pool inside the boss glade would
+/// carve the fight arena into islands (warden `region_center` (0,57), GLADE_R 16 + roam 13).
+const POOL_WARDEN_KEEPOUT: f32 = 22.0;
+
+/// Signed distance (approx base units; negative = water) to the swamp bog-pool blobs, or +INF
+/// away from them. Self-contained (region + warden + Blight gating INSIDE) so `classify`,
+/// `corner_water` and `smooth_surface_y` all see the same shoreline.
+fn pool_sd(x: f32, z: f32) -> f32 {
+    let mut best = f32::INFINITY;
+    for reg in active_map().regions {
+        if reg.biome != TB::Swamp || reg.peak != 0 {
+            continue;
+        }
+        if (x - reg.x).hypot(z - reg.z) > reg.r {
+            continue; // fast reject — blobs live well inside the region
+        }
+        for (fx, fz, frx, frz) in POOL_BLOBS {
+            let (cx, cz) = (reg.x + fx * reg.r, reg.z + fz * reg.r);
+            let (rx, rz) = (frx * reg.r, frz * reg.r);
+            let dx = (x - cx) / rx;
+            let dz = (z - cz) / rz;
+            // Normalised ellipse → approx base-unit signed distance (same trick as `lake_sd`).
+            let sd = ((dx * dx + dz * dz).sqrt() - 1.0) * rx.min(rz);
+            best = best.min(sd);
+        }
+    }
+    if best == f32::INFINITY {
+        return best;
+    }
+    // Swamp warden arena keep-out (world → base).
+    let wx = x * MAP_SCALE - GX;
+    let wz = z * MAP_SCALE - GZ;
+    if (wx - 0.0).hypot(wz - 57.0) < POOL_WARDEN_KEEPOUT {
+        return f32::INFINITY;
+    }
+    // The Blight owns its own ground (checked before regions in `classify`) — keep pools out.
+    if crate::ork_fortress::blight_class_base(x, z).is_some() {
+        return f32::INFINITY;
+    }
+    // Organic shoreline: wave the ellipse edge with noise. Only nibbles ±0.9 base units, so a
+    // blob's guaranteed deep core (−rx·min ≈ −3..−5) survives.
+    best + noise_a(x * 0.45, z * 0.45) * 0.9
+}
+
+fn is_pool(x: f32, z: f32) -> bool {
+    pool_sd(x, z) < 0.0
+}
+
+/// World-space pool test (scatter / roads / bridges / dressing all query in world coords).
+pub fn is_pool_world(wx: f32, wz: f32) -> bool {
+    is_pool((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
+}
+
+/// Is world `(wx, wz)` inside a flat swamp region's footprint? The water-murk mask uses it so
+/// the RIVER stretches that thread the marsh render as murky bog water too — a vivid teal
+/// channel slicing between dark pools read as a glaring seam (verification flag).
+fn in_swamp_region_world(wx: f32, wz: f32) -> bool {
+    let bx = (wx + GX) / MAP_SCALE;
+    let bz = (wz + GZ) / MAP_SCALE;
+    active_map()
+        .regions
+        .iter()
+        .any(|r| r.biome == TB::Swamp && r.peak == 0 && (bx - r.x).hypot(bz - r.z) < r.r - 2.0)
+}
+
+/// Signed distance in approx BASE units at world coords (bog dressing uses it to pick "deep
+/// enough" spots for drowned trees and to hug pool shores with mushrooms/wisps).
+pub fn pool_sd_world(wx: f32, wz: f32) -> f32 {
+    pool_sd((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
+}
+
 fn edge_fray(x: f32, z: f32) -> f32 {
     (x * 0.5 + z * 0.35 + 1.3).sin() * 1.1
         + (x * 0.9 - z * 0.82 + 4.0).sin() * 1.6
@@ -743,12 +833,17 @@ fn inland_hills(x: f32, z: f32, dc: f32, max: i32) -> i32 {
     if dc <= SAFE_R + 8.0 {
         return 1;
     }
+    // Thresholds lowered + a 5th class added (map-character overhaul feedback: "musi być
+    // więcej drobnych pagórków") — the frontier rolls noticeably now instead of reading as a
+    // flat sheet with rare knolls. Still nested → every face stays a 1-class walkable step.
     let roll = noise_a(x * 0.3 + 9.0, z * 0.3 - 5.0) + noise_b(x * 0.16 - 4.0, z * 0.16 + 8.0) * 0.6;
-    let h = if roll > 1.9 {
+    let h = if roll > 2.05 {
+        5
+    } else if roll > 1.6 {
         4
-    } else if roll > 1.45 {
+    } else if roll > 1.15 {
         3
-    } else if roll > 0.95 {
+    } else if roll > 0.7 {
         2
     } else {
         1
@@ -815,16 +910,26 @@ fn mountain_height(x: f32, z: f32, reg: &Region) -> i32 {
 }
 
 // ── Tiered mesas (cliffy peak regions — map-character overhaul pass 1) ─────────────
-/// Normalised radial "altitude" 0..1 into a cliffy region, with noise-distorted distance so the
-/// tier rims wave organically instead of drawing concentric circles.
+/// Normalised radial "altitude" 0..1 into a cliffy region, with per-massif anisotropy and
+/// two octaves of rim distortion — the player report on v1 was "dwie takie same góry,
+/// zupełnie okrągłe": the snow massif now runs elongated (squashed X), the rock range squat
+/// and lobed, and the broad low-frequency octave deforms each WHOLE silhouette (not just the
+/// rims) so neither reads as a compass-drawn circle.
 fn mesa_t(x: f32, z: f32, reg: &Region) -> f32 {
-    let dc = (x - reg.x).hypot(z - reg.z) + noise_a(x * 0.33, z * 0.33) * 3.2;
+    let (sx, sz) = if reg.biome == TB::Snow { (0.82, 1.20) } else { (1.12, 0.88) };
+    let dx = (x - reg.x) * sx;
+    let dz = (z - reg.z) * sz;
+    let dc = dx.hypot(dz)
+        + noise_b(x * 0.085 + 7.0, z * 0.085 - 3.0) * 5.5 // broad lobes: silhouette deformation
+        + noise_a(x * 0.33, z * 0.33) * 3.0; // fine rim waviness
     (1.0 - dc / reg.r).clamp(0.0, 1.0)
 }
 
-/// Fraction of the way up each tier begins (`mesa_height` ladder). 5 tiers: broad low shelves,
-/// a small summit cap.
+/// Fraction of the way up each tier begins (`mesa_height` ladder). Rock: 5 tiers — broad low
+/// shelves, a small summit cap. Snow: 4 (taller walls, a different stepping rhythm — the two
+/// massifs must not read as twins).
 const MESA_TIERS: [f32; 5] = [0.15, 0.34, 0.54, 0.74, 0.91];
+const SNOW_TIERS: [f32; 4] = [0.17, 0.44, 0.70, 0.90];
 
 /// Tiered mesa height for a `cliffy` region: flat shelves separated by multi-class SHEER walls
 /// (rock peak 22 → shelf classes 2/7/12/17/22 = 2.5u cliffs between shelves at `GROUND_STEP`
@@ -837,14 +942,15 @@ fn mesa_height(x: f32, z: f32, reg: &Region) -> i32 {
         return rc;
     }
     let t = mesa_t(x, z, reg);
-    if t < MESA_TIERS[0] {
+    let tiers: &[f32] = if reg.biome == TB::Snow { &SNOW_TIERS } else { &MESA_TIERS };
+    if t < tiers[0] {
         // Foot apron: low fringe so the mesa rises out of walkable ground, not a moat of cliff.
-        return if t > MESA_TIERS[0] * 0.5 { 2 } else { 1 };
+        return if t > tiers[0] * 0.5 { 2 } else { 1 };
     }
     let span = (reg.peak - 2).max(1) as f32;
-    let n = MESA_TIERS.len();
+    let n = tiers.len();
     let mut tier = 0;
-    for (i, th) in MESA_TIERS.iter().enumerate() {
+    for (i, th) in tiers.iter().enumerate() {
         if t >= *th {
             tier = i;
         }
@@ -852,10 +958,19 @@ fn mesa_height(x: f32, z: f32, reg: &Region) -> i32 {
     2 + (span * tier as f32 / (n - 1) as f32).round() as i32
 }
 
+/// Lateral serpentine of a pass corridor's centreline: an angular offset at ring distance `dc`
+/// holding a roughly CONSTANT ~2.4-base-unit lateral amplitude, so the ascent snakes up the
+/// mountain in S-curves instead of running a ruler-straight radial line ("idealnie prosta
+/// droga" report). Phase-salted per region + pass so no two ascents share a curve.
+fn pass_sway(dc: f32, reg: &Region, p: &Pass) -> f32 {
+    ((dc * 0.21 + reg.x * 0.7 + p.ang * 3.0).sin() * 2.4) / dc.max(2.4)
+}
+
 /// Smooth ≤1-class ramp staircase inside any of a cliffy region's authored [`Pass`] corridors
 /// (None outside them). Same angular-corridor construction as [`ramp_class`], but per authored
-/// pass instead of the single castle-facing default. The corridor walls — the jump between this
-/// ramp and the neighbouring mesa shelf — read as a climbing canyon for free.
+/// pass instead of the single castle-facing default — and serpentined by [`pass_sway`]. The
+/// corridor walls — the jump between this ramp and the neighbouring mesa shelf — read as a
+/// climbing canyon for free.
 fn pass_class(x: f32, z: f32, reg: &Region) -> Option<i32> {
     let dx = x - reg.x;
     let dz = z - reg.z;
@@ -864,7 +979,7 @@ fn pass_class(x: f32, z: f32, reg: &Region) -> Option<i32> {
         return None;
     }
     for p in reg.passes {
-        let mut da = (dz.atan2(dx) - p.ang) % std::f32::consts::TAU;
+        let mut da = (dz.atan2(dx) - p.ang - pass_sway(dc, reg, p)) % std::f32::consts::TAU;
         if da < -std::f32::consts::PI {
             da += std::f32::consts::TAU;
         }
@@ -918,9 +1033,12 @@ fn in_cliffy(x: f32, z: f32) -> bool {
 }
 
 // ── Cliffy-mesa exports (roads / placement) ──────────────────────────────────────
-/// Base-space mouth of a pass corridor: just outside the region rim along the pass angle.
+/// Base-space mouth of a pass corridor: just outside the region rim along the (serpentined)
+/// pass angle, so the road trunk meets the trail where the corridor actually opens.
 fn pass_mouth_base(reg: &Region, p: &Pass) -> (f32, f32) {
-    (reg.x + p.ang.cos() * (reg.r + 1.0), reg.z + p.ang.sin() * (reg.r + 1.0))
+    let dc = reg.r + 1.0;
+    let a = p.ang + pass_sway(dc, reg, p);
+    (reg.x + a.cos() * dc, reg.z + a.sin() * dc)
 }
 
 /// World-space centres of the active map's five primary biome regions (the road network's
@@ -975,9 +1093,12 @@ pub fn pass_trails_world() -> Vec<Vec<Vec2>> {
             let mut pts = Vec::new();
             let mut dc = reg.r + 1.0;
             while dc > 2.0 {
+                // Follow the serpentined corridor centreline (`pass_sway`), so the painted
+                // trail snakes exactly where the walkable ramp runs.
+                let a = p.ang + pass_sway(dc, reg, p);
                 pts.push(Vec2::new(
-                    (reg.x + p.ang.cos() * dc) * MAP_SCALE - GX,
-                    (reg.z + p.ang.sin() * dc) * MAP_SCALE - GZ,
+                    (reg.x + a.cos() * dc) * MAP_SCALE - GX,
+                    (reg.z + a.sin() * dc) * MAP_SCALE - GZ,
                 ));
                 dc -= 2.0;
             }
@@ -1083,20 +1204,26 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
             let h = if reg.cliffy { mesa_height(x, z, reg) } else { mountain_height(x, z, reg) };
             return Some((reg.biome, h));
         }
-        // Flat biomes get the inland-hills field: dunes in the desert, wooded rises in the forest.
-        // The swamp now gets gentle micro-relief too (max 2 = low hummocks between the pools) so it
-        // reads as bumpy wetland instead of a dead-flat sheet; lava stays perfectly flat.
-        // Next to a mesa rim the hills flatten to a contrast APRON — tall reads tall beside flat.
-        let max = if near_cliffy_rim(x, z, 8.0) || reg.biome == TB::Lava {
-            1
-        } else if reg.biome == TB::Swamp {
-            2
-        } else {
-            3
-        };
+        // Swamp (map-character overhaul pass 3): a coherent BOG — standing murky water in the
+        // authored pool blobs, mud flats (class 1) ringing every shore, dry hummock rises
+        // (class 2) only away from the water. Heights key on the SAME `pool_sd` the carve
+        // uses, so shores, mud and rises read as one geography.
+        if reg.biome == TB::Swamp {
+            let sd = pool_sd(x, z);
+            if sd < 0.0 {
+                return None; // carved to standing water (the sea plane shows through)
+            }
+            let fine = noise_b(x * 0.5 + 1.3, z * 0.5);
+            let h = if sd > 2.5 && fine > 0.7 { 2 } else { 1 };
+            return Some((TB::Swamp, h));
+        }
+        // Flat biomes get the inland-hills field: dunes in the desert, wooded rises in the forest;
+        // lava stays perfectly flat. Next to a mesa rim the hills flatten to a contrast APRON —
+        // tall reads tall beside flat.
+        let max = if near_cliffy_rim(x, z, 8.0) || reg.biome == TB::Lava { 1 } else { 4 };
         return Some((reg.biome, inland_hills(x, z, dc, max)));
     }
-    let h = if near_cliffy_rim(x, z, 8.0) { 1 } else { inland_hills(x, z, dc, 4) };
+    let h = if near_cliffy_rim(x, z, 8.0) { 1 } else { inland_hills(x, z, dc, 5) };
     let forest_n = noise_a(x, z) * noise_b(x + 7.0, z - 3.0);
     if forest_n > 0.35 {
         return Some((TB::Forest, h));
@@ -1284,10 +1411,10 @@ fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
         return (-0.6, false); // sea
     }
     // Combine the water sources into ONE corner field (nearest water wins) so marching-squares cuts
-    // a smooth shore for the lake too, not just rivers. The lake isn't gated by `river_blocked`
-    // (that's a river-only keep-out for the safe zone / peaks); it carries its own fixed ellipse.
+    // a smooth shore for the lake AND the swamp bog pools too, not just rivers. The lake/pools
+    // aren't gated by `river_blocked` (that's a river-only keep-out); they carry their own gating.
     let river = if river_blocked(bx, bz) { f32::INFINITY } else { river_sd(bx, bz) };
-    let sd = river.min(lake_sd(bx, bz));
+    let sd = river.min(lake_sd(bx, bz)).min(pool_sd(bx, bz));
     (sd, sd < 0.0)
 }
 
@@ -1300,11 +1427,12 @@ fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
 fn smooth_surface_y(wx: f32, wz: f32) -> Option<f32> {
     let gx = wx + GX;
     let gz = wz + GZ;
-    // No footing over the real (sub-tile) river surface. The per-tile `tile_at` classifies by tile
-    // CENTRE, but the bank is rendered sub-tile via marching-squares — so a boundary tile is land by
-    // centre yet half water on screen. Reject the exact water area here (cheap: `river_sd` early-outs
-    // outside the rivers' bbox) so the hero/NPCs/scatter can't stand on the rendered-water half.
-    if is_river(gx / MAP_SCALE, gz / MAP_SCALE) {
+    // No footing over the real (sub-tile) river/pool surface. The per-tile `tile_at` classifies
+    // by tile CENTRE, but the bank is rendered sub-tile via marching-squares — so a boundary
+    // tile is land by centre yet half water on screen. Reject the exact water area here (cheap:
+    // `river_sd` early-outs outside the rivers' bbox; `pool_sd` outside the swamp interiors) so
+    // the hero/NPCs/scatter can't stand on the rendered-water half.
+    if is_river(gx / MAP_SCALE, gz / MAP_SCALE) || is_pool(gx / MAP_SCALE, gz / MAP_SCALE) {
         return None;
     }
     let ix = gx.floor() as i32;
@@ -1602,7 +1730,7 @@ const SHORE_MAX: f32 = 8.0;
 /// the terrain has **no underwater geometry** (cliff walls stop at the waterline), so
 /// scene depth can't measure shallowness; this baked field is the only source.
 /// Returns the image plus the world→UV mapping (`xy` = min corner, `zw` = 1/extent).
-fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
+fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Handle<Image>, Vec4) {
     // Derived from the grid (was hardcoded 288×384 for MAP_SCALE 1.8 — at 2.2 the island reaches
     // world x ±~156 and the Blight z ~+240, past the old cover, which silently cut the water
     // shader's foam/shallows off at the fringes). +2·16 texels of open-sea margin all round so
@@ -1650,6 +1778,11 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
 
     let data: Vec<u8> =
         d.iter().map(|v| ((v / SHORE_MAX).clamp(0.0, 1.0) * 255.0) as u8).collect();
+    let linear = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
     let mut img = Image::new(
         Extent3d { width: W as u32, height: H as u32, depth_or_array_layers: 1 },
         TextureDimension::D2,
@@ -1659,13 +1792,32 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     );
     // Linear filtering smooths the 1-texel bands; the default clamp-to-edge address
     // mode makes off-texture samples read the border (open sea = max distance).
-    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        ..default()
-    });
+    img.sampler = linear.clone();
+    // BOG mask (map-character overhaul pass 3): 1 over the swamp's carved standing pools AND
+    // over river water inside the swamp regions, same region mapping as the shore field — the
+    // water shader swaps the vivid river palette for still dark-olive murk there and kills the
+    // foam collar (a bog doesn't lap; a marsh stream shouldn't glow turquoise between pools).
+    let bog_data: Vec<u8> = (0..W * H)
+        .map(|i| {
+            let wx = min_x + (i % W) as f32 + 0.5;
+            let wz = min_z + (i / W) as f32 + 0.5;
+            if is_pool_world(wx, wz) || (in_swamp_region_world(wx, wz) && is_river_world(wx, wz)) {
+                255
+            } else {
+                0
+            }
+        })
+        .collect();
+    let mut bog_img = Image::new(
+        Extent3d { width: W as u32, height: H as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        bog_data,
+        TextureFormat::R8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    bog_img.sampler = linear;
     let region = Vec4::new(min_x, min_z, 1.0 / W as f32, 1.0 / H as f32);
-    (images.add(img), region)
+    (images.add(img), images.add(bog_img), region)
 }
 
 // ── Build ────────────────────────────────────────────────────────────────────────
@@ -1684,7 +1836,7 @@ pub struct BuildState {
 }
 
 /// Number of phases [`build_step`] walks through. The loading veil maps its progress bar onto this.
-pub const BUILD_STEPS: u32 = 31;
+pub const BUILD_STEPS: u32 = 32;
 
 /// Build the whole world in ONE call (terrain → scatter → castle → fortress → …). Used by the
 /// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0. The normal
@@ -1765,8 +1917,11 @@ pub fn build_step(
         // fills the bald safe-zone clearing. After the castle/plots so its placement rules hold.
         29 => crate::meadow::build(commands, meshes, std_mats),
         // Wayside furniture (map-character overhaul pass 2): junction signposts + roadside
-        // cairns/fences/shrines. Last — its placement rejects everything the earlier phases own.
+        // cairns/fences/shrines. Late — its placement rejects everything the earlier phases own.
         30 => crate::wayside::populate(commands, meshes, std_mats),
+        // Bog dressing (pass 3): drowned trees/wisps/glow-mushrooms over the swamp pools + the
+        // drowned tower + stilt hut. After bridges (boardwalk keep-out) and roads.
+        31 => crate::bog::populate(commands, meshes, std_mats),
         _ => {}
     }
 }
@@ -1879,7 +2034,7 @@ fn rut_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
 /// scatter, so their clearings can be reserved out of the prop placement).
 fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>, water_mats: &mut Assets<WaterMaterial>) {
     let sea_mesh = meshes.add(Plane3d::default().mesh().size(900.0, 900.0).subdivisions(8).build());
-    let (shore_tex, shore_region) = bake_shore_distance(images);
+    let (shore_tex, bog_tex, shore_region) = bake_shore_distance(images);
     let sea = water_mats.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::srgba(0x2f as f32 / 255.0, 0x6f as f32 / 255.0, 0xae as f32 / 255.0, 0.9),
@@ -1896,6 +2051,7 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
                 region: shore_region,
             },
             shore: Some(shore_tex),
+            bog: Some(bog_tex),
         },
     });
     commands.spawn((Mesh3d(sea_mesh), MeshMaterial3d(sea), Transform::from_xyz(0.0, SEA_Y, 0.0), crate::biome::BiomeEntity));
@@ -1947,6 +2103,7 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
             };
             biome_match
                 && !is_river_world(x, z) // keep props off the (sub-tile) river surface
+                && !is_pool_world(x, z) // …and off the swamp bog pools
                 && !crate::camps::in_clearing(x, z)
                 && !crate::bridges::near_bridge(x, z, 1.0)
                 && !crate::ork_fortress::on_gate_approach(x, z)
@@ -2524,8 +2681,10 @@ mod tests {
                 // matching the nav-grid's 8-direction steps. (A greedy axis-walk is WRONG here —
                 // it fronts-loads all the dominant-axis steps and leaves the corridor.)
                 let to_grid = |dc: f32| {
-                    let bx = reg.x + p.ang.cos() * dc;
-                    let bz = reg.z + p.ang.sin() * dc;
+                    // The corridor centreline serpentines (`pass_sway`) — walk the same curve.
+                    let a = p.ang + pass_sway(dc, reg, p);
+                    let bx = reg.x + a.cos() * dc;
+                    let bz = reg.z + a.sin() * dc;
                     ((bx * MAP_SCALE) as i32, (bz * MAP_SCALE) as i32)
                 };
                 let start_dc = reg.r + 2.0;
@@ -2571,6 +2730,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The bog pools must actually EXIST and reach the depths the bog dressing gates on —
+    /// regression for two silent failures where a noise-thresholded pool field never fired
+    /// inside the swamp regions (0 pools → 0 drowned trees/wisps/tower, unnoticed until a
+    /// visual round). Checks the REAL tile grid (post-carve) + the sd field the dressing uses.
+    #[test]
+    fn swamp_pools_exist_and_run_deep() {
+        let mut water_tiles = 0;
+        let mut deepest = f32::INFINITY;
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                let (bx, bz) = (ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE);
+                if tile_at(ix, iz).is_none() && is_pool(bx, bz) {
+                    water_tiles += 1;
+                }
+                let sd = pool_sd(bx, bz);
+                if sd < deepest {
+                    deepest = sd;
+                }
+            }
+        }
+        assert!(
+            water_tiles > 400,
+            "expected broad carved bog pools, got {water_tiles} pool water tiles"
+        );
+        assert!(
+            deepest < -1.5,
+            "deepest pool sd {deepest} — bog dressing gates (trees −0.9, tower −1.1) unreachable"
+        );
     }
 
     /// The mesa summits must be reachable from the castle by the real nav-grid A* — the

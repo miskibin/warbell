@@ -23,11 +23,13 @@ use std::sync::OnceLock;
 /// ARTERY half-width (world units) — the wide main roads (trunks / ring / landmark+camp spurs).
 /// Full-strength core within [`EDGE`]·HALF_W, fading to 0 at HALF_W. Also the brush's MAX radius
 /// (arteries are the widest curve), so [`RoadField::stamp`]'s bounding box / the pad use it.
-const HALF_W: f32 = 1.7;
+/// 1.7 → 2.3 (map-character feedback: "ścieżki mogłyby być ciut szersze, łatwo się zgubić") —
+/// a wider packed band is the single cheapest legibility win.
+const HALF_W: f32 = 2.3;
 /// CAPILLARY half-width — the thin secondary trails that branch off the arteries to thread the
 /// space between main routes, so (almost) everywhere is reachable by *some* path without the map
 /// becoming all-road. Deliberately ~half an artery: a visible footpath, not a highway.
-const CAP_HALF_W: f32 = 0.85;
+const CAP_HALF_W: f32 = 1.05;
 /// Fraction of the half-width that stays full-strength packed earth before the soft edge begins.
 const EDGE: f32 = 0.45;
 /// Scatter (trees/props/cover) is rejected where the field exceeds this — keeps paths bare. Kept
@@ -215,12 +217,23 @@ fn field() -> &'static RoadField {
 /// and every such crossing gets one. Capillaries are excluded — they're kept off the water (no
 /// orphan path plunging into a river without a deck), so only the wide main routes get bridged.
 pub fn river_crossings() -> Vec<Vec2> {
+    water_crossings(&|x, z| is_river_world(x, z))
+}
+
+/// Artery↔bog-pool crossings (same contract as [`river_crossings`], sampling the swamp pools):
+/// `bridges` lays a BOARDWALK deck at each, so the swamp roads cross standing water on planks.
+pub fn pool_crossings() -> Vec<Vec2> {
+    water_crossings(&|x, z| crate::worldmap::is_pool_world(x, z))
+}
+
+/// Midpoints of every contiguous run where an ARTERY centreline crosses `wet` water.
+fn water_crossings(wet_at: &dyn Fn(f32, f32) -> bool) -> Vec<Vec2> {
     let mut out: Vec<Vec2> = Vec::new();
     for (c, half) in network() {
         if *half < HALF_W - 0.01 {
             continue; // arteries only
         }
-        // Walk the polyline; each contiguous run of river-water samples is one crossing → its midpoint.
+        // Walk the polyline; each contiguous run of water samples is one crossing → its midpoint.
         let mut wet: Vec<Vec2> = Vec::new();
         let flush = |wet: &mut Vec<Vec2>, out: &mut Vec<Vec2>| {
             if !wet.is_empty() {
@@ -233,7 +246,7 @@ pub fn river_crossings() -> Vec<Vec2> {
             let steps = (w[0].distance(w[1]) / 0.6).ceil().max(1.0) as usize;
             for s in 0..=steps {
                 let p = w[0].lerp(w[1], s as f32 / steps as f32);
-                if is_river_world(p.x, p.y) {
+                if wet_at(p.x, p.y) {
                     wet.push(p);
                 } else {
                     flush(&mut wet, &mut out);
@@ -503,7 +516,7 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     // Pass trails LAST and deliberately outside the spur/capillary source net: the mesa ramp
     // corridors get a painted mid-width track (mouth → summit), but nothing may branch off one
     // sideways — a spur or capillary sprouting off a ramp would paint straight up a cliff face.
-    out.extend(crate::worldmap::pass_trails_world().into_iter().map(|c| (c, 1.15)));
+    out.extend(crate::worldmap::pass_trails_world().into_iter().map(|c| (c, 1.4)));
     out
 }
 
@@ -562,53 +575,59 @@ fn cap_branch(rng: &mut Rng, pt: Vec2, dir: Vec2, seed: u32, salt: u32) -> Optio
         return None;
     }
     let poly = wander(pt, end, seed ^ salt.wrapping_mul(0x9E37_79B9));
-    // Capillaries never get a bridge (only arteries are bridged), so a trail must not cross a river
-    // — it would dead-end at the water or read as a path plunging in. Drop any that touches water.
-    if poly.iter().any(|p| is_river_world(p.x, p.y)) {
+    // Capillaries never get a bridge/boardwalk (only arteries are decked), so a trail must not
+    // cross a river or a swamp bog pool — it would dead-end at the water or read as a path
+    // plunging in. Drop any that touches water.
+    if poly.iter().any(|p| is_river_world(p.x, p.y) || crate::worldmap::is_pool_world(p.x, p.y)) {
         return None;
     }
     Some((poly, end))
 }
 
-/// Does any point of the polyline fall inside an ork-camp clearing?
+/// How close (world units) a through-road may come to an ork-camp CENTRE. Much wider than the
+/// clearing itself (half-extent 3.6): the v1 detour only dodged the clearing box, which left
+/// camps sitting right on the road margin ("dalej są obozy zbyt blisko ścieżek") — a war camp
+/// should read as a place you *approach off the road*, via its own spur.
+const CAMP_KEEP_OUT: f32 = 11.0;
+
+/// Does any point of the polyline come within [`CAMP_KEEP_OUT`] of an ork-camp centre?
 fn polyline_hits_clearing(c: &[Vec2]) -> bool {
+    let camps: Vec<Vec2> = crate::camps::cage_positions().iter().map(|(_, c)| *c).collect();
     c.windows(2).any(|w| {
-        let steps = (w[0].distance(w[1]) / 0.8).ceil().max(1.0) as usize;
+        let steps = (w[0].distance(w[1]) / 1.2).ceil().max(1.0) as usize;
         (0..=steps).any(|s| {
             let p = w[0].lerp(w[1], s as f32 / steps as f32);
-            crate::camps::in_clearing(p.x, p.y)
+            camps.iter().any(|cc| cc.distance(p) < CAMP_KEEP_OUT * 0.8)
         })
     })
 }
 
-/// Detour a through-route around ork-camp clearings — a trunk/ring road must never run THROUGH
-/// a camp (the "obóz orków literalnie na drodze" report): for each stretch of the polyline that
-/// crosses a clearing, insert a waypoint pushed perpendicular clear of it. A couple of fixpoint
-/// rounds handle a detour that clips a second clearing. (Camp SPURS skip this — the camp is
-/// their destination.) Safe to call inside `build_curves`: `camps::plan` never queries roads.
+/// Detour a through-route around ork camps — a trunk/ring road must never run through OR hug a
+/// camp: for each stretch of the polyline inside a camp's [`CAMP_KEEP_OUT`] ring, insert a
+/// waypoint pushed RADIALLY out of the ring (away from the camp centre — a perpendicular push
+/// can slide along the ring's tangent and stay inside). A few fixpoint rounds handle a detour
+/// that clips a second camp. (Camp SPURS skip this — the camp is their destination.) Safe to
+/// call inside `build_curves`: `camps::plan` never queries roads.
 fn avoid_clearings(mut c: Vec<Vec2>) -> Vec<Vec2> {
-    for _ in 0..4 {
+    let camps: Vec<Vec2> = crate::camps::cage_positions().iter().map(|(_, c)| *c).collect();
+    for _ in 0..6 {
         let mut fix: Option<(usize, Vec2)> = None;
         'scan: for (i, w) in c.windows(2).enumerate() {
-            let steps = (w[0].distance(w[1]) / 0.8).ceil().max(1.0) as usize;
-            let mut run: Vec<Vec2> = Vec::new();
+            let steps = (w[0].distance(w[1]) / 1.2).ceil().max(1.0) as usize;
             for s in 0..=steps {
                 let p = w[0].lerp(w[1], s as f32 / steps as f32);
-                if crate::camps::in_clearing(p.x, p.y) {
-                    run.push(p);
-                }
-            }
-            if run.is_empty() {
-                continue;
-            }
-            let mid = run.iter().fold(Vec2::ZERO, |a, &b| a + b) / run.len() as f32;
-            let dir = (w[1] - w[0]).normalize_or_zero();
-            let perp = Vec2::new(-dir.y, dir.x);
-            for side in [1.0_f32, -1.0] {
-                let q = mid + perp * 7.5 * side; // > CLEAR_HALF·√2 + shoulder
-                if !crate::camps::in_clearing(q.x, q.y) && ground_at_world(q.x, q.y).is_some() {
-                    fix = Some((i + 1, q));
-                    break 'scan;
+                let Some(camp) = camps.iter().find(|cc| cc.distance(p) < CAMP_KEEP_OUT) else {
+                    continue;
+                };
+                let away = (p - *camp).normalize_or_zero();
+                for reach in [2.5_f32, 6.0] {
+                    let q = *camp + away * (CAMP_KEEP_OUT + reach);
+                    if ground_at_world(q.x, q.y).is_some()
+                        && camps.iter().all(|cc| cc.distance(q) >= CAMP_KEEP_OUT)
+                    {
+                        fix = Some((i + 1, q));
+                        break 'scan;
+                    }
                 }
             }
         }

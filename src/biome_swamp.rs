@@ -218,7 +218,7 @@ fn shelf_bracket(at: Vec3, r: f32, yaw: f32) -> [Mesh; 2] {
 /// lobes on top. Two-tone hanging-moss strands drip off the limb tips and the canopy rim,
 /// each ending in a wispy blob. Authored ~1.7u tall, base flush at y=0. Three variants
 /// vary lean, canopy fullness and the buttress/moss phase.
-fn build_mangrove_mesh(variant: u32) -> Mesh {
+pub(crate) fn build_mangrove_mesh(variant: u32) -> Mesh {
     let lean = match variant {
         0 => 0.10_f32,
         1 => -0.14,
@@ -361,7 +361,7 @@ fn build_mangrove_mesh(variant: u32) -> Mesh {
 /// splinters, shelf-fungus brackets on the shaded side, and a ring of cypress "knees"
 /// (knob-tipped root cones leaning back at the stump out of the muck). Base at y=0,
 /// ~0.4u tall. Variant 1 is a shorter drum carrying one tall snapped shard.
-fn build_cypress_stump_mesh(variant: u32) -> Mesh {
+pub(crate) fn build_cypress_stump_mesh(variant: u32) -> Mesh {
     let r = 0.32;
     let h = if variant == 0 { 0.36 } else { 0.30 };
     let mut parts = vec![
@@ -743,7 +743,7 @@ fn build_lily_disc_mesh(variant: u32) -> Mesh {
 /// top crowns it, and two stubbed limbs drip hanging-moss strands. Shelf-fungus brackets
 /// step up the shaded flank under clinging moss. Base at y=0, ~3u tall, authored at full
 /// scale (the landmark spawns it un-scaled).
-fn build_hollow_dead_tree_mesh() -> Mesh {
+pub(crate) fn build_hollow_dead_tree_mesh() -> Mesh {
     let mut parts: Vec<Mesh> = Vec::new();
     let trunk_h = 2.6;
     let radius = 0.55;
@@ -850,7 +850,7 @@ fn build_hollow_dead_tree_mesh() -> Mesh {
 /// Pale stems for the glowmush cluster (shared white vertex-colour mat): each stem wears
 /// a slightly darker collar ring just under its cap (baked under-cap shadow), and the
 /// bigger stems get a damp moss tuft at the foot.
-fn build_glowmush_stems_mesh() -> Mesh {
+pub(crate) fn build_glowmush_stems_mesh() -> Mesh {
     let mut parts: Vec<Mesh> = Vec::new();
     for &(dx, dz, s) in &GLOWMUSH_SPOTS {
         let sh = 0.14 * s;
@@ -867,7 +867,7 @@ fn build_glowmush_stems_mesh() -> Mesh {
 /// Glowing caps for the glowmush cluster — domed squashed blobs with NO colour attribute
 /// (the emissive material owns the colour). Big caps use ico-1 for a rounder dome, the
 /// small ones stay chunky ico-0. Built to match the stem layout/heights.
-fn build_glowmush_caps_mesh() -> Mesh {
+pub(crate) fn build_glowmush_caps_mesh() -> Mesh {
     let mut parts: Vec<Mesh> = Vec::new();
     for &(dx, dz, s) in &GLOWMUSH_SPOTS {
         let sh = 0.14 * s;
@@ -1021,9 +1021,12 @@ pub fn config() -> BiomeConfig {
             treeline_mid: 0x2e4530,
             hill_h: (26.0, 58.0),
         },
-        // No weather: the swamp reads CLEAR (the fog pushes out), so no mist/fog cards either —
-        // the player didn't want haze here. Identity comes from the green plants + glowing herbs.
-        particle: ParticleKind::None,
+        // No weather (fog stays pushed out — the player didn't want haze here), but FIREFLIES
+        // (map-character overhaul pass 3): 32 warm emissive motes fade in whenever the hero
+        // walks the marsh — with the bog pools + wisps + glow-mushrooms they make the swamp at
+        // night an attraction instead of a void. Was `None` (the Fireflies preset sat
+        // implemented-but-unused in particles.rs since the port).
+        particle: ParticleKind::Fireflies,
     }
 }
 

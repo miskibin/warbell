@@ -38,6 +38,11 @@ struct WaterParams {
 // false shallow band across the open sea.
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var shore_tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var shore_samp: sampler;
+// Bog mask (R8, same region mapping as the shore field): 1 over the swamp's carved standing
+// pools — the vivid river palette swaps to still dark-olive murk there and the foam collar dies
+// (a bog doesn't lap). Baked alongside the shore field in `worldmap::bake_shore_distance`.
+@group(#{MATERIAL_BIND_GROUP}) @binding(103) var bog_tex: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(104) var bog_samp: sampler;
 
 // Max encoded shore distance in tiles — keep in sync with `worldmap::SHORE_MAX`.
 const SHORE_MAX: f32 = 8.0;
@@ -152,6 +157,7 @@ fn fragment(
     // a bogus shallow+foam BAND straight across the open sea E↔W ("the white stripe through the map").
     let in_field = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
     let shore = select(SHORE_MAX, textureSample(shore_tex, shore_samp, uv).r * SHORE_MAX, in_field);
+    let bog = select(0.0, textureSample(bog_tex, bog_samp, uv).r, in_field);
     let fx = water.sky_tint.w;
 
     // Authored stylized palette (linear RGB): vivid turquoise lapping the banks,
@@ -169,6 +175,16 @@ fn fragment(
     var color = mix(pbr_input.material.base_color.rgb,
         mix(shallow_col, deep_col, depth_t), fx);
     alpha = mix(alpha, mix(0.82, 0.96, depth_t), fx);
+    // Bog murk: the swamp pools (and the marsh's river stretches) are STILL dark-olive water,
+    // not the vivid turquoise channel — and near-opaque (you don't see the carved floor through
+    // bog water). Cooler + more saturated than the first cut, which sat so close to the mud
+    // tone that daytime pools read as wet dirt instead of standing water.
+    let murk = mix(vec3<f32>(0.055, 0.115, 0.095), vec3<f32>(0.022, 0.048, 0.042), depth_t);
+    color = mix(color, murk, bog * fx);
+    alpha = mix(alpha, 0.95, bog * fx);
+    // A touch glossier over the bog: the flat sky-sheen highlight is what sells "still water,
+    // not mud" by day.
+    rough = mix(rough, 0.10, bog * 0.6);
 
     // Crest/trough banding: light gathers on the swell tops so the surface reads
     // as moving even where there's no glint.
@@ -185,7 +201,7 @@ fn fragment(
     let foam_w = 0.45 + 0.2 * sin(t * 0.9 + n * 6.2831) + s.x * 0.15;
     let band = 1.0 - smoothstep(0.0, max(foam_w, 0.001), shore_d + (n - 0.5) * 0.5);
     let line = 1.0 - smoothstep(0.0, 0.3, shore_d);
-    let foam = smoothstep(0.55, 0.85, band * (0.30 + 0.70 * n) + line * 0.6) * fx;
+    let foam = smoothstep(0.55, 0.85, band * (0.30 + 0.70 * n) + line * 0.6) * fx * (1.0 - bog * 0.94);
     color = mix(color, vec3<f32>(0.95, 0.97, 0.98), foam);
     alpha = max(alpha, min(foam * 1.2, 0.97));
     rough = mix(rough, 0.85, foam);

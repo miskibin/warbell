@@ -39,18 +39,36 @@ const BANK_STEP: f32 = 0.55;
 /// HEAD the channel dead-ends, so a "bridge" there spans nothing you couldn't walk around — skip.
 const RIVER_CONTINUE: f32 = 3.0;
 
-/// A bridge deck: world-XZ centre, the long half-length across the water (incl. overhang),
-/// whether the deck's LONG axis runs along X (`across_x` → crosses a river flowing along Z) or
-/// along Z (short axis is always `DECK_HALF_Z`), and `base_y` — the bank terrain height the flat
-/// deck sits on (deck top = `base_y + 0.25`). Storing `base_y` once (not re-sampling per call)
-/// keeps the spawn transform, footing, and walkability checks in agreement.
+/// What kind of deck a [`Span`] is: an arched-look plank BRIDGE over a river crossing, or a
+/// low stilted BOARDWALK over a swamp bog pool (map-character overhaul pass 3). Both register
+/// identically for nav/footing — only mesh, sizing gates and candidate source differ.
+#[derive(Clone, Copy, PartialEq)]
+enum DeckKind {
+    Bridge,
+    Boardwalk,
+}
+
+/// Boardwalk sizing: pools are broader than river channels, so the span gate is wider; the
+/// walkway itself is narrower than a cart bridge (single-file planks on stilts).
+const BOARDWALK_MAX_HALF: f32 = 9.0;
+const BOARDWALK_HALF_Z: f32 = 0.9;
+const MAX_BOARDWALKS: usize = 10;
+const BOARDWALK_SPACING: f32 = 14.0;
+
+/// A deck: world-XZ centre, the long half-length across the water (incl. overhang), whether the
+/// long axis runs along X (`across_x`), the short-axis half-width (`half_z` — bridges use
+/// [`DECK_HALF_Z`], boardwalks the narrower [`BOARDWALK_HALF_Z`]), and `base_y` — the bank
+/// terrain height the flat deck sits on (deck top = `base_y + 0.25`). Storing `base_y` once
+/// (not re-sampling per call) keeps the spawn transform, footing, and walkability in agreement.
 #[derive(Clone, Copy)]
 struct Span {
     cx: f32,
     cz: f32,
     half: f32,
+    half_z: f32,
     across_x: bool,
     base_y: f32,
+    kind: DeckKind,
 }
 
 /// Find a few clean river crossings by scanning the whole island for NARROW water channels.
@@ -80,7 +98,90 @@ fn spans() -> &'static [Span] {
                 out.push(c);
             }
         }
+        // BOARDWALKS (map-character overhaul pass 3): every spot a road crosses a swamp bog pool
+        // gets a stilted walkway, same de-cluster discipline but a tighter spacing + higher cap —
+        // a swamp road legitimately hops several pools in a row, and a missing deck there is a
+        // nav break (A* would detour the whole pool while the painted road runs through it).
+        let mut bw: Vec<Span> = crate::roads::pool_crossings()
+            .into_iter()
+            .filter_map(|p| nearest_boardwalk(p.x, p.y))
+            .collect();
+        bw.sort_by(|a, b| a.half.partial_cmp(&b.half).unwrap_or(std::cmp::Ordering::Equal));
+        let n_bridges = out.len();
+        for c in bw {
+            if out.len() - n_bridges >= MAX_BOARDWALKS {
+                break;
+            }
+            if out.iter().all(|s| (s.cx - c.cx).hypot(s.cz - c.cz) >= BOARDWALK_SPACING) {
+                out.push(c);
+            }
+        }
         out
+    })
+}
+
+/// [`nearest_crossing`]'s ring-probe, for boardwalks over bog pools.
+fn nearest_boardwalk(x: f32, z: f32) -> Option<Span> {
+    if let Some(s) = boardwalk_at(x, z) {
+        return Some(s);
+    }
+    let mut r = 1.0;
+    while r <= 4.0 {
+        let mut a = 0.0;
+        while a < std::f32::consts::TAU {
+            if let Some(s) = boardwalk_at(x + r * a.cos(), z + r * a.sin()) {
+                return Some(s);
+            }
+            a += std::f32::consts::FRAC_PI_4;
+        }
+        r += 1.0;
+    }
+    None
+}
+
+/// Boardwalk validator — [`crossing_at`]'s shape with pool water instead of river, a wider span
+/// gate (pools are broad), and NO flow-continuation gate (a pool is a blob, not a channel; the
+/// walkway is useful wherever the road crosses it).
+fn boardwalk_at(x: f32, z: f32) -> Option<Span> {
+    let pool = |px: f32, pz: f32| crate::worldmap::is_pool_world(px, pz);
+    if !pool(x, z) {
+        return None;
+    }
+    let (cx_x, half_x) = water_run_of(x, z, true, BOARDWALK_MAX_HALF, &pool)?;
+    let (cz_z, half_z) = water_run_of(x, z, false, BOARDWALK_MAX_HALF, &pool)?;
+    let (across_x, cx, cz, half) = if half_x <= half_z {
+        (true, cx_x, z, half_x)
+    } else {
+        (false, x, cz_z, half_z)
+    };
+    if !(MIN_HALF..=BOARDWALK_MAX_HALF).contains(&half) || !pool(cx, cz) {
+        return None;
+    }
+    // Steppable banks (same trap as bridges: a deck the hero can't step off).
+    let bank = |sign: f32| -> Option<f32> {
+        let mut d = half;
+        while d <= half + OVERHANG + 1.0 {
+            let (px, pz) = if across_x { (cx + sign * d, cz) } else { (cx, cz + sign * d) };
+            if let Some(y) = crate::worldmap::ground_at_world(px, pz) {
+                return Some(y);
+            }
+            d += 0.5;
+        }
+        None
+    };
+    let ya = bank(1.0)?;
+    let yb = bank(-1.0)?;
+    if (ya - yb).abs() > BANK_STEP {
+        return None;
+    }
+    Some(Span {
+        cx,
+        cz,
+        half: half + OVERHANG,
+        half_z: BOARDWALK_HALF_Z,
+        across_x,
+        base_y: ya.min(yb),
+        kind: DeckKind::Boardwalk,
     })
 }
 
@@ -176,15 +277,35 @@ fn crossing_at(x: f32, z: f32) -> Option<Span> {
     }
     // Deck top sits a hair above the LOWER bank (`base_y + 0.25`): the hero steps up ≤0.25 from
     // it and down onto the higher bank — both within `BANK_STEP`, so neither end traps him.
-    Some(Span { cx, cz, half: half + OVERHANG, across_x, base_y: ya.min(yb) })
+    Some(Span {
+        cx,
+        cz,
+        half: half + OVERHANG,
+        half_z: DECK_HALF_Z,
+        across_x,
+        base_y: ya.min(yb),
+        kind: DeckKind::Bridge,
+    })
 }
 
 /// Walk both ways from `(x, z)` along one axis (`x_axis` ? X : Z) to the channel banks; return
 /// the channel's `(centre, half_width)` on that axis. `None` if the run overruns `MAX_HALF` (a
 /// wide span — not a tidy crossing) so the caller bails.
 fn water_run(x: f32, z: f32, x_axis: bool) -> Option<(f32, f32)> {
-    let limit = MAX_HALF * 2.0 + 2.0;
-    let wet = |d: f32| if x_axis { is_river_world(x + d, z) } else { is_river_world(x, z + d) };
+    water_run_of(x, z, x_axis, MAX_HALF, &|px, pz| is_river_world(px, pz))
+}
+
+/// [`water_run`] generalised over the water predicate + max half-width (boardwalks measure the
+/// swamp pools, which are broader than a river channel).
+fn water_run_of(
+    x: f32,
+    z: f32,
+    x_axis: bool,
+    max_half: f32,
+    wet_at: &dyn Fn(f32, f32) -> bool,
+) -> Option<(f32, f32)> {
+    let limit = max_half * 2.0 + 2.0;
+    let wet = |d: f32| if x_axis { wet_at(x + d, z) } else { wet_at(x, z + d) };
     let mut pos = 0.5;
     while wet(pos) {
         pos += 0.5;
@@ -208,7 +329,7 @@ fn span_at(wx: f32, wz: f32) -> Option<&'static Span> {
     spans().iter().find(|s| {
         let (along, across) =
             if s.across_x { (wx - s.cx, wz - s.cz) } else { (wz - s.cz, wx - s.cx) };
-        along.abs() <= s.half && across.abs() <= DECK_HALF_Z
+        along.abs() <= s.half && across.abs() <= s.half_z
     })
 }
 
@@ -230,7 +351,7 @@ pub fn near_bridge(wx: f32, wz: f32, pad: f32) -> bool {
     spans().iter().any(|s| {
         let (along, across) =
             if s.across_x { (wx - s.cx, wz - s.cz) } else { (wz - s.cz, wx - s.cx) };
-        along.abs() <= s.half + pad && across.abs() <= DECK_HALF_Z + pad
+        along.abs() <= s.half + pad && across.abs() <= s.half_z + pad
     })
 }
 
@@ -344,6 +465,57 @@ fn deck_mesh(half_x: f32, seed: u32) -> Mesh {
     base
 }
 
+/// A swamp BOARDWALK mesh spanning `2·half_x` across X (local; deck top y≈0): a narrow run of
+/// weathered planks on square stilt posts that drop through the bog water, low corner stubs
+/// instead of a full railing — a marsh walkway, not a cart bridge.
+fn boardwalk_mesh(half_x: f32, seed: u32) -> Mesh {
+    let len = half_x * 2.0;
+    let dz = BOARDWALK_HALF_Z;
+    let mut parts: Vec<Mesh> = Vec::new();
+
+    // Dark sub-deck for shadowed plank gaps (same trick as the bridge).
+    parts.push(bx(len, 0.05, dz * 2.0 - 0.05, Vec3::new(0.0, -0.04, 0.0), lin(GROOVE)));
+    let planks = (len * 1.5).max(4.0) as i32;
+    let cell = len / planks as f32;
+    for i in 0..planks {
+        let x = -half_x + (i as f32 + 0.5) * cell;
+        let h = hash01(seed ^ (i as u32).wrapping_mul(0x9e37_79b1));
+        let tone = if h < 0.30 { PLANK_TONES[3] } else if h < 0.65 { PLANK_TONES[1] } else { PLANK_TONES[2] };
+        let v = 0.72 + hash01(seed.wrapping_add((i as u32).wrapping_mul(0x2545_f491))) * 0.30;
+        // Bog damp: moss creeps over most of the walkway, heavier mid-span.
+        let center = (1.0 - (x / half_x).abs()).clamp(0.0, 1.0);
+        let moss = 0.15 + center * 0.35 * hash01(seed ^ 0x55 ^ i as u32);
+        let col = mix4(lin_scaled(tone, v), lin(MOSS_TINT), moss);
+        let warp = (hash01(seed ^ 0xab ^ i as u32) - 0.5) * 0.03;
+        parts.push(bx(cell * 0.80, 0.08, dz * 2.0, Vec3::new(x, warp, 0.0), col));
+    }
+    // Stilt posts: pairs every ~1.7u, dropping from the deck through the water surface (the
+    // transform sits at base_y+0.2 ≈ 0.2 and the bog water at −0.4, so 1.0 of post reaches
+    // through the surface into the murk).
+    let pairs = (len / 1.7).max(2.0) as i32;
+    for pi in 0..=pairs {
+        let x = -half_x + pi as f32 / pairs as f32 * len;
+        let j = 0.85 + hash01(seed ^ (pi as u32 * 977)) * 0.3;
+        for sz in [-dz + 0.1, dz - 0.1] {
+            parts.push(bx(0.11, 1.0, 0.11, Vec3::new(x, -0.5, sz), lin_scaled(RAIL_DK, j)));
+        }
+    }
+    // Low corner stubs (mooring-post look) instead of railings.
+    for sx in [-half_x + 0.15, half_x - 0.15] {
+        for sz in [-dz + 0.1, dz - 0.1] {
+            parts.push(bx(0.12, 0.34, 0.12, Vec3::new(sx, 0.14, sz), lin(RAIL)));
+        }
+    }
+    let mut it = parts.into_iter();
+    let mut base = it.next().unwrap();
+    for p in it {
+        base.merge(&p).expect("boardwalk parts share attributes");
+    }
+    base.duplicate_vertices();
+    base.compute_flat_normals();
+    base
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,7 +569,11 @@ mod tests {
                 );
             }
             // River continues on both sides → not a dead-end bridge (same perpendicular probe
-            // window `crossing_at` uses, so a meandering channel registers).
+            // window `crossing_at` uses, so a meandering channel registers). Boardwalks span
+            // pool BLOBS — no flow axis, so the gate doesn't apply.
+            if s.kind != DeckKind::Bridge {
+                continue;
+            }
             let cont = |off: f32| {
                 [-1.5f32, -0.75, 0.0, 0.75, 1.5].iter().any(|&w| {
                     let (px, pz) =
@@ -446,8 +622,12 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         };
         // Stable per-deck weathering seed from its world position (order-independent).
         let seed = s.cx.to_bits() ^ s.cz.to_bits().rotate_left(13) ^ 0x9e37_79b9;
+        let mesh = match s.kind {
+            DeckKind::Bridge => deck_mesh(s.half, seed),
+            DeckKind::Boardwalk => boardwalk_mesh(s.half, seed),
+        };
         commands.spawn((
-            Mesh3d(meshes.add(deck_mesh(s.half, seed))),
+            Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(mat.clone()),
             Transform {
                 translation: Vec3::new(s.cx, s.base_y + 0.2, s.cz),
