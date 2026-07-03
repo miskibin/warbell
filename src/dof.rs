@@ -50,10 +50,11 @@ pub struct Dof {
 
 /// A tasteful default; tunable live in the Debug panel.
 pub fn default_dof() -> Dof {
-    // 2026-07 cinematic pass: range 30 / far_ramp 90 (was 75/130) — the old sharp band was so
-    // wide the DoF never visibly fired in normal play; now the fore/background actually melt
-    // while the hero + a generous mid-ground stay sharp. max_radius 20 (was 17) for a softer melt.
-    Dof { focal: 28.0, range: 30.0, far_ramp: 90.0, max_radius: 20.0, near: NEAR, debug_view: 0.0 }
+    // 2026-07 readability pass (user feedback: too much blur near the hero): range 30→42 widens
+    // the fully-sharp band so everything the player actually fights/loots reads crisp, far_ramp
+    // 90→130 makes the distance melt come on later and more gradually, and max_radius 20→13
+    // keeps the far bokeh a gentle cinematic soften instead of a smear.
+    Dof { focal: 28.0, range: 42.0, far_ramp: 130.0, max_radius: 13.0, near: NEAR, debug_view: 0.0 }
 }
 
 pub struct DofPlugin;

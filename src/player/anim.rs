@@ -54,10 +54,15 @@ const SHIELD_GAIT_T: Vec3 = Vec3::new(-0.1, -0.05, 0.15);
 fn shield_gait_r() -> Quat {
     e3(0.12, -1.45, 0.0)
 }
-/// Sword rest X-rotation — held tip up-forward "at the ready" (was 2.2 = pointing down). Shared by
-/// the rest pose AND the attacks' wind-start / recovery-end so idle⇄attack stays smooth.
-pub(crate) const SWORD_REST_X: f32 = 1.2;
-fn sword_rest_r() -> Quat {
+/// Sword rest X-rotation — a relaxed forward-down carry (~22° below horizontal). 1.2 ("tip
+/// up-forward at the ready") held the blade near-horizontal out of a hanging fist, so the grip
+/// buried itself in the vambrace and the blade visibly pierced the wrist; ~1.95 runs the grip
+/// through the fist at a natural angle (pommel up behind the wrist, blade clear of the arm)
+/// without reaching the studio's full 2.2 straight-down (which risks ground-clipping on the walk
+/// backswing). Shared by the rest pose AND the attacks' wind-start / recovery-end so idle⇄attack
+/// stays smooth.
+pub(crate) const SWORD_REST_X: f32 = 1.95;
+pub(crate) fn sword_rest_r() -> Quat {
     e3(SWORD_REST_X, 0.3, 0.0)
 }
 
@@ -175,14 +180,26 @@ fn idle_pose(t: f32) -> Pose {
     let breath = (t * 2.2).sin();
     let s11 = (t * 1.1).sin();
     let c11 = (t * 1.1).cos();
+    // Slow weight shift (≈14s full cycle): a person at rest settles onto one hip, then the other.
+    // The pelvis slides + rolls a touch, the torso counter-rolls to keep the head over the feet,
+    // and the legs take up the slack — kills the "statue with a breathing chest" read.
+    let w = (t * 0.45).sin();
     let mut p = rest();
-    p.hips = Jp { t: Some(Vec3::new(0.0, 1.05 + breath * 0.015, 0.0)), r: e3(0.0, s11 * 0.02, 0.0) };
-    p.torso = Jp::r(e3(breath * 0.01, -s11 * 0.012, 0.0));
-    p.head = Jp::r(e3(-breath * 0.015, 0.0, s11 * 0.006));
-    p.sh_l = Jp::r(e3(breath * 0.05 + 0.1, 0.0, -0.15 + c11 * 0.02));
+    p.hips = Jp {
+        t: Some(Vec3::new(w * 0.03, 1.05 + breath * 0.015 - w.abs() * 0.008, 0.0)),
+        r: e3(0.0, s11 * 0.02, w * 0.035),
+    };
+    p.torso = Jp::r(e3(breath * 0.01, -s11 * 0.012, -w * 0.028));
+    p.head = Jp::r(e3(-breath * 0.015, s11 * 0.04, s11 * 0.006 - w * 0.012));
+    p.sh_l = Jp::r(e3(breath * 0.05 + 0.1, 0.0, -0.15 + c11 * 0.02 + w * 0.02));
     p.el_l = Jp::r(rx(-0.5 - breath * 0.03));
-    p.sh_r = Jp::r(e3(breath * 0.05 + 0.12, 0.0, 0.15 - c11 * 0.02));
+    p.sh_r = Jp::r(e3(breath * 0.05 + 0.12, 0.0, 0.15 - c11 * 0.02 + w * 0.02));
     p.el_r = Jp::r(rx(-0.4 - breath * 0.02));
+    // Stance leg straightens, free leg softens at the knee as the weight rides across.
+    p.hip_l = Jp::r(e3(0.0, 0.0, w.max(0.0) * 0.05));
+    p.hip_r = Jp::r(e3(0.0, 0.0, w.min(0.0) * 0.05));
+    p.knee_l = Jp::r(rx((-w).max(0.0) * 0.08));
+    p.knee_r = Jp::r(rx(w.max(0.0) * 0.08));
     p
 }
 
@@ -192,23 +209,30 @@ fn walk_pose(c: f32) -> Pose {
     let torso_x = 0.05 + (c * 2.0).sin() * 0.02;
     let mut p = rest();
     // A confident, decisive march — more arm swing and torso commitment than the studio's restrained
-    // values, while the legs carry a solid stride.
+    // values, while the legs carry a solid stride. 2026-07 humanization: real lateral weight
+    // transfer (the pelvis rides over the planted foot and ROLLS with it), a torso that
+    // counter-rolls, and a head that stays level — the counter-motions are what read as "person",
+    // not "piston".
     p.hips = Jp {
-        t: Some(Vec3::new(c.sin() * 0.014, 1.04 + (c * 2.0).sin() * 0.028, 0.0)),
-        r: e3(0.0, c.cos() * 0.08, c.sin() * 0.025),
+        t: Some(Vec3::new(c.sin() * 0.032, 1.04 + (c * 2.0).sin() * 0.028, 0.0)),
+        r: e3(0.0, c.cos() * 0.08, c.sin() * 0.045),
     };
-    p.torso = Jp::r(e3(torso_x, -c.cos() * 0.11, -c.sin() * 0.015));
-    p.head = Jp::r(e3(-torso_x * 0.5, c.cos() * 0.035, 0.0));
+    p.torso = Jp::r(e3(torso_x, -c.cos() * 0.11, -c.sin() * 0.035));
+    p.head = Jp::r(e3(-torso_x * 0.5, c.cos() * 0.035, -c.sin() * 0.012));
     p.hip_l = Jp::r(rx(l.sin() * 0.6));
     p.hip_r = Jp::r(rx(r.sin() * 0.6));
     p.knee_l = Jp::r(rx((-l.cos()).max(0.0) * 1.1));
     p.knee_r = Jp::r(rx((-r.cos()).max(0.0) * 1.1));
-    p.foot_l = Jp::r(rx(-l.sin() * 0.6));
-    p.foot_r = Jp::r(rx(-r.sin() * 0.6));
-    p.sh_l = Jp::r(e3(r.sin() * 0.4 + 0.05, 0.0, -0.38));
-    p.el_l = Jp::r(rx(-0.5 + r.sin() * 0.18));
-    p.sh_r = Jp::r(e3(l.sin() * 0.6 + 0.1, 0.0, 0.15 + c.cos() * 0.02));
-    p.el_r = Jp::r(rx(-0.3 + l.sin() * 0.28));
+    // Foot roll with a toe-off flick at the back of the stride (the +0.25 kick as the leg trails).
+    p.foot_l = Jp::r(rx(-l.sin() * 0.6 + (-l.sin()).max(0.0) * 0.25));
+    p.foot_r = Jp::r(rx(-r.sin() * 0.6 + (-r.sin()).max(0.0) * 0.25));
+    // Arms: relaxed pendulum swing with a soft elbow that folds deeper on the forward swing
+    // (negative shoulder-X = forward; the `sin` term goes negative with it, bending the elbow) —
+    // a straight arm swinging from the shoulder is the classic robot tell.
+    p.sh_l = Jp::r(e3(r.sin() * 0.42 + 0.05, 0.0, -0.36));
+    p.el_l = Jp::r(rx(-0.42 + r.sin() * 0.3));
+    p.sh_r = Jp::r(e3(l.sin() * 0.55 + 0.1, 0.0, 0.15 + c.cos() * 0.02));
+    p.el_r = Jp::r(rx(-0.32 + l.sin() * 0.32));
     p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
     p
 }
@@ -221,11 +245,11 @@ fn run_pose(c: f32) -> Pose {
     // A purposeful armored run — bigger, more committed stride than the studio's restrained jog
     // (but not the old frantic sprint): real lean, driving arms, knees that lift.
     p.hips = Jp {
-        t: Some(Vec3::new(0.0, 1.0 + absin * 0.06, 0.0)),
-        r: e3(0.0, c.cos() * 0.1, c.sin() * 0.03),
+        t: Some(Vec3::new(c.sin() * 0.02, 1.0 + absin * 0.06, 0.0)),
+        r: e3(0.0, c.cos() * 0.1, c.sin() * 0.04),
     };
-    p.torso = Jp::r(e3(0.18 + absin * 0.04, -c.cos() * 0.12, -c.sin() * 0.02));
-    p.head = Jp::r(e3(-0.1 - absin * 0.04, c.cos() * 0.04, 0.0));
+    p.torso = Jp::r(e3(0.18 + absin * 0.04, -c.cos() * 0.12, -c.sin() * 0.035));
+    p.head = Jp::r(e3(-0.1 - absin * 0.04, c.cos() * 0.04, -c.sin() * 0.01));
     p.hip_l = Jp::r(e3(l.sin() * 0.8, 0.0, l.sin().max(0.0) * 0.02));
     p.hip_r = Jp::r(e3(r.sin() * 0.8, 0.0, -r.sin().max(0.0) * 0.02));
     p.knee_l = Jp::r(rx((-l.cos()).max(0.0) * 1.3 + 0.12));

@@ -571,7 +571,10 @@ pub(crate) fn spawn_hero_meshes(
     let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, upper(meshes.add(m.shoulder_r)));
     let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, arm(meshes.add(m.elbow_r)));
     let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
-    spawn_joint(commands, hand_r, Some(Sword), Transform::default(), mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, fp_hide: false, weapon: true }));
+    // Spawn at the animator's held rest (not identity) so the pre-anim first frame AND the
+    // standalone viewer (which runs no animator) show the blade carried naturally instead of
+    // sticking straight up through the arm.
+    spawn_joint(commands, hand_r, Some(Sword), Transform::from_rotation(anim::sword_rest_r()), mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, fp_hide: false, weapon: true }));
 
     // Legs: hip joint → knee → ankle (HH-derived; feet land on the ground).
     let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-HIP_DX, O_HIP_Y, 0.0)), mat, body(meshes.add(m.hip_l)));

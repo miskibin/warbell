@@ -32,11 +32,16 @@ pub struct CamGate<'w> {
 
 const SENS_X: f32 = 0.0035;
 const SENS_Y: f32 = 0.0016;
-const MIN_PITCH: f32 = 0.12;
+const MIN_PITCH: f32 = 0.06;
 const MAX_PITCH: f32 = 1.45;
-const MIN_DIST: f32 = 2.3;
+const MIN_DIST: f32 = 1.9;
 const MAX_DIST: f32 = 11.0;
 const ZOOM_SENS: f32 = 0.55;
+/// Witcher-style over-the-shoulder framing: the look target (and with it the whole orbit) is
+/// shifted this far to the camera-right, so the hero stands left-of-centre and the view looks
+/// past his sword shoulder instead of pinning him dead-centre like a turret. Fades out with the
+/// first-person blend (FP aims through the eyes, no shoulder bias).
+const SHOULDER_X: f32 = 0.42;
 /// Minimum gap kept between the third-person eye and the terrain below it. When the orbit would sink
 /// the camera into a hill/slope between the hero and the lens, the eye is lifted to ground + this so
 /// it never punches under the world (the "camera dips below the hill" bug). Covers the 0.04 near
@@ -45,10 +50,11 @@ const CAM_GROUND_CLEAR: f32 = 0.5;
 /// Extra follow distance pulled back (smoothly) while a warden winds up its killing blow — a slow
 /// dolly-out that builds tension across the telegraph, then eases back in once the blow resolves.
 const CRIT_ZOOM_OUT: f32 = 4.5;
-/// Look-target height above the hero's feet. Aims at the knight's chest, NOT above the helm — an
-/// above-the-head target shoves the hero toward the bottom of frame. Framing the torso keeps him
-/// centred and prominent. (Tracks the `HERO_SCALE` bump — original 0.55 × 1.35.)
-const EYE_H: f32 = 0.7425;
+/// Look-target height above the hero's feet. Aims at the knight's upper chest / shoulder line
+/// (Witcher-style — drops the horizon lower in frame so more of the world reads over his
+/// shoulder), NOT above the helm — an above-the-head target shoves the hero toward the bottom of
+/// frame. (Tracks the `HERO_SCALE` bump; shoulder sits ≈1.02 world-units up.)
+const EYE_H: f32 = 0.92;
 
 /// First-person eye height above the hero's feet — sits right at the helm/eye line. (Scaled ×1.5
 /// alongside the `HERO_SCALE` bump; an eye floating above the helm reads as "too tall" and drops the
@@ -93,8 +99,10 @@ impl Default for OrbitCam {
             // the retired north-gate spawn; deriving from `spawn_point` keeps the opening frame
             // on the keep if the spawn ever moves again.
             azimuth: crate::player::spawn_point().1 + std::f32::consts::PI,
-            pitch: 0.42,
-            dist: 4.2,
+            // Witcher-style default pose: flatter pitch (near-level, looking along the world
+            // rather than down at the hero's back) and a closer follow so he reads large in frame.
+            pitch: 0.26,
+            dist: 3.3,
             locked: false,
             lead: Vec3::ZERO,
             anchor: Vec3::ZERO,
@@ -290,7 +298,14 @@ pub fn player_camera(
         orbit.anchor.z += (raw_anchor.z - orbit.anchor.z) * kxz;
         orbit.anchor.y += (raw_anchor.y - orbit.anchor.y) * ky;
     }
-    let follow_target = orbit.anchor + orbit.lead;
+    // Witcher-style shoulder offset: slide the whole framing to the camera-right (right =
+    // `(cos az, 0, -sin az)` for this orbit parameterisation) so the hero stands left-of-centre
+    // and the view runs past his sword shoulder. The shifted target feeds BOTH the eye and the
+    // look-at, so the orbit still circles the hero — the rig just rides offset. First person
+    // needs no explicit fade: `fp_eye`/`fp_look` are built from the raw hero position, so the
+    // FP blend below washes the offset out on its own.
+    let cam_right = Vec3::new(orbit.azimuth.cos(), 0.0, -orbit.azimuth.sin());
+    let follow_target = orbit.anchor + orbit.lead + cam_right * SHOULDER_X;
     // Speed feel: sprinting dollies the camera back a touch (eased by `run_amt`).
     let r_speed = hero.run_amt.clamp(0.0, 1.0) * SPRINT_DOLLY;
     let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist + r_tension + r_speed);
