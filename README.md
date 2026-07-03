@@ -17,6 +17,9 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 
 <img width="426" height="240" alt="0702(6)" src="https://github.com/user-attachments/assets/2e965d5c-cfb7-40d5-87ff-a78d101d443f" />
 
+<img width="1909" height="1008" alt="image" src="https://github.com/user-attachments/assets/d124c364-98bb-435b-8a1a-0418fd932bdd" />
+
+
 
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/e54e45fd-5f4d-4230-bf76-b6040ae66cce" />
 
