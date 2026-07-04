@@ -57,6 +57,7 @@ const WINDOW_GLOW: u32 = 0xffd58c;
 const BRONZE: u32 = 0xb9892f;
 const BRONZE_DARK: u32 = 0x7c5a1e;
 const TORCH_FLAME: u32 = 0xff7a2a;
+const BRAZIER_FLAME: u32 = 0xff5a1e; // deeper orange for the big brazier flame shell (`M::Ember`)
 const SLIT: u32 = 0x23242a; // arrow-slit / shadow inset
 
 const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
@@ -103,6 +104,10 @@ pub(crate) enum M {
     Gold,
     Window,
     Flame,
+    /// Deep-orange fire shell at a LOW emissive — the brazier flame's outer layer. `M::Flame`'s
+    /// ×6 emissive is right for a torch-speck but a brazier-sized mesh at ×6 clips through AgX
+    /// to a cream-white egg on camera; this slot stays saturated fire-orange at size.
+    Ember,
 }
 
 #[derive(Clone)]
@@ -573,6 +578,7 @@ fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial
     glow(GOLD, 0.8, 0.6, M::Gold);
     glow(WINDOW_GLOW, 2.2, 0.0, M::Window);
     glow(TORCH_FLAME, 6.0, 0.0, M::Flame);
+    glow(BRAZIER_FLAME, 2.4, 0.0, M::Ember);
 
     Mats { h }
 }
@@ -1328,7 +1334,11 @@ fn brazier_parts() -> Vec<(Mesh, M)> {
     v.push((bx(0.34, 0.1, 0.34, 0.0, 0.06, 0.0), M::BronzeDark)); // ground foot
     v.push((bx(0.5, 0.16, 0.5, 0.0, 1.18, 0.0), M::BronzeDark)); // wide bowl
     v.push((bx(0.42, 0.1, 0.42, 0.0, 1.28, 0.0), M::BronzeDark)); // bowl lip
-    v.push((flat(Mesh::from(Sphere::new(0.26).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.45, 1.0)).translated_by(Vec3::new(0.0, 1.5, 0.0))), M::Flame));
+    // Layered flame: a saturated deep-orange shell (`M::Ember`, low emissive — stays FIRE-coloured
+    // on camera) around a small hot `M::Flame` core. One big `M::Flame` sphere clipped to a
+    // cream-white egg on the first AFTER capture.
+    v.push((flat(Mesh::from(Sphere::new(0.24).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.5, 1.0)).translated_by(Vec3::new(0.0, 1.48, 0.0))), M::Ember));
+    v.push((flat(Mesh::from(Sphere::new(0.13).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.6, 1.0)).translated_by(Vec3::new(0.0, 1.42, 0.0))), M::Flame));
     v
 }
 
