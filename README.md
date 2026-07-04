@@ -14,14 +14,7 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 
 <a href="https://miskibin.itch.io/warbell"><img src="https://static.itch.io/images/badge-color.svg" alt="Available on itch.io" height="40"></a>
 
-
-<img width="426" height="240" alt="0702(6)" src="https://github.com/user-attachments/assets/2e965d5c-cfb7-40d5-87ff-a78d101d443f" />
-
-<img width="1909" height="1008" alt="image" src="https://github.com/user-attachments/assets/d124c364-98bb-435b-8a1a-0418fd932bdd" />
-
-
-
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/e54e45fd-5f4d-4230-bf76-b6040ae66cce" />
+<img alt="The forest island and the keep" src="site/screenshots/forest-overview.png" width="900" />
 
 </div>
 
@@ -33,9 +26,8 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 
 |  |  |  |
 |---|---|---|
-| ![Defend against the horde](site/screenshots/fight-orks.png) | ![Night combat](site/screenshots/night-combat.png) | ![The ork fortress](site/screenshots/ork-fortress.png) |
-| ![Snow biome](site/screenshots/snow-biome.png) | ![Desert biome](site/screenshots/desert-biome.png) | ![Swamp fortress](site/screenshots/swamp-fortress.png) |
-| <img width="1917" height="1091" alt="image" src="https://github.com/user-attachments/assets/97b5a5d6-038e-483c-b041-e9641e749aaa" /> |
+| ![Orks storm the keep at night](site/screenshots/orks-night.png) | ![A forest glade](site/screenshots/forest-glade.png) | ![Gnashfang Hold, the ork stronghold](site/screenshots/ork-temple.png) |
+| ![The rock highlands at night](site/screenshots/mountains.png) | ![Clashing with the desert rival](site/screenshots/rival-castle.png) | ![Villagers mining the desert](site/screenshots/desert-miners.png) |
 
 ## Controls
 
