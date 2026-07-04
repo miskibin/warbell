@@ -57,7 +57,7 @@ impl Plugin for PerftestPlugin {
             // FrameTime/EntityCount/SystemInformation diagnostics are all registered by `debug_stats`
             // (always present); we just read them here.
             .add_systems(Startup, perf_setup)
-            .add_systems(Update, (perf_tick, perf_exit, perf_keep_hero_alive));
+            .add_systems(Update, (perf_tick, perf_exit, perf_keep_hero_alive, perf_state_watch));
         // FOREST_PERFROAM=1: also drive the hero on a wide circuit so the follow-cam streams every
         // biome — exercises the position-reactive systems (groundcover/atmosphere/weather/footsteps)
         // that an idle-hero test leaves dormant. Gated to Modal::None like the rest of the sim.
@@ -83,6 +83,29 @@ impl Plugin for PerftestPlugin {
             app.add_systems(Update, perf_despawn_trees);
         }
     }
+}
+
+/// Logs `AppState`/`Modal` every 5s under `FOREST_PERFTEST` — most of the sim (including
+/// `animal_brain`/`ork_brain`) is gated on `Modal::None`, and if something leaves a panel open
+/// with no input to close it, the whole sim silently never runs while render/PERF numbers still
+/// look plausible. Caught exactly that class of bug once already (`skip_menu` not covering
+/// `FOREST_PERFTEST`, so the harness sat at the main menu) — cheap enough to just leave running.
+fn perf_state_watch(
+    time: Res<Time<Real>>,
+    app_state: Res<State<crate::game_state::AppState>>,
+    modal: Option<Res<State<crate::game_state::Modal>>>,
+    mut last: Local<f32>,
+) {
+    let now = time.elapsed_secs();
+    if now - *last < 5.0 {
+        return;
+    }
+    *last = now;
+    info!(
+        "STATE_DBG t={now:.1} app={:?} modal={}",
+        app_state.get(),
+        modal.map_or("?".to_string(), |m| format!("{:?}", m.get()))
+    );
 }
 
 /// See `FOREST_SPIKEWATCH` above.

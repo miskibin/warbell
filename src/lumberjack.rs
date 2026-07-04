@@ -83,7 +83,7 @@ const WEDGE_GIVEUP_SECS: f32 = 12.0;
 /// freeze. Trees are bounded to `WORK_R` (much smaller search space than ore's whole-island range),
 /// so this was never observed as severely here, but the architecture is identical — same caution.
 const REACH_CHECK_K: usize = 4;
-/// Inside this ring a worker just direct-steers, so [`pick_nearest_reachable`] takes the target
+/// Inside this ring a worker just direct-steers, so `assign_tree`/`assign_ore` take the target
 /// without paying for an A* reachability probe.
 pub(crate) const CLOSE_RING: f32 = 6.0;
 /// Time allowed inside the direct-steer ring (≤6u of the tree) without actually reaching it.
@@ -188,34 +188,25 @@ fn lumber_danger(
     }
 }
 
-/// From a distance-tagged candidate list `(entity, pos, dist-from-worker)`, pick the nearest one
-/// the worker can actually WALK to: sort ascending by distance, then probe up to `k` candidates and
-/// return the first that's either inside the close direct-steer ring ([`CLOSE_RING`]) or
-/// `reachable` (an A* path exists). Picking the Euclidean-nearest blindly is what marched workers at
-/// targets across a stream / up a cliff, where they wedged, abandoned, and re-picked the next
-/// equally-unreachable target — reading as "standing still". The probe is capped because A* over
-/// the island isn't free. Shared by `assign_tree`/`assign_ore`.
-pub(crate) fn pick_nearest_reachable(
-    cands: &mut [(Entity, Vec2, f32)],
-    k: usize,
-    reachable: impl Fn(Vec2) -> bool,
-) -> Option<Entity> {
-    cands.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
-    cands
-        .iter()
-        .take(k)
-        .find(|(_, p, d)| *d <= CLOSE_RING || reachable(*p))
-        .map(|(e, _, _)| *e)
+
+/// One woodcutter's reachability probe in progress — mirrors `miner::PendingOreSearch`.
+struct PendingChopSearch {
+    worker: Entity,
+    from: Vec2,
+    remaining: Vec<(Entity, Vec2, f32)>,
 }
 
 /// Hand each idle Lumber-plot worker the nearest workable tree (safe ground, not blacklisted).
-/// Throttled to every [`RETRY_SECS`] — the tree set is large and assignment isn't urgent.
+/// Throttled to every [`RETRY_SECS`] between starting searches; each search tests one candidate
+/// per tick (see [`PendingChopSearch`]) so a hard reachability probe never costs more than a
+/// single frame, same as `miner::assign_ore`.
 #[allow(clippy::type_complexity)]
 fn assign_tree(
     time: Res<Time>,
     town: Res<crate::town::TownRes>,
     danger: Res<DangerSpots>,
     mut retry_at: Local<f32>,
+    mut pending: Local<Option<PendingChopSearch>>,
     mut commands: Commands,
     workers: Query<
         (Entity, &Worker, &Villager, Option<&ChopSearchCooldown>),
@@ -232,6 +223,27 @@ fn assign_tree(
     orks: Query<&crate::orks::Ork, (Without<crate::orks::WaveInvader>, Without<crate::dying::Dying>)>,
 ) {
     let now = time.elapsed_secs();
+
+    if let Some(p) = pending.as_mut() {
+        match p.remaining.first().copied() {
+            Some((te, tp, _)) => {
+                p.remaining.remove(0);
+                if !crate::navgrid::path_to(p.from, tp).is_empty() {
+                    commands
+                        .entity(p.worker)
+                        .try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 })
+                        .try_remove::<ChopSearchCooldown>();
+                    *pending = None;
+                }
+            }
+            None => {
+                commands.entity(p.worker).try_insert(ChopSearchCooldown { until: now + CHOP_SEARCH_BACKOFF_SECS });
+                *pending = None;
+            }
+        }
+        return;
+    }
+
     if now < *retry_at {
         return;
     }
@@ -273,17 +285,18 @@ fn assign_tree(
                 Some((te, tp, v.pos.distance(tp)))
             })
             .collect();
-        let from = v.pos;
-        let chosen = pick_nearest_reachable(&mut cands, REACH_CHECK_K, |tp| {
-            !crate::navgrid::path_to(from, tp).is_empty()
-        });
-        if let Some(te) = chosen {
+        cands.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        cands.truncate(REACH_CHECK_K);
+        if let Some(pos) = cands.iter().position(|(_, _, d)| *d <= CLOSE_RING) {
+            let te = cands[pos].0;
             commands
                 .entity(e)
                 .try_insert(ChopJob { tree: te, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 })
                 .try_remove::<ChopSearchCooldown>();
-        } else {
+        } else if cands.is_empty() {
             commands.entity(e).try_insert(ChopSearchCooldown { until: now + CHOP_SEARCH_BACKOFF_SECS });
+        } else {
+            *pending = Some(PendingChopSearch { worker: e, from: v.pos, remaining: cands });
         }
     }
 }

@@ -162,14 +162,29 @@ fn mine_danger(
     }
 }
 
+/// One miner's reachability probe in progress, one candidate tested per [`assign_ore`] tick
+/// instead of up to [`REACH_CHECK_K`] in a single frame — see [`assign_ore`]'s doc comment.
+struct PendingOreSearch {
+    miner: Entity,
+    from: Vec2,
+    /// Nearest-first, already capped to `REACH_CHECK_K`; popped one at a time.
+    remaining: Vec<(Entity, Vec2, f32)>,
+}
+
 /// Hand each idle Stone-Miner-plot worker the nearest workable boulder (alive, safe ground, not
-/// blacklisted). NO `WORK_R` cap — ore is far, in the Rocky biome. Throttled to [`RETRY_SECS`].
+/// blacklisted). NO `WORK_R` cap — ore is far, in the Rocky biome. Throttled to [`RETRY_SECS`]
+/// between starting searches; each search itself is spread one candidate per tick (see
+/// [`PendingOreSearch`]) so even a single expensive reachability probe never costs more than one
+/// frame — measured (`cargo run --features profiling` + `tools/trace_summary.py` on a real play
+/// session) at up to `REACH_CHECK_K` × `NAV_NODES` node-expansions when every candidate but the
+/// last turns out unreachable, which was a real ~450ms hitch even after every other mitigation.
 #[allow(clippy::type_complexity)]
 fn assign_ore(
     time: Res<Time>,
     town: Res<crate::town::TownRes>,
     danger: Res<DangerSpots>,
     mut retry_at: Local<f32>,
+    mut pending: Local<Option<PendingOreSearch>>,
     mut commands: Commands,
     workers: Query<
         (Entity, &Worker, &Villager, Option<&OreSearchCooldown>),
@@ -185,6 +200,30 @@ fn assign_ore(
     ores: Query<(Entity, &OreNode, &Transform), Without<DepletedOre>>,
 ) {
     let now = time.elapsed_secs();
+
+    // Advance an in-progress search: test exactly ONE candidate this frame.
+    if let Some(p) = pending.as_mut() {
+        match p.remaining.first().copied() {
+            Some((oe, op, _)) => {
+                p.remaining.remove(0);
+                if !crate::navgrid::path_to_budget(p.from, op, NAV_NODES).is_empty() {
+                    commands
+                        .entity(p.miner)
+                        .try_insert(MineJob { ore: oe, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 })
+                        .try_remove::<OreSearchCooldown>();
+                    *pending = None;
+                }
+                // else: leave `pending` in place — the next tick tries the next candidate.
+            }
+            None => {
+                // Exhausted every candidate — back off (see `OreSearchCooldown`) and free the slot.
+                commands.entity(p.miner).try_insert(OreSearchCooldown { until: now + ORE_SEARCH_BACKOFF_SECS });
+                *pending = None;
+            }
+        }
+        return; // one search in flight at a time; don't also start a new one this frame
+    }
+
     if now < *retry_at {
         return;
     }
@@ -213,7 +252,9 @@ fn assign_ore(
             && cd.is_none_or(|c| now >= c.until)
     });
     for (e, _worker, v, _cd) in jobless_miners.take(MAX_ASSIGN_PER_TICK) {
-        // Gather every live, eligible boulder (safe ground, not blacklisted), nearest first.
+        // Gather every live, eligible boulder (safe ground, not blacklisted), nearest first — cheap
+        // (measured 0.0ms even at 50+ candidates), so doing this in one go is fine; only the A*
+        // probes below are spread across frames.
         let mut cands: Vec<(Entity, Vec2, f32)> = ores
             .iter()
             .filter_map(|(oe, node, otf)| {
@@ -230,18 +271,20 @@ fn assign_ore(
                 Some((oe, op, v.pos.distance(op)))
             })
             .collect();
-        // Ore A* spans the island (bridges included), so the capped probe uses the budgeted variant.
-        let from = v.pos;
-        let chosen = crate::lumberjack::pick_nearest_reachable(&mut cands, REACH_CHECK_K, |op| {
-            !crate::navgrid::path_to_budget(from, op, NAV_NODES).is_empty()
-        });
-        if let Some(oe) = chosen {
+        cands.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        cands.truncate(REACH_CHECK_K);
+        // A candidate inside CLOSE_RING (lumberjack's constant — miners share the same convention)
+        // needs no A* probe at all; take it immediately instead of queuing a pending search.
+        if let Some(pos) = cands.iter().position(|(_, _, d)| *d <= crate::lumberjack::CLOSE_RING) {
+            let oe = cands[pos].0;
             commands
                 .entity(e)
                 .try_insert(MineJob { ore: oe, atk_cd: 0.0, stall: 0.0, stuck: 0.0, close: 0.0 })
                 .try_remove::<OreSearchCooldown>();
-        } else {
+        } else if cands.is_empty() {
             commands.entity(e).try_insert(OreSearchCooldown { until: now + ORE_SEARCH_BACKOFF_SECS });
+        } else {
+            *pending = Some(PendingOreSearch { miner: e, from: v.pos, remaining: cands });
         }
     }
 }

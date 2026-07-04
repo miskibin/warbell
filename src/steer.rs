@@ -133,3 +133,24 @@ pub fn advance(
         Some(Step { facing: new_facing, pos, moving: false })
     }
 }
+
+/// Cheap fallback for [`advance`] when the mover is far from the hero/camera (ambient wildlife or
+/// camp orks beyond their LOD radius): a straight line toward the goal with the same turn-rate
+/// cap, but NO obstacle-fan scan or footing/blocker checks. `advance`'s 9-direction escape-fan
+/// alone costs up to ~80 terrain/blocker lookups per call (`step_clear` → `can_stand`'s 5
+/// `footing()` samples × up to 3 `blockers::is_blocked` checks, × 9 candidate headings) — measured
+/// (segmented `Instant` timing inside `wildlife::animal_brain`, after gating the predator/prey
+/// search itself turned out to be a near-zero-cost no-op) as ~99% of the wildlife brain's real
+/// per-frame cost. Wholly wasted on an actor nobody's near enough to see clip through a rock.
+/// Always "succeeds" (never boxed-in) since there's no obstacle test to fail.
+pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_turn_dt: f32) -> Step {
+    let to = goal - pos;
+    let dist = to.length();
+    if dist < 1e-4 {
+        return Step { facing, pos, moving: false };
+    }
+    let want = to.x.atan2(to.y);
+    let new_facing = facing + wrap_pi(want - facing).clamp(-max_turn_dt, max_turn_dt);
+    let fdir = Vec2::new(new_facing.sin(), new_facing.cos());
+    Step { facing: new_facing, pos: pos + fdir * step_dist, moving: true }
+}

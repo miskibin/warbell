@@ -40,6 +40,13 @@ pub(crate) const ORK_SIGHT: f32 = 9.0;
 pub(crate) const ORK_ATTACK_RANGE: f32 = 1.5;
 /// Max distance from its home camp an ork will pursue — keeps each warband local.
 const ORK_LEASH: f32 = 16.0;
+/// Distance from the hero past which `ork_brain` skips the ambient "seek a rival to brawl" scan
+/// (an O(all-orks) nearest-rival search, run for every ork not currently engaging the hero, every
+/// frame, unconditionally) — measured (`cargo run --features profiling` +
+/// `tools/trace_summary.py`) as the #2 CPU cost in the game after the wildlife brain's identical
+/// pattern. An ork beyond this still idles/patrols (cheap); only the rival-seek scan is cut, and
+/// only while it isn't already mid Hunt/Attack (so an in-progress brawl finishes on its own).
+const ORK_BRAIN_LOD_R: f32 = 90.0;
 /// Damage per club hit (queued onto `player::PendingHeroDamage`). Old-game grunt `orkConfig.ts`
 /// damage is 24; this is an intentional **−10% playtest nerf** (24 → 21.6) because the hero was
 /// dying too fast on Normal — a deliberate divergence from parity, not a reintroduced rescale.
@@ -375,17 +382,28 @@ fn ork_brain(
             }
         } else {
             o.holding = false;
-            // No hero — seek the nearest rival-faction ork near home to brawl.
+            // No hero — seek the nearest rival-faction ork near home to brawl. Skip the scan
+            // entirely when the hero's far (see `ORK_BRAIN_LOD_R`): distant ork-vs-ork skirmishing
+            // is ambient flavour nobody's watching, not worth an O(all-orks) search every frame.
+            // NOT exempted by "already mid-brawl" — that was tried first and measured to be a
+            // no-op (mirrors the identical mistake in `wildlife::animal_brain`'s first attempt):
+            // orks brawl each OTHER, not just the hero, so most of a warband ends up in Hunt/Attack
+            // from rival skirmishing alone, and an "already active" OR never lets them leave once
+            // the scan itself is gated on it. Leaving `rival` at `None` when far reuses the
+            // existing "no rival found → stand down to Idle" branch just below.
+            let near = hero.alive && o.pos.distance(hero.pos) < ORK_BRAIN_LOD_R;
             let mut rival: Option<(Entity, Vec2)> = None;
-            let mut best = ORK_SIGHT;
-            for (re, rf, rp) in &snap {
-                if *re == self_e || *rf == o.faction {
-                    continue;
-                }
-                let d = o.pos.distance(*rp);
-                if d < best && o.home.distance(*rp) < ORK_LEASH {
-                    best = d;
-                    rival = Some((*re, *rp));
+            if near {
+                let mut best = ORK_SIGHT;
+                for (re, rf, rp) in &snap {
+                    if *re == self_e || *rf == o.faction {
+                        continue;
+                    }
+                    let d = o.pos.distance(*rp);
+                    if d < best && o.home.distance(*rp) < ORK_LEASH {
+                        best = d;
+                        rival = Some((*re, *rp));
+                    }
                 }
             }
             if let Some((re, rp)) = rival {

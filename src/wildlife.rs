@@ -48,6 +48,21 @@ const QUAD_SIZE_FIX: f32 = 1.5;
 /// 180° between frames — the cure for the steering-oscillation flicker.
 const MAX_TURN: f32 = 3.5;
 
+/// Distance from the hero past which `animal_brain` (a) skips the predator/prey targeting search
+/// (snapping a distant chase back to Graze instead — no "already hunting" exemption; that ratchet
+/// let ambient predator-vs-prey brawling keep almost the whole population "active" forever) and
+/// (b) has a moving animal steer via the cheap [`steer::advance_direct`] instead of the full
+/// obstacle-aware [`steer::advance`]. (b) is the one that actually mattered: a segmented
+/// `Instant`-timed breakdown (`cargo run`, no profiling needed) showed the targeting search itself
+/// was under 1% of the function's cost — the real ~4ms/frame (measured with a full town + siege
+/// wildlife population, more than the entire GPU render) was `advance`'s 9-direction obstacle-fan
+/// scan, each candidate paying `step_clear`'s ~5 terrain + up to 3 blocker lookups. An animal
+/// beyond this still grazes/wanders/moves (keeps the world feeling alive at a distance), just via
+/// a straight line with no obstacle test — invisible on something nobody's near enough to see clip
+/// a rock. Bigger than `animal_limbs`' 70u `LIMB_CULL2` on purpose: decision/steering LOD is far
+/// less visible than limb-skinning LOD, so this can start a little further out.
+const BRAIN_LOD_R: f32 = 90.0;
+
 pub struct WildlifePlugin;
 
 impl Plugin for WildlifePlugin {
@@ -193,6 +208,7 @@ fn animal_brain(
         let t = g.translation();
         Vec2::new(t.x, t.z)
     });
+
     // The town pool is fair game for predators, exactly like the hero (hidden bodies excluded).
     let npcs: Vec<(Entity, Vec2)> = townsfolk
         .iter()
@@ -223,7 +239,23 @@ fn animal_brain(
                 a.aggro_target = s.by;
             }
         }
-        if let Some((aggro_r, _)) = pred {
+        // BRAIN_LOD_R: skip the whole nearest-target search below when the hero is far. NOT
+        // exempted by "already mid-hunt/flee" — that was tried first and measured (via
+        // `cargo run --features profiling` + `tools/trace_summary.py`, before/after byte-identical
+        // costs) to be a no-op: predators chase PREY, not just the hero, so most of the population
+        // ends up in Hunt/Flee from ambient food-chain activity alone, and an "already active" OR
+        // never lets them leave that state once the search is gated on it — a ratchet that stayed
+        // permanently open. Instead, explicitly snap a distant chase back to Graze the moment it's
+        // out of LOD range: nobody's watching a wolf run down a deer 150 world-units away anyway.
+        let near = hero.alive && a.pos.distance(hero.pos) < BRAIN_LOD_R;
+        if !near {
+            if matches!(a.mode, Mode::Hunt | Mode::Flee) {
+                a.mode = Mode::Graze;
+                a.timer = rng_range(&mut a.rng, 1.0, 2.5);
+                a.hunt_prey = None;
+                a.hunt_npc = None;
+            }
+        } else if let Some((aggro_r, _)) = pred {
             // ── Predator: hunt the nearest prey in range; failing that, the hero or a
             // townsperson (the town pool is treated exactly like the hero) — but only while
             // near home (~26u) so a pack doesn't trail a target across the whole island.
@@ -339,7 +371,6 @@ fn animal_brain(
                 a.target = a.pos + away * a.wander_r.max(6.0);
             }
         }
-
         match a.mode {
             Mode::Graze => {
                 a.moving = false;
@@ -355,20 +386,32 @@ fn animal_brain(
                     a.moving = false;
                 } else {
                     let spd = if a.mode == Mode::Flee { a.speed } else { a.wander_speed };
-                    let cur_y = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
-                    // Shared local steering (escape-fan + continuity bias + turn-rate cap) —
-                    // the anti-flicker logic, identical for orks (see `steer.rs`).
-                    match steer::advance(a.pos, a.facing, a.target, spd * dt, a.body_r, cur_y, MAX_TURN * dt) {
-                        Some(s) => {
-                            a.facing = s.facing;
-                            a.pos = s.pos;
-                            a.moving = s.moving;
-                        }
-                        None => {
-                            // Boxed in — pause briefly, then pick a fresh heading.
-                            a.mode = Mode::Graze;
-                            a.timer = rng_range(&mut a.rng, 0.4, 1.0);
-                            a.moving = false;
+                    // Far from the hero: skip the obstacle-aware fan-scan entirely (see
+                    // `steer::advance_direct` — this IS the real cost this whole LOD pass was
+                    // chasing, not the predator/prey search). A distant animal clipping a rock
+                    // nobody's near enough to see is a non-issue; the cheap direct line is enough
+                    // to keep it visibly wandering.
+                    if !near {
+                        let s = steer::advance_direct(a.pos, a.facing, a.target, spd * dt, MAX_TURN * dt);
+                        a.facing = s.facing;
+                        a.pos = s.pos;
+                        a.moving = s.moving;
+                    } else {
+                        let cur_y = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
+                        // Shared local steering (escape-fan + continuity bias + turn-rate cap) —
+                        // the anti-flicker logic, identical for orks (see `steer.rs`).
+                        match steer::advance(a.pos, a.facing, a.target, spd * dt, a.body_r, cur_y, MAX_TURN * dt) {
+                            Some(s) => {
+                                a.facing = s.facing;
+                                a.pos = s.pos;
+                                a.moving = s.moving;
+                            }
+                            None => {
+                                // Boxed in — pause briefly, then pick a fresh heading.
+                                a.mode = Mode::Graze;
+                                a.timer = rng_range(&mut a.rng, 0.4, 1.0);
+                                a.moving = false;
+                            }
                         }
                     }
                 }
@@ -465,7 +508,12 @@ fn animal_brain(
         // terrace edge — but a long, low body drawn at the CENTRE footing then sinks into the higher
         // step beside it. Ground off the highest footing under the body footprint instead, capped so
         // the downhill legs only float a little (a cheap stand-in for per-leg ground IK).
-        let gy = body_ground_y(a.pos, a.body_r, tf.translation.y);
+        // Cuts to a single centre-footing sample beyond `BRAIN_LOD_R` — this precise 5-sample terrace
+        // correction is imperceptible on a distant speck, and it turned out to be the REAL cost this
+        // whole LOD pass was chasing: it runs unconditionally for every animal, every frame, so gating
+        // only the predator/prey search above (a much cheaper Vec2::distance loop) never touched it.
+        let gy =
+            if near { body_ground_y(a.pos, a.body_r, tf.translation.y) } else { footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y) };
         let bob = if a.moving { (tw * a.gait + a.phase).sin().abs() * a.bob } else { 0.0 };
         let lunge = strike_p(a.atk_anim, now, arch_dur(strike_arch(a.species)))
             .map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.22);
@@ -475,8 +523,10 @@ fn animal_brain(
         // reach, so the head/jaws snapping forward over the bite land on his front instead of the
         // torso/body sliding (and the head poking) into him. The hero is shoved out to this same
         // line (`player::movement`), so a pressed-in hero can't force the overlap either. Grazers
-        // add no reach → the old skin-touch clamp.
-        if hero.alive {
+        // add no reach → the old skin-touch clamp. Only matters within melee reach of the hero, so
+        // skip it entirely when far (covered by the same `near` check — this animal can't possibly
+        // be overlapping him from beyond `BRAIN_LOD_R`).
+        if near {
             // Shield-aware + muzzle-aware: hold the torso off by the hero's guard (extended out
             // front when he blocks) PLUS the predator's head-reach, so the snout just reaches a
             // raised shield instead of the body sliding through him.
