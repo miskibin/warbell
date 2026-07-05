@@ -2,7 +2,14 @@
 //! live position, deals damage on arrival (via `PendingHeroDamage`, so a raised
 //! shield blocks it), and fizzles after a short lifetime or once it has flown
 //! its full range. Ported from the original game's `projectileStore.ts`.
+//!
+//! Also home to the town archers' **arrows** — the friendly mirror of the bolt, but ballistic
+//! (a real launch velocity + gravity arc, not homing): the archer brain (`villagers.rs`) pushes
+//! an [`ArrowSpawn`] at the release frame of its draw clip, the shaft flies its arc, and on
+//! impact damages hostile `Health` (orks / predators / rival soldiers) the same way a guard's
+//! sword blow does. A missed shaft sticks in the turf for a beat, then fades.
 
+use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
@@ -170,15 +177,219 @@ fn step_bolts(
     }
 }
 
+// ── Arrows (the town archers' ballistic shafts) ─────────────────────────────────────────
+
+/// Arrow muzzle speed (world units/sec) — quick enough to lead-shoot a shambling ork, slow enough
+/// that the arc and the shaft itself read in flight.
+pub(crate) const ARROW_SPEED: f32 = 26.0;
+/// Arrow gravity — gamey-light (real 9.8 at this speed reads near-flat), so a long shot lofts into
+/// a visible archer's arc.
+pub(crate) const ARROW_GRAV: f32 = 12.0;
+/// Within this of a hostile's chest, the shaft connects.
+const ARROW_HIT_RADIUS: f32 = 0.8;
+/// Seconds a missed shaft stays stuck in the turf before it fades.
+const ARROW_STICK_SECS: f32 = 2.4;
+/// Hard flight cap so a shaft launched off a cliff edge can't rain forever.
+const ARROW_TTL: f32 = 5.0;
+
+/// The launch velocity that carries a shaft from `from` to `aim` in `dist/speed` seconds under
+/// `grav` — flat and fast up close, a visible loft at range. Pure, unit-tested below.
+pub(crate) fn arrow_launch(from: Vec3, aim: Vec3, speed: f32, grav: f32) -> Vec3 {
+    let d = aim - from;
+    let t = (d.length() / speed.max(1e-3)).clamp(0.12, 1.4);
+    Vec3::new(d.x / t, d.y / t + 0.5 * grav * t, d.z / t)
+}
+
+/// One arrow an archer looses this frame — pushed by the archer brain at the draw clip's release
+/// moment (`villagers::guard_combat`), drained by [`spawn_queued_arrows`]. Same channel idiom as
+/// [`BoltSpawns`].
+pub struct ArrowSpawn {
+    /// Bow position at release (world; roughly the archer's chest, a step toward the target).
+    pub from: Vec3,
+    /// Where the shaft is aimed (the target's chest at release — a lead is not needed at militia
+    /// ranges, misses on a sidestepping foe are honest archery).
+    pub aim: Vec3,
+    /// The foe it was loosed at — used for the tight hit test while it flies.
+    pub target: Entity,
+    /// The archer, so a struck beast enrages at the right assailant.
+    pub shooter: Entity,
+    pub damage: f32,
+}
+
+#[derive(Resource, Default)]
+pub struct ArrowSpawns(pub Vec<ArrowSpawn>);
+
+/// A shaft in flight (or stuck in the turf while `stuck_at >= 0`).
+#[derive(Component)]
+struct Arrow {
+    vel: Vec3,
+    damage: f32,
+    target: Entity,
+    shooter: Entity,
+    ttl: f32,
+    /// `elapsed_secs` when it hit the ground; `< 0` while still flying.
+    stuck_at: f32,
+}
+
+/// Shared arrow mesh (one merged flat-shaded shaft, vertex-coloured) + plain white material,
+/// built once. Authored with the POINT toward -Z so `Transform::looking_to(vel)` flies it
+/// point-first.
+#[derive(Resource)]
+struct ArrowAssets {
+    mesh: Handle<Mesh>,
+    mat: Handle<StandardMaterial>,
+}
+
+fn setup_arrow_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    use crate::palette::lin;
+    let tint = |mut m: Mesh, c: u32| -> Mesh {
+        let n = m.count_vertices();
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![lin(c); n]);
+        m
+    };
+    // Same kit palette as the archer model (`peasant_model.rs`): yew shaft, iron point, blue vanes.
+    let mut m = tint(Cuboid::new(0.045, 0.045, 0.68).mesh().build(), 0x4f3c26); // shaft
+    let head = tint(
+        Cone { radius: 0.045, height: 0.13 }
+            .mesh()
+            .build()
+            .rotated_by(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)) // +Y point → -Z
+            .translated_by(Vec3::new(0.0, 0.0, -0.38)),
+        0xcfd3dc,
+    );
+    let vane_a = tint(Cuboid::new(0.13, 0.02, 0.16).mesh().build().translated_by(Vec3::new(0.0, 0.0, 0.27)), 0x3f5f9e);
+    let vane_b = tint(Cuboid::new(0.02, 0.13, 0.16).mesh().build().translated_by(Vec3::new(0.0, 0.0, 0.27)), 0x3f5f9e);
+    for part in [head, vane_a, vane_b] {
+        m.merge(&part).expect("arrow parts share attributes");
+    }
+    m.duplicate_vertices();
+    m.compute_flat_normals();
+    commands.insert_resource(ArrowAssets {
+        mesh: meshes.add(m),
+        mat: materials.add(StandardMaterial::default()), // white; colour rides the vertices
+    });
+}
+
+fn spawn_queued_arrows(
+    mut commands: Commands,
+    assets: Res<ArrowAssets>,
+    mut spawns: ResMut<ArrowSpawns>,
+) {
+    for s in spawns.0.drain(..) {
+        let vel = arrow_launch(s.from, s.aim, ARROW_SPEED, ARROW_GRAV);
+        commands.spawn((
+            Mesh3d(assets.mesh.clone()),
+            MeshMaterial3d(assets.mat.clone()),
+            Transform::from_translation(s.from).looking_to(vel.normalize_or_zero(), Vec3::Y),
+            Arrow { vel, damage: s.damage, target: s.target, shooter: s.shooter, ttl: ARROW_TTL, stuck_at: -1.0 },
+            BiomeEntity,
+        ));
+    }
+}
+
+/// Fly every arrow along its ballistic arc, point-first: hit the aimed foe (or any hostile the
+/// shaft happens to pass through), damage its `Health` exactly like a guard's sword blow — kill →
+/// death-fade toppling along the shaft's line, struck beast → enrage at the archer — or stick in
+/// the turf on a miss and fade after a beat.
+#[allow(clippy::type_complexity)]
+fn step_arrows(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut kills: MessageWriter<crate::verbs::AnimalKilled>,
+    mut arrows: Query<(Entity, &mut Arrow, &mut Transform)>,
+    mut hostiles: Query<
+        (Entity, &Transform, &mut crate::player::Health, Option<&crate::wildlife::Animal>),
+        (
+            // The same hostile set the guard melee engages (`villagers::guard_combat`).
+            Or<(
+                With<crate::orks::Ork>,
+                With<crate::wildlife::Animal>,
+                With<crate::warlord::Warlord>,
+                With<crate::rival::RivalSoldier>,
+            )>,
+            Without<Arrow>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let now = time.elapsed_secs();
+    for (arrow_e, mut a, mut tf) in &mut arrows {
+        a.ttl -= dt;
+        if a.ttl <= 0.0 || (a.stuck_at >= 0.0 && now - a.stuck_at > ARROW_STICK_SECS) {
+            commands.entity(arrow_e).try_despawn();
+            continue;
+        }
+        if a.stuck_at >= 0.0 {
+            continue; // planted in the turf, waiting out its fade timer
+        }
+        a.vel.y -= ARROW_GRAV * dt;
+        tf.translation += a.vel * dt;
+        let dir = a.vel.normalize_or_zero();
+        tf.look_to(dir, Vec3::Y);
+
+        // Hit test: the aimed target gets the full radius; any other hostile the shaft passes
+        // through connects on a slightly tighter one (a volley into a horde lands *somewhere*).
+        let mut hit: Option<Entity> = None;
+        if let Ok((te, ttf, ..)) = hostiles.get(a.target) {
+            if (ttf.translation + Vec3::Y).distance(tf.translation) < ARROW_HIT_RADIUS {
+                hit = Some(te);
+            }
+        }
+        if hit.is_none() {
+            for (he, htf, ..) in hostiles.iter() {
+                if (htf.translation + Vec3::Y).distance(tf.translation) < ARROW_HIT_RADIUS * 0.8 {
+                    hit = Some(he);
+                    break;
+                }
+            }
+        }
+        if let Some(he) = hit {
+            if let Ok((_, htf, mut hp, animal)) = hostiles.get_mut(he) {
+                if hp.hp > 0.0 {
+                    hp.hp -= a.damage;
+                    // Light struck-feedback (no camera punch — it's not the hero's blow): the
+                    // target blinks + squashes so a landed shaft visibly *thuds* home.
+                    commands.entity(he).try_insert(crate::combat_fx::HurtFlash::new(now, 0.4));
+                    commands.entity(he).try_insert(crate::combat_fx::HitSquash::new(now, 0.09, false));
+                    if hp.hp <= 0.0 {
+                        // Topple the kill along the shaft's line — it falls the way it was shot.
+                        crate::dying::begin_dying_struck(&mut commands, he, now, Vec2::new(dir.x, dir.z), false);
+                        if let Some(an) = animal {
+                            kills.write(crate::verbs::AnimalKilled { at: htf.translation, species: an.species });
+                        }
+                    } else if animal.is_some() {
+                        commands.entity(he).try_insert(crate::wildlife::Struck { by: Some(a.shooter) });
+                    }
+                }
+            }
+            commands.entity(arrow_e).try_despawn();
+            continue;
+        }
+
+        // Ground: plant the shaft point-first where it lands and let it fade out.
+        let gy = crate::worldmap::ground_at_world(tf.translation.x, tf.translation.z).unwrap_or(f32::MIN);
+        if tf.translation.y <= gy + 0.06 {
+            tf.translation.y = gy + 0.06;
+            a.stuck_at = now;
+        }
+    }
+}
+
 pub struct ProjectilePlugin;
 
 impl Plugin for ProjectilePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BoltSpawns>()
-            .add_systems(Startup, setup_bolt_assets)
+            .init_resource::<ArrowSpawns>()
+            .add_systems(Startup, (setup_bolt_assets, setup_arrow_assets))
             .add_systems(
                 Update,
-                (spawn_queued_bolts, step_bolts)
+                (spawn_queued_bolts, step_bolts, spawn_queued_arrows, step_arrows)
                     .chain()
                     .run_if(in_state(crate::game_state::Modal::None)),
             );
@@ -207,5 +418,27 @@ mod tests {
         let (out, tr) = advance_bolt(Vec3::ZERO, Vec3::new(50.0, 0.0, 0.0), 2.0, 39.0, 40.0);
         assert_eq!(out, BoltStep::Fizzle);
         assert_eq!(tr, 41.0);
+    }
+
+    /// Integrating the launch velocity under the same gravity must land the shaft on the aim
+    /// point (the arc is exact for the unclamped flight time).
+    #[test]
+    fn arrow_arc_lands_on_aim() {
+        let from = Vec3::new(0.0, 1.4, 0.0);
+        let aim = Vec3::new(10.0, 1.0, 6.0);
+        let vel = arrow_launch(from, aim, ARROW_SPEED, ARROW_GRAV);
+        let t = (aim - from).length() / ARROW_SPEED;
+        // Closed-form position at time t: p = from + vel·t − ½·g·t² ŷ.
+        let p = from + vel * t - Vec3::Y * 0.5 * ARROW_GRAV * t * t;
+        assert!(p.distance(aim) < 1e-4, "landed {p:?}, wanted {aim:?}");
+    }
+
+    /// A long shot must actually LOFT — the launch pitch rises above the straight line to the aim.
+    #[test]
+    fn arrow_long_shot_lofts() {
+        let from = Vec3::new(0.0, 1.4, 0.0);
+        let aim = Vec3::new(20.0, 1.4, 0.0);
+        let vel = arrow_launch(from, aim, ARROW_SPEED, ARROW_GRAV);
+        assert!(vel.y > 0.5, "expected an upward loft, got vel.y = {}", vel.y);
     }
 }

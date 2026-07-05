@@ -190,6 +190,13 @@ fn biped_anim_drive(time: Res<Time>, mut q: Query<&mut crate::biped::BipedDrive>
             d.attacking = true;
             d.attack_t = (now % 1.0) * crate::player::ATTACK_DURATION;
         }
+        // The archer's draw-and-loose on a loop: the 1.15s shot + a 0.85s at-ease beat between
+        // shots (matches the in-game `villagers::BOW_SHOT_SECS` pacing near enough for preview).
+        "bow" | "shoot" => {
+            let p = (now % 2.0) / 1.15;
+            d.bow = p <= 1.0;
+            d.bow_t = p.min(1.0);
+        }
         "sit" => d.sitting = true,
         _ => {} // idle
     }
@@ -364,6 +371,8 @@ fn spawn_model(
                 Unemployed
             } else if s.contains("guard") {
                 Guard
+            } else if s.contains("archer") {
+                Archer
             } else {
                 Woodcutter
             };

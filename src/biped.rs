@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 
-use crate::player::anim::{action_over_loco, attack_phase, attack_pose, carry_pose, loco_pose, sit_pose, work_pose, Pose};
+use crate::player::anim::{action_over_loco, attack_phase, attack_pose, bow_pose, carry_pose, loco_pose, sit_pose, work_pose, Pose};
 use crate::player::{Joint, ATTACK_DURATION};
 
 /// One animated joint of a biped mob. `root` points back at the entity carrying [`BipedDrive`] so a
@@ -60,6 +60,10 @@ pub struct BipedDrive {
     /// Per-instance clock offset (radians/seconds) so neighbouring mobs don't fidget/work in
     /// lockstep. Fed into the work stroke; locomotion already carries its own phase via `walk_phase`.
     pub phase: f32,
+    /// Mid bow-shot this frame (an archer's draw-and-loose plays instead of the melee swing).
+    pub bow: bool,
+    /// 0..1 progress through the bow-shot clip (the archer brain advances it over its shot time).
+    pub bow_t: f32,
 }
 
 /// Select + compose the studio clips for one biped from its drive (reuses the hero's clip math).
@@ -70,7 +74,16 @@ pub(crate) fn biped_pose(d: &BipedDrive, now: f32) -> Pose {
     }
     let moving = d.moving_amt.clamp(0.0, 1.0);
     let loco = loco_pose(now, d.walk_phase, moving, d.run_amt.clamp(0.0, 1.0));
-    if d.attacking {
+    if d.bow {
+        // An archer's draw-and-loose. Shot mid-step (a repositioning archer) it layers over the
+        // gait like a running attack; planted, the full braced stance plays.
+        let b = bow_pose(now + d.phase, d.bow_t);
+        if moving > 0.05 {
+            action_over_loco(&b, &loco, moving)
+        } else {
+            b
+        }
+    } else if d.attacking {
         let (phase, p) = attack_phase((d.attack_t / ATTACK_DURATION).clamp(0.0, 1.0));
         let atk = attack_pose(d.attack_variant, &phase, p);
         if moving > 0.05 {

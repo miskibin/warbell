@@ -96,6 +96,10 @@ pub enum AudioCue {
     /// so the player *hears* the militia fighting nearby. Emitted only for skirmishes close to the
     /// hero (a small earshot) so the whole battlefield doesn't clatter at once.
     GuardStrike(Vec3),
+    /// A town archer LOOSES an arrow, at the bow's world position — the swing whoosh pitched
+    /// sharply up so it reads as a string twang + shaft whip. Earshot-gated by the emitter
+    /// (`villagers::guard_combat`) like the guard clash, but from farther (a twang carries).
+    BowShot(Vec3),
     /// One metallic chip on a pick-swing against an ore boulder (sampled `var-1`/`var-3`
     /// clips, pitch-jittered). Distinct from the `OreShatter` synth sting on the breaking blow.
     OreChip,

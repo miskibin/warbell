@@ -163,6 +163,20 @@ pub struct Guard {
     post: Vec2,
 }
 
+/// A townsperson who is a trained **bowman** — a persistent trait of the person (like their face),
+/// not a job: on militia duty they carry the longbow ([`PeasantKind::Archer`] body, `Role::Archer`)
+/// and [`guard_combat`] fights them at RANGE — plant, draw ([`crate::biped::BipedDrive::bow`] plays
+/// the draw-and-loose clip), and release an [`crate::projectile::ArrowSpawn`] exactly on the clip's
+/// release frame. Employed on a plot they dress and work like any other villager (the trait waits).
+/// They still carry [`Guard`] (post/cooldown/rally plumbing is shared); this marker just swaps the
+/// melee for archery.
+#[derive(Component)]
+pub struct Archer {
+    /// The in-flight shot's arrow has left the string (guards against double-spawning while the
+    /// release frame window is crossed over several frames).
+    loosed: bool,
+}
+
 /// A guard that has answered the **muster** (the player pressed `K`): it abandons its fixed post and
 /// follows the hero. [`rally_follow`] rewrites its [`Guard::post`] each frame to a reserved slot in a
 /// loose blob around him, so the *existing* [`guard_combat`] follow-the-post + peel-to-fight +
@@ -286,6 +300,21 @@ const GUARD_REGEN: f32 = 3.0;
 const GUARD_MELEE: f32 = 1.6;
 const GUARD_SPEED: f32 = 2.9; // a touch quicker so the muster keeps pace with the hero (was 2.4)
 const GUARD_ATTACK_CD: f32 = 1.0;
+/// An archer engages from this far out — well past the melee scrum, inside the wall-to-field
+/// sightlines, and comfortably under the shaman's own cast range × its threat.
+const BOW_RANGE: f32 = 16.0;
+/// Full draw-and-loose clip length (seconds) — the arrow releases at `anim::BOW_RELEASE_P` of it.
+const BOW_SHOT_SECS: f32 = 1.15;
+/// Nock-to-nock cadence. Slower than the guard's sword (a real draw takes a beat), paid back by
+/// [`archer_damage`]'s heavier per-shaft hit and by fighting from safety.
+const ARCHER_ATTACK_CD: f32 = 2.5;
+/// A shaft hits ~1.5× the sword blow of the same arms tier: per-second output lands close to the
+/// melee guard's, but from range — the archer's value is *where* he fights, not raw dps.
+fn archer_damage(tier: u32) -> f32 {
+    guard_damage(tier) * 1.5
+}
+/// A bow release is heard from farther than a sword clash (a sharp twang carries).
+const BOW_SFX_RADIUS: f32 = 22.0;
 /// A passive townsperson's self-defence swing: weak (a hoe, an axe haft) but real. −30% off the old 6.
 const NPC_DEFEND_DMG: f32 = 4.2;
 const NPC_DEFEND_CD: f32 = 1.2;
@@ -393,6 +422,7 @@ impl Plugin for VillagersPlugin {
                     rally_follow.before(muster_keys),
                     muster_keys.before(guard_combat),
                     stage_muster,
+                    stage_archers,
                     guard_combat,
                     rearm_townsfolk,
                     reskin_townsfolk,
@@ -500,6 +530,22 @@ pub fn spawn_courtyard_guard(
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
     spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng), false); // peasant base walk a touch quicker (was 2.3)
+}
+
+/// Spawn a fresh town **archer** at an open courtyard spot — the ranged mirror of
+/// [`spawn_courtyard_guard`] for the systems that grow the militia (and the staging hooks).
+pub fn spawn_courtyard_archer(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    seed: u32,
+) {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let mut rng = seed | 1;
+    let half = crate::castle::courtyard_half();
+    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
+    let kind = Kind::Archer { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[2] };
+    spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng), false);
 }
 
 /// Spawn a **rival** soldier body for `rival.rs` — a helmeted, sword-bearing guard biped in the
@@ -1211,6 +1257,42 @@ fn rally_follow(
     }
 }
 
+/// Screenshot/staging hook: `FOREST_ARCHERS=1` retrains the ENTIRE standing militia as bowmen at
+/// boot — every `Townsfolk` guard gains the persistent [`Archer`] trait, and `reskin_townsfolk`
+/// swaps each body to the longbow kit on its next pass. A numeric value ≥ 2 (`FOREST_ARCHERS=12`)
+/// additionally raises `town.population` to that headcount so `sync_population_bodies` grows a
+/// whole squad of bodies to retrain (the headcount is the body-sync's source of truth — spawning
+/// bodies directly would just get them culled back). Idempotent per the `Without<Archer>` filter
+/// (late-spawned bodies get caught on later frames), env read cached like `stage_muster`. Pair
+/// with `FOREST_WAVE`/`FOREST_TOWN` to film a defended siege, or with `FOREST_MUSTER` for a war
+/// party of bowmen.
+fn stage_archers(
+    mut armed: Local<Option<Option<u32>>>,
+    mut grown: Local<bool>,
+    mut commands: Commands,
+    mut town: ResMut<crate::town::TownRes>,
+    fresh: Query<Entity, (With<Townsfolk>, With<Guard>, Without<Archer>, Without<crate::dying::Dying>)>,
+) {
+    let Some(want) = *armed.get_or_insert_with(|| {
+        std::env::var("FOREST_ARCHERS").ok().map(|s| s.trim().parse::<u32>().unwrap_or(1))
+    }) else {
+        return;
+    };
+    if want >= 2 && !*grown && town.0.population > 0 {
+        *grown = true;
+        town.0.population = town.0.population.max(want);
+    }
+    if fresh.is_empty() {
+        return;
+    }
+    let mut n = 0;
+    for e in &fresh {
+        commands.entity(e).try_insert(Archer { loosed: true });
+        n += 1;
+    }
+    info!("FOREST_ARCHERS: retrained {n} guards as archers");
+}
+
 /// Screenshot hook: `FOREST_MUSTER=1` rallies the town guard to the hero at boot (same as pressing
 /// `K`), so the capture harness's warmup frames let the war party gather into its blob and a single
 /// shot shows the muster. Pairs with `FOREST_TOWN` to stage a full town first. It re-tags any
@@ -1252,9 +1334,19 @@ fn guard_combat(
     mut commands: Commands,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut kills: MessageWriter<crate::verbs::AnimalKilled>,
+    mut arrows: ResMut<crate::projectile::ArrowSpawns>,
     hero: Query<&crate::player::Hero>,
     mut guards: Query<
-        (Entity, &mut Guard, &mut NpcHp, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath, Has<Rallied>),
+        (
+            Entity,
+            &mut Guard,
+            &mut NpcHp,
+            &mut Villager,
+            &mut Transform,
+            &mut crate::navgrid::NavPath,
+            Has<Rallied>,
+            Option<&mut Archer>,
+        ),
         Without<crate::dying::Dying>,
     >,
     mut hostiles: Query<
@@ -1288,6 +1380,7 @@ fn guard_combat(
     let hero_pos = hero.single().ok().map(|h| h.pos);
     // Effective strike for the town's current arms tier (Defense "Guard Arms" upgrades).
     let guard_dmg = guard_damage(def.villager_arms_tier);
+    let arrow_dmg = archer_damage(def.villager_arms_tier);
     // Each arms tier also widens the watch (the upgrade descs promise "chase from farther" /
     // "wider watch"): +3u detect, +4u leash per tier. Previously unwired — only damage scaled.
     let tier = def.villager_arms_tier as f32;
@@ -1307,7 +1400,7 @@ fn guard_combat(
         .collect();
     let mut dealt: Vec<(Entity, Entity, f32)> = Vec::new(); // (target, guard, dmg)
 
-    for (self_e, mut g, mut hp, mut v, mut tf, mut path, rallied) in &mut guards {
+    for (self_e, mut g, mut hp, mut v, mut tf, mut path, rallied, mut archer) in &mut guards {
         g.atk_cd -= dt;
         if !in_wave {
             // Peacetime mend — slow, so a mauling leaves a mark (no more instant dawn heal).
@@ -1344,7 +1437,48 @@ fn guard_combat(
         }
 
         if let Some((te, tp, d)) = best {
-            if d < GUARD_MELEE {
+            // An ARCHER never closes to melee: inside bow range (or mid-draw already) it plants,
+            // tracks the target, and shoots on its cadence — the arrow entity leaves the string
+            // exactly at the draw clip's release frame, aimed at the foe's LIVE chest position.
+            let mid_shot = archer.is_some() && v.atk_anim > 0.0 && now - v.atk_anim < BOW_SHOT_SECS;
+            if let Some(ar) = archer.as_deref_mut().filter(|_| d < BOW_RANGE || mid_shot) {
+                v.moving = false;
+                let to = tp - v.pos;
+                if to.length_squared() > 1e-4 {
+                    let want = to.x.atan2(to.y);
+                    v.facing += steer::wrap_pi(want - v.facing).clamp(-VIL_MAX_TURN * 2.0 * dt, VIL_MAX_TURN * 2.0 * dt);
+                }
+                if mid_shot {
+                    let shot_p = (now - v.atk_anim) / BOW_SHOT_SECS;
+                    if shot_p >= crate::player::anim::BOW_RELEASE_P && !ar.loosed {
+                        ar.loosed = true;
+                        // Loose from the bow: chest height, half a step toward the foe.
+                        let dir3 = Vec3::new(to.x, 0.0, to.y).normalize_or_zero();
+                        let from = Vec3::new(v.pos.x, tf.translation.y + 1.3, v.pos.y) + dir3 * 0.45;
+                        // Aim at the target's live chest (fall back to its map spot if it died
+                        // between target-pick and release).
+                        let aim = hostiles
+                            .get(te)
+                            .map(|(_, ttf, ..)| ttf.translation + Vec3::Y)
+                            .unwrap_or(Vec3::new(tp.x, tf.translation.y + 1.0, tp.y));
+                        arrows.0.push(crate::projectile::ArrowSpawn {
+                            from,
+                            aim,
+                            target: te,
+                            shooter: self_e,
+                            damage: arrow_dmg,
+                        });
+                        // The string's twang — earshot-gated like the melee clash, but carries farther.
+                        if hero_pos.is_some_and(|hp| v.pos.distance(hp) < BOW_SFX_RADIUS) {
+                            cues.write(crate::audio::AudioCue::BowShot(from));
+                        }
+                    }
+                } else if g.atk_cd <= 0.0 {
+                    g.atk_cd = ARCHER_ATTACK_CD;
+                    v.atk_anim = now; // start the draw (villager_drive plays the bow clip off this)
+                    ar.loosed = false;
+                }
+            } else if d < GUARD_MELEE {
                 v.moving = false;
                 let to = tp - v.pos;
                 if to.length_squared() > 1e-4 {
@@ -1571,6 +1705,7 @@ fn villager_drive(
             &mut BipedDrive,
             Has<crate::lumberjack::Hauling>,
             Has<crate::miner::Carting>,
+            Has<Archer>,
         ),
         Without<crate::dying::Dying>,
     >,
@@ -1578,7 +1713,7 @@ fn villager_drive(
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    for (v, worker, role, mut d, hauling, carting) in &mut q {
+    for (v, worker, role, mut d, hauling, carting, is_archer) in &mut q {
         // Ease the idle↔gait blend so starts/stops aren't a snap.
         let target = if v.moving { 1.0 } else { 0.0 };
         d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
@@ -1601,12 +1736,26 @@ fn villager_drive(
             0
         };
 
-        // A live strike (stamped by guard_combat / npc_fight_back) drives an overhead swing.
-        if let Some(p) = strike_p(v.atk_anim, now) {
+        // A live strike drives the weapon animation. An archer ON DUTY (dressed with the bow —
+        // `Role::Archer`; employed on a plot they're dressed as a worker and would mime a melee
+        // swing like anyone) plays the draw-and-loose clip for the shot `guard_combat` stamped;
+        // everyone else plays the overhead melee swing.
+        if is_archer && matches!(role, Some(Role::Archer)) {
+            d.attacking = false;
+            let p = (now - v.atk_anim) / BOW_SHOT_SECS;
+            if v.atk_anim > 0.0 && (0.0..1.0).contains(&p) {
+                d.bow = true;
+                d.bow_t = p;
+            } else {
+                d.bow = false;
+            }
+        } else if let Some(p) = strike_p(v.atk_anim, now) {
+            d.bow = false;
             d.attacking = true;
             d.attack_t = p * crate::player::ATTACK_DURATION;
             d.attack_variant = 0;
         } else {
+            d.bow = false;
             d.attacking = false;
         }
         d.sitting = false;
@@ -1753,6 +1902,9 @@ fn pick_walk(v: &mut Villager, spots: &[Vec2], is_kid: bool) {
 enum Kind {
     Peasant { skin: u32, tunic: u32, hat: bool },
     Guard { skin: u32, tunic: u32 },
+    /// The ranged militiaman: longbow + quiver + leather hood ([`PeasantKind::Archer`]). Same town
+    /// pool plumbing as the guard, but [`guard_combat`] fights him at range.
+    Archer { skin: u32, tunic: u32 },
     /// A townsperson posted to a producer — distinct work clothes + a held tool (hoe / axe).
     Worker { trade: Trade, skin: u32, tunic: u32 },
 }
@@ -1780,6 +1932,8 @@ enum Held {
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Guard,
+    /// On militia duty with the longbow (only ever worn by [`Archer`]-marked townsfolk).
+    Archer,
     Working(Trade),
 }
 
@@ -1832,6 +1986,7 @@ fn spec(kind: Kind, seed: u32, kid: bool) -> VSpec {
     let (id_skin, id_tunic) = match kind {
         Kind::Peasant { skin, tunic, .. } => (skin, tunic),
         Kind::Guard { skin, tunic } => (skin, tunic),
+        Kind::Archer { skin, tunic } => (skin, tunic), // legacy box rig never grew a bow — treated as a guard
         Kind::Worker { skin, tunic, .. } => (skin, tunic),
     };
     let guard = matches!(kind, Kind::Guard { .. });
@@ -2202,6 +2357,7 @@ pub fn populate(
                 Kind::Worker { trade: Trade::Woodcutter, skin: SKIN[2], tunic: TUNIC[1] },
                 Kind::Worker { trade: Trade::Miner, skin: SKIN[0], tunic: TUNIC[3] },
                 Kind::Guard { skin: SKIN[1], tunic: TUNIC[0] },
+                Kind::Archer { skin: SKIN[2], tunic: TUNIC[2] },
             ];
             for (i, k) in kinds.into_iter().enumerate() {
                 let x = p[0] + i as f32 * 1.5 - 3.0;
@@ -2423,16 +2579,33 @@ fn spawn(
     // staff a producer by day (the `Townsfolk` pool). They carry their identity colours [`Folk`] +
     // current [`Role`] + body material so `reskin_townsfolk` can redress them as a farmer/woodcutter
     // when they take a job. The NavPath caches an A* route home for a freed captive (see `guard_combat`).
-    if let Kind::Guard { skin, tunic } = kind {
-        commands.entity(root).insert((
-            Guard { atk_cd: 0.0, post: home },
-            NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
-            crate::navgrid::NavPath::default(),
-            Townsfolk,
-            Folk { skin, tunic, seed },
-            Role::Guard,
-            BodyMat(mat.clone()),
-        ));
+    match kind {
+        Kind::Guard { skin, tunic } => {
+            commands.entity(root).insert((
+                Guard { atk_cd: 0.0, post: home },
+                NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
+                crate::navgrid::NavPath::default(),
+                Townsfolk,
+                Folk { skin, tunic, seed },
+                Role::Guard,
+                BodyMat(mat.clone()),
+            ));
+        }
+        Kind::Archer { skin, tunic } => {
+            // Same militia bundle as the guard, plus the persistent bowman trait: `guard_combat`
+            // fights this one at range, and a re-skin returns him to the bow when a day job ends.
+            commands.entity(root).insert((
+                Guard { atk_cd: 0.0, post: home },
+                Archer { loosed: true },
+                NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
+                crate::navgrid::NavPath::default(),
+                Townsfolk,
+                Folk { skin, tunic, seed },
+                Role::Archer,
+                BodyMat(mat.clone()),
+            ));
+        }
+        _ => {}
     }
     root
 }
@@ -2443,6 +2616,7 @@ fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool, desert: bool) -> BipedMesh
     let trouser = PANT_TONES[(seed as usize) % PANT_TONES.len()];
     let (pk, skin, tunic) = match kind {
         Kind::Guard { skin, tunic } => (PeasantKind::Guard, skin, tunic),
+        Kind::Archer { skin, tunic } => (PeasantKind::Archer, skin, tunic),
         Kind::Worker { trade, skin, tunic } => (
             match trade {
                 Trade::Farmer => PeasantKind::Farmer,
@@ -2517,14 +2691,16 @@ fn reskin_townsfolk(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     rigs: Query<(), With<BipedRig>>,
-    mut folk: Query<(Entity, &Folk, &mut Role, &BodyMat, &Children, Option<&crate::town::Worker>), With<Townsfolk>>,
+    mut folk: Query<(Entity, &Folk, &mut Role, &BodyMat, &Children, Option<&crate::town::Worker>, Has<Archer>), With<Townsfolk>>,
 ) {
     use tileworld_core::town_store::BuildKind;
-    for (e, f, mut role, body_mat, children, worker) in &mut folk {
+    for (e, f, mut role, body_mat, children, worker, is_archer) in &mut folk {
         let desired = match worker.and_then(|w| town.0.plots.get(w.idx)).and_then(|p| p.kind) {
             Some(BuildKind::Farm) => Role::Working(Trade::Farmer),
             Some(BuildKind::Lumber) => Role::Working(Trade::Woodcutter),
             Some(BuildKind::Mine) => Role::Working(Trade::Miner),
+            // Off a day job, a bowman takes up his LONGBOW, everyone else the sword-and-board.
+            _ if is_archer => Role::Archer,
             _ => Role::Guard,
         };
         if *role == desired {
@@ -2539,6 +2715,7 @@ fn reskin_townsfolk(
         }
         let kind = match desired {
             Role::Guard => Kind::Guard { skin: f.skin, tunic: f.tunic },
+            Role::Archer => Kind::Archer { skin: f.skin, tunic: f.tunic },
             Role::Working(trade) => Kind::Worker { trade, skin: f.skin, tunic: f.tunic },
         };
         build_biped_body(&mut commands, e, kind, f.seed, false, false, &body_mat.0, &mut meshes);
