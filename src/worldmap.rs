@@ -1950,7 +1950,7 @@ pub fn build_step(
         ),
         20 => crate::verbs::populate_forage(commands, meshes, std_mats),
         21 => crate::chest::populate_chests(commands, meshes, std_mats),
-        22 => crate::defenses::populate_defenders(commands, meshes, std_mats),
+        22 => crate::defenses::populate_defenders(commands, meshes, std_mats, creature_mats),
         23 => crate::ruins::populate_landmarks(commands, meshes, std_mats),
         24 => crate::vignettes::populate_vignettes(commands, meshes, std_mats),
         25 => crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats),

@@ -304,7 +304,8 @@ const GUARD_ATTACK_CD: f32 = 1.0;
 /// sightlines, and comfortably under the shaman's own cast range × its threat.
 const BOW_RANGE: f32 = 16.0;
 /// Full draw-and-loose clip length (seconds) — the arrow releases at `anim::BOW_RELEASE_P` of it.
-const BOW_SHOT_SECS: f32 = 1.15;
+/// `pub(crate)`: the keep-roof sentries (`defenses.rs`) time their shots off the same clip.
+pub(crate) const BOW_SHOT_SECS: f32 = 1.15;
 /// Nock-to-nock cadence. Slower than the guard's sword (a real draw takes a beat), paid back by
 /// [`archer_damage`]'s heavier per-shaft hit and by fighting from safety.
 const ARCHER_ATTACK_CD: f32 = 2.5;
@@ -516,8 +517,19 @@ fn reset_rescues(mut r: ResMut<RescuedCamps>) {
     }
 }
 
-/// Spawn a fresh town **guard** at an open courtyard spot — the body the District/rescue/recruit
-/// systems add to the castle's defenders (and the bloodline).
+/// Roughly a third of the town's fighting pool are trained **bowmen** — decided per body from its
+/// spawn seed (a stable hash, not live RNG), so the militia's sword/bow mix holds at ~2:1 across
+/// deaths, regrowth and Continue (bodies are never saved — the population count is — so a
+/// seed-derived trait is the save-proof way to keep the ratio).
+const BOWMAN_RATIO: u32 = 3; // one in this many
+fn is_bowman(seed: u32) -> bool {
+    let mut s = seed ^ 0xA11C_0BE5;
+    next_u32(&mut s) % BOWMAN_RATIO == 0
+}
+
+/// Spawn a fresh town **militia body** at an open courtyard spot — the body the District/rescue/
+/// recruit systems add to the castle's defenders (and the bloodline). About a third arrive as
+/// longbow [`Archer`]s ([`is_bowman`]), the rest as sword-and-board guards.
 pub fn spawn_courtyard_guard(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -528,25 +540,15 @@ pub fn spawn_courtyard_guard(
     let mut rng = seed | 1;
     let half = crate::castle::courtyard_half();
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
-    let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
+    let skin = SKIN[(seed as usize) % SKIN.len()];
+    let kind = if is_bowman(seed) {
+        Kind::Archer { skin, tunic: TUNIC[2] }
+    } else {
+        Kind::Guard { skin, tunic: TUNIC[1] }
+    };
     spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng), false); // peasant base walk a touch quicker (was 2.3)
 }
 
-/// Spawn a fresh town **archer** at an open courtyard spot — the ranged mirror of
-/// [`spawn_courtyard_guard`] for the systems that grow the militia (and the staging hooks).
-pub fn spawn_courtyard_archer(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
-    seed: u32,
-) {
-    let mat = crate::creature::make_creature_material(creature_mats);
-    let mut rng = seed | 1;
-    let half = crate::castle::courtyard_half();
-    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
-    let kind = Kind::Archer { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[2] };
-    spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng), false);
-}
 
 /// Spawn a **rival** soldier body for `rival.rs` — a helmeted, sword-bearing guard biped in the
 /// rival's **desert** garb (sandy-ochre tunic, NOT the player militia's colours), anchored at `home`,
