@@ -1099,8 +1099,8 @@ pub fn hero_anim(
                 // - guard: tucked down-forward-right, out of frame — the shield is the story.
                 if fp_amt > 0.0 {
                     let combat = e3(
-                        2.68 - 0.70 * fp_atk_back + 0.55 * fp_atk_fwd + fp_bob_v * 0.5,
-                        -(0.60 + fp_sway + 0.35 * fp_atk_back - 0.65 * fp_atk_fwd),
+                        2.68 - 0.55 * fp_atk_back + 0.55 * fp_atk_fwd + fp_bob_v * 0.5,
+                        -(0.60 + fp_sway - 0.40 * fp_atk_back - 0.65 * fp_atk_fwd),
                         -0.44,
                     );
                     let target = combat.slerp(e3(-2.42, -0.60, -0.33), block_amt);
@@ -1114,18 +1114,19 @@ pub fn hero_anim(
                     rot = if elbow { el } else { sh };
                 } else if fp_amt > 0.0 {
                     // First-person shield ARM (always viewmodel-driven in FP — see the sword arm
-                    // note): the low carry hangs the shield edge-on beside the thigh (out of
-                    // frame bar a sliver in the bottom-left corner); ready raises the forearm to
-                    // ride the corner as a guard; a raised guard (`block_amt`) BRACES it up into
-                    // the lower-left of frame, where the pose's face-on Shield rotation turns the
-                    // plate to the camera.
+                    // note): it STAYS in the low carry even at combat-ready — the shield rides
+                    // edge-on beside the thigh, out of frame bar a sliver in the bottom-left
+                    // corner (raising it at ready laid the plate ALONG the lifted forearm, whose
+                    // far end crossed the lens as a wall). Only a raised guard (`block_amt`)
+                    // BRACES it up into the lower-left of frame, where the FP Shield override
+                    // below turns the plate's face to the camera.
                     let target = if elbow {
-                        rx(lerp(lerp(-0.55, -1.00, fp_ready), -1.20, block_amt) + fp_bob_v * 0.6)
+                        rx(lerp(-0.55, -1.20, block_amt) + fp_bob_v * 0.6)
                     } else {
                         e3(
-                            lerp(lerp(0.10, -0.55, fp_ready), -0.75, block_amt) + fp_breath + fp_bob_v,
-                            -(fp_sway - fp_bob_l) * lerp(0.5, 1.0, fp_ready) - 0.15 * fp_ready,
-                            lerp(lerp(-0.12, -0.05, fp_ready), -0.02, block_amt),
+                            lerp(0.10, -0.75, block_amt) + fp_breath + fp_bob_v,
+                            -(fp_sway - fp_bob_l) * 0.5,
+                            lerp(-0.12, -0.02, block_amt),
                         )
                     };
                     rot = rot.slerp(target, fp_amt);

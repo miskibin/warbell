@@ -39,6 +39,13 @@ pub fn player_block(
         return;
     }
 
+    // Capture hook: `FOREST_ANIMTEST=block` stages the guard from `player::animtest`; yield here
+    // so this system (whose scheduling order vs. animtest is arbitrary) can't clear the staged
+    // flag on the frames where it runs second — the race made block captures a coin-flip.
+    if std::env::var("FOREST_ANIMTEST").is_ok_and(|v| v == "block" || v == "defend") {
+        return;
+    }
+
     // The block SFX is NOT fired here — raising the shield is silent. The knock plays only when
     // a hit is actually absorbed (see `health::apply_hero_damage`), matching `playerStore.ts`.
     let want = buttons.pressed(MouseButton::Right) && !hh.block_locked && hh.stamina > 0.0;
