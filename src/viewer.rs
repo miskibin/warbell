@@ -312,7 +312,10 @@ fn spawn_model(
     match view.as_str() {
         // The ork on the shared studio biped skeleton (Phase 2 re-rig verification). Rest pose
         // unless `FOREST_VIEW_ANIM` is wired for bipeds; geometry/proportions read true here.
-        // `FOREST_VIEW=ork:scout|berserker|shaman` picks the variant (default grunt).
+        // `FOREST_VIEW=ork:scout|berserker|shaman` picks the variant (default grunt);
+        // `ork:torch` swaps the buckler for the torch-bearer's held war-torch (grip/rake
+        // verification — tune `orks::ork_torch_bake` against this view). The flame marker ball
+        // sits at `ork_torch_tip` so the in-game flame/light placement reads here too.
         s if s.starts_with("ork") || s.starts_with("orc") => {
             use crate::orks::OrkVariant::*;
             let variant = match s.rsplit(':').next() {
@@ -326,9 +329,26 @@ fn spawn_model(
                 rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
                 scale: Vec3::ONE,
             };
-            let h = crate::orks::ork_biped_meshes(variant, crate::orks::Faction::Red).upload(meshes);
+            let mut h = crate::orks::ork_biped_meshes(variant, crate::orks::Faction::Red).upload(meshes);
+            let torch = s.contains("torch");
+            if torch {
+                h = h.with_shield(Some(meshes.add(crate::orks::ork_torch_mesh())));
+            }
             commands.entity(root).insert(crate::biped::BipedDrive::default());
-            crate::biped::spawn_biped(commands, root, mat, h, 1.22, 1.0, 0.17, 0.38, -0.05, Some(shield_xf));
+            let (_, off_hand) =
+                crate::biped::spawn_biped(commands, root, mat, h, 1.22, 1.0, 0.17, 0.38, -0.05, Some(shield_xf));
+            if let (true, Some(hand)) = (torch, off_hand) {
+                // Bright vertex-coloured stand-in for the emissive flame (the viewer only carries
+                // the shared CreatureMaterial) — placement, not look.
+                let flame = crate::orks::tinted_flame_marker();
+                commands.entity(hand).with_children(|p| {
+                    p.spawn((
+                        Mesh3d(meshes.add(flame)),
+                        MeshMaterial3d(mat.clone()),
+                        Transform::from_translation(crate::orks::ork_torch_tip()),
+                    ));
+                });
+            }
         }
         // The peasant worker types on the shared skeleton (Phase 3). `FOREST_VIEW=peasant:farmer|
         // miner|unemployed|guard` picks the type (default woodcutter).

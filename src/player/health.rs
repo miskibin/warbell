@@ -155,6 +155,14 @@ pub fn apply_hero_damage(
         // Layer the resist-buff (taken) + worn-armor (armor) mults onto the unblocked blow
         // — matches the TS `damage(amount, takenMult, armorMult)`.
         p.damage(dmg as f64, now, buffs.0.damage_taken_mult(now), inv.0.armor_damage_mult());
+        // `FOREST_IMMORTAL=1` (capture staging): the hero takes every blow — full float/flash/
+        // shake juice — but can't drop below 1 HP, so a filmed melee never trips the succession
+        // beat mid-clip (which slow-mos the world and swings the camera away to the nearest
+        // townsperson — it hijacked a combat capture's framing). No effect in normal play.
+        if p.hp <= 0.0 && std::env::var("FOREST_IMMORTAL").is_ok() {
+            p.hp = 1.0;
+            p.dead_since = None;
+        }
         let dead = p.hp <= 0.0;
 
         // Combat juice: a floating number ("PARRY!" / "BLOCK" / "-N") + red flash + screen shake.

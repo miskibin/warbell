@@ -178,17 +178,19 @@ pub struct HitStop {
 // distinct (they were all one weight before). Kill > crit > light, in both freeze length and
 // camera trauma. The light hit is lighter than the old single value; the kill a touch shorter so
 // the new crit tier sits cleanly between them.
-const HITSTOP_KILL: f32 = 0.10;
-const HITSTOP_CRIT: f32 = 0.07;
-const HITSTOP_HIT: f32 = 0.04;
+// The tiers are `pub(crate)` (re-exported via `player`) so `combat_fx::hit_test` can mirror the
+// real hit-site juice exactly — FOREST_HITTEST capture footage must not under-sell the game feel.
+pub(crate) const HITSTOP_KILL: f32 = 0.10;
+pub(crate) const HITSTOP_CRIT: f32 = 0.07;
+pub(crate) const HITSTOP_HIT: f32 = 0.04;
 /// During hit-stop the sim runs at this fraction of real time rather than a dead freeze — a brief
 /// slow-mo dip that still sells the "punch" without the full-stop stutter that read as micro-lag.
 const HITSTOP_SLOWMO: f32 = 0.15;
-const SHAKE_KILL: f32 = 0.46;
-const SHAKE_CRIT: f32 = 0.32;
-const SHAKE_HIT: f32 = 0.20;
-const KNOCKBACK: f32 = 6.0;
-const KNOCKBACK_CRIT: f32 = 9.0;
+pub(crate) const SHAKE_KILL: f32 = 0.46;
+pub(crate) const SHAKE_CRIT: f32 = 0.32;
+pub(crate) const SHAKE_HIT: f32 = 0.20;
+pub(crate) const KNOCKBACK: f32 = 6.0;
+pub(crate) const KNOCKBACK_CRIT: f32 = 9.0;
 /// A crit/heavy blow STAGGERS the ork: its attack is interrupted and its next strike pushed out by
 /// this long (s). Reuses the existing `atk_cd` gate (honoured by both the camp and siege brains) so
 /// a hard hit visibly stops the ork's offense — the "you felt that" beat — with no new AI state.
@@ -222,9 +224,9 @@ const HEAVY_MULT: f64 = 3.0;
 /// "can I afford it" grey-out.
 pub(crate) const HEAVY_STAMINA_COST: f32 = 30.0;
 /// Heavy juice tier — a notch ABOVE a kill (`HITSTOP_KILL`/`SHAKE_KILL`) so the payoff lands hard.
-const HITSTOP_HEAVY: f32 = 0.14;
-const SHAKE_HEAVY: f32 = 0.6;
-const FOV_KICK_HEAVY: f32 = 2.4;
+pub(crate) const HITSTOP_HEAVY: f32 = 0.14;
+pub(crate) const SHAKE_HEAVY: f32 = 0.6;
+pub(crate) const FOV_KICK_HEAVY: f32 = 2.4;
 
 pub fn drive_hit_stop(
     real: Res<Time<bevy::time::Real>>,

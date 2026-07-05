@@ -24,10 +24,12 @@ const FLOAT_RISE: f32 = 1.3;
 const FLOAT_FONT: f32 = 24.0;
 /// Drop-shadow alpha at full opacity (fades with the number).
 const FLOAT_SHADOW_A: f32 = 0.85;
-/// Hurt-flash duration on a struck ork (s). SHORT on purpose: the flash is now a *pop* (a bright
-/// hot core at the contact frame that falls off fast), not the old faint plateau — a quick punch
-/// reads as impact without strobing the model on rapid hits.
-const HURT_FLASH_DUR: f32 = 0.11;
+/// Hurt-flash duration on a struck ork (s). Still a front-loaded *pop* (bright hot core at the
+/// contact frame, k² falloff — see `hurt_flash`), not a plateau; but 0.11 s lived on only ~3
+/// frames at 30 fps, so on capture/stream footage the flash read as barely-there (verified on the
+/// baseline combat clip — not one still caught it mid-flash). 0.17 keeps the punch shape while
+/// surviving the frame grid; rapid combo hits still don't strobe (each re-insert restarts the pop).
+const HURT_FLASH_DUR: f32 = 0.17;
 /// Warm tint of the flash (linear RGB weights) — a hot white-amber spark, NOT flat engine-white,
 /// so the pop reads as a struck-flesh impact rather than a placeholder blink. Scaled by the
 /// per-hit `intensity` (light < crit < heavy), so a heavy blow flashes far harder than a poke.
@@ -201,15 +203,20 @@ fn float_test(
 }
 
 /// Tuning/capture hook: `FOREST_HITTEST=1` staged-hits the ork nearest the hero every ~0.6s,
-/// cycling light → crit → heavy, so a clip/still shows the flash pop + absorb squash + recoil lean
-/// across all three weight tiers without landing real swings. Pair with `FOREST_ORKLINE` (parked
-/// orks) + `FOREST_TPS`/`FOREST_CLIP`. No effect in normal play.
+/// cycling light → crit → heavy → kill, so a clip/still shows the FULL landed-blow package —
+/// flash pop, absorb squash, recoil lean, knockback shove, hit-stop, camera trauma + FOV kick —
+/// across the weight tiers without landing real swings. Mirrors the `player_attack` hit site
+/// (same `KNOCKBACK`/`HITSTOP_*`/`SHAKE_*` tiers), so capture footage is honest about the real
+/// game feel. Pair with `FOREST_ORKLINE` (parked orks) + `FOREST_TPS`/`FOREST_CLIP`. No effect in
+/// normal play.
 fn hit_test(
     time: Res<Time>,
     hero: Res<crate::player::HeroState>,
     mut commands: Commands,
     mut orks: Query<(Entity, &GlobalTransform, &mut Ork), Without<crate::dying::Dying>>,
     mut floats: ResMut<FloatQueue>,
+    mut hitstop: ResMut<crate::player::HitStop>,
+    mut feedback: ResMut<HitFeedback>,
     mut t: Local<f32>,
     mut tier: Local<u32>,
 ) {
@@ -231,13 +238,19 @@ fn hit_test(
         }
     }
     let Some((e, p, _)) = best else { return };
+    // Blow direction hero→ork (the shove axis); camera recoils back along it like a real swing.
+    let dir = Vec2::new(p.x - hero.pos.x, p.z - hero.pos.y).normalize_or_zero();
+    let recoil = -dir;
     // Step 3 stages a DIRECTED KILL (topples away from the hero) so a clip shows the death money-shot
     // + proves the corpse stops colliding; steps 0–2 cycle the light/crit/heavy hit reaction.
     if *tier % 4 == 3 {
         *tier += 1;
-        let dir = Vec2::new(p.x - hero.pos.x, p.z - hero.pos.y);
         crate::dying::begin_dying_struck(&mut commands, e, now, dir, true);
         floats.0.push(FloatReq { world: p + Vec3::Y * 2.2, text: "†".into(), color: col_kill(), scale: 1.4 });
+        feedback.shake_dir = recoil;
+        feedback.trauma = (feedback.trauma + crate::player::SHAKE_KILL).min(1.0);
+        add_fov_kick(&mut feedback, FOV_KICK_KILL);
+        hitstop.remaining = hitstop.remaining.max(crate::player::HITSTOP_KILL);
         return;
     }
     let (intensity, amp, label, heavy) = match *tier % 4 {
@@ -246,15 +259,30 @@ fn hit_test(
         _ => (0.95, 0.17, "HEAVY", true),
     };
     *tier += 1;
+    let crit = label == "CRIT";
     if let Ok((_, _, mut o)) = orks.get_mut(e) {
         o.hit_recoil = now;
-        if heavy || label == "CRIT" {
+        // The shove — same push the real hit site applies (crit/heavy shove harder).
+        o.kb = dir * if crit || heavy { crate::player::KNOCKBACK_CRIT } else { crate::player::KNOCKBACK };
+        if heavy || crit {
             o.atk_anim = 0.0; // stagger: cancel any wind-up
         }
     }
     commands.entity(e).try_insert(HurtFlash::new(now, intensity));
     commands.entity(e).try_insert(HitSquash::new(now, amp, false));
     floats.0.push(FloatReq { world: p + Vec3::Y * 2.2, text: label.into(), color: col_ork_hit(), scale: 1.2 });
+    // Camera + clock: the same tiered punch `player_attack` lands.
+    feedback.shake_dir = recoil;
+    let (shake, kick, stop) = if heavy {
+        (crate::player::SHAKE_HEAVY, crate::player::FOV_KICK_HEAVY, crate::player::HITSTOP_HEAVY)
+    } else if crit {
+        (crate::player::SHAKE_CRIT, FOV_KICK_CRIT, crate::player::HITSTOP_CRIT)
+    } else {
+        (crate::player::SHAKE_HIT, FOV_KICK_HIT, crate::player::HITSTOP_HIT)
+    };
+    feedback.trauma = (feedback.trauma + shake).min(1.0);
+    add_fov_kick(&mut feedback, kick);
+    hitstop.remaining = hitstop.remaining.max(stop);
 }
 
 // ── 2. Ork HP bars (billboard follower entities) ────────────────────────────

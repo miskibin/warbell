@@ -16,7 +16,9 @@ mod combat;
 
 pub(crate) use combat::{
     spawn_burst, spawn_chips, spawn_dash_trail, spawn_heal_burst, spawn_motes, spawn_shockwave,
-    spawn_sweep_burst, CombatFx, Health,
+    spawn_sweep_burst, CombatFx, Health, HitStop, FOV_KICK_HEAVY, HITSTOP_CRIT, HITSTOP_HEAVY,
+    HITSTOP_HIT, HITSTOP_KILL, KNOCKBACK, KNOCKBACK_CRIT, SHAKE_CRIT, SHAKE_HEAVY, SHAKE_HIT,
+    SHAKE_KILL,
 };
 /// Swing length (seconds) — exposed so the standalone viewer can loop a preview swing.
 pub use combat::ATTACK_DURATION;

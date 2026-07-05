@@ -161,6 +161,17 @@ pub struct BipedHandles {
     lion: Option<Handle<Mesh>>,
 }
 
+impl BipedHandles {
+    /// Swap the off-hand (shield-slot) mesh — e.g. an ork torch-bearer carries a lit war-torch in
+    /// the shield hand instead of a buckler. `None` strips the off-hand entirely. The shield
+    /// emblem is dropped either way (it only makes sense riding an actual shield).
+    pub fn with_shield(mut self, shield: Option<Handle<Mesh>>) -> Self {
+        self.shield = shield;
+        self.lion = None;
+        self
+    }
+}
+
 impl BipedMeshes {
     /// Upload every mesh once, returning shareable (cloneable) handles for cached spawning.
     pub fn upload(self, meshes: &mut Assets<Mesh>) -> BipedHandles {
@@ -188,11 +199,12 @@ impl BipedMeshes {
 
 /// Spawn the studio knight skeleton (the same joint hierarchy + frames the hero uses) for a mob,
 /// from pre-uploaded `h` handles. Tags each joint [`BipedPart`] so [`animate_biped`] poses it from
-/// the root's [`BipedDrive`]. **Returns the `Head` joint entity** so callers can attach extras
-/// (e.g. an ork's glowing eyes). Per-mob tuning: `head_scale`/`foot_scale` (studio group scales),
-/// `hip_dx`/`shoulder_dx` (limb spacing), `rig_offset_y` (drop feet onto the ground), and
-/// `shield_xf` (Some → mount the shield + emblem on the left hand). The held `weapon` rides the
-/// `Sword` pivot. Built under a `rig` child of `root` so the caller's root scale sizes the whole mob.
+/// the root's [`BipedDrive`]. **Returns `(Head, Option<Shield>)` joint entities** so callers can
+/// attach extras (an ork's glowing eyes on the head; a torch-bearer's flame + light on the
+/// off-hand). Per-mob tuning: `head_scale`/`foot_scale` (studio group scales), `hip_dx`/
+/// `shoulder_dx` (limb spacing), `rig_offset_y` (drop feet onto the ground), and `shield_xf`
+/// (Some → mount the shield + emblem on the left hand). The held `weapon` rides the `Sword`
+/// pivot. Built under a `rig` child of `root` so the caller's root scale sizes the whole mob.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_biped(
     commands: &mut Commands,
@@ -205,7 +217,7 @@ pub fn spawn_biped(
     shoulder_dx: f32,
     rig_offset_y: f32,
     shield_xf: Option<Transform>,
-) -> Entity {
+) -> (Entity, Option<Entity>) {
     let p = |t: Vec3| Transform::from_translation(t);
     let ps = |t: Vec3, s: f32| Transform { translation: t, scale: Vec3::splat(s), ..default() };
     // Spawn a tagged joint (transform-only) under `parent`, with an optional mesh-leaf child.
@@ -237,11 +249,13 @@ pub fn spawn_biped(
     let sh_l = joint(commands, torso, Some(ShoulderL), p(Vec3::new(-shoulder_dx, 0.27, 0.01)), Some(h.shoulder_l));
     let el_l = joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, -0.30, 0.0)), Some(h.elbow_l));
     let hand_l = joint(commands, el_l, None, p(Vec3::new(0.0, -0.25, 0.0)), None);
+    let mut shield_out = None;
     if let (Some(sx), Some(shield)) = (shield_xf, h.shield) {
         let shield_e = joint(commands, hand_l, Some(Shield), sx, Some(shield));
         if let Some(lion) = h.lion {
             joint(commands, shield_e, None, p(Vec3::new(0.0, -0.03, 0.033)), Some(lion));
         }
+        shield_out = Some(shield_e);
     }
 
     // Right arm (+ optional weapon on the Sword pivot).
@@ -260,7 +274,7 @@ pub fn spawn_biped(
     let knee_r = joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, -0.40, 0.0)), Some(h.knee_r));
     joint(commands, knee_r, Some(FootR), ps(Vec3::new(0.0, -0.45, 0.0), foot_scale), Some(h.foot_r));
 
-    head_e
+    (head_e, shield_out)
 }
 
 pub struct BipedPlugin;

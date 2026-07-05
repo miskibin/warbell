@@ -778,6 +778,55 @@ fn ork_shield_xf() -> Transform {
     Transform { translation: Vec3::new(0.0, 0.0, 0.14), rotation: xyz(0.15, -0.45, 0.1), scale: Vec3::ONE }
 }
 
+/// Orientation baked into the torch-bearer's held torch, in the SHIELD-joint frame. The biped
+/// animator rewrites the Shield joint's pose every frame with the shared hero carry
+/// (`anim::shield_rest_r` ≈ `e3(0.12, -1.5, 0)`) — tuned edge-on for a heater shield — so, like
+/// the ork buckler's baked `rotation_y(1.15)`, any "how the prop sits in the fist" correction
+/// must live in the MESH, not the mount transform. Tuned against `FOREST_VIEW=ork:torch`.
+pub(crate) fn ork_torch_bake() -> Quat {
+    // `FOREST_TORCH_BAKE="x,y,z"` (radians, XYZ euler) overrides for FOREST_VIEW tuning loops —
+    // iterate camera shots without a rebuild, then freeze the winner into the default below.
+    if let Ok(s) = std::env::var("FOREST_TORCH_BAKE") {
+        let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        if p.len() == 3 {
+            return xyz(p[0], p[1], p[2]);
+        }
+    }
+    // Tuned against `FOREST_VIEW=ork:torch` (see the doc above): identity leaves the shaft
+    // hugging the upper arm with the tip buried at the shoulder; +X pitches it forward out of
+    // the fist, the small +Z rolls the flame outboard clear of the cheek/shoulder fur.
+    xyz(0.65, 0.0, 0.12)
+}
+
+/// Shaft length from grip to the pitch head's heart — where the flame + light sit
+/// (shield-joint-local, through the same bake so mesh and flame can't drift apart).
+const TORCH_TIP_LEN: f32 = 0.62;
+pub(crate) fn ork_torch_tip() -> Vec3 {
+    ork_torch_bake() * Vec3::new(0.0, TORCH_TIP_LEN, 0.0)
+}
+
+/// The held war-torch (shield-slot prop, grip at the joint origin, shaft up local +Y before the
+/// bake): wrapped grip, wooden shaft, pitch-soaked head. The emissive flame is NOT part of this
+/// mesh — it spawns as a separate `StandardMaterial` child at [`ork_torch_tip`] (this mesh rides
+/// the shared vertex-colour skin material and flashes with the body on a hit).
+pub(crate) fn ork_torch_mesh() -> Mesh {
+    group(vec![
+        cyl(0.045, 0.18, v(0.0, 0.02, 0.0), Quat::IDENTITY, lin(0x2e1f12)), // leather-wrapped grip
+        cyl(0.032, 0.52, v(0.0, 0.32, 0.0), Quat::IDENTITY, lin(0x4a2a16)), // shaft
+        frustum(0.072, 0.045, 0.16, v(0.0, 0.60, 0.0), Quat::IDENTITY, lin(0x241408)), // pitch head
+    ])
+    .rotated_by(ork_torch_bake())
+}
+
+/// Viewer-only flame stand-in (bright vertex-coloured blob — the real flame is an emissive
+/// `StandardMaterial` the FOREST_VIEW stage doesn't carry). Marks [`ork_torch_tip`] placement.
+pub(crate) fn tinted_flame_marker() -> Mesh {
+    tinted(
+        Mesh::from(Sphere::new(0.105).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.55, 1.0)),
+        [4.0, 2.2, 0.4, 1.0],
+    )
+}
+
 /// Drive each (biped) ork's [`crate::biped::BipedDrive`] from its `Ork` AI, so `animate_biped` plays
 /// the studio clips. Mirrors the old `ork_limbs` gait/strike timing (gait `(t+phase)*gait`, the
 /// `strike_p` window → an overhead chop). Camp/patrol/wave orks use this; fortress decorative orks
@@ -1386,6 +1435,12 @@ pub struct Armory {
     tmpl: Vec<((OrkVariant, Faction), Template)>,
     eye_mesh: Handle<Mesh>,
     eye_mat: Handle<StandardMaterial>, // glowing eyes stay a plain emissive StandardMaterial
+    /// War-torch strapped over a bearer's shoulder (shaft + lashing + pitch head; vertex-coloured
+    /// so it rides the shared skin material and flashes with the body on a hit).
+    torch_mesh: Handle<Mesh>,
+    /// Teardrop torch flame — emissive `StandardMaterial` like the eyes, so bloom catches it.
+    flame_mesh: Handle<Mesh>,
+    flame_mat: Handle<StandardMaterial>,
 }
 
 impl Armory {
@@ -1419,7 +1474,17 @@ impl Armory {
             unlit: true,
             ..default()
         });
-        Armory { mat, tmpl, eye_mesh, eye_mat }
+        let torch_mesh = meshes.add(ork_torch_mesh());
+        let flame_mesh =
+            meshes.add(Mesh::from(Sphere::new(0.105).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.55, 1.0)));
+        // Matches the fire family (`firelight` embers / castle flames): warm base, strong emissive.
+        let flame_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.55, 0.22),
+            emissive: LinearRgba::rgb(5.0, 1.9, 0.35),
+            unlit: true,
+            ..default()
+        });
+        Armory { mat, tmpl, eye_mesh, eye_mat, torch_mesh, flame_mesh, flame_mat }
     }
 
     fn template(&self, variant: OrkVariant, faction: Faction) -> &Template {
@@ -1535,8 +1600,22 @@ impl Armory {
                 BiomeEntity,
             ))
             .id();
-        let head = crate::biped::spawn_biped(
-            commands, root, &self.mat, t.biped.clone(),
+        // Torch-bearers: ~a third of the melee line (grunts/berserkers — scouts sneak, shamans
+        // already glow) trades the buckler for a lit war-torch HELD in the shield hand (same
+        // joint, so the carry pose + gait animate it naturally). This is the night siege's
+        // READABILITY fix: capture footage showed the horde as black cutouts against the
+        // moon-dark ground, so the bearers carry their own warm light into the fight (and read as
+        // a river of fire on the horizon from the walls). Seed-hashed, NOT `rng`-drawn, so the
+        // existing spawn rng sequence (phase/facing/timer/heal_cd) is untouched.
+        let torch_bearer = matches!(variant, OrkVariant::Grunt | OrkVariant::Berserker)
+            && (seed.wrapping_mul(2654435761) >> 7) % 100 < 35;
+        let handles = if torch_bearer {
+            t.biped.clone().with_shield(Some(self.torch_mesh.clone()))
+        } else {
+            t.biped.clone()
+        };
+        let (head, off_hand) = crate::biped::spawn_biped(
+            commands, root, &self.mat, handles,
             1.22, 1.0, 0.17, 0.38, ORK_RIG_OFF, Some(ork_shield_xf()),
         );
         // Two glowing eyes on the head joint (head-local) — the menacing night-glow.
@@ -1545,6 +1624,22 @@ impl Armory {
                 p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), Transform::from_translation(off), OrkEye));
             }
         });
+        if let (true, Some(hand)) = (torch_bearer, off_hand) {
+            // Flame + flicker-light at the torch head (shield-joint-local via `ork_torch_tip`, so
+            // it tracks the held shaft through the carry/gait poses). The light rides
+            // `firelight`'s shared flicker/ember systems, so a marching bearer trails sparks at
+            // night for free. Emissive `StandardMaterial` — the hurt-flash skin-clone only
+            // touches `CreatureMaterial` children, so no `OrkEye` guard is needed.
+            commands.entity(hand).with_children(|p| {
+                p.spawn((
+                    Mesh3d(self.flame_mesh.clone()),
+                    MeshMaterial3d(self.flame_mat.clone()),
+                    Transform::from_translation(ork_torch_tip()),
+                    bevy::light::NotShadowCaster,
+                    crate::firelight::held_torch_light(phase * 3.7),
+                ));
+            });
+        }
         root
     }
 
@@ -1562,7 +1657,7 @@ impl Armory {
                 BiomeEntity,
             ))
             .id();
-        let head = crate::biped::spawn_biped(commands, root, &self.mat, t.biped.clone(), 1.22, 1.0, 0.17, 0.38, ORK_RIG_OFF, Some(ork_shield_xf()));
+        let head = crate::biped::spawn_biped(commands, root, &self.mat, t.biped.clone(), 1.22, 1.0, 0.17, 0.38, ORK_RIG_OFF, Some(ork_shield_xf())).0;
         commands.entity(head).with_children(|p| {
             for off in ORK_BIPED_EYE_OFFS {
                 p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), Transform::from_translation(off), OrkEye));
