@@ -254,6 +254,64 @@ fn build_autumn() -> Mesh {
     merged(parts)
 }
 
+// ── POC: a "pretty" broadleaf — same style, much higher fidelity ────────────────────────
+//
+// Measurement prototype for the tree-model-performance question. It stays inside the exact
+// same pipeline as every other tree (one merged mesh, vertex `ATTRIBUTE_COLOR`, shared white
+// material → still auto-batches), so it does NOT break the batch or add a texture/alpha pass —
+// the ONLY thing that grows is the triangle count. That's the point: it isolates "how much
+// does prettier geometry cost" from "what happens if you break batching". Built by cranking the
+// three fidelity knobs the current broadleaf leaves low:
+//   - foliage ico detail 1 → 2  (80 → 320 tris per blob)
+//   - crown blobs 8 → 18        (fuller, more organic silhouette)
+//   - trunk resolution 7 → 12, three tapering segments, 5 branches
+pub fn build_pretty_broadleaf() -> Mesh {
+    let bark = lin(TREE_TRUNK);
+    let (dark, mid, light) = (FOLIAGE_DARK, FOLIAGE_MID, FOLIAGE_LIGHT);
+    let mut parts = vec![
+        tinted(trunk_part(0.075, 0.11, 0.42, 12, Vec3::new(0.0, 0.21, 0.0)), bark),
+        tinted(trunk_part(0.062, 0.078, 0.44, 12, Vec3::new(0.015, 0.60, 0.0)), bark),
+        tinted(trunk_part(0.05, 0.062, 0.36, 10, Vec3::new(0.03, 0.94, 0.01)), bark),
+    ];
+    parts.extend(root_flare(0.11, 6, 0.14, bark, 0.45));
+    // Five limbs forking into the crown.
+    let limbs = [
+        (0.035, 0.32, 0.7, 0.4, Vec3::new(0.03, 0.78, 0.0)),
+        (0.032, 0.28, -0.8, 2.6, Vec3::new(-0.02, 0.74, 0.02)),
+        (0.028, 0.26, 0.6, 4.4, Vec3::new(0.02, 0.88, -0.03)),
+        (0.026, 0.24, -0.65, 1.5, Vec3::new(-0.03, 0.92, 0.02)),
+        (0.024, 0.22, 0.85, 5.6, Vec3::new(0.04, 0.84, 0.03)),
+    ];
+    for (r, len, tilt, yaw, base) in limbs {
+        parts.push(branch_part(r, len, tilt, yaw, base, bark));
+    }
+    // 18-blob crown at ico detail 2 — fuller, rounder, more clumps; dark base → mid → light cap.
+    let blobs: [(f32, Vec3, u32); 18] = [
+        (0.34, Vec3::new(0.0, 1.02, 0.0), dark),
+        (0.28, Vec3::new(0.30, 0.98, 0.10), dark),
+        (0.27, Vec3::new(-0.26, 1.02, -0.12), dark),
+        (0.25, Vec3::new(0.10, 1.00, -0.30), dark),
+        (0.24, Vec3::new(-0.14, 1.06, 0.28), mid),
+        (0.30, Vec3::new(0.04, 1.28, 0.04), mid),
+        (0.26, Vec3::new(-0.24, 1.24, 0.14), mid),
+        (0.25, Vec3::new(0.26, 1.26, -0.10), mid),
+        (0.23, Vec3::new(0.02, 1.30, 0.30), mid),
+        (0.24, Vec3::new(-0.06, 1.32, -0.28), mid),
+        (0.22, Vec3::new(0.22, 1.32, 0.22), light),
+        (0.24, Vec3::new(-0.02, 1.52, -0.02), light),
+        (0.21, Vec3::new(0.18, 1.50, 0.12), light),
+        (0.20, Vec3::new(-0.18, 1.50, -0.10), light),
+        (0.19, Vec3::new(0.06, 1.54, 0.20), light),
+        (0.18, Vec3::new(0.14, 1.64, 0.06), light),
+        (0.16, Vec3::new(-0.10, 1.66, 0.08), light),
+        (0.14, Vec3::new(0.0, 1.74, 0.0), light),
+    ];
+    for (r, c, tone) in blobs {
+        parts.push(tinted(foliage(r, 2, c), lin(tone)));
+    }
+    bake_facet_shading(flat_shaded(merged(parts)))
+}
+
 /// The broadleaf body shared by the green `Broadleaf` and the `Autumn` variant — only the
 /// three crown tones differ. (dark base mass → mid body → light sunlit cap)
 fn build_broadleaf_toned(dark: u32, mid: u32, light: u32) -> Mesh {
@@ -706,12 +764,20 @@ fn spawn_treeline(
         TreeKind::Dead,
         TreeKind::Stump,
     ];
-    for (i, k) in kinds.iter().enumerate() {
-        let x = p[0] + i as f32 * 3.0 - (kinds.len() as f32 - 1.0) * 1.5;
+    // POC: append the "pretty" broadleaf as an extra model at the end of the row so a single
+    // FOREST_TREELINE shot frames current-broadleaf (index 0) next to it for a before/after.
+    let extra = [build_tree_mesh(kinds[0]), build_pretty_broadleaf()];
+    for (i, m) in kinds
+        .iter()
+        .map(|k| build_tree_mesh(*k))
+        .chain(extra)
+        .enumerate()
+    {
+        let x = p[0] + i as f32 * 3.0 - (kinds.len() as f32 + 1.0) * 1.5;
         let z = p[1];
         let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
         commands.spawn((
-            Mesh3d(meshes.add(build_tree_mesh(*k))),
+            Mesh3d(meshes.add(m)),
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(Vec3::new(x, y, z)).with_scale(Vec3::splat(2.0)),
         ));
@@ -724,6 +790,32 @@ mod tests {
 
     fn radius(k: TreeKind) -> f32 {
         silhouette_block_radius(&build_tree_mesh(k))
+    }
+
+    /// POC measurement: exact triangle count per tree kind (current) vs the "pretty" broadleaf,
+    /// so the tree-model-performance question is answered with real numbers, not a guess. Trees
+    /// are non-indexed after `flat_shaded` (`duplicate_vertices`), so tris == vertices / 3.
+    #[test]
+    fn tri_count_report() {
+        let tris = |m: &Mesh| m.count_vertices() / 3;
+        let kinds = [
+            ("broadleaf", TreeKind::Broadleaf),
+            ("birch", TreeKind::Birch),
+            ("pine", TreeKind::Pine),
+            ("poplar", TreeKind::Poplar),
+            ("autumn", TreeKind::Autumn),
+            ("dead", TreeKind::Dead),
+            ("stump", TreeKind::Stump),
+        ];
+        eprintln!("── current tree tri counts ──");
+        for (name, k) in kinds {
+            eprintln!("  {name:<10} {} tris", tris(&build_tree_mesh(k)));
+        }
+        let cur = tris(&build_tree_mesh(TreeKind::Broadleaf));
+        let pretty = tris(&build_pretty_broadleaf());
+        eprintln!("── POC ──");
+        eprintln!("  broadleaf (current) {cur} tris");
+        eprintln!("  broadleaf (pretty)  {pretty} tris  = {:.1}×", pretty as f32 / cur as f32);
     }
 
     /// The whole point of the per-kind footprint: the wide-skirted conifer blocks widest, while
