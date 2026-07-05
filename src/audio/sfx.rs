@@ -349,14 +349,14 @@ pub(crate) fn play_cues(
             | AudioCue::ChestOpen
             | AudioCue::Gold
             | AudioCue::ShopBuy
-            | AudioCue::CampRescue
+            | AudioCue::CampRescue(_)
             | AudioCue::LowHp => {
                 let sting = match *cue {
                     AudioCue::OreShatter => Sting::OreShatter,
                     AudioCue::ChestOpen => Sting::ChestOpen,
                     AudioCue::Gold => Sting::Gold,
                     AudioCue::ShopBuy => Sting::ShopBuy,
-                    AudioCue::CampRescue => Sting::CampRescue,
+                    AudioCue::CampRescue(_) => Sting::CampRescue,
                     _ => Sting::LowHp,
                 };
                 if let Some(h) = stings.handle(sting) {

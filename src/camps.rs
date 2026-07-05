@@ -32,12 +32,106 @@ pub struct CampsPlugin;
 
 impl Plugin for CampsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (flicker_flames, drift_smoke));
+        // swing_cage_doors + reconcile_cages_on_load are UNGATED: the door swing is cosmetic
+        // (a mid-swing door finishing under a pause is harmless), and the load reconcile must
+        // fire on the GameLoaded message whenever it lands.
+        app.add_systems(Update, (flicker_flames, drift_smoke, swing_cage_doors, reconcile_cages_on_load));
         app.add_systems(
             Update,
             respawn_warbands.run_if(in_state(crate::game_state::Modal::None)),
         );
     }
+}
+
+/// Ease every cage door toward its `open` target — the rescue "animation": a quick fling that
+/// settles (cubic ease-out). The door is a child of the cage frame, so this writes rotation
+/// only; the frame (and its blocker) never change.
+fn swing_cage_doors(time: Res<Time>, mut q: Query<(&mut Transform, &mut CageDoor)>) {
+    let dt = time.delta_secs();
+    for (mut tf, mut d) in &mut q {
+        let step = dt / CAGE_DOOR_SWING;
+        d.t = (d.t + if d.open { step } else { -step }).clamp(0.0, 1.0);
+        let s = 1.0 - (1.0 - d.t).powi(3);
+        tf.rotation = Quat::from_rotation_y(CAGE_DOOR_OPEN_YAW * s);
+    }
+}
+
+/// Post-load reconcile: a restored run's cages must match its `rescued_camps` /
+/// `blight_captives_freed` flags, whatever state the live world is in (a fresh world rebuild
+/// spawns every cage closed + stocked; an in-process Continue may have them open from the dead
+/// run). Snap each door to its saved state and despawn the captives of already-freed cages.
+fn reconcile_cages_on_load(
+    mut ev: MessageReader<crate::savegame::GameLoaded>,
+    mut doors: Query<&mut CageDoor>,
+    captives: Query<(Entity, &crate::villagers::Captive)>,
+    mut commands: Commands,
+) {
+    let Some(crate::savegame::GameLoaded(data)) = ev.read().last() else { return };
+    let freed = |key: CageKey| match key {
+        CageKey::Camp(i) => data.rescued_camps.get(i).copied().unwrap_or(false),
+        CageKey::Blight(i) => data.blight_captives_freed.get(i).copied().unwrap_or(false),
+        CageKey::Decor => false,
+    };
+    for mut d in &mut doors {
+        d.open = freed(d.key);
+        d.t = if d.open { 1.0 } else { 0.0 }; // snap — no ghost swing on load
+    }
+    for (e, c) in &captives {
+        if freed(c.key) {
+            commands.entity(e).try_despawn(); // rescued long ago — walked home already
+        }
+    }
+}
+
+/// Spawn one prisoner cage: the natural-timber frame (`ork_fortress::cage_mesh`), the separate
+/// hinged door child, and `captives` REAL seated peasants inside
+/// (`villagers::spawn_cage_captive`, one per `ork_fortress::CAGE_SEATS` straw bed). A rescue
+/// opens the door by ANIMATION and walks the peasants out — nothing about the cage is swapped
+/// or despawned. Callers register their own collision blocker (footprints differ per site).
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_cage(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    prop_mat: &Handle<StandardMaterial>,
+    tf: Transform,
+    key: CageKey,
+    captives: usize,
+    seed: u32,
+    open: bool,
+) -> Entity {
+    use crate::ork_fortress::{cage_door_mesh, cage_mesh, CAGE_SEATS, CAGE_W};
+    let mut rng = seed | 1;
+    let root = commands
+        .spawn((
+            Mesh3d(meshes.add(cage_mesh(&mut rng))),
+            MeshMaterial3d(prop_mat.clone()),
+            tf,
+            Cage { key },
+            BiomeEntity,
+        ))
+        .id();
+    // The door hangs just proud of the (+X, +Z) corner post. No BiomeEntity of its own — it
+    // despawns with the frame (child cascade), and a second tag would double-despawn.
+    let door = commands
+        .spawn((
+            Mesh3d(meshes.add(cage_door_mesh(&mut rng))),
+            MeshMaterial3d(prop_mat.clone()),
+            Transform::from_translation(v(CAGE_W / 2.0 + 0.07, 0.0, CAGE_W / 2.0)),
+            // `open` pre-opens the door (the `FOREST_CAGETEST` after-state cage) — it eases
+            // from shut on the first frames, which is invisible during boot.
+            CageDoor { key, open, t: 0.0 },
+        ))
+        .id();
+    commands.entity(root).add_child(door);
+    // The captives: real peasants seated on the straw beds (roots of their own — they stand up
+    // and WALK OUT on rescue, so they can't be children of the frame).
+    for (sx, sz, syaw) in CAGE_SEATS.iter().take(captives) {
+        let seat = tf.transform_point(v(*sx, 0.148, *sz)); // on the plank floor
+        let facing = tf.rotation * ry(*syaw);
+        crate::villagers::spawn_cage_captive(commands, meshes, creature_mats, seat, facing, key, next_u32(&mut rng));
+    }
+    root
 }
 
 /// Campfire flame marker — also the anchor the audio module hangs a spatial campfire loop
@@ -54,16 +148,42 @@ struct CampSmoke {
     speed: f32,
 }
 
-/// Tags JUST the prisoner-cage prop of a camp so the rescue system can despawn it (open the
-/// cage) when the warband is cleared. `camp` = the enumerate index of `plan()` — the same index
-/// [`cage_positions`] and `villagers::camp_rescue` use.
-#[derive(Component)]
-pub struct Cage {
-    pub camp: usize,
+/// Which prisoner cage an entity belongs to — shared by the cage frame ([`Cage`]), its hinged
+/// door ([`CageDoor`]) and the seated peasants inside (`villagers::Captive`), so a rescue can
+/// address all three parts of one cage.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CageKey {
+    /// A wilderness camp's cage — the enumerate index of [`plan`] (the same index
+    /// [`cage_positions`] and `villagers::camp_rescue` use).
+    Camp(usize),
+    /// A Blight cage outside Gnashfang Hold — the `ork_fortress::BLIGHT_CAGES` slot.
+    Blight(usize),
+    /// Decorative only (the Hold's own hoard-cage, the `FOREST_CAGETEST` stage) — never freed.
+    Decor,
 }
 
-/// Index of the cage within the per-camp `solids` vec in [`build`].
-const CAGE_SOLID: usize = 3;
+/// Tags the prisoner-cage FRAME. The frame persists through a rescue — opening is the hinged
+/// [`CageDoor`] child swinging (an animation), never a model swap.
+#[derive(Component)]
+pub struct Cage {
+    pub key: CageKey,
+}
+
+/// The cage's hinged door (a child of the frame, hung at the (+X, +Z) corner post). A rescue
+/// sets `open`; [`swing_cage_doors`] eases the yaw so the door visibly swings out.
+#[derive(Component)]
+pub struct CageDoor {
+    pub key: CageKey,
+    /// Target state — set true by the rescue systems (or snapped by the save-load reconcile).
+    pub open: bool,
+    /// Swing progress 0 (shut) → 1 (fully open). Snap to 1.0 to open instantly (load reconcile).
+    pub t: f32,
+}
+
+/// How far the door swings (rad about the hinge post; negative = outward past perpendicular).
+const CAGE_DOOR_OPEN_YAW: f32 = -2.05;
+/// Full swing duration (s).
+const CAGE_DOOR_SWING: f32 = 1.4;
 
 /// Seconds after a camp's warband is wiped before it repopulates. 3× the old 60s (TS
 /// `OrkCamp.tsx` used 60) so clearing a camp buys real breathing room instead of an endless
@@ -305,6 +425,32 @@ pub fn build(
         }
     }
 
+    // Screenshot hook: `FOREST_CAGETEST="x,z"` parks the rescue's before/after states side by
+    // side at the given world XZ: a CLOSED cage full of seated peasant captives, and 5.5u
+    // further +X an OPEN, emptied one — so one still verifies the captive models, the natural
+    // frame and the swung door. (The swing ANIMATION itself films best via the real rescue:
+    // `FOREST_DEMO=rescue` + `FOREST_CLIP`.) Both doors face +X; frame from the east.
+    if let Ok(s) = std::env::var("FOREST_CAGETEST") {
+        let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        if p.len() == 2 {
+            for (dx, open) in [(0.0, false), (5.5, true)] {
+                let (x, z) = (p[0] + dx, p[1]);
+                let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
+                spawn_cage(
+                    commands,
+                    meshes,
+                    creature_mats,
+                    &prop_mat,
+                    Transform::from_xyz(x, y, z),
+                    CageKey::Decor,
+                    if open { 0 } else { crate::ork_fortress::CAGE_SEATS.len() },
+                    0xca6e_7e57 + dx as u32,
+                    open,
+                );
+            }
+        }
+    }
+
     for (camp, site) in sites.iter().enumerate() {
         // Logged so staging tools (screenshot framing, debugging) can find each camp.
         info!("camp {camp} at {:.1},{:.1}", site.centre.x, site.centre.y);
@@ -314,10 +460,9 @@ pub fn build(
         let place = |local: Vec3| centre3 + rot_q * local;
 
         // Static props: (mesh, camp-local pos, local yaw, footprint half-extents (hw,hd) in the
-        // prop's own frame; (0,0) = no collision). The tent + cage are the FORTRESS models
-        // (`ork_fortress::tent_mesh`/`cage_mesh`) so every warband pitches the same gear as
-        // Gnashfang Hold; both are SOLID — they register blocker boxes, so the hero and the
-        // warband route around them.
+        // prop's own frame; (0,0) = no collision). The tent is the FORTRESS model
+        // (`ork_fortress::tent_mesh`) so every warband pitches the same gear as Gnashfang Hold;
+        // it's SOLID — it registers a blocker box, so the hero and the warband route around it.
         // Tent NW (−z), cage SW (+z), well apart so the bigger fortress models don't overlap
         // (they did at the old −2.4/+2.2 spots). Tent at 0.7× the fortress size to fit the camp.
         let mut prop_rng = site.seed | 1;
@@ -325,28 +470,40 @@ pub fn build(
             (crate::ork_fortress::tent_mesh(0.7, &mut prop_rng), v(-2.3, 0.0, -2.1), 0.0_f32, (1.3_f32, 1.1_f32)),
             (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.25, 0.25)),
             (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
-            (crate::ork_fortress::cage_mesh(), v(-2.4, 0.0, 2.2), 0.6, (1.2, 1.2)),
             (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.55, 0.55)),
         ];
-        for (idx, (m, local, lyaw, (hw, hd))) in solids.into_iter().enumerate() {
+        for (m, local, lyaw, (hw, hd)) in solids {
             let h = meshes.add(m);
             let world = place(local);
-            let mut e = commands.spawn((
+            commands.spawn((
                 Mesh3d(h),
                 MeshMaterial3d(prop_mat.clone()),
                 Transform { translation: world, rotation: rot_q * ry(lyaw), scale: Vec3::ONE },
                 BiomeEntity,
             ));
-            if idx == CAGE_SOLID {
-                // The cage: tag it for rescue-despawn. It blocks like any solid prop — you walk
-                // UP TO it to rescue, not through it. The blocker set is append-only, so the husk
-                // left after the cage opens stays solid too (a closed→open cage is a fine wall).
-                e.insert(Cage { camp });
-                crate::blockers::add_obb(world.x, world.z, hw, hd, site.rot + lyaw);
-            } else if hw > 0.0 && hd > 0.0 {
+            if hw > 0.0 && hd > 0.0 {
                 crate::blockers::add_obb(world.x, world.z, hw, hd, site.rot + lyaw);
             }
         }
+
+        // The prisoner cage: the fortress frame + hinged door + a full cage of real seated
+        // peasants (`spawn_cage`). It blocks like any solid prop — you walk UP TO it to rescue,
+        // not through it. The blocker set is append-only, so the frame stays solid after the
+        // door opens too (an opened cage is a fine wall; the peasants leave through the door
+        // mouth, which sits outside the box).
+        let cage_world = place(v(-2.4, 0.0, 2.2));
+        spawn_cage(
+            commands,
+            meshes,
+            creature_mats,
+            &prop_mat,
+            Transform { translation: cage_world, rotation: rot_q * ry(0.6), scale: Vec3::ONE },
+            CageKey::Camp(camp),
+            crate::villagers::CAMP_RESCUE_POP as usize,
+            site.seed ^ 0xca6e_0000,
+            false,
+        );
+        crate::blockers::add_obb(cage_world.x, cage_world.z, 1.2, 1.2, site.rot + 0.6);
 
         // Log sit-stumps ringing the fire (fire is at local (0.2,0,0)) — orks roost on these
         // between musters. Small footprint blockers so the hero bumps them but they don't wall
@@ -473,11 +630,6 @@ fn respawn_warbands(
 
 const POLE: u32 = 0x3a2a1a;
 const SKULL: u32 = 0xe0d8c0;
-const WOOD: u32 = 0x4b3724;
-const WOOD_DARK: u32 = 0x33271a;
-const BAR: u32 = 0x6b6f76;
-const CAPTIVE_BODY: u32 = 0x7c6a54;
-const CAPTIVE_HEAD: u32 = 0xcaa980;
 const STONE: u32 = 0x6e6e76;
 const LOG_LIGHT: u32 = 0x7a4a26;
 const LOG_DARK: u32 = 0x3a2a1a;
@@ -505,53 +657,9 @@ fn spikes_mesh() -> Mesh {
     group(parts)
 }
 
-// (The camps' bespoke closed cage is gone too — the closed state is the fortress cage,
-//  `ork_fortress::cage_mesh` (W 2.2 / H 1.8); only the opened husk below remains local,
-//  scaled up at spawn to match the bigger closed cage it replaces.)
-
-/// The OPENED cage — the fortress cage's frame proportions, the east-face bars gone (door
-/// swung out) and no captives inside. Spawned in place of the closed cage on a rescue, so
-/// it reads as the cage *opening* rather than vanishing.
-fn cage_open_mesh() -> Mesh {
-    const W: f32 = 1.7;
-    const H: f32 = 1.5;
-    const HW: f32 = W / 2.0;
-    let wood = lin(WOOD);
-    let dark = lin(WOOD_DARK);
-    let bar = lin(BAR);
-    let mut p: Vec<Mesh> = Vec::new();
-    p.push(bx(W + 0.12, 0.12, W + 0.12, v(0.0, 0.06, 0.0), dark)); // floor
-    for (sx, sz) in [(-HW, -HW), (HW, -HW), (-HW, HW), (HW, HW)] {
-        p.push(bx(0.14, H, 0.14, v(sx, H / 2.0, sz), wood)); // corner posts
-    }
-    p.push(bx(W, 0.1, 0.1, v(0.0, H - 0.05, -HW), wood));
-    p.push(bx(W, 0.1, 0.1, v(0.0, H - 0.05, HW), wood));
-    p.push(bx(0.1, 0.1, W, v(-HW, H - 0.05, 0.0), wood));
-    p.push(bx(0.1, 0.1, W, v(HW, H - 0.05, 0.0), wood));
-    // Bars on N / S / W only — the EAST side is the door, now open.
-    for o in [-0.45f32, 0.0, 0.45] {
-        p.push(bx(0.07, H - 0.06, 0.07, v(o, H / 2.0, -HW), bar)); // north
-        p.push(bx(0.07, H - 0.06, 0.07, v(o, H / 2.0, HW), bar)); // south
-        p.push(bx(0.07, H - 0.06, 0.07, v(-HW, H / 2.0, o), bar)); // west
-    }
-    // The swung-open door panel, hinged at the SE post and flung outward.
-    p.push(bxr(0.06, H - 0.1, W - 0.12, v(HW + 0.55, H / 2.0, HW - 0.45), ry(FRAC_PI_2 * 0.85), bar));
-    group(p)
-}
-
-/// Replace a closed cage with the opened husk at the same pose (called by the rescue path).
-pub fn open_cage(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    at: Transform,
-) {
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
-    // ×1.25: the open husk is authored at the OLD cage size (W 1.7); the closed cage it
-    // replaces is now the fortress one (W 2.2), so scale up to swing open at the same bulk.
-    let at = Transform { scale: at.scale * 1.25, ..at };
-    commands.spawn((Mesh3d(meshes.add(cage_open_mesh())), MeshMaterial3d(mat), at, BiomeEntity));
-}
+// (The opened-husk cage model is gone — a rescue no longer swaps meshes at all. The one cage
+//  model (`ork_fortress::cage_mesh`) persists and its hinged door child swings open by
+//  animation: see [`spawn_cage`] / [`swing_cage_doors`].)
 
 /// Campfire base — a ring of stones + two crossed logs (the solid, vertex-coloured part).
 fn fire_base_mesh() -> Mesh {
@@ -618,9 +726,6 @@ fn group(parts: Vec<Mesh>) -> Mesh {
 }
 fn bx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
     tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
-}
-fn bxr(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
-    tinted(Cuboid::new(w, h, d).mesh().build().rotated_by(rot).translated_by(off), c)
 }
 fn cyl(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
     tinted(Cylinder::new(r, h).mesh().resolution(6).build().rotated_by(rot).translated_by(off), c)
