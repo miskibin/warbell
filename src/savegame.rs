@@ -451,8 +451,9 @@ fn apply_pending_load(
     camps.done = data.rescued_camps.clone();
     camps.seen = data.rescued_camps.clone();
     // Blight cages: restore the freed flags so respawned patrols can't re-free an already-freed
-    // captive (which would dup `population`). In-process Continue keeps the live cage visuals, so
-    // only the flag matters here. Element-wise copy guards a length mismatch from an older save.
+    // captive (which would dup `population`). The cage VISUALS (door open/shut, captives seated
+    // or gone) reconcile from the GameLoaded message below — `camps::reconcile_cages_on_load`.
+    // Element-wise copy guards a length mismatch from an older save.
     if let Some(mut captives) = captives {
         for (i, &f) in data.blight_captives_freed.iter().enumerate() {
             if i < captives.freed.len() {

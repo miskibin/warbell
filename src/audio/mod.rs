@@ -121,8 +121,10 @@ pub enum AudioCue {
     Gold,
     /// Shop purchase confirmed.
     ShopBuy,
-    /// Camp captive freed.
-    CampRescue,
+    /// Camp/Blight captive freed — carries the cage's world position so the freed peasant's
+    /// voiced `Rescued` reaction (`npc.rs`) speaks from the cage, not from some random
+    /// townsperson across the map.
+    CampRescue(Vec3),
     /// Hero HP crossed the low threshold.
     LowHp,
     /// The ork fortress sounds its war-horn (sampled `war-horn.ogg` — a sharp wood crack,

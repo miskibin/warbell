@@ -884,8 +884,19 @@ pub fn build(
         commands.entity(flag).insert(BiomeEntity);
     }
 
-    // ── Prisoner cage (bigger than a camp's; the hold hoards captives) ──
-    spawn_solid(commands, meshes, &timber_mat, cage_mesh(), at(CAGE_AT), ry(0.4));
+    // ── Prisoner cage (decorative — the hold's captives are beyond rescue; that's the story
+    //    it tells). Real seated peasants behind a hinged door that never opens. ──
+    crate::camps::spawn_cage(
+        commands,
+        meshes,
+        creature_mats,
+        &timber_mat,
+        Transform { translation: at(CAGE_AT), rotation: ry(0.4), scale: Vec3::ONE },
+        crate::camps::CageKey::Decor,
+        CAGE_SEATS.len(),
+        next_u32(&mut rng),
+        false, // the Hold's door never opens
+    );
     crate::blockers::add_obb(CAGE_AT.x, CAGE_AT.y, 1.25, 1.25, 0.4);
 
     // ── War totems: one OUTSIDE on the causeway and two inside, all glaring at the
@@ -1143,17 +1154,22 @@ pub fn build(
     commands.insert_resource(BlightPatrols { armory, sites });
 
     // ── Caged captives: closed cages staked by two patrols (the raid objective). Each blocks
-    //    like a solid prop — you walk UP to it; `blight_rescue` opens it when its squad falls. ──
+    //    like a solid prop — you walk UP to it; `blight_rescue` swings the door open when its
+    //    squad falls and the captive (a real seated peasant) walks out and marches home. ──
     for (slot, (at_xz, _patrol)) in BLIGHT_CAGES.iter().enumerate() {
         let yaw = rng_range(&mut rng, 0.0, TAU);
         crate::blockers::add_obb(at_xz.x, at_xz.y, 1.1, 1.0, yaw);
-        commands.spawn((
-            Mesh3d(meshes.add(cage_mesh())),
-            MeshMaterial3d(timber_mat.clone()),
+        crate::camps::spawn_cage(
+            commands,
+            meshes,
+            creature_mats,
+            &timber_mat,
             Transform { translation: at(*at_xz), rotation: ry(yaw), scale: Vec3::ONE },
-            BiomeEntity,
-            BlightCage { slot },
-        ));
+            crate::camps::CageKey::Blight(slot),
+            1, // one captive per Blight cage — the rescue grows the town by exactly one
+            next_u32(&mut rng),
+            false, // closed until its patrol falls
+        );
     }
     commands.insert_resource(BlightCaptives::default());
 
@@ -1264,17 +1280,13 @@ const PATROL_RESPAWN_FAR: f32 = 45.0;
 
 // ── Caged captives: the orks' plundered townsfolk, the reason to raid the mire ──────────
 //
+// (The cage prop itself — frame, hinged door, seated peasants — is `camps::spawn_cage`,
+// keyed `CageKey::Blight(slot)`; this module owns only the WHEN of the rescue.)
+//
 // A couple of barred cages are staked in the open Blight, each guarded by one patrol squad.
 // Wipe the guards (one-time — patrols respawn, captives don't) and the cage swings open +
 // one townsperson joins the castle (grows the bloodline). Mirrors `villagers::camp_rescue`,
 // keyed off the Blight patrols instead of the wilderness camps.
-
-/// A closed captive cage in the mire — `patrol` indexes [`PATROL_SITES`] (the squad guarding
-/// it; cleared = freed) and `i` is its slot in [`BlightCaptives`].
-#[derive(Component)]
-struct BlightCage {
-    slot: usize,
-}
 
 /// `(cage world XZ, guarding PATROL_SITES index)`. Both cages sit a few units OUTSIDE the
 /// walls in walkable mire, hard by their patrol's home so the squad reads as their jailers.
@@ -1350,23 +1362,26 @@ fn patrol_respawn(
     }
 }
 
-/// Free a caged captive once the patrol guarding it is wiped (one-time): swap the closed cage
-/// for the opened husk, grow the town by one, float + voice the rescue. Mirrors
-/// `villagers::camp_rescue` but keyed off the [`BlightPatrols`] homes. `seen` stops a cage from
-/// freeing before its squad has even spawned; wave invaders are excluded so a night siege at the
-/// keep can't read as "guards cleared".
+/// Free a caged captive once the patrol guarding it is wiped (one-time): swing the cage door
+/// open IN PLACE (an animation — the cage model never swaps), stand the captive up and walk it
+/// out (`villagers::release_captives` — it comments as it goes, then marches home and joins the
+/// town), grow the town by one, float + voice the rescue. Mirrors `villagers::camp_rescue` but
+/// keyed off the [`BlightPatrols`] homes. `seen` stops a cage from freeing before its squad has
+/// even spawned; wave invaders are excluded so a night siege at the keep can't read as "guards
+/// cleared".
 #[allow(clippy::too_many_arguments)]
 fn blight_rescue(
+    time: Res<Time>,
     mut town: ResMut<crate::town::TownRes>,
     captives: Option<ResMut<BlightCaptives>>,
     orks: Query<&crate::orks::Ork, (Without<crate::orks::WaveInvader>, Without<crate::dying::Dying>)>,
-    cages_q: Query<(Entity, &BlightCage, &Transform)>,
+    cages_q: Query<(&crate::camps::Cage, &Transform)>,
+    mut doors_q: Query<&mut crate::camps::CageDoor>,
+    caged_q: Query<(Entity, &crate::villagers::Captive)>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let Some(mut captives) = captives else { return };
     for (slot, (at_xz, patrol)) in BLIGHT_CAGES.iter().enumerate() {
@@ -1382,24 +1397,32 @@ fn blight_rescue(
             continue; // patrol not spawned yet — don't auto-free
         }
         captives.freed[slot] = true;
-        // Open the cage in place (swap the closed prop for the husk at its exact pose).
+        let key = crate::camps::CageKey::Blight(slot);
+        // Swing the door open where it stands and start the captive's walk-out.
         let y = ground_y(at_xz.x, at_xz.y).unwrap_or(0.0);
-        let mut cage_tf = Transform::from_xyz(at_xz.x, y, at_xz.y);
-        for (e, c, tf) in &cages_q {
-            if c.slot == slot {
-                cage_tf = *tf;
-                commands.entity(e).try_despawn();
+        let cage_tf = cages_q
+            .iter()
+            .find(|(c, _)| c.key == key)
+            .map(|(_, tf)| *tf)
+            .unwrap_or_else(|| Transform::from_xyz(at_xz.x, y, at_xz.y));
+        for mut d in &mut doors_q {
+            if d.key == key {
+                d.open = true;
             }
         }
-        crate::camps::open_cage(&mut commands, &mut meshes, &mut materials, cage_tf);
-        town.0.population += 1; // the freed townsperson appears via town::sync_population_bodies
+        let freed: Vec<(Entity, u32)> =
+            caged_q.iter().filter(|(_, c)| c.key == key).map(|(e, c)| (e, c.seed)).collect();
+        crate::villagers::release_captives(&mut commands, time.elapsed_secs(), &cage_tf, &freed);
+        // Population grows NOW (the walker counts as a body — see `release_captives`), so the
+        // headcount sync never races the walk-out.
+        town.0.population += 1;
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(at_xz.x, cage_tf.translation.y + 1.8, at_xz.y),
             text: "Captive freed!  +1 townsperson".into(),
             color: Color::srgb(0.5, 1.0, 0.6),
             scale: 1.2,
         });
-        cues.write(crate::audio::AudioCue::CampRescue);
+        cues.write(crate::audio::AudioCue::CampRescue(Vec3::new(at_xz.x, cage_tf.translation.y + 1.2, at_xz.y)));
         speak.write(crate::audio::Speak::new(crate::audio::Concept::FirstRescue));
     }
 }
@@ -2279,34 +2302,119 @@ fn totem_mesh(rng: &mut u32) -> Mesh {
     group(p)
 }
 
-/// A heavy prisoner cage with three huddled captives (decorative — the hold's are beyond
-/// rescue; that's the story it tells). `pub(crate)`: the wilderness camps use the same
-/// cage for their closed (pre-rescue) state.
-pub(crate) fn cage_mesh() -> Mesh {
-    const W: f32 = 2.2;
-    const H: f32 = 1.8;
+/// Cage footprint (outer width) + height — shared with `camps::spawn_cage`, which parents the
+/// hinged door onto this frame and seats the captives against its geometry.
+pub(crate) const CAGE_W: f32 = 2.2;
+pub(crate) const CAGE_H: f32 = 1.8;
+/// Captive seat spots: cage-local `(x, z, yaw)`. A straw bedding lump is built into
+/// [`cage_mesh`] at each, and `camps::spawn_cage` sits one real peasant biped on it
+/// (`villagers::spawn_cage_captive`), faced loosely toward the door (+X) so the huddle
+/// reads as watching for rescue.
+pub(crate) const CAGE_SEATS: [(f32, f32, f32); 3] = [(-0.52, 0.30, 1.25), (0.28, -0.48, 2.0), (0.05, 0.62, 0.7)];
+
+// Cage dressing hues (rough rope lashings + the captives' straw bedding).
+const ROPE: u32 = 0x8a6f46;
+const STRAW: u32 = 0xb59245;
+const STRAW_DARK: u32 = 0x94743a;
+
+/// A heavy prisoner cage — rough-hewn crooked logs lashed with rope, a plank floor and straw
+/// bedding lumps (one per [`CAGE_SEATS`] spot). Branch bars cover only THREE faces: the +X face
+/// is the doorway, closed by the separate hinged [`cage_door_mesh`] that `camps::spawn_cage`
+/// parents onto the cage — so a rescue OPENS the same model by animation (the door swings),
+/// never a mesh swap. The captives are real seated peasants, not baked boxes. `pub(crate)`:
+/// the wilderness camps and the Blight both stake this same cage.
+pub(crate) fn cage_mesh(rng: &mut u32) -> Mesh {
+    const W: f32 = CAGE_W;
+    const H: f32 = CAGE_H;
     const HW: f32 = W / 2.0;
-    let wood = lin(TIMBER);
-    let dark = lin(TIMBER_DARK);
-    let bar = lin(IRON);
     let mut p: Vec<Mesh> = Vec::new();
-    p.push(bx(W + 0.14, 0.14, W + 0.14, v(0.0, 0.07, 0.0), dark));
+    // Plank floor: a dark base slab + a few lighter worn boards laid over it.
+    p.push(bx(W + 0.14, 0.14, W + 0.14, v(0.0, 0.07, 0.0), lin(TIMBER_DARK)));
+    for i in 0..3 {
+        let x = -0.62 + i as f32 * 0.62 + rng_range(rng, -0.05, 0.05);
+        let d = W - rng_range(rng, 0.15, 0.4);
+        p.push(bx(0.5, 0.02, d, v(x, 0.148, rng_range(rng, -0.08, 0.08)), lin(TIMBER)));
+    }
+    // Crooked corner posts — rough logs, each with its own lean, rope-lashed at the head.
     for (sx, sz) in [(-HW, -HW), (HW, -HW), (-HW, HW), (HW, HW)] {
-        p.push(bx(0.16, H, 0.16, v(sx, H / 2.0, sz), wood));
+        let lean = Quat::from_euler(
+            EulerRot::XYZ,
+            rng_range(rng, -0.045, 0.045),
+            0.0,
+            rng_range(rng, -0.045, 0.045),
+        );
+        let h = H + rng_range(rng, 0.02, 0.18);
+        p.push(cyl(0.085, h, v(sx, h / 2.0, sz), lean, lin(TIMBER)));
+        p.push(cyl(0.105, 0.1, v(sx, H - 0.08, sz), lean, lin(ROPE)));
     }
-    p.push(bx(W, 0.12, 0.12, v(0.0, H - 0.06, -HW), wood));
-    p.push(bx(W, 0.12, 0.12, v(0.0, H - 0.06, HW), wood));
-    p.push(bx(0.12, 0.12, W, v(-HW, H - 0.06, 0.0), wood));
-    p.push(bx(0.12, 0.12, W, v(HW, H - 0.06, 0.0), wood));
-    for o in [-0.66f32, -0.22, 0.22, 0.66] {
-        p.push(bx(0.08, H - 0.07, 0.08, v(o, H / 2.0, -HW), bar));
-        p.push(bx(0.08, H - 0.07, 0.08, v(o, H / 2.0, HW), bar));
-        p.push(bx(0.08, H - 0.07, 0.08, v(-HW, H / 2.0, o), bar));
-        p.push(bx(0.08, H - 0.07, 0.08, v(HW, H / 2.0, o), bar));
+    // Top rails: rough poles post-to-post on all four sides (the door swings under the +X one),
+    // each riding at its own slightly-off height so the frame reads hand-lashed, not machined.
+    p.push(cyl(0.055, W + 0.1, v(rng_range(rng, -0.03, 0.03), H - 0.05, -HW), rz(FRAC_PI_2), lin(TIMBER)));
+    p.push(cyl(0.055, W + 0.1, v(rng_range(rng, -0.03, 0.03), H - 0.02, HW), rz(FRAC_PI_2), lin(TIMBER)));
+    p.push(cyl(0.055, W + 0.1, v(-HW, H - 0.04, rng_range(rng, -0.03, 0.03)), rx(FRAC_PI_2), lin(TIMBER)));
+    p.push(cyl(0.055, W + 0.1, v(HW, H - 0.07, rng_range(rng, -0.03, 0.03)), rx(FRAC_PI_2), lin(TIMBER)));
+    // Mid rails on the three CLOSED faces (the bars lash against them).
+    p.push(cyl(0.04, W, v(0.0, 0.95 + rng_range(rng, -0.05, 0.05), -HW), rz(FRAC_PI_2), lin(TIMBER_DARK)));
+    p.push(cyl(0.04, W, v(0.0, 0.9 + rng_range(rng, -0.05, 0.05), HW), rz(FRAC_PI_2), lin(TIMBER_DARK)));
+    p.push(cyl(0.04, W, v(-HW, 0.92 + rng_range(rng, -0.05, 0.05), 0.0), rx(FRAC_PI_2), lin(TIMBER_DARK)));
+    // Branch bars on N / S / W — pale saplings, each its own thickness and tilt. The +X face
+    // stays open: that's the doorway.
+    for o in [-0.72f32, -0.24, 0.24, 0.72] {
+        for face in 0..3 {
+            let tilt = Quat::from_euler(
+                EulerRot::XYZ,
+                rng_range(rng, -0.05, 0.05),
+                0.0,
+                rng_range(rng, -0.05, 0.05),
+            );
+            let h = H - 0.18 + rng_range(rng, -0.08, 0.08);
+            let r = rng_range(rng, 0.03, 0.042);
+            let jo = o + rng_range(rng, -0.05, 0.05);
+            let at = match face {
+                0 => v(jo, h / 2.0 + 0.12, -HW),
+                1 => v(jo, h / 2.0 + 0.12, HW),
+                _ => v(-HW, h / 2.0 + 0.12, jo),
+            };
+            p.push(cyl(r, h, at, tilt, lin(TIMBER_PALE)));
+        }
     }
-    for (cx, cz) in [(-0.45f32, 0.25f32), (0.4, -0.3), (0.05, 0.55)] {
-        p.push(bx(0.34, 0.58, 0.24, v(cx, 0.34, cz), lin(0x7c6a54)));
-        p.push(bx(0.24, 0.24, 0.24, v(cx, 0.78, cz), lin(0xcaa980)));
+    // Straw bedding heaped at each seat spot (the captives sit on these).
+    for (sx, sz, _) in CAGE_SEATS {
+        let spin = ry(rng_range(rng, 0.0, TAU));
+        p.push(cyl(0.30, 0.22, v(sx, 0.25, sz), spin, lin(STRAW_DARK)));
+        p.push(cyl(0.24, 0.18, v(sx + rng_range(rng, -0.04, 0.04), 0.42, sz + rng_range(rng, -0.04, 0.04)), spin, lin(STRAW)));
+    }
+    group(p)
+}
+
+/// The cage DOOR — a lashed branch panel authored with its HINGE at the local origin (it hangs
+/// on the cage's (+X, +Z) corner post; the panel extends toward −Z across the +X face).
+/// `camps::spawn_cage` parents it onto the cage frame and `camps::swing_cage_doors` swings its
+/// yaw on a rescue — the opening is an animation of this one mesh, never a model swap.
+pub(crate) fn cage_door_mesh(rng: &mut u32) -> Mesh {
+    const H: f32 = CAGE_H;
+    let span = CAGE_W - 0.16; // panel width, fitted between the corner posts
+    let mut p: Vec<Mesh> = Vec::new();
+    // Two horizontal carry-rails the bars are lashed to, plus a diagonal brace.
+    for y in [0.42, H - 0.38] {
+        p.push(cyl(0.045, span, v(0.0, y + rng_range(rng, -0.03, 0.03), -span / 2.0 - 0.04), rx(FRAC_PI_2), lin(TIMBER)));
+    }
+    p.push(cyl(0.035, 2.05, v(0.0, 0.92, -1.02), rx(-1.07), lin(TIMBER_DARK)));
+    // Vertical branch bars — same pale saplings as the walls, each its own lean.
+    for z in [-0.30f32, -0.75, -1.20, -1.65] {
+        let h = H - 0.2 + rng_range(rng, -0.06, 0.08);
+        let tilt = Quat::from_euler(
+            EulerRot::XYZ,
+            rng_range(rng, -0.04, 0.04),
+            0.0,
+            rng_range(rng, -0.04, 0.04),
+        );
+        p.push(cyl(rng_range(rng, 0.032, 0.042), h, v(0.0, h / 2.0 + 0.12, z + rng_range(rng, -0.04, 0.04)), tilt, lin(TIMBER_PALE)));
+    }
+    // A heavier stile at the free (latch) edge + rope hinge-wraps at the hung edge.
+    p.push(cyl(0.05, H - 0.12, v(0.0, (H - 0.12) / 2.0 + 0.1, -1.97), Quat::IDENTITY, lin(TIMBER)));
+    for y in [0.42, H - 0.38] {
+        p.push(cyl(0.075, 0.12, v(0.0, y, -0.06), rx(FRAC_PI_2), lin(ROPE)));
     }
     group(p)
 }

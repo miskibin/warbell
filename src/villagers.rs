@@ -349,7 +349,7 @@ const CAMP_HOME_R: f32 = 6.0;
 /// the main way the town grows: 5 camps × 3 = +15, the army's backbone. Raw-added (uncapped, like
 /// the old +1) — the realistic max (camps + start ≈ 17) stays under the 24 house cap, and a farm
 /// feeds far more than the headcount, so over-house peasants don't starve.
-const CAMP_RESCUE_POP: u32 = 3;
+pub(crate) const CAMP_RESCUE_POP: u32 = 3; // == captives seated per camp cage (`camps::spawn_cage`)
 
 impl Plugin for VillagersPlugin {
     fn build(&self, app: &mut App) {
@@ -397,6 +397,7 @@ impl Plugin for VillagersPlugin {
                     rearm_townsfolk,
                     reskin_townsfolk,
                     camp_rescue,
+                    walk_out_captives,
                     recruit,
                 )
                     .run_if(in_state(crate::game_state::Modal::None)),
@@ -577,22 +578,204 @@ pub fn spawn_scene_peasant(
     e
 }
 
-/// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): a cage
-/// of [`CAMP_RESCUE_POP`] joins the castle as militia (new guards) and grows the bloodline, with a
-/// float over the cage so you see it happen. `seen` gates against freeing a camp before its orks
-/// have even spawned.
+// ── Caged captives: real peasants behind bars, freed by clearing their jailers ────────────
+
+/// A caged peasant — a REAL peasant biped (`peasant_model`) huddled on the straw of a prisoner
+/// cage (`camps::spawn_cage`), not a baked box. No brain, no HP: it only sits (its
+/// [`BipedDrive::sitting`] pose) until a rescue tags it [`WalkOut`]. `seed` fixes its face and
+/// clothes so the townsperson it becomes on walking out is visibly the SAME person.
+#[derive(Component)]
+pub struct Captive {
+    pub key: crate::camps::CageKey,
+    pub(crate) seed: u32,
+}
+
+/// A freed captive mid walk-out: it stands after `start` (staggered so a cage files out, not
+/// pops out), speaks its `line`, shuffles to `target` (the door mouth, clear of the cage's
+/// blocker box) and there converts into a real townsperson ([`walk_out_captives`]).
+#[derive(Component)]
+pub(crate) struct WalkOut {
+    target: Vec2,
+    start: f32,
+    line: &'static str,
+}
+
+/// What the freed peasants say as they step out of an opened cage (one line each, floated over
+/// their head — the voiced `Concept::Rescued` reaction plays from the cage too, but only one
+/// mouth gets a clip; these floats let every captive react).
+const FREED_LINES: [&str; 6] = [
+    "We're free! Bless you, m'lord!",
+    "Thank you! I'll not forget this.",
+    "Sweet air at last!",
+    "To the castle \u{2014} I'll take up a spear!",
+    "I thought the orks would eat us\u{2026}",
+    "My family will hear of this kindness.",
+];
+/// Pace of the walk-out shuffle (u/s) — slower than a guard's march; they're stiff from the cage.
+const WALK_OUT_SPEED: f32 = 2.0;
+
+/// Spawn one seated captive peasant at `pos` (world; on the cage's plank floor), facing
+/// `facing`. Called by `camps::spawn_cage` — one per straw bed.
+pub fn spawn_cage_captive(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    pos: Vec3,
+    facing: Quat,
+    key: crate::camps::CageKey,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let skin = SKIN[(seed as usize) % SKIN.len()];
+    let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
+    let root = commands
+        .spawn((
+            Transform { translation: pos, rotation: facing, scale: Vec3::splat(SCALE) },
+            Visibility::Visible,
+            BipedDrive { sitting: true, phase: (seed % 628) as f32 / 100.0, ..default() },
+            Captive { key, seed },
+            BiomeEntity,
+        ))
+        .id();
+    build_biped_body(commands, root, Kind::Peasant { skin, tunic, hat: false }, seed, false, false, &mat, meshes);
+    root
+}
+
+/// Begin the walk-out for an opened cage's captives: each stands after a staggered delay and
+/// files out through the door face (cage-local +X), one comment line each. The captives are
+/// tagged [`Townsfolk`] NOW so `town::sync_population_bodies` counts them against the
+/// population the rescue just grew — no courtyard double-spawn while they're still walking.
+pub(crate) fn release_captives(commands: &mut Commands, now: f32, cage_tf: &Transform, captives: &[(Entity, u32)]) {
+    let door3 = cage_tf.rotation * Vec3::X;
+    let out = Vec2::new(door3.x, door3.z).normalize_or_zero();
+    let perp = Vec2::new(-out.y, out.x);
+    let cage_pos = Vec2::new(cage_tf.translation.x, cage_tf.translation.z);
+    let n = captives.len() as f32;
+    for (i, (e, seed)) in captives.iter().enumerate() {
+        let spread = (i as f32 - (n - 1.0) * 0.5) * 0.55;
+        commands.entity(*e).try_insert((
+            WalkOut {
+                // Past the door mouth, clear of the cage's blocker box (half-extent 1.2).
+                target: cage_pos + out * 2.7 + perp * spread,
+                start: now + 1.1 + i as f32 * 0.5, // let the door swing crack open first
+                line: FREED_LINES[(*seed as usize + i) % FREED_LINES.len()],
+            },
+            Townsfolk,
+        ));
+    }
+}
+
+/// Walk freed captives out of their cage: stand up (drop the sitting pose), float their comment,
+/// shuffle to the door mouth, then convert into a REAL townsperson on the spot — the same face
+/// and clothes (same `seed`), now with the full militia identity — which the guard AI marches
+/// home to the courtyard through the gates (the `NavPath` A* in [`guard_combat`]).
+fn walk_out_captives(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut q: Query<(Entity, &Captive, &WalkOut, &mut Transform, &mut BipedDrive)>,
+) {
+    let now = time.elapsed_secs();
+    let tw = time.elapsed_secs_wrapped();
+    let dt = time.delta_secs();
+    for (e, cap, w, mut tf, mut d) in &mut q {
+        if now < w.start {
+            continue; // still huddled — the door is swinging open
+        }
+        if d.sitting {
+            d.sitting = false; // stand up…
+            floats.0.push(crate::combat_fx::FloatReq {
+                // …and say thanks (one float per captive, staggered by the walk-out starts).
+                world: tf.translation + Vec3::Y * 1.7,
+                text: w.line.into(),
+                color: Color::srgb(0.85, 0.92, 1.0),
+                scale: 0.95,
+            });
+        }
+        let pos = Vec2::new(tf.translation.x, tf.translation.z);
+        let to = w.target - pos;
+        if to.length() < 0.2 {
+            // Out and clear: become a real townsperson mid-stride (same seed → same look).
+            spawn_freed_townsfolk(&mut commands, &mut meshes, &mut creature_mats, pos, cap.seed);
+            commands.entity(e).try_despawn();
+            continue;
+        }
+        let dir = to.normalize_or_zero();
+        tf.translation.x += dir.x * WALK_OUT_SPEED * dt;
+        tf.translation.z += dir.y * WALK_OUT_SPEED * dt;
+        // Step down from the plank floor onto the ground as they clear the cage.
+        let gy = crate::worldmap::ground_at_world(tf.translation.x, tf.translation.z).unwrap_or(0.0);
+        tf.translation.y += (gy - tf.translation.y) * (dt * 4.0).min(1.0);
+        let yaw = dir.x.atan2(dir.y);
+        tf.rotation = tf.rotation.slerp(Quat::from_rotation_y(yaw), (dt * 8.0).min(1.0));
+        // Drive the shared biped gait by hand (no `Villager` brain on a captive).
+        d.moving_amt += (1.0 - d.moving_amt) * (dt * 8.0).min(1.0);
+        d.walk_phase = (tw + d.phase) * 8.0;
+    }
+}
+
+/// The townsperson a freed captive becomes: the same peasant (same `seed` → same face/clothes,
+/// no helmet pop) with the full town-pool identity — militia guard posted to a courtyard spot,
+/// so the guard AI walks it home from the wilderness. `Role::Guard` from the start means
+/// [`reskin_townsfolk`] won't touch the body until a real job change redresses it.
+fn spawn_freed_townsfolk(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    pos: Vec2,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let mut rng = seed | 1;
+    let skin = SKIN[(seed as usize) % SKIN.len()];
+    let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
+    let half = crate::castle::courtyard_half();
+    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
+    let e = spawn(
+        commands,
+        meshes,
+        &mat,
+        Kind::Peasant { skin, tunic, hat: false },
+        home,
+        pos,
+        GUARD_SPEED,
+        1.0,
+        SCALE,
+        seed,
+        false,
+    );
+    commands.entity(e).insert((
+        Guard { atk_cd: 0.0, post: home },
+        NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
+        crate::navgrid::NavPath::default(),
+        Townsfolk,
+        Folk { skin, tunic, seed },
+        Role::Guard,
+        BodyMat(mat),
+    ));
+    e
+}
+
+/// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): the
+/// cage door swings open IN PLACE (an animation — the model never swaps), the cage of
+/// [`CAMP_RESCUE_POP`] peasants stands up, comments, files out and marches home to join the
+/// militia and the bloodline, with a float over the cage so you see it happen. `seen` gates
+/// against freeing a camp before its orks have even spawned.
 #[allow(clippy::too_many_arguments)]
 fn camp_rescue(
+    time: Res<Time>,
     mut town: ResMut<crate::town::TownRes>,
     mut rescued: ResMut<RescuedCamps>,
     orks: Query<&crate::orks::Ork, Without<crate::orks::WaveInvader>>,
-    cages_q: Query<(Entity, &crate::camps::Cage, &Transform)>,
+    cages_q: Query<(&crate::camps::Cage, &Transform)>,
+    mut doors_q: Query<&mut crate::camps::CageDoor>,
+    caged_q: Query<(Entity, &Captive)>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let cages = crate::camps::cage_positions();
     if rescued.done.len() != cages.len() {
@@ -612,18 +795,24 @@ fn camp_rescue(
         }
         // Warband wiped → free the captives.
         rescued.done[i] = true;
+        let key = crate::camps::CageKey::Camp(i);
         let y = crate::worldmap::ground_at_world(cage.x, cage.y).unwrap_or(0.0);
-        // Open the cage IN PLACE: swap the closed prop for the opened husk at the same pose.
-        let mut cage_tf = Transform::from_xyz(cage.x, y, cage.y);
-        for (e, c, tf) in &cages_q {
-            if c.camp == i {
-                cage_tf = *tf;
-                commands.entity(e).try_despawn();
+        let cage_tf = cages_q
+            .iter()
+            .find(|(c, _)| c.key == key)
+            .map(|(_, tf)| *tf)
+            .unwrap_or_else(|| Transform::from_xyz(cage.x, y, cage.y));
+        for mut d in &mut doors_q {
+            if d.key == key {
+                d.open = true; // the door swings — the cage itself never changes
             }
         }
-        crate::camps::open_cage(&mut commands, &mut meshes, &mut materials, cage_tf);
-        // The freed captives join the town's population (guards appear in the courtyard via
-        // `sync_population_bodies`) — and the bloodline with them: heirs ARE the headcount.
+        let freed: Vec<(Entity, u32)> =
+            caged_q.iter().filter(|(_, c)| c.key == key).map(|(e, c)| (e, c.seed)).collect();
+        release_captives(&mut commands, time.elapsed_secs(), &cage_tf, &freed);
+        // The freed captives join the town's population — and the bloodline with them: heirs
+        // ARE the headcount. Counted NOW (the walkers carry `Townsfolk`, so the body sync
+        // stays balanced while they file out and march home).
         town.0.population += CAMP_RESCUE_POP;
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(cage.x, y + 1.8, cage.y),
@@ -631,7 +820,7 @@ fn camp_rescue(
             color: Color::srgb(0.5, 1.0, 0.6),
             scale: 1.2,
         });
-        cues.write(crate::audio::AudioCue::CampRescue);
+        cues.write(crate::audio::AudioCue::CampRescue(Vec3::new(cage.x, y + 1.2, cage.y)));
         speak.write(crate::audio::Speak::new(crate::audio::Concept::FirstRescue));
     }
 }

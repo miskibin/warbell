@@ -148,6 +148,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_WAVE` / `FOREST_DEFEND=1` | stage a night siege / arm all defenses + walls |
 | `FOREST_MUSTER=1` | rally the whole town into the **war party** at boot (as if pressing `K`) so a shot frames the muster; pair with `FOREST_DEMO=work` (stages a 14-pop town) for a full host (`villagers.rs::stage_muster`) |
 | `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
+| `FOREST_CAGETEST="x,z"` | park the prisoner-cage rescue's before/after states side by side at a world XZ: a CLOSED cage of real seated peasant captives + an OPENED emptied one 5.5u further +X (`camps::spawn_cage`); both doors face +X, so frame from the east. Film the actual door-swing + walk-out with `FOREST_DEMO=rescue` + `FOREST_CLIP` instead |
 | `FOREST_BREACH=1` | auto-break the Hold gate on the first sim frame so a shot/clip films the woken garrison + the Warlord boss without a keypress (`ork_fortress::stage_breach`); pair with `FOREST_HERO`/`FOREST_CAM` inside the walls |
 | `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at world ≈`(54, -72)` (NE desert) |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
