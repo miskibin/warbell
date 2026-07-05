@@ -1065,7 +1065,7 @@ pub fn hero_anim(
                         None => (0.0, 0.0),
                     };
                     let target = if elbow {
-                        rx(lerp(-0.35, -1.30, fp_ready) - 0.30 * back + 0.75 * fwd + fp_bob_v * 0.6)
+                        rx(lerp(-0.35, -1.05, fp_ready) - 0.30 * back + 0.75 * fwd + fp_bob_v * 0.6)
                     } else {
                         e3(
                             lerp(0.10, -0.70, fp_ready) - 0.25 * back + 0.15 * fwd + fp_breath + fp_bob_v,
@@ -1079,15 +1079,17 @@ pub fn hero_anim(
                 }
             }
             Joint::Sword => {
-                // FP ready: blade diagonal up-inward toward frame centre (Skyrim ready stance).
-                // X≈1.30 rises the hilt from the corner; Y sweeps the blade toward upper-centre.
-                // Scaled by `fp_ready` so the low carry keeps the rest tilt (blade forward-down,
-                // tip at the corner). Attack/block/charge keep the CLIP's wrist rotation — with
-                // the hand pinned by the FP arm above, the clip's big sword sweeps read as the
-                // FP slash arcs.
-                if attack.is_none() && block_amt < 0.5 && hero.charge_t <= CHARGE_GRACE && fp_amt > 0.0 {
-                    let ready = e3(1.30 + fp_bob_v * 0.5, -(0.60 + fp_sway), 0.15);
-                    rot = rot.slerp(ready, fp_amt * fp_ready);
+                // FP ready: blade angled up-forward from the bottom-right hilt toward frame
+                // centre (Skyrim ready stance). NB the FP arm tilts the HAND frame back, so the
+                // wrist X here is far smaller than the pose-space intuition suggests — tuned
+                // against the FPDBG camera-space blade probes, not by eye. A raised guard tucks
+                // the blade back down to the rest carry (out of frame — the shield is the story).
+                // Attack/charge keep the CLIP's wrist rotation — with the hand pinned by the FP
+                // arm above, the clip's big sword sweeps read as the FP slash arcs.
+                if attack.is_none() && hero.charge_t <= CHARGE_GRACE && fp_amt > 0.0 {
+                    let ready = e3(0.35 + fp_bob_v * 0.5, -(0.60 + fp_sway), 0.15);
+                    let target = ready.slerp(e3(1.95, 0.30, 0.0), block_amt);
+                    rot = rot.slerp(target, fp_amt * fp_ready.max(block_amt));
                 }
             }
             Joint::ShoulderL | Joint::ElbowL => {
@@ -1102,10 +1104,10 @@ pub fn hero_anim(
                     // the lower-left of frame, where the pose's face-on Shield rotation turns the
                     // plate to the camera.
                     let target = if elbow {
-                        rx(lerp(lerp(-0.55, -1.25, fp_ready), -1.50, block_amt) + fp_bob_v * 0.6)
+                        rx(lerp(lerp(-0.55, -0.90, fp_ready), -1.20, block_amt) + fp_bob_v * 0.6)
                     } else {
                         e3(
-                            lerp(lerp(0.10, -1.05, fp_ready), -1.15, block_amt) + fp_breath + fp_bob_v,
+                            lerp(lerp(0.10, -0.50, fp_ready), -0.75, block_amt) + fp_breath + fp_bob_v,
                             -(fp_sway - fp_bob_l) * lerp(0.5, 1.0, fp_ready) - 0.15 * fp_ready,
                             lerp(lerp(-0.12, -0.05, fp_ready), -0.02, block_amt),
                         )
