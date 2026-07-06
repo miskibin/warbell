@@ -281,7 +281,8 @@ const REGIONS: [Region; 6] = [
     // first attempt's 13): at 13 the tier walls came out 1–1.5u and the massif still read as a
     // smooth white dome (verification FAIL) — 18 gives 2u walls (ladder 2/6/10/14/18) that
     // register as cliff bands even white-on-white in haze. Rock stays taller (22).
-    Region { x: 26.0, z: 24.0, r: 33.0, biome: TB::Snow, peak: 18, cliffy: true, passes: &SNOW_PASSES },
+    // r 33→36: grow the massif into the grass freed by the shrunk swamps ("bigger mountains").
+    Region { x: 26.0, z: 24.0, r: 36.0, biome: TB::Snow, peak: 18, cliffy: true, passes: &SNOW_PASSES },
     // NE dunes — shifted NW (112,28 → 101,10), so the dune field grows toward the snow massif and
     // fills the grass corridor along the top coast. Radius 34→38 to close the empty grass seam
     // between snow and desert (players noted the wide bare strip there): with snow at r33 the seam
@@ -293,18 +294,19 @@ const REGIONS: [Region; 6] = [
     // the safe-zone fray instead of a 33-unit trek). peak 18→22 + cliffy (pass 1): the tallest
     // biome is now a real tiered MESA — flat shelves, 2.5u sheer walls between them, climbable
     // only via ROCK_PASSES; `terrace_inland` exempts it (`cliff_exempt_base`).
-    Region { x: 116.0, z: 57.0, r: 34.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
+    // r 34→38: the tallest biome grows down toward the shrunk SE marsh — more mountain, less bog.
+    Region { x: 116.0, z: 57.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
     // MAP_SCALE 2.2 bump. Snow/desert radii stay (their shared seam is already tuned tight).
     Region { x: 32.0, z: 80.0, r: 36.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // SW forest
-    Region { x: 72.0, z: 92.0, r: 29.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // S swamp
+    Region { x: 72.0, z: 92.0, r: 23.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // S swamp (r 29→23: less bog)
     // Eastern marsh arm: fills the open grass strip that ran between the S swamp and the
     // rocky mine range (world x +30…+66, z +15…+60), so the marsh laps right up to the
     // foot of the mines instead of leaving a grass corridor. Rock's mountain priority in
     // `region_at` auto-clips the east edge (the mines stay rock), and the castle safe-ring
     // forces grass at the centre, so this only eats the in-between grass.
-    Region { x: 102.0, z: 78.0, r: 24.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] },
+    Region { x: 102.0, z: 78.0, r: 17.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // E marsh (r 24→17: yields to the rock range)
 ];
 
 struct Plateau {

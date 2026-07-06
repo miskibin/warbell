@@ -607,9 +607,14 @@ pub fn sunken_pyramid() -> LandmarkModel {
         let w = pyr_w(i);
         let y = i as f32 * PYR_TH;
         let jig = Quat::from_rotation_y((hash3(i as f32, 3.0, 7.0) - 0.5) * 0.05);
-        parts.push(box_rot(w * 2.0, PYR_TH, w * 2.0, yv(y + PYR_TH * 0.5), jig, bands[i]));
+        // Sink each tier 0.12 into the one below (its top stays at y+PYR_TH) so stacked boxes
+        // never share a coplanar horizontal face — that coincidence (tier-top == next-tier-bottom)
+        // was the landmark's z-fighting flicker.
+        let th = PYR_TH + 0.12;
+        parts.push(box_rot(w * 2.0, th, w * 2.0, yv(y + PYR_TH - th * 0.5), jig, bands[i]));
         if i % 2 == 0 {
-            parts.push(box_rot(w * 2.0 + 0.07, 0.06, w * 2.0 + 0.07, yv(y + PYR_TH - 0.03), jig, PYR_LT));
+            // Bright rim lifted a hair PROUD of the tier top instead of flush — flush = coplanar = flicker.
+            parts.push(box_rot(w * 2.0 + 0.07, 0.06, w * 2.0 + 0.07, yv(y + PYR_TH + 0.01), jig, PYR_LT));
         }
         // One chipped corner per tier (hash-picked) — weather bites the arrises first.
         let hh = hash3(i as f32, 1.0, 11.0);
@@ -632,12 +637,14 @@ pub fn sunken_pyramid() -> LandmarkModel {
         let y = s as f32 * 0.3;
         // The face slopes inward as the tiers shrink; keep each tread proud of it.
         let w_here = 2.35 + (0.62 - 2.35) * (y / 3.6);
-        parts.push(tbox(0.95 - y * 0.04, 0.3, 0.62, Vec3::new(0.0, y + 0.15, w_here + 0.14), PYR_LT));
+        // Overlap treads vertically (top stays y+0.3) so neighbouring steps don't share a plane.
+        parts.push(tbox(0.95 - y * 0.04, 0.4, 0.62, Vec3::new(0.0, y + 0.10, w_here + 0.14), PYR_LT));
     }
 
     // ── Summit shrine: floor slab, four pillars, two lintels, the gold altar.
     let top_y = 6.0 * PYR_TH;
-    parts.push(tbox(1.5, 0.12, 1.5, yv(top_y + 0.06), PYR_LT));
+    // Shrine floor sunk into the top tier (its top stays top_y+0.12) — base no longer coplanar with tier 5.
+    parts.push(tbox(1.5, 0.2, 1.5, yv(top_y + 0.02), PYR_LT));
     for &(x, z) in &[(-0.52_f32, -0.52_f32), (0.52, -0.52), (-0.52, 0.52), (0.52, 0.52)] {
         parts.push(cyl(0.11, 0.78, Vec3::new(x, top_y + 0.51, z), 6, PYR_BODY));
         parts.push(tbox(0.3, 0.1, 0.3, Vec3::new(x, top_y + 0.94, z), PYR_DK));
