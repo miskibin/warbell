@@ -6,7 +6,7 @@ name = "tileworld_bevy_forest"
 # The one source of the release version (build.rs embeds it; the MSI binds to it).
 # Bumping it on main cuts a release: .github/workflows/release-on-bump.yml tags
 # and releases any version that lands here without a matching v* tag.
-version = "0.18.0"
+version = "0.19.0"
 edition = "2024"
 
 [dependencies]
