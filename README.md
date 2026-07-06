@@ -14,8 +14,7 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 
 <a href="https://miskibin.itch.io/warbell"><img src="https://static.itch.io/images/badge-color.svg" alt="Available on itch.io" height="40"></a>
 
-<img alt="The forest island and the keep" src="site/screenshots/forest-overview.png" width="900" />
-
+<img width="1897" height="1094" alt="Screenshot 2026-07-06 110013" src="https://github.com/user-attachments/assets/f122afa8-60e8-46bb-bc37-9c3fbb7a693e" />
 </div>
 
 ## Play
