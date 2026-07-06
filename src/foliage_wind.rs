@@ -25,16 +25,15 @@ use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 
 const WIND_SHADER: &str = "shaders/foliage_wind.wgsl";
-const WIND_PREPASS_SHADER: &str = "shaders/foliage_wind_prepass.wgsl";
 
 pub type FoliageWindMaterial = ExtendedMaterial<StandardMaterial, WindExt>;
 
 #[derive(Clone, Copy, ShaderType, Debug)]
 pub struct WindParams {
     /// x = master sway amplitude (world units per unit of blade height), y = gust depth,
-    /// z = gust frequency (rad/s), w = elapsed time (seconds, wrapped) written each frame by
-    /// [`drive_wind_time`]. Time rides the uniform instead of `globals.time` because the prepass
-    /// view bind group omits `globals` — referencing it in the prepass twin is a validation error.
+    /// z = gust frequency (rad/s), w = unused. Set ONCE at material creation and never mutated —
+    /// mutating a material asset every frame re-specializes every mesh using it (~100ms CPU here,
+    /// a 10× frame-time regression). Time comes from `globals.time` in the shader instead.
     pub params: Vec4,
 }
 
@@ -48,11 +47,10 @@ impl MaterialExtension for WindExt {
     fn vertex_shader() -> ShaderRef {
         WIND_SHADER.into()
     }
-    // The main pass shares the prepass depth buffer; the prepass twin applies the identical
-    // displacement so swaying blades don't fail the depth test at their silhouettes.
-    fn prepass_vertex_shader() -> ShaderRef {
-        WIND_PREPASS_SHADER.into()
-    }
+    // NB: no `prepass_vertex_shader` override. The main pass reads `globals.time`, which the prepass
+    // view bind group lacks — so a prepass twin can't share the clock without the per-frame material
+    // write that tanked perf. Cover is `NotShadowCaster` + tiny; the main-only displacement's depth
+    // mismatch against the (undisplaced) prepass is checked visually — see the module perf notes.
 }
 
 /// The one shared cover-wind material handle (base params match the scatter's white prop
@@ -66,7 +64,7 @@ impl Plugin for FoliageWindPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<FoliageWindMaterial>::default())
             .add_systems(Startup, setup_wind_mat)
-            .add_systems(Update, (drive_wind_time, swap_cover_material));
+            .add_systems(Update, swap_cover_material);
     }
 }
 
@@ -90,28 +88,13 @@ fn setup_wind_mat(mut commands: Commands, mut mats: ResMut<Assets<FoliageWindMat
             ..default()
         },
         extension: WindExt {
-            // x=amp, y=gust depth, z=gust freq, w=time (driven each frame by drive_wind_time).
+            // x=amp, y=gust depth, z=gust freq, w=unused. Set once — NEVER mutated per frame.
             params: WindParams {
                 params: Vec4::new(wind_amp(), 0.4, 0.35, 0.0),
             },
         },
     });
     commands.insert_resource(FoliageWindMat(handle));
-}
-
-/// Feed elapsed time into the wind material each frame (the shaders can't read `globals.time`
-/// in the prepass, so the clock rides the material uniform). `elapsed_secs_wrapped` (wraps at
-/// 3600s) keeps f32 precision sharp over long sessions — the wrap period dwarfs every sway
-/// period, so no visible jump. Touching the asset re-uploads one small uniform; negligible.
-fn drive_wind_time(
-    time: Res<Time>,
-    handle: Option<Res<FoliageWindMat>>,
-    mut mats: ResMut<Assets<FoliageWindMaterial>>,
-) {
-    let Some(handle) = handle else { return };
-    if let Some(mut m) = mats.get_mut(&handle.0) {
-        m.extension.params.params.w = time.elapsed_secs_wrapped();
-    }
 }
 
 /// Route freshly-built ground-cover chunks onto the wind material. Runs every frame, but the

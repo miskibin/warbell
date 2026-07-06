@@ -13,8 +13,9 @@
 //
 // Frequencies match the CPU tree sway (`wind.rs`): X = sin(t*1.5)+0.4*sin(t*3.1),
 // Z = cos(t*1.2), per-blade phase = worldpos.x*0.7 + worldpos.z*0.55 — so grass and trees
-// ripple coherently. The prepass twin (`foliage_wind_prepass.wgsl`) applies the SAME offset so
-// the shared depth buffer matches (else swaying blades punch holes at their silhouettes).
+// ripple coherently. Main-pass ONLY (no prepass twin): the prepass keeps the undisplaced cover
+// depth, so watch for depth-silhouette shimmer on swaying blades (verified acceptable at the
+// default amplitude; cover is NotShadowCaster + small).
 
 #import bevy_pbr::{
     mesh_bindings::mesh,
@@ -23,13 +24,15 @@
     morph::{morph_position, morph_normal, morph_tangent},
     forward_io::{Vertex, VertexOutput},
     view_transformations::position_world_to_clip,
+    mesh_view_bindings::globals,
 }
 
 struct WindParams {
     // x = master sway amplitude (world units per unit of blade height), y = gust depth,
-    // z = gust frequency (rad/s), w = time (elapsed seconds, wrapped). Time rides the material
-    // uniform — NOT `globals.time` — because the prepass view bind group omits `globals`
-    // (binding 0/11), so referencing it in the prepass twin is a wgpu validation error.
+    // z = gust frequency (rad/s), w = unused. Time = `globals.time` (in the main-pass view bind
+    // group). There is deliberately NO prepass twin: globals is absent from the prepass view
+    // layout, and feeding time via the material uniform every frame re-specialized every cover
+    // mesh → a 10× CPU regression. See src/foliage_wind.rs.
     params: vec4<f32>,
 };
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> wind: WindParams;
@@ -102,7 +105,7 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 #else
     let bend = 0.0;
 #endif
-    let wt = wind.params.w; // elapsed time (see WindParams) — not globals.time (absent in prepass)
+    let wt = globals.time;
     let phase = out.world_position.x * 0.7 + out.world_position.z * 0.55;
     // Slow field-wide gust envelope layered over the per-blade wander so the whole meadow surges.
     let gust = 1.0 + wind.params.y * sin(wt * wind.params.z + out.world_position.x * 0.03 + out.world_position.z * 0.02);
