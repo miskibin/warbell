@@ -56,8 +56,10 @@
   "author": { "@type": "Person", "name": "miskibin" },
   "screenshot": [
     "https://miskibin.github.io/warbell/screenshots/forest-overview.png",
+    "https://miskibin.github.io/warbell/screenshots/combat.png",
     "https://miskibin.github.io/warbell/screenshots/orks-night.png",
-    "https://miskibin.github.io/warbell/screenshots/mountains.png",
+    "https://miskibin.github.io/warbell/screenshots/war-table.png",
+    "https://miskibin.github.io/warbell/screenshots/rock.png",
     "https://miskibin.github.io/warbell/screenshots/ork-temple.png"
   ],
   "trailer": {
@@ -185,31 +187,111 @@
 <!-- ── Stats ── -->
 <div class="stats">
   <div class="wrap">
+    <p class="stats-eyebrow rv">Forged in Rust · one island, wall to wall</p>
     <div class="stats-grid">
+      <div class="stat rv"><div class="num" data-count="5">5</div><div class="lbl">Biomes to hold</div></div>
+      <div class="stat rv rv-2"><div class="num" data-count="4">4</div><div class="lbl">Nightly ork breeds</div></div>
+      <div class="stat rv rv-3"><div class="num" data-count="26">26</div><div class="lbl">War Table upgrades</div></div>
+      <div class="stat rv rv-4"><div class="num" data-count="13">13</div><div class="lbl">Wildlife species</div></div>
       <div class="stat rv"><div class="num" data-count="200" data-suffix="+">200+</div><div class="lbl">Voice &amp; bark lines</div></div>
-      <div class="stat rv rv-2"><div class="num" data-count="15">15</div><div class="lbl">Wildlife species</div></div>
-      <div class="stat rv rv-3"><div class="num" data-count="300" data-suffix="+">300+</div><div class="lbl">Hand-built meshes</div></div>
-      <div class="stat rv rv-4"><div class="num" data-count="83" data-suffix="K">83K</div><div class="lbl">Lines of Rust</div></div>
+      <div class="stat rv rv-2"><div class="num" data-count="90" data-suffix="K">90K</div><div class="lbl">Lines of Rust</div></div>
     </div>
   </div>
 </div>
 
-<!-- ── Features ── -->
-<section class="feat" id="features">
+<!-- ── Feature showcase ── -->
+<section class="feat showcase" id="features">
   <div class="wrap">
     <div class="sec-head rv"><span class="eyebrow">What's inside</span><h2>A living warband sim</h2><div class="rule"></div>
-      <p>Not just a defense game — a whole island that works, fights and grows around you.</p></div>
-    <div class="feat-grid">
-      <div class="fcard rv ticks"><span class="ic">⚔️</span><h3>Real-time combat</h3><p>Soft-lock onto the nearest threat, then swing, crit and block with stamina — or hold to charge a guaranteed-crit heavy smash. Four ork breeds, each with its own brain and bite.</p></div>
-      <div class="fcard rv rv-2"><span class="ic">🏰</span><h3>City-building</h3><p>Lay out plots and raise houses, walls, towers and workshops. A real town economy with food, repair and burn.</p></div>
-      <div class="fcard rv rv-3"><span class="ic">🪓</span><h3>Villagers that work</h3><p>Woodcutters fell real trees. Miners chip real boulders and cart the stone home. Recruit them, feed them, grow the town.</p></div>
-      <div class="fcard rv rv-4"><span class="ic">🌳</span><h3>The War Table</h3><p>A branching upgrade tree — blade, armor, abilities and defenses. Spend gold and stone to climb it night after night.</p></div>
-      <div class="fcard rv"><span class="ic">🗺️</span><h3>Five biomes &amp; roads</h3><p>Forest, snow, desert, rock and swamp on one island, laced with a curving road network — each biome with its own ork camp, wildlife, weather and loot.</p></div>
-      <div class="fcard rv rv-2"><span class="ic">🛡️</span><h3>Defenses &amp; the bell</h3><p>Archer towers, ballistae and shrines you unlock and place. Ring the war bell to call the night on your own terms.</p></div>
-      <div class="fcard rv rv-3"><span class="ic">🧭</span><h3>Guided by quests</h3><p>A step-by-step quest chain eases you in — where to gather, when to build, how the trials work — so your first night doesn't blindside you.</p></div>
-      <div class="fcard rv rv-4"><span class="ic">🏯</span><h3>A rival in the desert</h3><p>A Stronghold-Crusader-style human opponent holds a walled fort out in the sands — running its own tax economy, raising buildings and patrolling as it grows.</p></div>
-      <div class="fcard rv"><span class="ic">🔓</span><h3>Free the caged</h3><p>The horde pens captives like cattle. Clear a warband, break the cage open, and they take up arms at your side.</p></div>
-      <div class="fcard rv rv-2"><span class="ic">💀</span><h3>Gnashfang Hold</h3><p>An off-map ork fortress beyond the swamp feeds the waves — patrols, the Blight, and towers that fire on sight. Breach it and end the Warlord to win.</p></div>
+      <p>Not just a defense game — a whole island that works, fights and grows around you. Every shot below is captured in-engine, on <strong>Ultra</strong>.</p></div>
+
+    <div class="show">
+
+      <!-- 1 · Combat -->
+      <div class="show-row rv">
+        <a class="show-media" href="screenshots/combat.png"><img loading="lazy" src="screenshots/combat.png" alt="A lone knight faces a spread ork warband outside the walled keep">
+          <span class="num">01</span><span class="ultra">In-engine · Ultra</span></a>
+        <div class="show-copy">
+          <span class="show-tag">⚔ Real-time combat</span>
+          <h3>Blade, block &amp; stamina</h3>
+          <p>Soft-lock the nearest threat, then swing, crit and block on a stamina budget — or hold to charge a guaranteed-crit heavy smash. Four ork breeds, each with its own brain and bite.</p>
+          <ul class="show-list"><li>Soft-lock targeting &amp; combo chains</li><li>Charged heavy strikes &amp; timed blocks</li><li>Grunts · scouts · berserkers · warp-shamans</li></ul>
+        </div>
+      </div>
+
+      <!-- 2 · War Table -->
+      <div class="show-row flip rv">
+        <a class="show-media" href="screenshots/war-table.png"><img loading="lazy" src="screenshots/war-table.png" alt="The War Table upgrade tree — Prosperity, Bulwark, Champion and Armoury branches">
+          <span class="num">02</span><span class="ultra">In-engine · Ultra</span></a>
+        <div class="show-copy">
+          <span class="show-tag">🌳 The War Table</span>
+          <h3>Spend blood-won gold</h3>
+          <p>A branching upgrade tree — blade, armor, abilities, walls and defenses. Climb the Prosperity, Bulwark, Champion and Armoury lines night after night, and carry every unlock down the bloodline.</p>
+          <ul class="show-list"><li>Four branches, dozens of nodes</li><li>Walls, towers, ballistae &amp; shrines</li><li>Upgrades persist across heirs</li></ul>
+        </div>
+      </div>
+
+      <!-- 3 · Town / villagers -->
+      <div class="show-row rv">
+        <a class="show-media" href="screenshots/desert-miners.png"><img loading="lazy" src="screenshots/desert-miners.png" alt="Villagers mining the desert crags and carting stone home at dusk">
+          <span class="num">03</span><span class="ultra">In-engine · Ultra</span></a>
+        <div class="show-copy">
+          <span class="show-tag">🪓 A town that works</span>
+          <h3>Villagers with real jobs</h3>
+          <p>Woodcutters fell real trees; miners chip real boulders and cart the stone home. Lay out plots, raise houses and workshops, recruit and feed townsfolk — a town with its own food, repair and burn.</p>
+          <ul class="show-list"><li>Woodcutters, miners &amp; farmers at work</li><li>Build mode: houses, farms, walls, towers</li><li>Recruit, feed &amp; muster a war party</li></ul>
+        </div>
+      </div>
+
+      <!-- 4 · Hold the night -->
+      <div class="show-row flip rv">
+        <a class="show-media" href="screenshots/orks-night.png"><img loading="lazy" src="screenshots/orks-night.png" alt="Orks breach the walls and storm the keep under a violet night sky">
+          <span class="num">04</span><span class="ultra">In-engine · Ultra</span></a>
+        <div class="show-copy">
+          <span class="show-tag">🌙 Hold the night</span>
+          <h3>Ring the bell, brace the wall</h3>
+          <p>When the war bell tolls, grunts, scouts, berserkers and warp-casting shamans pour from every biome toward the keep. Man the towers, ballistae and shrines, repair the breaches, and survive until dawn.</p>
+          <ul class="show-list"><li>Escalating nightly sieges</li><li>Archer towers, ballistae &amp; healing shrines</li><li>Ring the bell to start the night on your terms</li></ul>
+        </div>
+      </div>
+
+      <!-- 5 · Free the caged -->
+      <div class="show-row rv">
+        <a class="show-media" href="screenshots/cage-rescue.png"><img loading="lazy" src="screenshots/cage-rescue.png" alt="The knight breaks open a horde cage to free penned captives">
+          <span class="num">05</span><span class="ultra">In-engine · Ultra</span></a>
+        <div class="show-copy">
+          <span class="show-tag">🔓 Free the caged</span>
+          <h3>Break the pens open</h3>
+          <p>The horde pens captives like cattle across the island. Clear the warband, smash the cage, and the freed take up arms at your side — every rescue another sword on the wall come nightfall.</p>
+          <ul class="show-list"><li>Cages guarded across every biome</li><li>Rescues join your militia</li><li>More hands to build, mine and fight</li></ul>
+        </div>
+      </div>
+
+      <!-- 6 · Rival -->
+      <div class="show-row flip rv">
+        <a class="show-media" href="screenshots/rival.png"><img loading="lazy" src="screenshots/rival.png" alt="The rival warlord's walled sandstone fort out in the cactus desert">
+          <span class="num">06</span><span class="ultra">In-engine · Ultra</span></a>
+        <div class="show-copy">
+          <span class="show-tag">🏯 A rival in the sands</span>
+          <h3>You're not the only lord</h3>
+          <p>A Stronghold-Crusader-style human opponent holds a walled fort out in the desert — running its own tax economy, raising buildings and patrolling as it grows. Rush it early, or let it fester into a second front.</p>
+          <ul class="show-list"><li>An AI keep with a live economy</li><li>Builds, taxes &amp; patrols on its own</li><li>Raid it — or race it — for the island</li></ul>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- also inside -->
+    <div class="also rv">
+      <p class="also-head">— and there's more on the island —</p>
+      <div class="also-grid">
+        <div class="fcard"><span class="ic">🗺️</span><h3>Five biomes &amp; roads</h3><p>Forest, snow, desert, rock and swamp on one island, laced with curving roads — each with its own camp, wildlife and weather.</p></div>
+        <div class="fcard"><span class="ic">💀</span><h3>Gnashfang Hold</h3><p>An ork fortress beyond the swamp feeds the waves — the Blight, patrols and towers that fire on sight. Breach it and end the Warlord to win.</p></div>
+        <div class="fcard"><span class="ic">🩸</span><h3>Bloodline succession</h3><p>When the hero falls, the next heir takes up the sword with every upgrade intact. Your townsfolk are your lives.</p></div>
+        <div class="fcard"><span class="ic">🧭</span><h3>Guided by quests</h3><p>A step-by-step quest chain eases you in — where to gather, when to build, how the trials work — so your first night doesn't blindside you.</p></div>
+        <div class="fcard"><span class="ic">🎒</span><h3>Satchel &amp; consumables</h3><p>Loot chests, forage, and stock food and potions into quick-slots for the fight — eat to heal, quaff to buff.</p></div>
+        <div class="fcard"><span class="ic">👁️</span><h3>First-person view</h3><p>Tap <kbd>V</kbd> to drop into a first-person viewmodel — sword and shield in hand — and take the wall eye-to-eye with the horde.</p></div>
+      </div>
     </div>
   </div>
 </section>
@@ -238,7 +320,7 @@
         <span class="lab"><span class="n">Snow</span><span class="d"> — frozen pinewood &amp; ambush snowmen</span></span></a>
       <a class="biome rv rv-3" href="screenshots/desert.png"><img loading="lazy" src="screenshots/desert.png" alt="Desert biome — cactus flats before the rival keep">
         <span class="lab"><span class="n">Desert</span><span class="d"> — cactus flats &amp; the rival fort</span></span></a>
-      <a class="biome rv" href="screenshots/mountains.png"><img loading="lazy" src="screenshots/mountains.png" alt="Rock highlands — glowing crystal crags at night">
+      <a class="biome rv" href="screenshots/rock.png"><img loading="lazy" src="screenshots/rock.png" alt="Rock highlands — glowing crystal crags and fireflies at night">
         <span class="lab"><span class="n">Rock</span><span class="d"> — crystal crags &amp; sheer cliffs</span></span></a>
       <a class="biome rv rv-2" href="screenshots/swamp.png"><img loading="lazy" src="screenshots/swamp.png" alt="Swamp biome — the drowned mire">
         <span class="lab"><span class="n">Swamp</span><span class="d"> — the drowned mire</span></span></a>
@@ -266,13 +348,13 @@
     </div>
     <div class="gal">
       <a class="rv" href="screenshots/town-center.png"><img loading="lazy" src="screenshots/town-center.png" alt="The keep and its village at the heart of the island"></a>
-      <a class="rv rv-2" href="screenshots/orks-night.png"><img loading="lazy" src="screenshots/orks-night.png" alt="Orks breach the walls and storm the keep at night"></a>
-      <a class="rv rv-3" href="screenshots/town-center-night.png"><img loading="lazy" src="screenshots/town-center-night.png" alt="The village at dusk before the siege"></a>
+      <a class="rv rv-2" href="screenshots/combat.png"><img loading="lazy" src="screenshots/combat.png" alt="A lone knight faces a warband of orks outside the keep"></a>
+      <a class="rv rv-3" href="screenshots/orks-night.png"><img loading="lazy" src="screenshots/orks-night.png" alt="Orks breach the walls and storm the keep at night"></a>
+      <a class="rv" href="screenshots/cage-rescue.png"><img loading="lazy" src="screenshots/cage-rescue.png" alt="The knight breaks open a horde cage to free captives"></a>
+      <a class="rv rv-2" href="screenshots/town-center-night.png"><img loading="lazy" src="screenshots/town-center-night.png" alt="The village at dusk before the siege"></a>
+      <a class="rv rv-3" href="screenshots/rock.png"><img loading="lazy" src="screenshots/rock.png" alt="Glowing crystal crags in the rock highlands at night"></a>
       <a class="rv" href="screenshots/hero-woods.png"><img loading="lazy" src="screenshots/hero-woods.png" alt="The cloaked knight in the forest at dawn"></a>
-      <a class="rv rv-2" href="screenshots/rival-castle.png"><img loading="lazy" src="screenshots/rival-castle.png" alt="Clashing with the rival warband outside their desert keep"></a>
-      <a class="rv rv-3" href="screenshots/swamp.png"><img loading="lazy" src="screenshots/swamp.png" alt="The drowned mire at dusk"></a>
-      <a class="rv" href="screenshots/mountains.png"><img loading="lazy" src="screenshots/mountains.png" alt="Glowing crystal crags in the rock highlands at night"></a>
-      <a class="rv rv-2" href="screenshots/forest-glade.png"><img loading="lazy" src="screenshots/forest-glade.png" alt="A forest glade with a caged captive, villagers and a deer"></a>
+      <a class="rv rv-2" href="screenshots/rival.png"><img loading="lazy" src="screenshots/rival.png" alt="The rival warlord's walled fort out in the desert"></a>
       <a class="rv rv-3" href="screenshots/desert-miners.png"><img loading="lazy" src="screenshots/desert-miners.png" alt="Villagers mining the desert crags at dusk"></a>
     </div>
   </div>
@@ -432,7 +514,7 @@ setTimeout(()=>rvEls.forEach(el=>{if(el.getBoundingClientRect().top<innerHeight*
 
 // lightbox
 const lb=document.getElementById('lb'),lbi=lb.querySelector('img');
-document.querySelectorAll('.gal a,.biome').forEach(a=>{
+document.querySelectorAll('.gal a,.biome,.show-media').forEach(a=>{
   a.addEventListener('click',e=>{e.preventDefault();lbi.src=a.getAttribute('href');lb.classList.add('open');});
 });
 lb.addEventListener('click',()=>lb.classList.remove('open'));
