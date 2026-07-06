@@ -29,6 +29,10 @@ pub enum PeasantKind {
     Unemployed,
     Miner,
     Guard,
+    /// The town's ranged militia: longbow in the off-hand, a nocked arrow in the string hand,
+    /// a back quiver + baldric, leather hood + bow-arm bracer. Fights at range (`villagers.rs`
+    /// archer brain) instead of the guard's sword-and-board melee.
+    Archer,
 }
 
 // Fixed studio peasant hues (skin/tunic/trouser are caller-supplied for town variety).
@@ -51,6 +55,12 @@ const DESERT_CLOAK: u32 = 0xb1925a; // warm sand cloak
 // NPCs). Matches the rival's crimson banners in `rival.rs`.
 const LIVERY_BLUE: u32 = 0x2f4a8a;
 const LIVERY_CRIMSON: u32 = 0x9a2420;
+// Archer kit — dark yew bow stave, pale linen string, fletchings dyed the militia blue so a
+// nocked shaft reads against the leather kit (and matches the tabard blue of our melee guards).
+const BOW_WOOD: u32 = 0x4f3c26; // oiled yew stave
+const BOW_STRING: u32 = 0xe6ddc4; // waxed linen
+const FLETCH: u32 = 0x3f5f9e; // dyed goose-feather vanes (militia blue, a shade lighter than LIVERY_BLUE)
+const ARCHER_BAND: u32 = 0x33261a; // dark leather hood band / quiver straps
 const PLATE: u32 = 0xb9bec8; // brushed steel armour (a touch darker than the bright IRON tool blade)
 const DESERT_BRONZE: u32 = 0x8a6a34; // warm desert war-metal (conical war-helm, scimitar hilt)
 // The rival garrison's body armour is PALE SANDY plate (sun-bleached leather/scale), NOT heavy
@@ -161,6 +171,9 @@ fn frustum(rt: f32, rb: f32, h: f32, off: Vec3, c: u32, s: Surf) -> Mesh {
 fn frustum_s(rt: f32, rb: f32, h: f32, scale: Vec3, off: Vec3, c: u32, s: Surf) -> Mesh {
     tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(12).build().scaled_by(scale).translated_by(off), c, s)
 }
+fn frustum_r(rt: f32, rb: f32, h: f32, off: Vec3, rot: Quat, c: u32, s: Surf) -> Mesh {
+    tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(6).build().rotated_by(rot).translated_by(off), c, s)
+}
 fn cone(r: f32, h: f32, off: Vec3, rot: Quat, scale: Vec3, c: u32, s: Surf) -> Mesh {
     tinted(Cone { radius: r, height: h }.mesh().build().scaled_by(scale).rotated_by(rot).translated_by(off), c, s)
 }
@@ -184,6 +197,7 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
     let unemployed = kind == Unemployed;
     let miner = kind == Miner;
     let guard = kind == Guard;
+    let archer = kind == Archer;
 
     // Desert (rival) people are a foreign desert folk: sun-tanned skin and loose sand linens, not the
     // player town's pale skin + brown trews. (Workers also get the full thobe + sandals below.)
@@ -228,6 +242,23 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
             // The diagonal sash is the WORKER's desert mark; a soldier wears the steel + tabard below
             // instead, so fighter vs labourer stays legible even under the shared keffiyeh/cloak.
             torso_parts.push(bxr(0.46, 0.075, 0.05, v(0.0, 0.12, 0.19), rz(0.5), DESERT_BAND, Surf::Cloth)); // chest sash
+        }
+    }
+    if archer {
+        // The archer's silhouette from any angle: a leather QUIVER slung on the back (tilted so the
+        // shafts poke over the right shoulder) on a diagonal chest baldric, plus a leather jerkin
+        // panel over the tunic — lighter kit than the guard's steel (an archer is milicja, not a
+        // man-at-arms), but still clearly a FIGHTER against the unarmed workers.
+        torso_parts.push(frustum_s(0.25, 0.212, 0.38, v(1.06, 1.0, 0.86), v(0.0, 0.15, 0.025), LEATHER, Surf::Cloth)); // leather jerkin
+        torso_parts.push(bxr(0.075, 0.5, 0.03, v(0.0, 0.12, 0.19), rz(0.55), ARCHER_BAND, Surf::Cloth)); // chest baldric
+        let qrot = rz(-0.38); // quiver tilts its mouth toward the right shoulder
+        torso_parts.push(frustum_r(0.058, 0.046, 0.42, v(0.09, 0.1, -0.19), qrot, LEATHER, Surf::Cloth)); // quiver tube
+        torso_parts.push(frustum_r(0.062, 0.06, 0.05, v(0.155, 0.265, -0.19), qrot, ARCHER_BAND, Surf::Cloth)); // mouth band
+        // Three spare shafts poking out of the mouth, fletchings up.
+        for (dx, dy, dz) in [(0.0_f32, 0.0_f32, 0.0_f32), (0.045, -0.02, 0.03), (0.03, 0.015, -0.035)] {
+            let base = v(0.19 + dx, 0.36 + dy, -0.19 + dz);
+            torso_parts.push(frustum_r(0.011, 0.011, 0.17, base, qrot, BOW_WOOD, Surf::Skin)); // shaft
+            torso_parts.push(bxr(0.045, 0.07, 0.045, base + v(0.035, 0.09, 0.0), qrot, FLETCH, Surf::Cloth)); // fletch tuft
         }
     }
     if guard {
@@ -297,6 +328,14 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         head_parts.push(frustum(0.125, 0.14, 0.11, v(0.0, 0.17, 0.0), PLATE, Surf::Metal)); // steel helm
         head_parts.push(bxr(0.04, 0.1, 0.16, v(0.0, 0.25, 0.0), Quat::IDENTITY, PLATE, Surf::Metal)); // helm crest ridge
         head_parts.push(bx(0.05, 0.11, 0.03, v(0.0, 0.07, 0.12), PLATE, Surf::Metal)); // nasal bar
+    } else if archer {
+        // A fitted leather archer's hood: snug skullcap + band, a short drape guarding the neck,
+        // and a single blue fletch-feather tucked in the band — the ranged-militia headmark
+        // (leather, not steel: he stands off the melee).
+        head_parts.push(frustum(0.115, 0.145, 0.1, v(0.0, 0.17, 0.0), LEATHER, Surf::Cloth)); // leather skullcap
+        head_parts.push(frustum(0.148, 0.15, 0.04, v(0.0, 0.115, 0.0), ARCHER_BAND, Surf::Cloth)); // hood band
+        head_parts.push(bxr(0.24, 0.24, 0.03, v(0.0, -0.02, -0.125), rx(-0.12), LEATHER, Surf::Cloth)); // neck drape
+        head_parts.push(bxr(0.022, 0.16, 0.045, v(0.1, 0.24, -0.03), xyz(-0.25, 0.0, -0.45), FLETCH, Surf::Cloth)); // feather
     } else {
         head_parts.push(frustum(0.12, 0.14, 0.075, v(0.0, 0.18, 0.0), HAIR, Surf::Cloth)); // cap
         head_parts.push(bxr(0.17, 0.035, 0.14, v(0.02, 0.23, -0.015), xyz(-0.12, 0.0, if unemployed { 0.2 } else { -0.08 }), HAIR, Surf::Cloth)); // cap top
@@ -309,12 +348,20 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
             frustum(0.072, 0.07, 0.045, v(0.0, -0.27, 0.0), LEATHER, Surf::Cloth), // cuff
         ])
     };
-    let elbow = || {
-        group(vec![
+    let elbow = |bracer: bool| {
+        let mut p = vec![
             frustum(0.058, 0.064, 0.29, v(0.0, -0.145, 0.0), skin, Surf::Skin), // forearm
             frustum(0.066, 0.07, 0.075, v(0.0, -0.22, 0.0), LEATHER, Surf::Cloth), // wrist wrap
             bx(0.07, 0.07, 0.08, v(0.0, -0.22, 0.0), skin, Surf::Skin), // fist
-        ])
+        ];
+        if bracer {
+            // The archer's BOW-ARM bracer: a laced leather guard over the inner forearm so the
+            // released string doesn't flay it — the classic bowman's tell.
+            p.push(frustum(0.07, 0.076, 0.15, v(0.0, -0.12, 0.0), LEATHER, Surf::Cloth)); // bracer
+            p.push(frustum(0.074, 0.075, 0.025, v(0.0, -0.075, 0.0), ARCHER_BAND, Surf::Cloth)); // lace band
+            p.push(frustum(0.074, 0.075, 0.025, v(0.0, -0.165, 0.0), ARCHER_BAND, Surf::Cloth)); // lace band
+        }
+        group(p)
     };
     let hip = || {
         let mut p = vec![frustum(0.115, 0.097, 0.38, v(0.0, -0.2, 0.0), trouser, Surf::Cloth)]; // thigh
@@ -398,6 +445,18 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
             frustum(0.02, 0.018, 0.14, v(0.0, -0.03, 0.0), LEATHER, Surf::Cloth), // grip
             bx(0.05, 0.05, 0.05, v(0.0, -0.11, 0.0), IRON, Surf::Metal), // pommel
         ]))
+    } else if archer {
+        // A single NOCKED ARROW in the string hand (built +Y like every held weapon, so the shared
+        // rest rotation carries it point-down at ease; the bow-draw clip levels it at the target).
+        // The hand always shows a "next shaft ready" — low-poly shorthand that keeps the grip
+        // honest between shots without swapping meshes; the flying arrow is its own entity
+        // (`projectile.rs`).
+        Some(group(vec![
+            frustum(0.013, 0.013, 0.5, v(0.0, 0.19, 0.0), BOW_WOOD, Surf::Skin), // shaft
+            cone(0.026, 0.09, v(0.0, 0.47, 0.0), Quat::IDENTITY, v(1.0, 1.0, 0.5), IRON, Surf::Metal), // bodkin point
+            bx(0.055, 0.11, 0.014, v(0.0, -0.01, 0.0), FLETCH, Surf::Cloth), // fletching vane
+            bx(0.014, 0.11, 0.055, v(0.0, -0.01, 0.0), FLETCH, Surf::Cloth), // crossed vane
+        ]))
     } else {
         None // unemployed — empty handed
     };
@@ -419,6 +478,45 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
             .rotated_by(Quat::from_rotation_x(FRAC_PI_2)) // disc face → +Z (shield-local)
             .rotated_by(Quat::from_rotation_y(1.15)), // counter the hero pose's edge-on carry
         )
+    } else if archer {
+        // The LONGBOW rides the off-hand (`Shield`) pivot — grip at the origin, stave arcing in
+        // the local Y-Z plane (belly toward +Z, string a straight linen line joining the tips at
+        // -Z). Built from a sampled quadratic arc so the limbs read as one bent yew stave, not a
+        // stack of boxes. The shared shield rest pose carries it near-vertical along the forearm
+        // (a bow at ease); `bow_pose` (player/anim.rs) turns it upright into the draw.
+        let tip_y = 0.5_f32;
+        let tip_z = -0.12_f32;
+        let belly_z = 0.11_f32; // bezier control (grip belly lands ≈ z 0)
+        let bez = |t: f32| {
+            let u = 1.0 - t;
+            v(
+                0.0,
+                (t * t - u * u) * tip_y, // u²·(-tip_y) + t²·(+tip_y)
+                (u * u + t * t) * tip_z + 2.0 * u * t * belly_z,
+            )
+        };
+        let mut parts = vec![
+            frustum(0.034, 0.034, 0.15, v(0.0, 0.0, 0.0), LEATHER, Surf::Cloth), // leather grip wrap
+            bx(0.014, 1.0, 0.014, v(0.0, 0.0, tip_z), BOW_STRING, Surf::Cloth), // string tip-to-tip
+        ];
+        const SEGS: usize = 8;
+        for i in 0..SEGS {
+            let (a, b) = (bez(i as f32 / SEGS as f32), bez((i + 1) as f32 / SEGS as f32));
+            let d = b - a;
+            let mid = (a + b) * 0.5;
+            // Limbs thin toward the tips (0.05 at the grip → 0.028 at a tip).
+            let w = 0.05 - 0.022 * ((mid.y.abs() / tip_y).min(1.0));
+            parts.push(bxr(
+                w,
+                d.length() + 0.015,
+                w * 1.35,
+                mid,
+                rx(d.z.atan2(d.y)), // align the box's +Y along the arc segment (Y-Z plane)
+                BOW_WOOD,
+                Surf::Skin,
+            ));
+        }
+        Some(group(parts))
     } else {
         None
     };
@@ -430,8 +528,8 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         head,
         shoulder_l: shoulder(),
         shoulder_r: shoulder(),
-        elbow_l: elbow(),
-        elbow_r: elbow(),
+        elbow_l: elbow(archer), // bow arm gets the bracer
+        elbow_r: elbow(false),
         hip_l: hip(),
         hip_r: hip(),
         knee_l: knee(),

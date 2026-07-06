@@ -856,6 +856,82 @@ pub(crate) fn work_pose(t: f32, hoe: bool) -> Pose {
     p
 }
 
+/// The bow shot's release moment as a fraction of the whole clip — the arrow entity must leave the
+/// string exactly when the string hand snaps open, so the archer brain (`villagers::guard_combat`)
+/// times its `ArrowSpawn` off this same constant.
+pub(crate) const BOW_RELEASE_P: f32 = 0.60;
+
+/// A Warbell flavour clip (not a studio one): the archer's **draw-and-loose**. One shot, `p` 0..1:
+/// the bow arm levels at the target while the string hand reaches to the string (draw), pulls to
+/// the cheek and holds a steady aiming beat (a faint tremble of effort), the string hand SNAPS open
+/// at [`BOW_RELEASE_P`] with a small whole-body recoil, then everything settles back to the carry.
+/// The body blades side-on (hips + torso yaw toward the string side, head counter-yawed onto the
+/// target) — the root still faces the target, so the silhouette reads as a braced archer, not a
+/// squared-up peasant. The off-hand `Shield` pivot carries the BOW (stave authored +Y,
+/// string at -Z): this clip turns it upright into the draw; the `Sword` pivot's nocked arrow is
+/// levelled at the target through the aim.
+pub(crate) fn bow_pose(t: f32, p: f32) -> Pose {
+    let p = p.clamp(0.0, 1.0);
+    let draw = smoothstep(p / 0.40); // reach + pull to the cheek
+    let loose = smoothstep((p - BOW_RELEASE_P) / 0.05); // the string hand snaps open
+    let settle = smoothstep((p - 0.70) / 0.30); // ease the whole pose back to rest
+    // A faint aiming tremble while at full draw (gone once loosed).
+    let trem = (t * 21.0).sin() * 0.012 * draw * (1.0 - loose);
+
+    let mut po = rest();
+    // Blade the body: hips + torso yaw toward the string side, head counter-yawed onto the target,
+    // weight settled into a staggered stance (lead/left foot toward the foe).
+    po.hips = Jp {
+        t: Some(Vec3::new(0.0, lerp(1.05, 1.01, draw), 0.0)),
+        r: e3(0.0, 0.42 * draw, 0.0),
+    };
+    po.torso = Jp::r(e3(-0.05 * draw, 0.30 * draw, 0.04 * draw));
+    po.head = Jp::r(e3(0.02 * draw + trem, -0.62 * draw, 0.0));
+    po.hip_l = Jp::r(e3(-0.22 * draw, 0.12 * draw, -0.05 * draw));
+    po.knee_l = Jp::r(rx(0.14 * draw));
+    po.foot_l = Jp::r(rx(-0.06 * draw));
+    po.hip_r = Jp::r(e3(0.14 * draw, -0.1 * draw, 0.06 * draw));
+    po.knee_r = Jp::r(rx(0.22 * draw));
+
+    // Bow arm: levels straight out at the target (compensating the torso yaw), elbow near-locked.
+    po.sh_l = Jp::r(e3(lerp(0.1, -1.42, draw) + trem, lerp(0.0, 0.34, draw), lerp(-0.15, -0.06, draw)));
+    po.el_l = Jp::r(rx(lerp(-0.5, -0.1, draw)));
+    // The bow itself: from the at-ease carry along the forearm to UPRIGHT in the draw. With the
+    // arm raised forward (hand-local −Y ≈ world-forward, +Z ≈ world-up), pitching the mesh +X by
+    // +π/2 stands the stave (mesh +Y) vertical and turns the string (mesh −Z) back at the cheek.
+    po.shield = Jp {
+        t: Some(Vec3::new(0.0, -0.02, 0.05)),
+        r: Jp::r(e3(0.12, -1.5, 0.0)).r.slerp(e3(1.55, 0.0, 0.0), draw),
+    };
+    // String hand: reaches forward with the nock, hauls straight back to the cheek (the elbow
+    // folding to a right angle at shoulder height, shoulder drawn back around the yawed torso),
+    // then SNAPS open past the release point.
+    let pull = draw; // reach and pull share the envelope; the reach reads in the elbow unfolding
+    po.sh_r = Jp::r(e3(
+        lerp(0.12, -1.14, pull) + 0.14 * loose,
+        lerp(0.0, -0.66, pull) - 0.45 * loose,
+        lerp(0.15, 0.26, pull) + 0.12 * loose,
+    ));
+    po.el_r = Jp::r(rx(lerp(-0.4, -1.7, pull) + 0.95 * loose));
+    // The nocked arrow lies level along the draw (pointing at the target), and drops with the hand
+    // after the loose — the "next shaft" carried down at ease.
+    po.sword = Jp::r(Jp::r(sword_rest_r()).r.slerp(e3(1.5, 0.15, 0.0), draw * (1.0 - loose)));
+
+    // Recoil: a small whole-body give the instant the string lets go.
+    if loose > 0.0 && settle < 1.0 {
+        let k = loose * (1.0 - settle);
+        po.torso = Jp::r(po.torso.r * e3(-0.05 * k, 0.03 * k, 0.0));
+        po.sh_l = Jp::r(po.sh_l.r * e3(0.0, 0.06 * k, 0.04 * k));
+    }
+
+    // Settle everything back to the rest carry after the loose.
+    let out = rest();
+    if settle > 0.0 {
+        return po.lerp(&out, settle);
+    }
+    po
+}
+
 /// A worker hauling a load home (a log / a handcart): both arms raise forward with a fixed elbow
 /// bend, gripping the load level in front of the chest. The legs come from locomotion (the worker
 /// walks the load home), so the caller layers this over the gait with `action_over_loco`.

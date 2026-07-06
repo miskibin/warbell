@@ -335,6 +335,15 @@ pub(crate) fn play_cues(
                 spatial_shot(&mut commands, bank.swing.clone(), 0.16 * sfx, jitter(&mut seed, 0.14), at);
                 spatial_shot(&mut commands, pick(&bank.flesh, &mut seed), 0.26 * sfx, jitter(&mut seed, 0.10), at);
             }
+            // A town archer's loose — the swing whoosh pitched sharply UP reads as the string's
+            // twang + the shaft whipping off it. Shares the guard-skirmish throttle so a volleying
+            // wall doesn't machine-gun the mix.
+            AudioCue::BowShot(at) => {
+                if !throttle.allow(T_GUARD, now) {
+                    continue;
+                }
+                spatial_shot(&mut commands, bank.swing.clone(), 0.22 * sfx, jitter(&mut seed, 0.08) * 1.5, at);
+            }
             // Sampled herb-pick rustle — same 0.35 gain the synth blip used.
             AudioCue::Forage => {
                 one_shot(&mut commands, bank.forage.clone(), 0.35 * sfx, jitter(&mut seed, 0.08));
