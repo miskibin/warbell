@@ -120,16 +120,18 @@ fn spans() -> &'static [Span] {
     })
 }
 
-/// [`nearest_crossing`]'s ring-probe, for boardwalks over bog pools.
+/// [`nearest_crossing`]'s ring-probe, for boardwalks over bog pools. Same on-road gate: the
+/// snap must not carry the deck centre off the path it exists to serve.
 fn nearest_boardwalk(x: f32, z: f32) -> Option<Span> {
-    if let Some(s) = boardwalk_at(x, z) {
+    let on_road_walk = |s: &Span| crate::roads::on_road(s.cx, s.cz);
+    if let Some(s) = boardwalk_at(x, z).filter(on_road_walk) {
         return Some(s);
     }
     let mut r = 1.0;
     while r <= 4.0 {
         let mut a = 0.0;
         while a < std::f32::consts::TAU {
-            if let Some(s) = boardwalk_at(x + r * a.cos(), z + r * a.sin()) {
+            if let Some(s) = boardwalk_at(x + r * a.cos(), z + r * a.sin()).filter(on_road_walk) {
                 return Some(s);
             }
             a += std::f32::consts::FRAC_PI_4;
@@ -187,17 +189,21 @@ fn boardwalk_at(x: f32, z: f32) -> Option<Span> {
 
 /// A road's river-crossing midpoint can sit a touch off the channel's narrow axis (the centreline
 /// crosses on the diagonal), so probe at the point and then on a small expanding ring for the first
-/// spot that validates as a real deck. `None` if nothing nearby is a clean crossing (e.g. the road
-/// forded a too-wide span) — then that crossing simply gets no bridge.
+/// spot that validates as a real deck. The snap (probe ring + `water_run` recentring) can walk the
+/// deck centre off the road that justified it — reject those, or the "bridge only where a path
+/// crosses" invariant breaks (first bitten by the MAP_SCALE 2.6 bump). `None` if nothing nearby is
+/// a clean ON-ROAD crossing (e.g. the road forded a too-wide span) — then that crossing simply
+/// gets no bridge.
 fn nearest_crossing(x: f32, z: f32) -> Option<Span> {
-    if let Some(s) = crossing_at(x, z) {
+    let on_road_deck = |s: &Span| crate::roads::on_road(s.cx, s.cz);
+    if let Some(s) = crossing_at(x, z).filter(on_road_deck) {
         return Some(s);
     }
     let mut r = 1.0;
     while r <= 4.0 {
         let mut a = 0.0;
         while a < std::f32::consts::TAU {
-            if let Some(s) = crossing_at(x + r * a.cos(), z + r * a.sin()) {
+            if let Some(s) = crossing_at(x + r * a.cos(), z + r * a.sin()).filter(on_road_deck) {
                 return Some(s);
             }
             a += std::f32::consts::FRAC_PI_4;

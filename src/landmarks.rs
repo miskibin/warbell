@@ -185,21 +185,24 @@ fn meta(b: Biome) -> Meta {
             beacon: Color::srgb(1.0, 0.76, 0.23), // gold over grey rock
             gear: "stone_maul", // Stone Maul (+18) — the circle's own heft
         },
+        // NB (July 2026 map-character overhaul): the forest/swamp landmarks were re-identified —
+        // Hollow Oak → the Old Mill, Mire Sentinel → the Witch's Hut. Saves round-trip discovery
+        // by NAME, so a pre-overhaul save simply shows the new places undiscovered (harmless).
         Biome::Forest => Meta {
-            name: "The Hollow Oak",
-            lore: "Roots drink deep; so shall you strike.",
+            name: "The Old Mill",
+            lore: "Its sails still turn, though no wind asks them to.",
             buff: BuffKind::Power,
             buff_mag: 1.4,
             beacon: Color::srgb(1.0, 0.68, 0.18), // amber over green forest
-            gear: "sword_gold", // Golden Blade (+21)
+            gear: "sword_gold", // Golden Blade (+21) — the miller's hidden pay
         },
         Biome::Swamp => Meta {
-            name: "The Mire Sentinel",
-            lore: "Bog-iron bark shrugs off the worst.",
+            name: "The Witch's Hut",
+            lore: "The brew never cools. The door never opens.",
             buff: BuffKind::Resist,
             buff_mag: 0.6,
             beacon: Color::srgb(0.31, 0.94, 0.90), // bright cyan over murk
-            gear: "dragon_plate", // Dragonscale Plate (42%) — the worst the mire endured
+            gear: "dragon_plate", // Dragonscale Plate (42%) — payment the witch never collected
         },
     }
 }

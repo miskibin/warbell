@@ -74,14 +74,16 @@ fn melee_dmg(level: i32) -> f32 {
     BASE_MELEE * DMG_GROWTH.powi((level - 1).max(0))
 }
 
-/// Biome region centres (world XZ) — where each warden spawns + roams (see CLAUDE.md).
+/// Biome region centres — where each warden spawns + roams (see CLAUDE.md). Authored in
+/// MAP_SCALE-2.2-era world coords; `world22` rescales them to the current map size.
 fn region_center(b: Biome) -> Vec2 {
+    use crate::worldmap::world22;
     match b {
-        Biome::Snow => Vec2::new(-69.0, -45.0),
-        Biome::Desert => Vec2::new(60.0, -39.0),
-        Biome::Rocky => Vec2::new(66.0, 4.0),
-        Biome::Forest => Vec2::new(-60.0, 39.0),
-        Biome::Swamp => Vec2::new(0.0, 57.0),
+        Biome::Snow => world22(-69.0, -45.0),
+        Biome::Desert => world22(60.0, -39.0),
+        Biome::Rocky => world22(66.0, 4.0),
+        Biome::Forest => world22(-60.0, 39.0),
+        Biome::Swamp => world22(0.0, 57.0),
     }
 }
 
