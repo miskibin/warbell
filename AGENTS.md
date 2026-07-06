@@ -43,3 +43,12 @@ externally, so use the built-in render-and-exit harness, NOT a normal `cargo run
   `FOREST_WAVE=1 FOREST_DEFEND=1 FOREST_NIGHT=1` stages a fortified night siege,
   `FOREST_CAM="x,y,z,tx,ty,tz"` frames it. See the `visual-debug-cloud` skill for the full
   workflow and `FOREST_CLIP` for stitched video.
+
+**Marketing site (`site/`)** is plain static HTML/CSS/JS with no build step — preview it with
+`python3 -m http.server 8099` run from `site/`, then open `http://localhost:8099/`. Its images
+in `site/screenshots/*.png` are real in-engine captures from the `FOREST_SHOT` harness; use
+`FOREST_QUALITY=ultra` for the showcase look and `FOREST_NOHUD=1` for clean, HUD-free marketing
+frames. Reliable framings: `FOREST_TPS=1 FOREST_HERO="x,z"` for character-in-world / biome shots,
+`FOREST_CAM` for deliberate overviews. Note `FOREST_PANEL=<panel>` also opens the egui F1 debug
+window (shared env check), so a UI-panel shot needs cropping. The VM has **no ImageMagick or
+Pillow** — crop/resize captures with `ffmpeg -vf "crop=w:h:x:y"` instead.

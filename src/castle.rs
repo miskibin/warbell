@@ -57,6 +57,7 @@ const WINDOW_GLOW: u32 = 0xffd58c;
 const BRONZE: u32 = 0xb9892f;
 const BRONZE_DARK: u32 = 0x7c5a1e;
 const TORCH_FLAME: u32 = 0xff7a2a;
+const BRAZIER_FLAME: u32 = 0xff5a1e; // deeper orange for the big brazier flame shell (`M::Ember`)
 const SLIT: u32 = 0x23242a; // arrow-slit / shadow inset
 
 const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
@@ -103,6 +104,10 @@ pub(crate) enum M {
     Gold,
     Window,
     Flame,
+    /// Deep-orange fire shell at a LOW emissive — the brazier flame's outer layer. `M::Flame`'s
+    /// ×6 emissive is right for a torch-speck but a brazier-sized mesh at ×6 clips through AgX
+    /// to a cream-white egg on camera; this slot stays saturated fire-orange at size.
+    Ember,
 }
 
 #[derive(Clone)]
@@ -573,6 +578,7 @@ fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial
     glow(GOLD, 0.8, 0.6, M::Gold);
     glow(WINDOW_GLOW, 2.2, 0.0, M::Window);
     glow(TORCH_FLAME, 6.0, 0.0, M::Flame);
+    glow(BRAZIER_FLAME, 2.4, 0.0, M::Ember);
 
     Mats { h }
 }
@@ -1319,6 +1325,23 @@ fn torch_parts() -> Vec<(Mesh, M)> {
     v
 }
 
+/// A gate war-brazier — the torch's big sibling that lights the siege kill-zone OUTSIDE each
+/// gate (see the brazier spawn loop + `firelight::brazier_light`). Heavier post, wide iron bowl,
+/// a fat flame: reads as deliberate war-lighting, not a scaled-up torch.
+fn brazier_parts() -> Vec<(Mesh, M)> {
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    v.push((bx(0.2, 1.1, 0.2, 0.0, 0.55, 0.0), M::Wood)); // heavy post
+    v.push((bx(0.34, 0.1, 0.34, 0.0, 0.06, 0.0), M::BronzeDark)); // ground foot
+    v.push((bx(0.5, 0.16, 0.5, 0.0, 1.18, 0.0), M::BronzeDark)); // wide bowl
+    v.push((bx(0.42, 0.1, 0.42, 0.0, 1.28, 0.0), M::BronzeDark)); // bowl lip
+    // Layered flame: a saturated deep-orange shell (`M::Ember`, low emissive — stays FIRE-coloured
+    // on camera) around a small hot `M::Flame` core. One big `M::Flame` sphere clipped to a
+    // cream-white egg on the first AFTER capture.
+    v.push((flat(Mesh::from(Sphere::new(0.24).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.5, 1.0)).translated_by(Vec3::new(0.0, 1.48, 0.0))), M::Ember));
+    v.push((flat(Mesh::from(Sphere::new(0.13).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.6, 1.0)).translated_by(Vec3::new(0.0, 1.42, 0.0))), M::Flame));
+    v
+}
+
 // ── Rustic yard clutter ──────────────────────────────────────────────────────────
 // Small work-yard props that dress the courtyard corners. Tagged `Always` — they used to be
 // `PreWalls`, which meant buying the Palisade Walls DELETED every sign of life and left bare
@@ -1627,6 +1650,16 @@ pub fn build(
             let local = Quat::from_rotation_y(rot) * Vec3::new(sx, 0.0, 1.0);
             spawn(torch_parts(), Vec3::new(x + local.x, 0.0, z + local.z), 0.0, Vec3::ONE, CastleKind::Gate);
         }
+        // War-braziers flanking the gate APPROACH (outside the walls, clear of the gate lane):
+        // the night siege's melee happens right here, and on the moon-dark ground it filmed as
+        // black-on-black. `out` is the true outward axis (gates are axis-aligned on the
+        // perimeter, so the local +Z trick the torches use points inside on two of them).
+        let out = Vec3::new(x, 0.0, z).normalize();
+        let perp = Vec3::new(-out.z, 0.0, out.x);
+        for s in [-(half + 1.4), half + 1.4] {
+            let p = Vec3::new(x, 0.0, z) + out * 3.2 + perp * s;
+            spawn(brazier_parts(), p, 0.0, Vec3::ONE, CastleKind::Gate);
+        }
     }
     for sx in [-2.3_f32, 2.3] {
         spawn(torch_parts(), Vec3::new(sx, 0.0, 3.4), 0.0, Vec3::ONE, CastleKind::Always);
@@ -1659,6 +1692,19 @@ pub fn build(
                 CastlePart { kind: CastleKind::Gate },
                 BiomeEntity,
                 crate::firelight::torch_light(x * 0.7 + z * 0.31 + k as f32 * 2.1),
+            ));
+        }
+        // The war-braziers' pools (same gate lifecycle; flame local y = 1.5).
+        let out = Vec3::new(x, 0.0, z).normalize();
+        let perp = Vec3::new(-out.z, 0.0, out.x);
+        for (k, s) in [-(half + 1.4), half + 1.4].into_iter().enumerate() {
+            let p = Vec3::new(x, 0.0, z) + out * 3.2 + perp * s;
+            commands.spawn((
+                Transform::from_translation(Vec3::new(p.x, 1.5, p.z)),
+                Visibility::Hidden,
+                CastlePart { kind: CastleKind::Gate },
+                BiomeEntity,
+                crate::firelight::brazier_light(x * 0.43 + z * 0.57 + k as f32 * 3.3),
             ));
         }
     }

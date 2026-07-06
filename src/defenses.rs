@@ -42,9 +42,9 @@ const DEFENDER_BOLT_TTL: f32 = 3.0;
 /// World Y of the keep roof the archer figures stand on (the keep body top, ≈ `(KEEP_FOUND + KEEP_H)`
 /// scaled by the keep's 0.7 y-scale). Tuned against a staged shot.
 const ARCHER_FEET_Y: f32 = 1.54;
-/// Shrink the ~1.6-unit `archer_mesh` to peasant size. Villagers render a ~1.37-natural body at
-/// `villagers::SCALE` 0.63 (≈0.86 world tall); 0.53 brings the archer to the same apparent height.
-const ARCHER_SCALE: f32 = 0.53;
+/// Root scale of the keep-roof archer bipeds — the same size the townsfolk render at
+/// (`villagers::SCALE`), so the roof sentries read as the same people as the courtyard militia.
+const ARCHER_SCALE: f32 = 0.81;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -72,14 +72,26 @@ const TOWER_BATTER_RANGE: f32 = 3.0;
 const TOWER_BATTER_CD: f32 = 1.0;
 const TOWER_BATTER_DMG: f32 = 12.0;
 
-/// A visible keep-archer figure standing guard on the keep roof — the firing logic stays on the
-/// co-located [`Defender`]; this is just the model. Shown whenever the Keep Archers upgrade is owned
-/// (day + night, not only during a siege). The only "animation" is a hair of idle bob — a single
-/// transform per frame, no skeleton — so four of them barely register on the frame budget.
+/// A REAL archer body standing watch on the keep roof — the same studio biped + longbow kit the
+/// town's bowmen wear (`peasant_model::PeasantKind::Archer`), replacing the old merged-box
+/// mannequin. A roof sentry never walks: its only motion is the shared idle clip
+/// (`biped::animate_biped` off its `BipedDrive`), a yaw onto the current mark, and the
+/// draw-and-loose. Target pick + cadence stay on the co-located [`Defender`]
+/// (`defenders_fire`); this component holds the shot **choreography** — the arrow entity must
+/// leave the string exactly on the draw clip's release frame, like the town archers' shots
+/// (`keep_archer_shots`).
 #[derive(Component)]
 struct KeepArcher {
-    base_y: f32,
-    phase: f32,
+    /// Facing it returns to between marks — out over its battlement edge.
+    home_yaw: f32,
+    /// Current smoothed facing (the root yaw is ours; the animator owns only the joints).
+    yaw: f32,
+    /// `elapsed_secs` when the current draw began; `< 0` when at ease.
+    draw_started: f32,
+    /// The invader this draw is aimed at.
+    target: Option<Entity>,
+    /// This draw's arrow has left the string.
+    loosed: bool,
 }
 
 /// A defender bolt in flight, homing on its target invader.
@@ -122,6 +134,7 @@ impl Plugin for DefensePlugin {
                     defenders_fire,
                     spawn_defender_bolts,
                     step_defender_bolts,
+                    keep_archer_shots.after(defenders_fire),
                     batter_towers,
                     revive_towers,
                     shrine_heal,
@@ -174,7 +187,7 @@ fn defenders_fire(
     siege: Res<Siege>,
     defenses: Res<Defenses>,
     mut orders: ResMut<DefenderBolts>,
-    mut emitters: Query<&mut Defender>,
+    mut emitters: Query<(&mut Defender, Option<&mut KeepArcher>)>,
     // `Without<Dying>`: don't lock a shot (and burn the cooldown) onto a fading corpse — a killed
     // invader stays a valid `WaveInvader` for ~1.4s. Matches `step_defender_bolts`'s own query.
     invaders: Query<(Entity, &Transform), (With<WaveInvader>, Without<crate::dying::Dying>)>,
@@ -192,7 +205,7 @@ fn defenders_fire(
     }
     let pts: Vec<(f64, f64)> = targets.iter().map(|t| (t.1, t.2)).collect();
 
-    for mut d in &mut emitters {
+    for (mut d, mut roof_archer) in &mut emitters {
         let enabled = match d.kind {
             Kind::Tower => defenses.towers,
             Kind::Archer => defenses.keep_archers,
@@ -203,14 +216,76 @@ fn defenders_fire(
         }
         let prof = if d.kind == Kind::Tower && defenses.tower_mastery { TOWER_MASTERY } else { d.profile };
         if let Some(i) = nearest_in_range(d.muzzle.x as f64, d.muzzle.z as f64, prof.range, &pts) {
-            orders.0.push(BoltOrder {
-                origin: d.muzzle,
-                target: targets[i].0,
-                damage: prof.damage as f32 * DMG_SCALE,
-                speed: prof.speed as f32,
-                max_range: prof.max_range as f32,
-            });
+            if let Some(ka) = roof_archer.as_deref_mut() {
+                // A roof archer doesn't shoot instantly: it BEGINS A DRAW here, and
+                // `keep_archer_shots` looses the real arrow on the clip's release frame.
+                ka.draw_started = now;
+                ka.target = Some(targets[i].0);
+                ka.loosed = false;
+            } else {
+                orders.0.push(BoltOrder {
+                    origin: d.muzzle,
+                    target: targets[i].0,
+                    damage: prof.damage as f32 * DMG_SCALE,
+                    speed: prof.speed as f32,
+                    max_range: prof.max_range as f32,
+                });
+            }
             d.ready_at = now + prof.cooldown as f32;
+        }
+    }
+}
+
+/// Drive each keep-roof archer's shot: yaw the body onto the mark (the sentry stands planted —
+/// facing is the only whole-body motion), play the draw clip on its `BipedDrive`, and push the
+/// real [`crate::projectile::ArrowSpawn`] exactly at the clip's release frame, aimed at the
+/// target's live chest. Between draws the sentry eases back to its home battlement facing. The
+/// keep-archer damage number stays the core parity profile × [`DMG_SCALE`], same as the old bolt.
+fn keep_archer_shots(
+    time: Res<Time>,
+    defenses: Res<Defenses>,
+    mut arrows: ResMut<crate::projectile::ArrowSpawns>,
+    invaders: Query<&Transform, (With<WaveInvader>, Without<KeepArcher>, Without<crate::dying::Dying>)>,
+    mut q: Query<(Entity, &Defender, &mut KeepArcher, &mut crate::biped::BipedDrive, &mut Transform)>,
+) {
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs().min(0.05);
+    const TURN: f32 = 4.0; // rad/s — a deliberate sentry pivot, quicker than a strolling villager
+    for (self_e, d, mut ka, mut drive, mut tf) in &mut q {
+        let p = (now - ka.draw_started) / crate::villagers::BOW_SHOT_SECS;
+        let drawing = defenses.keep_archers && ka.draw_started >= 0.0 && (0.0..1.0).contains(&p);
+        if !drawing {
+            ka.draw_started = -1.0;
+            ka.target = None;
+            drive.bow = false;
+            // At ease: settle back to watching out over the battlement edge.
+            ka.yaw += crate::steer::wrap_pi(ka.home_yaw - ka.yaw).clamp(-TURN * dt, TURN * dt);
+            tf.rotation = Quat::from_rotation_y(ka.yaw);
+            continue;
+        }
+        drive.bow = true;
+        drive.bow_t = p;
+        let Some(te) = ka.target else { continue };
+        if let Ok(ttf) = invaders.get(te) {
+            let to = ttf.translation - tf.translation;
+            let want = to.x.atan2(to.z);
+            ka.yaw += crate::steer::wrap_pi(want - ka.yaw).clamp(-TURN * dt, TURN * dt);
+            tf.rotation = Quat::from_rotation_y(ka.yaw);
+            if p >= crate::player::anim::BOW_RELEASE_P && !ka.loosed {
+                ka.loosed = true;
+                let dir = Vec3::new(to.x, 0.0, to.z).normalize_or_zero();
+                arrows.0.push(crate::projectile::ArrowSpawn {
+                    from: tf.translation + Vec3::Y * 1.15 + dir * 0.4, // the bow, off the roof deck
+                    aim: ttf.translation + Vec3::Y,
+                    target: te,
+                    shooter: self_e,
+                    damage: d.profile.damage as f32 * DMG_SCALE,
+                    rival: false,
+                });
+            }
+        } else {
+            // The mark died mid-draw: finish the motion gracefully, loose nothing.
+            ka.target = None;
         }
     }
 }
@@ -363,22 +438,14 @@ fn shrine_heal(
     }
 }
 
-/// Reveal the keep-archer figures once the Keep Archers upgrade is owned (they stand guard day +
-/// night, not only during a siege), with a hair of idle bob. Cheap — four transforms, no skeleton.
-fn sync_keep_archers(
-    time: Res<Time>,
-    defenses: Res<Defenses>,
-    mut q: Query<(&KeepArcher, &mut Visibility, &mut Transform)>,
-) {
-    let t = time.elapsed_secs();
-    for (a, mut vis, mut tf) in &mut q {
-        if defenses.keep_archers {
-            if *vis != Visibility::Inherited {
-                *vis = Visibility::Inherited;
-            }
-            tf.translation.y = a.base_y + (t * 1.4 + a.phase).sin() * 0.02; // subtle idle bob
-        } else if *vis != Visibility::Hidden {
-            *vis = Visibility::Hidden;
+/// Reveal the keep-roof archers once the Keep Archers upgrade is owned (they stand guard day +
+/// night, not only during a siege). The bodies are real bipeds now — the shared idle clip keeps
+/// them alive, so no manual bob; this only gates visibility.
+fn sync_keep_archers(defenses: Res<Defenses>, mut q: Query<&mut Visibility, With<KeepArcher>>) {
+    let want = if defenses.keep_archers { Visibility::Inherited } else { Visibility::Hidden };
+    for mut vis in &mut q {
+        if *vis != want {
+            *vis = want;
         }
     }
 }
@@ -393,6 +460,7 @@ pub fn populate_defenders(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
     let tower_hp = TOWER_MAX_HP as f32;
     for (x, z) in [(-HALF_X, -HALF_Z), (HALF_X, -HALF_Z), (HALF_X, HALF_Z), (-HALF_X, HALF_Z)] {
@@ -409,36 +477,58 @@ pub fn populate_defenders(
             crate::biome::BiomeEntity,
         ));
     }
-    // Keep archers: four figures manning the keep-roof corners. The `Defender` is the firing logic
-    // (muzzle a touch above the figure's bow); the mesh + transform make them visible, facing outward.
+    // Keep archers: four REAL archer bipeds manning the keep-roof edges — the same longbow kit
+    // the town's bowmen wear (`peasant_model::Archer`), not the old merged-box mannequin. Planted
+    // sentries: `keep_archer_shots` yaws them onto marks and plays the draw; they never walk.
     // Hidden until the Keep Archers upgrade is owned (`sync_keep_archers`).
-    let archer_handle = meshes.add(archer_mesh());
-    let archer_material =
-        materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
-    // One archer at the middle of each roof edge (front/back/sides) — on the open roof, clear of the
-    // corner turrets, facing out over the battlements.
+    let sentry_mat = crate::creature::make_creature_material(creature_mats);
+    // Per-man variety pulled from the villager palette family (skin / tunic hexes).
+    let sentry_looks: [(u32, u32); 4] =
+        [(0xd8a06a, 0x4a6a3a), (0xc89070, 0x3a7a72), (0xe8c4a0, 0x6a4a6a), (0xa36b4a, 0x4a6a3a)];
+    // One archer at the middle of each roof edge (front/back/sides) — on the open roof, clear of
+    // the corner turrets, facing out over the battlements.
     for (i, (x, z)) in [(0.0_f32, 2.0_f32), (0.0, -2.0), (2.7, 0.0), (-2.7, 0.0)].into_iter().enumerate() {
-        let outward = Vec3::new(x, 0.0, z).normalize_or_zero();
-        let tf = Transform::from_xyz(x, ARCHER_FEET_Y, z)
-            .looking_to(if outward == Vec3::ZERO { Vec3::NEG_Z } else { outward }, Vec3::Y)
-            .with_scale(Vec3::splat(ARCHER_SCALE));
-        commands.spawn((
-            Defender {
-                kind: Kind::Archer,
-                profile: KEEP_ARCHER,
-                muzzle: Vec3::new(x, 2.5, z),
-                ready_at: 0.0,
-                hp: f32::INFINITY,
-                max_hp: f32::INFINITY,
-                batter_cd: 0.0,
-            },
-            Mesh3d(archer_handle.clone()),
-            MeshMaterial3d(archer_material.clone()),
-            tf,
-            Visibility::Hidden,
-            KeepArcher { base_y: ARCHER_FEET_Y, phase: i as f32 * 1.7 },
-            crate::biome::BiomeEntity,
-        ));
+        let home_yaw = x.atan2(z); // villager facing convention: from_rotation_y(yaw), forward +Z
+        let root = commands
+            .spawn((
+                Transform {
+                    translation: Vec3::new(x, ARCHER_FEET_Y, z),
+                    rotation: Quat::from_rotation_y(home_yaw),
+                    scale: Vec3::splat(ARCHER_SCALE),
+                },
+                Visibility::Hidden,
+                Defender {
+                    kind: Kind::Archer,
+                    profile: KEEP_ARCHER,
+                    muzzle: Vec3::new(x, 2.5, z),
+                    ready_at: 0.0,
+                    hp: f32::INFINITY,
+                    max_hp: f32::INFINITY,
+                    batter_cd: 0.0,
+                },
+                KeepArcher { home_yaw, yaw: home_yaw, draw_started: -1.0, target: None, loosed: false },
+                // The shared biped animator idles/draws off this; `phase` desyncs the breathing.
+                crate::biped::BipedDrive { phase: i as f32 * 1.7, ..default() },
+                crate::biome::BiomeEntity,
+            ))
+            .id();
+        let (skin, tunic) = sentry_looks[i];
+        let h = crate::peasant_model::peasant_biped_meshes(
+            crate::peasant_model::PeasantKind::Archer,
+            skin,
+            tunic,
+            0x3a2a18,
+            false,
+            false,
+        )
+        .upload(meshes);
+        // Off-hand bow mount — same transform the townsfolk use (`villagers::build_biped_body`).
+        let shield_xf = Transform {
+            translation: Vec3::new(0.0, 0.0, 0.14),
+            rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
+            ..default()
+        };
+        crate::biped::spawn_biped(commands, root, &sentry_mat, h, 1.06, 1.0, 0.15, 0.3, -0.06, Some(shield_xf));
     }
     // Ballista flanking the north gate (offset off the gate axis so it doesn't sit on the hero
     // spawn / follow-cam line — the hero spawns at the gate centre, `gate.y - 3.0`).
@@ -515,35 +605,8 @@ fn ballista_mesh() -> Mesh {
     ])
 }
 
-// ── Keep-archer figure (vertex-coloured, flat-shaded) ───────────────────────────────
-// A low-poly archer at the ready, feet at y=0, facing −Z (forward). Shares the ballista's
-// vertex-colour helpers + one white material; `looking_to` aims each one outward off the keep roof.
-fn archer_mesh() -> Mesh {
-    let cloth = lin(0x4f7e38); // ranger green — pops on the grey roof, distinct from the blue banners
-    let cloth_dk = lin(0x37591f);
-    let skin = lin(0xd0a070);
-    let leather = lin(0x6a4f2e);
-    let bow_c = lin(0x7a5530);
-    let string = lin(0xe0d2ad);
-    bgroup(vec![
-        // legs
-        bbox(0.16, 0.6, 0.18, vc(-0.12, 0.3, 0.0), cloth_dk),
-        bbox(0.16, 0.6, 0.18, vc(0.12, 0.3, 0.0), cloth_dk),
-        // torso + belt
-        bbox(0.44, 0.62, 0.3, vc(0.0, 0.9, 0.0), cloth),
-        bbox(0.46, 0.1, 0.32, vc(0.0, 0.6, 0.0), leather),
-        // head + helm
-        bbox(0.27, 0.27, 0.27, vc(0.0, 1.36, 0.0), skin),
-        bbox(0.32, 0.15, 0.32, vc(0.0, 1.55, 0.0), leather),
-        // front (bow) arm reaching out toward −Z; back arm drawing the string
-        bboxr(0.13, 0.52, 0.13, vc(-0.18, 1.0, -0.24), Quat::from_rotation_x(-1.3), skin),
-        bboxr(0.13, 0.42, 0.13, vc(0.2, 0.96, 0.1), Quat::from_rotation_x(0.7), skin),
-        // bow stave held out front (vertical) + bowstring + a nocked arrow aiming out
-        bbox(0.07, 1.15, 0.08, vc(-0.24, 1.05, -0.5), bow_c),
-        bbox(0.03, 1.0, 0.03, vc(-0.17, 1.05, -0.5), string),
-        bbox(0.04, 0.04, 0.7, vc(-0.06, 1.06, -0.26), bow_c),
-    ])
-}
+// (The old merged-box `archer_mesh()` keep-roof mannequin is gone — the roof sentries are real
+// `peasant_model::Archer` bipeds now, spawned in `populate_defenders`.)
 
 fn vc(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)

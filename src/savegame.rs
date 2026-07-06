@@ -451,8 +451,9 @@ fn apply_pending_load(
     camps.done = data.rescued_camps.clone();
     camps.seen = data.rescued_camps.clone();
     // Blight cages: restore the freed flags so respawned patrols can't re-free an already-freed
-    // captive (which would dup `population`). In-process Continue keeps the live cage visuals, so
-    // only the flag matters here. Element-wise copy guards a length mismatch from an older save.
+    // captive (which would dup `population`). The cage VISUALS (door open/shut, captives seated
+    // or gone) reconcile from the GameLoaded message below — `camps::reconcile_cages_on_load`.
+    // Element-wise copy guards a length mismatch from an older save.
     if let Some(mut captives) = captives {
         for (i, &f) in data.blight_captives_freed.iter().enumerate() {
             if i < captives.freed.len() {
@@ -566,8 +567,8 @@ mod tests {
             blight_captives_freed: vec![false, true],
             discoveries_found: 3,
             discoveries_completed: false,
-            discovered_landmarks: vec!["The Hollow Oak".into()],
-            claimed_landmark_gear: vec!["The Hollow Oak".into()],
+            discovered_landmarks: vec!["The Old Mill".into()],
+            claimed_landmark_gear: vec!["The Old Mill".into()],
             opened_chests: vec![false, true, false],
             quest: Some(QuestLog { active: 3, progress: 2.0 }),
             rival_gold: 142.5,
@@ -592,7 +593,7 @@ mod tests {
         assert_eq!(back.upgrades, data.upgrades);
         assert!(back.defenses.walls);
         assert_eq!(back.rescued_camps, vec![true, false, true]);
-        assert_eq!(back.discovered_landmarks, vec!["The Hollow Oak".to_string()]);
+        assert_eq!(back.discovered_landmarks, vec!["The Old Mill".to_string()]);
         assert_eq!(back.opened_chests, vec![false, true, false]);
         assert_eq!(back.quest, Some(QuestLog { active: 3, progress: 2.0 }));
         assert!(back.bag.has_item("potion"));

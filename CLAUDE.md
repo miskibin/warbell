@@ -128,13 +128,15 @@ keeps a `FOREST_WAVE` assault topped up so a long siege actually films a battle.
 
 ```powershell
 # island/biome flyover (orbit "cx,cy,cz,radius,height,deg_per_sec")
-$env:FOREST_CLIP="target/clips/desert"; $env:FOREST_CLIP_ORBIT="60,1.5,-39,22,14,7"; $env:FOREST_TIME="0.24"; cargo run
+$env:FOREST_CLIP="target/clips/desert"; $env:FOREST_CLIP_ORBIT="71,1.5,-46,22,14,7"; $env:FOREST_TIME="0.24"; cargo run
 # sustained night siege
 $env:FOREST_CLIP="target/clips/siege"; $env:FOREST_WAVE="1"; $env:FOREST_DEFEND="1"; $env:FOREST_TOWN="1"; $env:FOREST_CAM="0,15,30,0,2,-8"; cargo run
 # stitch (per-clip mp4 + gif): ffmpeg -framerate 30 -i frame_%05d.png -pix_fmt yuv420p out.mp4
 ```
-Biome region centres (world XZ): snow (-69,-45) · desert (60,-39) · rock (66,4) · forest (-60,39) ·
-swamp (0,57). Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).
+Biome region centres (world XZ, at `MAP_SCALE` 2.6): snow (-82,-53) · desert (71,-46) · rock (78,5) ·
+forest (-71,46) · swamp (0,67). These scale with `MAP_SCALE` — code with a hand-authored world coord
+should route it through `worldmap::world22` (rescales 2.2-era coords) instead of baking the scale in.
+Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).
 
 Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FOREST_CLIP`), all read at startup:
 
@@ -148,8 +150,10 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_WAVE` / `FOREST_DEFEND=1` | stage a night siege / arm all defenses + walls |
 | `FOREST_MUSTER=1` | rally the whole town into the **war party** at boot (as if pressing `K`) so a shot frames the muster; pair with `FOREST_DEMO=work` (stages a 14-pop town) for a full host (`villagers.rs::stage_muster`) |
 | `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
+| `FOREST_ARCHERS=<n>` | retrain the whole standing militia as **longbow archers** at boot (`villagers.rs::stage_archers`); numeric `n ≥ 2` also raises `town.population` to `n` so a whole squad grows in to retrain. Pair with `FOREST_MUSTER`+`FOREST_HERO` to park a volleying rank anywhere, `FOREST_ORKLINE` for live targets, or `FOREST_WAVE` for a defended siege. (`FOREST_VIEW=peasant:archer` + `FOREST_VIEW_ANIM=bow` previews the model / draw-loose clip in the viewer.) |
+| `FOREST_CAGETEST="x,z"` | park the prisoner-cage rescue's before/after states side by side at a world XZ: a CLOSED cage of real seated peasant captives + an OPENED emptied one 5.5u further +X (`camps::spawn_cage`); both doors face +X, so frame from the east. Film the actual door-swing + walk-out with `FOREST_DEMO=rescue` + `FOREST_CLIP` instead |
 | `FOREST_BREACH=1` | auto-break the Hold gate on the first sim frame so a shot/clip films the woken garrison + the Warlord boss without a keypress (`ork_fortress::stage_breach`); pair with `FOREST_HERO`/`FOREST_CAM` inside the walls |
-| `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at world ≈`(54, -72)` (NE desert) |
+| `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at `rival::RIVAL_CENTRE` ≈ world `(78, -104)` at MAP_SCALE 2.6 (NE desert) |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_FISHLINE="x,z"` | park one of each fish variety (silver/blue/gold) frozen mid-leap in a lit row at a world XZ (fish-model close-ups, `fish.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
@@ -165,6 +169,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_FLAGTEST=1` | park one cloth banner in open air at `(0, 6, -22)` to frame the flutter in isolation (`banner.rs`). NB the cloth streams along world ≈`(0.9, 0, -0.43)` — shoot from a spot perpendicular to that or it reads edge-on |
 | `FOREST_BELLTEST=1` | re-toll the war bell on a ~12s loop (swing + clapper + SFX) so a shot/clip frames the ring without a keypress (`castle::swing_bell`); the bell stands at `castle::BELL_POS` (4.5, 7.5) |
 | `FOREST_ROLLTEST=1` | re-arm the hero's **Alt dodge-roll** (forward, along the facing) on a ~1.8s loop so a `FOREST_TPS` shot/clip frames the somersault without a keypress (`player/movement.rs::player_roll`); skips the pointer-lock/stamina gates |
+| `FOREST_IMMORTAL=1` | the hero takes hits with full juice (floats/flash/shake) but can't drop below 1 HP, so a filmed melee never trips the **succession beat** — which slow-mos the world and swings the camera to the nearest townsperson, hijacking a combat clip's framing (`player/health.rs::apply_hero_damage`) |
 | `BEVY_ASSET_ROOT` | point at this dir if running the binary from elsewhere (WGSL loads from `assets/shaders/`) |
 
 ## Architecture
@@ -327,11 +332,20 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   view-model knobs: `fp_keep` in `player/mod.rs::spawn_hero_meshes` picks which limb meshes survive
   FP (hide the **upper-arm** meshes — they balloon at the eye — but KEEP the forearm so the weapon
   has a hand and doesn't levitate); `camera::fp_body_visibility` applies it; the FP arm/sword/shield
-  poses are the `fp_amt` overrides in `anim::hero_anim`; the eye sits at `FP_EYE_H`/`FP_FWD_OFF` in
-  `player/camera.rs`; and the main-camera **near-plane** (`scene.rs::setup_camera`, `near: 0.04`) is
-  lowered so the close-held weapon doesn't slice the near-plane (that slicing was the walk-time
-  "flicker"). NB: FP melee inherently puts the enemy in your face — no view-model trick fixes that;
-  third-person is the design's combat view.
+  poses live in `anim::hero_anim` (July 2026 rework): the arms are **always viewmodel-driven in FP**
+  (the eye sits AT the chest, so third-person clips orbit the lens itself — never let them play on
+  the FP arms), a `fp_ready` weight keeps the gear in a low carry at the frame edges out of combat
+  and draws it up when a threat is near / attacking / blocking, and the whole arm chains are
+  **handedness-MIRRORED** in FP (the studio rig renders its "R" joints on the viewer's left;
+  translations flip X, rotations conjugate `(x,-y,-z)`) so the sword reads bottom-right / shield
+  bottom-left. The FP wrist/shield angles were **solved from `FOREST_FPDBG=1` camera-space probes,
+  not eyeballed** — pose-space intuition is useless through the tilted FP hand frame, so tune
+  against the probe vectors (NB: FPDBG needs `FOREST_SHOT` too — without the shot harness the app
+  idles on the start screen and the probes read the menu camera). The eye sits at
+  `FP_EYE_H`/`FP_FWD_OFF` in `player/camera.rs`; and the main-camera **near-plane**
+  (`scene.rs::setup_camera`, `near: 0.04`) is lowered so the close-held weapon doesn't slice the
+  near-plane (that slicing was the walk-time "flicker"). NB: FP melee inherently puts the enemy in
+  your face — no view-model trick fixes that; third-person is the design's combat view.
 - **Capture-harness flakes — confirm the `Screenshot saved` log line, and retry before debugging.**
   A `FOREST_SHOT` run can emit a junk frame that is NOT a code bug: a **black** frame (cold pipeline,
   see the bevy-0.19 note) or an **overview/god-cam** frame (the follow-cam hadn't engaged yet under

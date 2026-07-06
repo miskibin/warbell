@@ -41,12 +41,23 @@ use crate::water::{WaterExt, WaterMaterial, WaterParams};
 /// Bumped 1.5 → 1.8 (a clean +20% on every axis), then 1.8 → 2.0 to give the strongholds (esp.
 /// the desert rival, jammed against the north coast) more room, then 2.0 → 2.2 (map-character
 /// overhaul pass 0) so the biomes keep real interior once the fixed-world-size claims (warden
-/// glade r16, rival plateau r30, fortress apron) are subtracted. The two world-coord-authored
-/// landmarks scale with it automatically: `ork_fortress::BLIGHT_DZ` and `rival::RIVAL_CENTRE` are
-/// both derived from `MAP_SCALE`, so bumping it keeps the ork gate on the south coast and the
-/// rival fort in the desert with no hand-tuning. (The warden `boss::region_center` world coords
-/// are hand-authored but sit well inside their biomes at 2.2 — verified.)
-pub const MAP_SCALE: f32 = 2.2;
+/// glade r16, rival plateau r30, fortress apron) are subtracted, then 2.2 → 2.6 (landmark
+/// overhaul, July 2026 — paid for by the terrain far-LOD, see `build_terrain_chunk_coarse`).
+/// The world-coord-authored landmarks scale with it automatically: `ork_fortress::BLIGHT_DZ` and
+/// `rival::RIVAL_CENTRE` are derived from `MAP_SCALE`, and the remaining hand-authored world
+/// coords (warden `boss::region_center`, chest hoards, snowman field, the swamp pool keep-out)
+/// route through [`world22`] so they track scale bumps too. Per-bump manual checklist: trim
+/// `SAFE_R` (base-space, so it silently over-grows), re-size `navgrid::NAV_MAX_NODES` (A* budget
+/// ∝ tiles), and re-check CLAUDE.md's biome-centre table for capture framing.
+pub const MAP_SCALE: f32 = 2.6;
+
+/// Rescale a world-XZ coordinate that was hand-authored (and playtested) at `MAP_SCALE` 2.2 to
+/// the CURRENT scale. Generation runs in base space, so a point that sat inside a biome at 2.2
+/// maps to the same base-space spot — same biome, same relative position — at any other scale.
+/// Every hand-authored world coordinate should pass through here rather than bake the scale in.
+pub fn world22(x: f32, z: f32) -> Vec2 {
+    Vec2::new(x, z) * (MAP_SCALE / 2.2)
+}
 // The GRID is the enlarged resolution; GENERATION still runs in *base* space — the grid
 // loop samples `classify(ix / MAP_SCALE, …)`, so the island shape is identical, just
 // drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
@@ -70,12 +81,12 @@ const ISLAND_RX: f32 = 71.0;
 const ISLAND_RZ: f32 = 53.0;
 const ISLAND_EXP: f32 = 2.6;
 // Castle safe-zone radius in BASE space (forced flat grass, no biome scatter). `classify` runs in
-// base space, so the WORLD radius is `SAFE_R * MAP_SCALE` (≈32.4 at MAP_SCALE 2.2). Trimmed from
-// 18.0 → 16.2 → 14.7 across the 1.8 → 2.0 → 2.2 scale bumps: this is base-space, so each bump
-// silently grows the *world* safe-zone ~10%; the trims keep the biome-free ring round the castle
-// at its tuned ~32.4-unit world size. Town build plots flatten themselves (`near_build_plot`),
-// so this doesn't gate their footing.
-pub const SAFE_R: f32 = 14.7;
+// base space, so the WORLD radius is `SAFE_R * MAP_SCALE` (≈32.4 at MAP_SCALE 2.6). Trimmed from
+// 18.0 → 16.2 → 14.7 → 12.45 across the 1.8 → 2.0 → 2.2 → 2.6 scale bumps: this is base-space, so
+// each bump silently grows the *world* safe-zone; the trims keep the biome-free ring round the
+// castle at its tuned ~32.4-unit world size. Town build plots flatten themselves
+// (`near_build_plot`), so this doesn't gate their footing.
+pub const SAFE_R: f32 = 12.45;
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 pub const SEA_Y: f32 = -0.4;
 /// Colour-blend half-width (tiles) at biome edges.
@@ -765,10 +776,11 @@ fn pool_sd(x: f32, z: f32) -> f32 {
     if best == f32::INFINITY {
         return best;
     }
-    // Swamp warden arena keep-out (world → base).
+    // Swamp warden arena keep-out (world → base). The glade coord is authored at scale 2.2.
     let wx = x * MAP_SCALE - GX;
     let wz = z * MAP_SCALE - GZ;
-    if (wx - 0.0).hypot(wz - 57.0) < POOL_WARDEN_KEEPOUT {
+    let swamp_glade = world22(0.0, 57.0);
+    if (wx - swamp_glade.x).hypot(wz - swamp_glade.y) < POOL_WARDEN_KEEPOUT {
         return f32::INFINITY;
     }
     // The Blight owns its own ground (checked before regions in `classify`) — keep pools out.
@@ -1950,7 +1962,7 @@ pub fn build_step(
         ),
         20 => crate::verbs::populate_forage(commands, meshes, std_mats),
         21 => crate::chest::populate_chests(commands, meshes, std_mats),
-        22 => crate::defenses::populate_defenders(commands, meshes, std_mats),
+        22 => crate::defenses::populate_defenders(commands, meshes, std_mats, creature_mats),
         23 => crate::ruins::populate_landmarks(commands, meshes, std_mats),
         24 => crate::vignettes::populate_vignettes(commands, meshes, std_mats),
         25 => crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats),
@@ -2377,29 +2389,195 @@ fn spawn_terrain_sheet(
     mat: Handle<TerrainMaterial>,
     keep: impl Fn(TB) -> bool + Copy,
 ) {
+    let lod = terrain_lod_enabled();
     let mut cz = 0;
     while cz < ROWS {
         let mut cx = 0;
         while cx < COLS {
-            let mesh = build_terrain_chunk(
-                keep,
-                cx,
-                (cx + TERRAIN_CHUNK).min(COLS),
-                cz,
-                (cz + TERRAIN_CHUNK).min(ROWS),
-            );
+            let (x1, z1) = ((cx + TERRAIN_CHUNK).min(COLS), (cz + TERRAIN_CHUNK).min(ROWS));
+            let mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
             if mesh.count_vertices() > 0 {
-                commands.spawn((
+                let mut e = commands.spawn((
                     Mesh3d(meshes.add(mesh)),
                     MeshMaterial3d(mat.clone()),
                     Transform::default(),
                     crate::biome::BiomeEntity,
                 ));
+                // Terrain LOD: past TERRAIN_LOD the full-res chunk (1 quad/tile + walls +
+                // marching-squares banks) hands off to a stride-4 coarse drape — ~1/16th the
+                // vertices for the distant majority of the island. The band is a dithered
+                // crossfade (only the ring of chunks currently inside it pays the discard
+                // cost) so the swap doesn't pop; skirts on the coarse mesh hide the seam.
+                if lod {
+                    if let Some(coarse) = build_terrain_chunk_coarse(keep, cx, x1, cz, z1) {
+                        e.insert(bevy::camera::visibility::VisibilityRange {
+                            start_margin: 0.0..0.0,
+                            end_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
+                            use_aabb: true,
+                        });
+                        commands.spawn((
+                            Mesh3d(meshes.add(coarse)),
+                            MeshMaterial3d(mat.clone()),
+                            Transform::default(),
+                            crate::biome::BiomeEntity,
+                            // Shadow cascades stop at ~150 and the fog is thick out there —
+                            // the coarse drape is pure fill, never a shadow caster.
+                            bevy::light::NotShadowCaster,
+                            bevy::camera::visibility::VisibilityRange {
+                                start_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
+                                end_margin: 1.0e30..1.0e30, // no far cutoff — terrain always draws
+                                use_aabb: true,
+                            },
+                        ));
+                    }
+                }
             }
             cx += TERRAIN_CHUNK;
         }
         cz += TERRAIN_CHUNK;
     }
+}
+
+/// Where the full-res terrain chunk hands off to its coarse LOD (world units, camera→chunk-AABB
+/// distance), and the width of the dithered crossfade band. 110 sits past the base fog start
+/// (≈56) and the prop/cover culls (62/75), well before trees vanish (180) — so the geometry
+/// swap happens under haze, on chunks the eye reads mostly by silhouette.
+const TERRAIN_LOD: f32 = 110.0;
+const TERRAIN_LOD_BAND: f32 = 26.0;
+/// Coarse-LOD sampling stride, in tiles (one quad per 4×4 tiles ≈ 1/16th the vertices).
+/// Must divide `TERRAIN_CHUNK` so coarse cell corners line up across chunk seams.
+const LOD_STRIDE: i32 = 4;
+
+/// Whether terrain LOD is on. Shares the scatter culling's `FOREST_NOCULL=1` escape hatch —
+/// the whole-island map-shot recipe and perf A/B runs want EVERYTHING at full res.
+fn terrain_lod_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_NOCULL").is_err())
+}
+
+/// Build the coarse far-LOD drape for one terrain chunk: the smoothed ground surface sampled
+/// every `LOD_STRIDE` tiles, no terrace walls, no marching-squares river cuts (the channel just
+/// drapes toward `SEA_Y` and the always-drawn water plane reads as the river), plus a short
+/// downward SKIRT around the chunk perimeter so LOD seams against neighbouring full-res chunks
+/// can't open see-through cracks. Cell→sheet routing matches the full-res pass (centre tile's
+/// class through `keep`), so each sheet's coarse drape wears its own material grain.
+fn build_terrain_chunk_coarse(
+    keep: impl Fn(TB) -> bool,
+    ix0: i32,
+    ix1: i32,
+    iz0: i32,
+    iz1: i32,
+) -> Option<Mesh> {
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    // Ground height at a stride-grid corner (world Y), `None` over water / off the island.
+    let corner_y = |cx: i32, cz: i32| -> Option<f32> { smooth_surface_y(cx as f32 - GX, cz as f32 - GZ) };
+    // Sea-tucked height for a wet corner: just under the water plane so the drape dips beneath.
+    const WET_Y: f32 = SEA_Y - 0.12;
+    let nrm3 = |v: [f32; 3]| {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-4);
+        [v[0] / l, v[1] / l, v[2] / l]
+    };
+
+    let mut push_quad = |p: [[f32; 3]; 4], n: [[f32; 3]; 4], c: [[f32; 4]; 4]| {
+        let b = positions.len() as u32;
+        for k in 0..4 {
+            positions.push(p[k]);
+            normals.push(n[k]);
+            colors.push(c[k]);
+        }
+        indices.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+    };
+
+    let mut cz = iz0;
+    while cz < iz1 {
+        let z1 = (cz + LOD_STRIDE).min(iz1);
+        let mut cx = ix0;
+        while cx < ix1 {
+            let x1 = (cx + LOD_STRIDE).min(ix1);
+            // Route the cell to a sheet by its centre tile (or any land corner on the coast).
+            let centre = tile_at((cx + x1) / 2, (cz + z1) / 2);
+            let class = centre.or_else(|| {
+                [(cx, cz), (x1, cz), (x1, z1), (cx, z1)].iter().find_map(|&(gx, gz)| tile_at(gx, gz))
+            });
+            let Some((tb, _)) = class else {
+                cx += LOD_STRIDE;
+                continue; // open sea cell
+            };
+            if !keep(tb) {
+                cx += LOD_STRIDE;
+                continue;
+            }
+            let corners = [(cx, cz), (x1, cz), (x1, z1), (cx, z1)];
+            let ys = corners.map(|(gx, gz)| corner_y(gx, gz));
+            if ys.iter().all(|y| y.is_none()) {
+                cx += LOD_STRIDE;
+                continue;
+            }
+            let y = ys.map(|y| y.unwrap_or(WET_Y));
+            // Central-difference normals over the stride grid (wet samples clamp to WET_Y).
+            let cn = |gx: i32, gz: i32| {
+                let s = LOD_STRIDE;
+                let e = corner_y(gx + s, gz).unwrap_or(WET_Y);
+                let w = corner_y(gx - s, gz).unwrap_or(WET_Y);
+                let so = corner_y(gx, gz + s).unwrap_or(WET_Y);
+                let no = corner_y(gx, gz - s).unwrap_or(WET_Y);
+                nrm3([w - e, 2.0 * s as f32, no - so])
+            };
+            let p = corners.map(|(gx, gz)| [gx as f32 - GX, 0.0, gz as f32 - GZ]);
+            let p = [
+                [p[0][0], y[0], p[0][2]],
+                [p[1][0], y[1], p[1][2]],
+                [p[2][0], y[2], p[2][2]],
+                [p[3][0], y[3], p[3][2]],
+            ];
+            let n = [cn(cx, cz), cn(x1, cz), cn(x1, z1), cn(cx, z1)];
+            let c = corners.map(|(gx, gz)| ground_color(gx as f32 / MAP_SCALE, gz as f32 / MAP_SCALE));
+            push_quad(p, n, c);
+
+            // Perimeter skirt: cell edges lying on the CHUNK boundary drop a short apron so a
+            // height mismatch against the neighbouring chunk's LOD state can't open a crack.
+            const SKIRT: f32 = 1.1;
+            let edges: [(usize, usize, bool); 4] = [
+                (0, 1, cz == iz0),
+                (1, 2, x1 == ix1),
+                (2, 3, z1 == iz1),
+                (3, 0, cx == ix0),
+            ];
+            for (a, b, on_boundary) in edges {
+                if !on_boundary {
+                    continue;
+                }
+                let dark = |col: [f32; 4]| [col[0] * 0.72, col[1] * 0.70, col[2] * 0.68, col[3]];
+                push_quad(
+                    [
+                        p[a],
+                        p[b],
+                        [p[b][0], p[b][1] - SKIRT, p[b][2]],
+                        [p[a][0], p[a][1] - SKIRT, p[a][2]],
+                    ],
+                    [n[a], n[b], n[b], n[a]],
+                    [c[a], c[b], dark(c[b]), dark(c[a])],
+                );
+            }
+            cx += LOD_STRIDE;
+        }
+        cz += LOD_STRIDE;
+    }
+
+    if positions.is_empty() {
+        return None;
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    Some(mesh)
 }
 
 /// Build one terrain CHUNK — the tiles in `[ix0,ix1) × [iz0,iz1)` that pass `keep`. Walls still

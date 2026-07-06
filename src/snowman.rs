@@ -51,9 +51,12 @@ const RESPAWN: f32 = 150.0;
 /// Waddle leg-swing frequency while shambling.
 const GAIT: f32 = 5.5;
 
-/// Snow biome region centre (world XZ) — snowmen scatter around here (see CLAUDE.md biome table).
-const SNOW_CENTRE: Vec2 = Vec2::new(-69.0, -45.0);
-/// How far from [`SNOW_CENTRE`] a snowman may be placed.
+/// Snow biome region centre — snowmen scatter around here (see CLAUDE.md biome table).
+/// Authored at MAP_SCALE 2.2; `world22` rescales it to the current map size.
+fn snow_centre() -> Vec2 {
+    crate::worldmap::world22(-69.0, -45.0)
+}
+/// How far from [`snow_centre`] a snowman may be placed.
 const SCATTER_R: f32 = 30.0;
 /// Target number of ambush snowmen on the island.
 const COUNT: usize = 10;
@@ -174,7 +177,7 @@ fn seed_snowmen(
         // Uniform-ish point in the scatter disc around the snow centre.
         let ang = frand(&mut rng) * std::f32::consts::TAU;
         let rad = SCATTER_R * frand(&mut rng).sqrt();
-        let p = SNOW_CENTRE + Vec2::new(ang.cos(), ang.sin()) * rad;
+        let p = snow_centre() + Vec2::new(ang.cos(), ang.sin()) * rad;
         // Must be walkable snow, off any build plot, and spaced from its siblings.
         if footing(p.x, p.y).is_none()
             || crate::worldmap::biome_at_world(p.x, p.y) != Some(crate::biome::Biome::Snow)

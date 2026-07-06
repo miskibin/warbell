@@ -78,6 +78,13 @@ pub(crate) struct SfxBank {
     /// Just the dry wood crack/snap (`wood-crack.ogg`) — the cactus felling sound (a saguaro
     /// has no heavy trunk to crash, so it gets the crack alone).
     wood_crack: Handle<AudioSource>,
+    /// The hero's CRITICAL strike landing (`crit-hit.ogg` — a heavy sword slash smashing into
+    /// armor). Played INSTEAD of the flesh pool when the swing crit (rolled / Heavy / riposte),
+    /// so a crit is heard, not just seen.
+    crit: Handle<AudioSource>,
+    /// An archer's loose (`bow-shot.ogg` — a powerful bowstring snap + the shaft cutting off it).
+    /// Spatial at the bow for every friendly AND rival arrow release.
+    bow: Handle<AudioSource>,
     /// Shield-block impacts (`block-{1,2}`) — sharp steel-on-steel parries; picked at random +
     /// pitch-jittered so repeated blocks don't sound stamped.
     blocks: Vec<Handle<AudioSource>>,
@@ -147,6 +154,8 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .collect(),
         tree_fall: asset.load("audio/tree-fall.ogg"),
         wood_crack: asset.load("audio/wood-crack.ogg"),
+        crit: asset.load("audio/crit-hit.ogg"),
+        bow: asset.load("audio/bow-shot.ogg"),
         blocks: ["audio/block-1.ogg", "audio/block-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         dash: asset.load("audio/sand-dash.ogg"),
         roll: asset.load("audio/dodge-roll.ogg"),
@@ -226,11 +235,19 @@ pub(crate) fn play_cues(
     for cue in cues.read() {
         match *cue {
             AudioCue::Swing => one_shot(&mut commands, bank.swing.clone(), 0.30 * sfx, jitter(&mut seed, 0.12)),
-            AudioCue::Impact { kill } => {
-                // Random flesh take + pitch jitter; a kill plays it louder + a touch lower (heavier).
-                let v = if kill { 0.62 } else { 0.50 } * sfx;
-                let p = if kill { jitter(&mut seed, 0.06) * 0.85 } else { jitter(&mut seed, 0.08) };
-                one_shot(&mut commands, pick(&bank.flesh, &mut seed), v, p);
+            AudioCue::Impact { kill, crit } => {
+                if crit {
+                    // The dedicated crit take replaces the flesh pool — louder than any normal
+                    // hit, tiny jitter (the clip is the signature; only keep back-to-back crits
+                    // from sounding stamped), a crit KILL still drops the pitch heavier.
+                    let p = if kill { jitter(&mut seed, 0.04) * 0.9 } else { jitter(&mut seed, 0.05) };
+                    one_shot(&mut commands, bank.crit.clone(), 0.72 * sfx, p);
+                } else {
+                    // Random flesh take + pitch jitter; a kill plays it louder + a touch lower (heavier).
+                    let v = if kill { 0.62 } else { 0.50 } * sfx;
+                    let p = if kill { jitter(&mut seed, 0.06) * 0.85 } else { jitter(&mut seed, 0.08) };
+                    one_shot(&mut commands, pick(&bank.flesh, &mut seed), v, p);
+                }
             }
             // Metallic chip per ore pick-swing — random clang + wide pitch jitter so a long mine
             // never repeats the same note (old game's `playPick`).
@@ -335,6 +352,15 @@ pub(crate) fn play_cues(
                 spatial_shot(&mut commands, bank.swing.clone(), 0.16 * sfx, jitter(&mut seed, 0.14), at);
                 spatial_shot(&mut commands, pick(&bank.flesh, &mut seed), 0.26 * sfx, jitter(&mut seed, 0.10), at);
             }
+            // An archer's loose — the real sampled bowstring snap + shaft whip (`bow-shot.ogg`;
+            // replaced the old pitched-up sword-swing stand-in). Shares the guard-skirmish
+            // throttle so a volleying wall doesn't machine-gun the mix.
+            AudioCue::BowShot(at) => {
+                if !throttle.allow(T_GUARD, now) {
+                    continue;
+                }
+                spatial_shot(&mut commands, bank.bow.clone(), 0.45 * sfx, jitter(&mut seed, 0.08), at);
+            }
             // Sampled herb-pick rustle — same 0.35 gain the synth blip used.
             AudioCue::Forage => {
                 one_shot(&mut commands, bank.forage.clone(), 0.35 * sfx, jitter(&mut seed, 0.08));
@@ -349,14 +375,14 @@ pub(crate) fn play_cues(
             | AudioCue::ChestOpen
             | AudioCue::Gold
             | AudioCue::ShopBuy
-            | AudioCue::CampRescue
+            | AudioCue::CampRescue(_)
             | AudioCue::LowHp => {
                 let sting = match *cue {
                     AudioCue::OreShatter => Sting::OreShatter,
                     AudioCue::ChestOpen => Sting::ChestOpen,
                     AudioCue::Gold => Sting::Gold,
                     AudioCue::ShopBuy => Sting::ShopBuy,
-                    AudioCue::CampRescue => Sting::CampRescue,
+                    AudioCue::CampRescue(_) => Sting::CampRescue,
                     _ => Sting::LowHp,
                 };
                 if let Some(h) = stings.handle(sting) {

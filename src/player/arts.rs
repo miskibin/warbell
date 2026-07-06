@@ -263,7 +263,7 @@ pub fn player_arts(
         }
     }
     if killed_any {
-        cues.write(AudioCue::Impact { kill: true });
+        cues.write(AudioCue::Impact { kill: true, crit: false });
     }
     // An art that bites an enemy opens/refreshes the IN-COMBAT window (drives the stance).
     if any_struck {

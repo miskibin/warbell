@@ -89,7 +89,9 @@ fn menu_park_camera(mut cam: Query<&mut Transform, With<Camera3d>>) {
 #[derive(Component)]
 struct MenuSceneEntity;
 
-/// The pre-rendered menu backdrop (dusk forest, baked fireflies + DoF). It covers the whole screen
+/// The pre-rendered menu backdrop: a golden-hour look across the forest to the keep — the war-bell
+/// tower and torch-lit keep silhouetted against the low sun's god rays, over baked DoF + haze. It
+/// covers the whole screen
 /// as a UI image, so the live 3D world is never seen on the menu — that's what lets
 /// [`menu_park_camera`] aim at bare sky and skip drawing the forest. `GlobalZIndex(-100)` keeps it
 /// BEHIND the start-screen title/buttons (`game_state.rs`, default z) but in front of the 3D pass

@@ -861,6 +861,11 @@ const WORKER_HP: f32 = 40.0;
 pub const WORKER_BOUNTY_GOLD: i64 = 3;
 pub const WORKER_BOUNTY_XP: i64 = 8;
 const SOLDIER_MELEE: f32 = 1.7;
+/// A rival bowman's per-shaft hit — the soldier blade × the same 1.5 mark-up the town's
+/// `archer_damage` puts on its guards' swords (slower cadence, paid back per hit).
+const SOLDIER_ARROW_DMG: f32 = 24.0;
+/// Nock-to-nock cadence — matches the town archers' `ARCHER_ATTACK_CD`.
+const RIVAL_ARCHER_CD: f32 = 2.5;
 /// How near a foe must come before a soldier engages…
 const SOLDIER_SIGHT: f32 = 13.0;
 /// …and how far from the keep it will chase before breaking off (so they defend home, not roam the
@@ -878,6 +883,56 @@ pub struct RivalSoldier {
     patrol: Vec2,
     patrol_t: f32,
     rng: u32,
+}
+
+/// A rival soldier who is a **desert bowman** — the rival mirror of the town's `villagers::Archer`
+/// trait: about a third of the garrison and of each raid party ([`crate::villagers::is_bowman`] on
+/// the spawn seed, the town's own split). Carriers fight at [`crate::villagers::BOW_RANGE`] instead
+/// of closing to melee; their brains ([`rival_combat`] / [`rival_raid_brain`]) drive the same
+/// draw-and-loose clip and release a crimson-fletched [`crate::projectile::ArrowSpawn`] on the
+/// clip's release frame via [`bow_cycle`].
+#[derive(Component)]
+pub struct RivalBow {
+    /// The in-flight shot's arrow has left the string (guards against double-spawning while the
+    /// release-frame window is crossed over several frames) — same latch as `villagers::Archer`.
+    loosed: bool,
+}
+
+/// One tick of a rival bowman's draw-and-loose state machine (mirrors the archer branch of
+/// `villagers::guard_combat`): starts a new draw when `atk_cd` allows (stamping `v.atk_anim`, which
+/// `villager_drive` turns into the bow clip), and returns `Some(bow_position)` exactly ONCE at the
+/// clip's release frame — the caller then spawns the arrow / applies its damage. `dir` is the flat
+/// aim direction (for the half-step the loose point leads toward the target); `base_y` the body's
+/// current ground height.
+fn bow_cycle(
+    now: f32,
+    v: &mut crate::villagers::Villager,
+    atk_cd: &mut f32,
+    bw: &mut RivalBow,
+    dir: Vec2,
+    base_y: f32,
+) -> Option<Vec3> {
+    let secs = crate::villagers::BOW_SHOT_SECS;
+    if v.atk_anim > 0.0 && now - v.atk_anim < secs {
+        let p = (now - v.atk_anim) / secs;
+        if p >= crate::player::anim::BOW_RELEASE_P && !bw.loosed {
+            bw.loosed = true;
+            let d3 = Vec3::new(dir.x, 0.0, dir.y).normalize_or_zero();
+            // Loose from the bow: chest height, half a step toward the mark (as the town archers).
+            return Some(Vec3::new(v.pos.x, base_y + 1.3, v.pos.y) + d3 * 0.45);
+        }
+    } else if *atk_cd <= 0.0 {
+        *atk_cd = RIVAL_ARCHER_CD;
+        v.atk_anim = now; // start the draw (villager_drive plays the bow clip off this)
+        bw.loosed = false;
+    }
+    None
+}
+
+/// Is this bowman still mid-draw? (The engagement logic must stay planted through the whole clip
+/// even if the mark drifts out of range — same stickiness as the town archers' `mid_shot`.)
+fn mid_shot(v: &crate::villagers::Villager, now: f32) -> bool {
+    v.atk_anim > 0.0 && now - v.atk_anim < crate::villagers::BOW_SHOT_SECS
 }
 
 /// Tiny LCG for patrol jitter (no `Math::random` in the deterministic core; this is cosmetic).
@@ -926,7 +981,15 @@ fn rival_garrison(
     let a = next_f(&mut r) * std::f32::consts::TAU;
     let rad = 5.0 + next_f(&mut r) * 4.0; // ring between the keep (±3.1) and the walls (±12)
     let pos = RIVAL_CENTRE + Vec2::new(a.cos() * rad, a.sin() * rad);
-    let e = crate::villagers::spawn_rival_soldier(&mut commands, &mut meshes, &mut creature_mats, RIVAL_CENTRE, pos, s);
+    // About a third of the garrison are desert bowmen — the same seed-hashed one-in-three split
+    // the player's militia uses (`villagers::is_bowman`), so the two towns mirror each other.
+    let e = if crate::villagers::is_bowman(s) {
+        let e = crate::villagers::spawn_rival_archer(&mut commands, &mut meshes, &mut creature_mats, RIVAL_CENTRE, pos, s);
+        commands.entity(e).insert(RivalBow { loosed: true });
+        e
+    } else {
+        crate::villagers::spawn_rival_soldier(&mut commands, &mut meshes, &mut creature_mats, RIVAL_CENTRE, pos, s)
+    };
     commands.entity(e).insert((
         RivalSoldier { home: RIVAL_CENTRE, atk_cd: 0.0, patrol: pos, patrol_t: 0.0, rng: r },
         crate::player::Health { hp: SOLDIER_HP, max: SOLDIER_HP },
@@ -934,16 +997,21 @@ fn rival_garrison(
 }
 
 /// The soldier brain: pick the nearest foe (hero or a player townsperson) in sight and within leash
-/// of the keep, close to melee and strike on cooldown; otherwise patrol near home. Drives the
+/// of the keep, close to melee and strike on cooldown; otherwise patrol near home. A **bowman**
+/// ([`RivalBow`]) spots from farther ([`crate::villagers::BOW_RANGE`]) and never closes — he plants,
+/// tracks, and looses crimson-fletched arrows on the town archers' cadence. Drives the
 /// `Villager` pose fields (position/facing/moving/atk_anim) that `villager_drive` turns into walk +
-/// swing clips. Gated on `Modal::None` with the rest of the sim.
+/// swing/draw clips. Gated on `Modal::None` with the rest of the sim.
 #[allow(clippy::type_complexity)]
 fn rival_combat(
     time: Res<Time>,
     hero: Res<crate::player::HeroState>,
     mut pending: ResMut<crate::player::PendingHeroDamage>,
     mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
-    mut soldiers: Query<(Entity, &mut RivalSoldier, &mut crate::villagers::Villager, &mut Transform), (Without<crate::dying::Dying>, Without<RivalRaider>)>,
+    mut arrows: ResMut<crate::projectile::ArrowSpawns>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    hero_ent: Query<Entity, With<crate::player::Hero>>,
+    mut soldiers: Query<(Entity, &mut RivalSoldier, Option<&mut RivalBow>, &mut crate::villagers::Villager, &mut Transform), (Without<crate::dying::Dying>, Without<RivalRaider>)>,
     townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>)>,
 ) {
     // LOD: with the hero far, nothing can reach a soldier (sight/leash ≤26) and they're off-screen —
@@ -955,30 +1023,62 @@ fn rival_combat(
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
     let tw = time.elapsed_secs_wrapped();
-    let folk: Vec<(Entity, Vec2)> =
-        townsfolk.iter().map(|(e, t)| (e, Vec2::new(t.translation.x, t.translation.z))).collect();
+    let hero_e = hero_ent.iter().next();
+    // (entity, flat pos, chest height) — the height feeds a bowman's aim point.
+    let folk: Vec<(Entity, Vec2, f32)> =
+        townsfolk.iter().map(|(e, t)| (e, Vec2::new(t.translation.x, t.translation.z), t.translation.y + 1.0)).collect();
 
-    for (e, mut sol, mut v, mut tf) in &mut soldiers {
+    for (e, mut sol, mut bow, mut v, mut tf) in &mut soldiers {
         sol.atk_cd -= dt;
         let vpos = v.pos;
-        // Nearest hostile in sight AND within leash of the keep.
-        let mut best: Option<(f32, Vec2, Option<Entity>)> = None; // (dist, pos, townsperson victim)
+        let sight = if bow.is_some() { crate::villagers::BOW_RANGE } else { SOLDIER_SIGHT };
+        // Nearest hostile in sight AND within leash of the keep. (aim_y = the mark's chest height.)
+        let mut best: Option<(f32, Vec2, f32, Option<Entity>)> = None; // (dist, pos, aim_y, townsperson victim)
         if hero.alive {
             let d = vpos.distance(hero.pos);
-            if d < SOLDIER_SIGHT && sol.home.distance(hero.pos) < SOLDIER_LEASH {
-                best = Some((d, hero.pos, None));
+            if d < sight && sol.home.distance(hero.pos) < SOLDIER_LEASH {
+                best = Some((d, hero.pos, hero.y + 1.0, None));
             }
         }
-        for (fe, fp) in &folk {
+        for (fe, fp, fy) in &folk {
             let d = vpos.distance(*fp);
-            if d < SOLDIER_SIGHT && sol.home.distance(*fp) < SOLDIER_LEASH && best.map_or(true, |(bd, _, _)| d < bd) {
-                best = Some((d, *fp, Some(*fe)));
+            if d < sight && sol.home.distance(*fp) < SOLDIER_LEASH && best.map_or(true, |(bd, ..)| d < bd) {
+                best = Some((d, *fp, *fy, Some(*fe)));
             }
         }
 
         let cur_y = crate::steer::footing(vpos.x, vpos.y).unwrap_or(tf.translation.y);
-        if let Some((d, tpos, victim)) = best {
-            if d <= SOLDIER_MELEE {
+        if let Some((d, tpos, aim_y, victim)) = best {
+            // A bowman never closes: inside bow range (or mid-draw already) he plants, tracks the
+            // mark, and shoots on his cadence — the mirror of the town archers' engagement.
+            if let Some(bw) = bow.as_deref_mut().filter(|_| d < crate::villagers::BOW_RANGE || mid_shot(&v, now)) {
+                v.moving = false;
+                let to = tpos - vpos;
+                if to.length_squared() > 1e-4 {
+                    let want = to.x.atan2(to.y);
+                    v.facing += crate::steer::wrap_pi(want - v.facing).clamp(-SOLDIER_TURN * 2.0 * dt, SOLDIER_TURN * 2.0 * dt);
+                }
+                if let Some(from) = bow_cycle(now, &mut v, &mut sol.atk_cd, bw, to, tf.translation.y) {
+                    // Aim at the mark's live chest; the hero-aimed shaft still needs a target
+                    // entity for the spawn — the hero body works (the rival hit test finds the
+                    // hero by position, never through this handle).
+                    let target = victim.or(hero_e);
+                    if let Some(te) = target {
+                        arrows.0.push(crate::projectile::ArrowSpawn {
+                            from,
+                            aim: Vec3::new(tpos.x, aim_y, tpos.y),
+                            target: te,
+                            shooter: e,
+                            damage: SOLDIER_ARROW_DMG,
+                            rival: true,
+                        });
+                        // The string's twang, on the same earshot the town archers use.
+                        if vpos.distance(hero.pos) < crate::villagers::BOW_SFX_RADIUS {
+                            cues.write(crate::audio::AudioCue::BowShot(from));
+                        }
+                    }
+                }
+            } else if d <= SOLDIER_MELEE {
                 v.moving = false;
                 let to = tpos - vpos;
                 if to.length_squared() > 1e-4 {
@@ -1101,6 +1201,11 @@ fn step_toward(v: &mut crate::villagers::Villager, target: Vec2, step: f32, cur_
 // keep-0 defeat stays night-gated in `siege.rs`).
 
 const RAIDER_HP: f32 = 70.0;
+/// A raid bowman's per-shaft hit — the raider's townsperson blade × the same 1.5 archer mark-up
+/// as everywhere else (raiders are deliberately soft pressure, not snipers).
+const RAIDER_ARROW_DMG: f32 = 13.0;
+/// A raid bowman stops and volleys the keep from here (a bowshot, not at the wall's foot).
+const RAIDER_KEEP_RANGE_BOW: f32 = 12.0;
 /// Sticky-notice id for the "Rival raiders are attacking!" banner (persists while any raider lives).
 const RAID_ALERT_KEY: u32 = 0x5a1d_a1e7;
 const RAIDER_HERO_DMG: f32 = 8.0;
@@ -1186,7 +1291,15 @@ fn spawn_raider(
     pos: Vec2,
     seed: u32,
 ) {
-    let e = crate::villagers::spawn_rival_soldier(commands, meshes, creature_mats, crate::siege::KEEP_POS, pos, seed);
+    // Raid parties march with the same one-in-three bowman split as the garrison (and as the
+    // player's own militia) — `is_bowman` on the spawn seed.
+    let e = if crate::villagers::is_bowman(seed) {
+        let e = crate::villagers::spawn_rival_archer(commands, meshes, creature_mats, crate::siege::KEEP_POS, pos, seed);
+        commands.entity(e).insert(RivalBow { loosed: true });
+        e
+    } else {
+        crate::villagers::spawn_rival_soldier(commands, meshes, creature_mats, crate::siege::KEEP_POS, pos, seed)
+    };
     commands.entity(e).insert((
         RivalSoldier { home: crate::siege::KEEP_POS, atk_cd: 0.0, patrol: pos, patrol_t: 0.0, rng: seed },
         RivalRaider { atk_cd: 0.0 },
@@ -1224,8 +1337,11 @@ fn stage_raid_for_shot(
 }
 
 /// Drive each raider toward the player's keep: engage the nearest guard/townsperson/hero in sight,
-/// else press to the keep and batter it (modest chip). Gated on `Modal::None` with the rest of the
-/// sim. A raid is a handful of bodies alive for one day, heading to where the player lives — no LOD.
+/// else press to the keep and batter it (modest chip). A raid **bowman** ([`RivalBow`]) fights the
+/// same brain at range: he spots foes from [`crate::villagers::BOW_RANGE`], plants and volleys them,
+/// and bombards the keep from a bowshot out instead of hammering its wall. Gated on `Modal::None`
+/// with the rest of the sim. A raid is a handful of bodies alive for one day, heading to where the
+/// player lives — no LOD.
 #[allow(clippy::type_complexity)]
 fn rival_raid_brain(
     time: Res<Time>,
@@ -1234,7 +1350,10 @@ fn rival_raid_brain(
     mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
     mut keep: ResMut<crate::siege::KeepHp>,
     mut notice: ResMut<crate::ui::notice::Notice>,
-    mut raiders: Query<(Entity, &mut RivalRaider, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
+    mut arrows: ResMut<crate::projectile::ArrowSpawns>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    hero_ent: Query<Entity, With<crate::player::Hero>>,
+    mut raiders: Query<(Entity, &mut RivalRaider, Option<&mut RivalBow>, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
     townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>, Without<RivalRaider>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -1244,29 +1363,59 @@ fn rival_raid_brain(
     let mut struck = false;
     let tw = time.elapsed_secs_wrapped();
     let goal = crate::siege::KEEP_POS;
-    let folk: Vec<(Entity, Vec2)> =
-        townsfolk.iter().map(|(e, t)| (e, Vec2::new(t.translation.x, t.translation.z))).collect();
-    for (re, mut rd, mut v, mut tf) in &mut raiders {
+    let hero_e = hero_ent.iter().next();
+    // (entity, flat pos, chest height) — the height feeds a bowman's aim point.
+    let folk: Vec<(Entity, Vec2, f32)> =
+        townsfolk.iter().map(|(e, t)| (e, Vec2::new(t.translation.x, t.translation.z), t.translation.y + 1.0)).collect();
+    for (re, mut rd, mut bow, mut v, mut tf) in &mut raiders {
         rd.atk_cd -= dt;
         let vpos = v.pos;
-        // Nearest of our people (hero or townsperson) in sight.
-        let mut best: Option<(f32, Vec2, Option<Entity>)> = None;
+        let is_archer = bow.is_some();
+        let sight = if is_archer { crate::villagers::BOW_RANGE } else { RAIDER_SIGHT };
+        // Nearest of our people (hero or townsperson) in sight. (aim_y = the mark's chest height.)
+        let mut best: Option<(f32, Vec2, f32, Option<Entity>)> = None;
         if hero.alive {
             let d = vpos.distance(hero.pos);
-            if d < RAIDER_SIGHT {
-                best = Some((d, hero.pos, None));
+            if d < sight {
+                best = Some((d, hero.pos, hero.y + 1.0, None));
             }
         }
-        for (fe, fp) in &folk {
+        for (fe, fp, fy) in &folk {
             let d = vpos.distance(*fp);
-            if d < RAIDER_SIGHT && best.is_none_or(|(bd, _, _)| d < bd) {
-                best = Some((d, *fp, Some(*fe)));
+            if d < sight && best.is_none_or(|(bd, ..)| d < bd) {
+                best = Some((d, *fp, *fy, Some(*fe)));
             }
         }
         let cur_y = crate::steer::footing(vpos.x, vpos.y).unwrap_or(tf.translation.y);
         let turn = RAIDER_TURN * 2.0 * dt;
-        if let Some((d, tpos, victim)) = best {
-            if d <= RAIDER_MELEE {
+        // The keep-assault distance: a swordsman batters the wall, a bowman volleys from a bowshot.
+        let keep_range = if is_archer { RAIDER_KEEP_RANGE_BOW } else { RAIDER_KEEP_RANGE };
+        if let Some((d, tpos, aim_y, victim)) = best {
+            // A raid bowman plants and volleys instead of closing — mirror of the garrison archer.
+            if let Some(bw) = bow.as_deref_mut().filter(|_| d < crate::villagers::BOW_RANGE || mid_shot(&v, now)) {
+                v.moving = false;
+                let to = tpos - vpos;
+                if to.length_squared() > 1e-4 {
+                    let want = to.x.atan2(to.y);
+                    v.facing += crate::steer::wrap_pi(want - v.facing).clamp(-turn, turn);
+                }
+                if let Some(from) = bow_cycle(now, &mut v, &mut rd.atk_cd, bw, to, tf.translation.y) {
+                    struck = true;
+                    if let Some(te) = victim.or(hero_e) {
+                        arrows.0.push(crate::projectile::ArrowSpawn {
+                            from,
+                            aim: Vec3::new(tpos.x, aim_y, tpos.y),
+                            target: te,
+                            shooter: re,
+                            damage: RAIDER_ARROW_DMG,
+                            rival: true,
+                        });
+                        if vpos.distance(hero.pos) < crate::villagers::BOW_SFX_RADIUS {
+                            cues.write(crate::audio::AudioCue::BowShot(from));
+                        }
+                    }
+                }
+            } else if d <= RAIDER_MELEE {
                 v.moving = false;
                 let to = tpos - vpos;
                 if to.length_squared() > 1e-4 {
@@ -1291,14 +1440,35 @@ fn rival_raid_brain(
             } else {
                 step_toward(&mut v, tpos, RAIDER_SPEED * dt, cur_y, dt);
             }
-        } else if vpos.distance(goal) <= RAIDER_KEEP_RANGE {
+        } else if vpos.distance(goal) <= keep_range {
             v.moving = false;
             let to = goal - vpos;
             if to.length_squared() > 1e-4 {
                 let want = to.x.atan2(to.y);
                 v.facing += crate::steer::wrap_pi(want - v.facing).clamp(-turn, turn);
             }
-            if rd.atk_cd <= 0.0 {
+            if let Some(bw) = bow.as_deref_mut() {
+                // Volley the keep: the chip lands on the release frame (as the melee chip lands on
+                // the strike frame), and the shaft itself flies for real, arcing into the
+                // battlements — usually planting in masonry, but a defender crossing the arc
+                // catches an honest raid-arrow hit.
+                if let Some(from) = bow_cycle(now, &mut v, &mut rd.atk_cd, bw, to, tf.translation.y) {
+                    struck = true;
+                    keep.hp = (keep.hp - RAIDER_KEEP_DMG).max(0.0);
+                    let keep_y = crate::worldmap::ground_at_world(goal.x, goal.y).unwrap_or(tf.translation.y);
+                    arrows.0.push(crate::projectile::ArrowSpawn {
+                        from,
+                        aim: Vec3::new(goal.x, keep_y + 4.0, goal.y),
+                        target: re, // no living mark (masonry) — never matched by the rival hit test
+                        shooter: re,
+                        damage: RAIDER_ARROW_DMG,
+                        rival: true,
+                    });
+                    if vpos.distance(hero.pos) < crate::villagers::BOW_SFX_RADIUS {
+                        cues.write(crate::audio::AudioCue::BowShot(from));
+                    }
+                }
+            } else if rd.atk_cd <= 0.0 {
                 rd.atk_cd = RAIDER_ATK_CD;
                 v.atk_anim = now;
                 struck = true;

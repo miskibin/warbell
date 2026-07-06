@@ -67,6 +67,42 @@ pub fn torch_light(phase: f32) -> (PointLight, FireLight) {
     )
 }
 
+/// A war-torch carried by a marching ork (`orks.rs`): the tightest, cheapest pool of the family —
+/// there can be a dozen live at once mid-siege, and its job is to paint the BEARER and his
+/// neighbours so the horde reads as figures at night instead of black cutouts.
+pub fn held_torch_light(phase: f32) -> (PointLight, FireLight) {
+    const BASE: f32 = 9_500.0;
+    (
+        PointLight {
+            color: FIRE_COLOR,
+            intensity: BASE,
+            range: 6.5,
+            radius: 0.08,
+            shadow_maps_enabled: false,
+            ..default()
+        },
+        FireLight { phase, base: BASE, next_ember: 0.0 },
+    )
+}
+
+/// A gate war-brazier (`castle.rs`): a campfire-class pool aimed at the gate APPROACH — the siege
+/// kill-zone — so the night melee happens in warm light instead of the moon-dark mush it read as
+/// on capture footage. Between torch and campfire in size.
+pub fn brazier_light(phase: f32) -> (PointLight, FireLight) {
+    const BASE: f32 = 36_000.0;
+    (
+        PointLight {
+            color: FIRE_COLOR,
+            intensity: BASE,
+            range: 14.0,
+            radius: 0.25,
+            shadow_maps_enabled: false,
+            ..default()
+        },
+        FireLight { phase, base: BASE, next_ember: 0.0 },
+    )
+}
+
 pub struct FireLightPlugin;
 
 impl Plugin for FireLightPlugin {

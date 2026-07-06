@@ -163,6 +163,20 @@ pub struct Guard {
     post: Vec2,
 }
 
+/// A townsperson who is a trained **bowman** — a persistent trait of the person (like their face),
+/// not a job: on militia duty they carry the longbow ([`PeasantKind::Archer`] body, `Role::Archer`)
+/// and [`guard_combat`] fights them at RANGE — plant, draw ([`crate::biped::BipedDrive::bow`] plays
+/// the draw-and-loose clip), and release an [`crate::projectile::ArrowSpawn`] exactly on the clip's
+/// release frame. Employed on a plot they dress and work like any other villager (the trait waits).
+/// They still carry [`Guard`] (post/cooldown/rally plumbing is shared); this marker just swaps the
+/// melee for archery.
+#[derive(Component)]
+pub struct Archer {
+    /// The in-flight shot's arrow has left the string (guards against double-spawning while the
+    /// release frame window is crossed over several frames).
+    loosed: bool,
+}
+
 /// A guard that has answered the **muster** (the player pressed `K`): it abandons its fixed post and
 /// follows the hero. [`rally_follow`] rewrites its [`Guard::post`] each frame to a reserved slot in a
 /// loose blob around him, so the *existing* [`guard_combat`] follow-the-post + peel-to-fight +
@@ -286,6 +300,24 @@ const GUARD_REGEN: f32 = 3.0;
 const GUARD_MELEE: f32 = 1.6;
 const GUARD_SPEED: f32 = 2.9; // a touch quicker so the muster keeps pace with the hero (was 2.4)
 const GUARD_ATTACK_CD: f32 = 1.0;
+/// An archer engages from this far out — well past the melee scrum, inside the wall-to-field
+/// sightlines, and comfortably under the shaman's own cast range × its threat.
+/// `pub(crate)`: the rival's desert bowmen (`rival.rs`) fight at the same range.
+pub(crate) const BOW_RANGE: f32 = 16.0;
+/// Full draw-and-loose clip length (seconds) — the arrow releases at `anim::BOW_RELEASE_P` of it.
+/// `pub(crate)`: the keep-roof sentries (`defenses.rs`) time their shots off the same clip.
+pub(crate) const BOW_SHOT_SECS: f32 = 1.15;
+/// Nock-to-nock cadence. Slower than the guard's sword (a real draw takes a beat), paid back by
+/// [`archer_damage`]'s heavier per-shaft hit and by fighting from safety.
+const ARCHER_ATTACK_CD: f32 = 2.5;
+/// A shaft hits ~1.5× the sword blow of the same arms tier: per-second output lands close to the
+/// melee guard's, but from range — the archer's value is *where* he fights, not raw dps.
+fn archer_damage(tier: u32) -> f32 {
+    guard_damage(tier) * 1.5
+}
+/// A bow release is heard from farther than a sword clash (a sharp twang carries).
+/// `pub(crate)`: the rival's bowmen (`rival.rs`) gate their loose cue on the same earshot.
+pub(crate) const BOW_SFX_RADIUS: f32 = 22.0;
 /// A passive townsperson's self-defence swing: weak (a hoe, an axe haft) but real. −30% off the old 6.
 const NPC_DEFEND_DMG: f32 = 4.2;
 const NPC_DEFEND_CD: f32 = 1.2;
@@ -349,7 +381,7 @@ const CAMP_HOME_R: f32 = 6.0;
 /// the main way the town grows: 5 camps × 3 = +15, the army's backbone. Raw-added (uncapped, like
 /// the old +1) — the realistic max (camps + start ≈ 17) stays under the 24 house cap, and a farm
 /// feeds far more than the headcount, so over-house peasants don't starve.
-const CAMP_RESCUE_POP: u32 = 3;
+pub(crate) const CAMP_RESCUE_POP: u32 = 3; // == captives seated per camp cage (`camps::spawn_cage`)
 
 impl Plugin for VillagersPlugin {
     fn build(&self, app: &mut App) {
@@ -393,10 +425,12 @@ impl Plugin for VillagersPlugin {
                     rally_follow.before(muster_keys),
                     muster_keys.before(guard_combat),
                     stage_muster,
+                    stage_archers,
                     guard_combat,
                     rearm_townsfolk,
                     reskin_townsfolk,
                     camp_rescue,
+                    walk_out_captives,
                     recruit,
                 )
                     .run_if(in_state(crate::game_state::Modal::None)),
@@ -486,8 +520,21 @@ fn reset_rescues(mut r: ResMut<RescuedCamps>) {
     }
 }
 
-/// Spawn a fresh town **guard** at an open courtyard spot — the body the District/rescue/recruit
-/// systems add to the castle's defenders (and the bloodline).
+/// Roughly a third of the town's fighting pool are trained **bowmen** — decided per body from its
+/// spawn seed (a stable hash, not live RNG), so the militia's sword/bow mix holds at ~2:1 across
+/// deaths, regrowth and Continue (bodies are never saved — the population count is — so a
+/// seed-derived trait is the save-proof way to keep the ratio).
+/// `pub(crate)`: the rival's garrison/raid spawns (`rival.rs`) apply the same one-in-three split,
+/// so both towns' militaries keep the same sword/bow mix.
+const BOWMAN_RATIO: u32 = 3; // one in this many
+pub(crate) fn is_bowman(seed: u32) -> bool {
+    let mut s = seed ^ 0xA11C_0BE5;
+    next_u32(&mut s) % BOWMAN_RATIO == 0
+}
+
+/// Spawn a fresh town **militia body** at an open courtyard spot — the body the District/rescue/
+/// recruit systems add to the castle's defenders (and the bloodline). About a third arrive as
+/// longbow [`Archer`]s ([`is_bowman`]), the rest as sword-and-board guards.
 pub fn spawn_courtyard_guard(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -498,9 +545,15 @@ pub fn spawn_courtyard_guard(
     let mut rng = seed | 1;
     let half = crate::castle::courtyard_half();
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
-    let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
+    let skin = SKIN[(seed as usize) % SKIN.len()];
+    let kind = if is_bowman(seed) {
+        Kind::Archer { skin, tunic: TUNIC[2] }
+    } else {
+        Kind::Guard { skin, tunic: TUNIC[1] }
+    };
     spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng), false); // peasant base walk a touch quicker (was 2.3)
 }
+
 
 /// Spawn a **rival** soldier body for `rival.rs` — a helmeted, sword-bearing guard biped in the
 /// rival's **desert** garb (sandy-ochre tunic, NOT the player militia's colours), anchored at `home`,
@@ -522,6 +575,27 @@ pub fn spawn_rival_soldier(
     // textured-sandstone fort no longer carries on its own.
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
     let root = spawn(commands, meshes, &mat, kind, home, pos, 2.6, 2.0, SCALE, seed, true); // desert = keffiyeh + cloak
+    commands.entity(root).remove::<(Guard, NpcHp, Townsfolk)>();
+    root
+}
+
+/// Spawn a **rival** bowman body for `rival.rs` — the desert-garbed mirror of the town's longbow
+/// archer (`Kind::Archer` + `desert=true` → sand headwrap, crimson fletchings, longbow + quiver).
+/// Like [`spawn_rival_soldier`], the town-pool identity is stripped; the [`Archer`] marker +
+/// `Role::Archer` are KEPT so `villager_drive` plays the draw-and-loose clip off the `atk_anim`
+/// the rival brain stamps. The caller (`rival.rs`) adds `RivalSoldier`/`RivalBow`/`Health` and its
+/// own ranged combat brain.
+pub fn spawn_rival_archer(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    home: Vec2,
+    pos: Vec2,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let kind = Kind::Archer { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
+    let root = spawn(commands, meshes, &mat, kind, home, pos, 2.6, 2.0, SCALE, seed, true);
     commands.entity(root).remove::<(Guard, NpcHp, Townsfolk)>();
     root
 }
@@ -577,22 +651,204 @@ pub fn spawn_scene_peasant(
     e
 }
 
-/// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): a cage
-/// of [`CAMP_RESCUE_POP`] joins the castle as militia (new guards) and grows the bloodline, with a
-/// float over the cage so you see it happen. `seen` gates against freeing a camp before its orks
-/// have even spawned.
+// ── Caged captives: real peasants behind bars, freed by clearing their jailers ────────────
+
+/// A caged peasant — a REAL peasant biped (`peasant_model`) huddled on the straw of a prisoner
+/// cage (`camps::spawn_cage`), not a baked box. No brain, no HP: it only sits (its
+/// [`BipedDrive::sitting`] pose) until a rescue tags it [`WalkOut`]. `seed` fixes its face and
+/// clothes so the townsperson it becomes on walking out is visibly the SAME person.
+#[derive(Component)]
+pub struct Captive {
+    pub key: crate::camps::CageKey,
+    pub(crate) seed: u32,
+}
+
+/// A freed captive mid walk-out: it stands after `start` (staggered so a cage files out, not
+/// pops out), speaks its `line`, shuffles to `target` (the door mouth, clear of the cage's
+/// blocker box) and there converts into a real townsperson ([`walk_out_captives`]).
+#[derive(Component)]
+pub(crate) struct WalkOut {
+    target: Vec2,
+    start: f32,
+    line: &'static str,
+}
+
+/// What the freed peasants say as they step out of an opened cage (one line each, floated over
+/// their head — the voiced `Concept::Rescued` reaction plays from the cage too, but only one
+/// mouth gets a clip; these floats let every captive react).
+const FREED_LINES: [&str; 6] = [
+    "We're free! Bless you, m'lord!",
+    "Thank you! I'll not forget this.",
+    "Sweet air at last!",
+    "To the castle \u{2014} I'll take up a spear!",
+    "I thought the orks would eat us\u{2026}",
+    "My family will hear of this kindness.",
+];
+/// Pace of the walk-out shuffle (u/s) — slower than a guard's march; they're stiff from the cage.
+const WALK_OUT_SPEED: f32 = 2.0;
+
+/// Spawn one seated captive peasant at `pos` (world; on the cage's plank floor), facing
+/// `facing`. Called by `camps::spawn_cage` — one per straw bed.
+pub fn spawn_cage_captive(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    pos: Vec3,
+    facing: Quat,
+    key: crate::camps::CageKey,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let skin = SKIN[(seed as usize) % SKIN.len()];
+    let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
+    let root = commands
+        .spawn((
+            Transform { translation: pos, rotation: facing, scale: Vec3::splat(SCALE) },
+            Visibility::Visible,
+            BipedDrive { sitting: true, phase: (seed % 628) as f32 / 100.0, ..default() },
+            Captive { key, seed },
+            BiomeEntity,
+        ))
+        .id();
+    build_biped_body(commands, root, Kind::Peasant { skin, tunic, hat: false }, seed, false, false, &mat, meshes);
+    root
+}
+
+/// Begin the walk-out for an opened cage's captives: each stands after a staggered delay and
+/// files out through the door face (cage-local +X), one comment line each. The captives are
+/// tagged [`Townsfolk`] NOW so `town::sync_population_bodies` counts them against the
+/// population the rescue just grew — no courtyard double-spawn while they're still walking.
+pub(crate) fn release_captives(commands: &mut Commands, now: f32, cage_tf: &Transform, captives: &[(Entity, u32)]) {
+    let door3 = cage_tf.rotation * Vec3::X;
+    let out = Vec2::new(door3.x, door3.z).normalize_or_zero();
+    let perp = Vec2::new(-out.y, out.x);
+    let cage_pos = Vec2::new(cage_tf.translation.x, cage_tf.translation.z);
+    let n = captives.len() as f32;
+    for (i, (e, seed)) in captives.iter().enumerate() {
+        let spread = (i as f32 - (n - 1.0) * 0.5) * 0.55;
+        commands.entity(*e).try_insert((
+            WalkOut {
+                // Past the door mouth, clear of the cage's blocker box (half-extent 1.2).
+                target: cage_pos + out * 2.7 + perp * spread,
+                start: now + 1.1 + i as f32 * 0.5, // let the door swing crack open first
+                line: FREED_LINES[(*seed as usize + i) % FREED_LINES.len()],
+            },
+            Townsfolk,
+        ));
+    }
+}
+
+/// Walk freed captives out of their cage: stand up (drop the sitting pose), float their comment,
+/// shuffle to the door mouth, then convert into a REAL townsperson on the spot — the same face
+/// and clothes (same `seed`), now with the full militia identity — which the guard AI marches
+/// home to the courtyard through the gates (the `NavPath` A* in [`guard_combat`]).
+fn walk_out_captives(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut q: Query<(Entity, &Captive, &WalkOut, &mut Transform, &mut BipedDrive)>,
+) {
+    let now = time.elapsed_secs();
+    let tw = time.elapsed_secs_wrapped();
+    let dt = time.delta_secs();
+    for (e, cap, w, mut tf, mut d) in &mut q {
+        if now < w.start {
+            continue; // still huddled — the door is swinging open
+        }
+        if d.sitting {
+            d.sitting = false; // stand up…
+            floats.0.push(crate::combat_fx::FloatReq {
+                // …and say thanks (one float per captive, staggered by the walk-out starts).
+                world: tf.translation + Vec3::Y * 1.7,
+                text: w.line.into(),
+                color: Color::srgb(0.85, 0.92, 1.0),
+                scale: 0.95,
+            });
+        }
+        let pos = Vec2::new(tf.translation.x, tf.translation.z);
+        let to = w.target - pos;
+        if to.length() < 0.2 {
+            // Out and clear: become a real townsperson mid-stride (same seed → same look).
+            spawn_freed_townsfolk(&mut commands, &mut meshes, &mut creature_mats, pos, cap.seed);
+            commands.entity(e).try_despawn();
+            continue;
+        }
+        let dir = to.normalize_or_zero();
+        tf.translation.x += dir.x * WALK_OUT_SPEED * dt;
+        tf.translation.z += dir.y * WALK_OUT_SPEED * dt;
+        // Step down from the plank floor onto the ground as they clear the cage.
+        let gy = crate::worldmap::ground_at_world(tf.translation.x, tf.translation.z).unwrap_or(0.0);
+        tf.translation.y += (gy - tf.translation.y) * (dt * 4.0).min(1.0);
+        let yaw = dir.x.atan2(dir.y);
+        tf.rotation = tf.rotation.slerp(Quat::from_rotation_y(yaw), (dt * 8.0).min(1.0));
+        // Drive the shared biped gait by hand (no `Villager` brain on a captive).
+        d.moving_amt += (1.0 - d.moving_amt) * (dt * 8.0).min(1.0);
+        d.walk_phase = (tw + d.phase) * 8.0;
+    }
+}
+
+/// The townsperson a freed captive becomes: the same peasant (same `seed` → same face/clothes,
+/// no helmet pop) with the full town-pool identity — militia guard posted to a courtyard spot,
+/// so the guard AI walks it home from the wilderness. `Role::Guard` from the start means
+/// [`reskin_townsfolk`] won't touch the body until a real job change redresses it.
+fn spawn_freed_townsfolk(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    pos: Vec2,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let mut rng = seed | 1;
+    let skin = SKIN[(seed as usize) % SKIN.len()];
+    let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
+    let half = crate::castle::courtyard_half();
+    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
+    let e = spawn(
+        commands,
+        meshes,
+        &mat,
+        Kind::Peasant { skin, tunic, hat: false },
+        home,
+        pos,
+        GUARD_SPEED,
+        1.0,
+        SCALE,
+        seed,
+        false,
+    );
+    commands.entity(e).insert((
+        Guard { atk_cd: 0.0, post: home },
+        NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
+        crate::navgrid::NavPath::default(),
+        Townsfolk,
+        Folk { skin, tunic, seed },
+        Role::Guard,
+        BodyMat(mat),
+    ));
+    e
+}
+
+/// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): the
+/// cage door swings open IN PLACE (an animation — the model never swaps), the cage of
+/// [`CAMP_RESCUE_POP`] peasants stands up, comments, files out and marches home to join the
+/// militia and the bloodline, with a float over the cage so you see it happen. `seen` gates
+/// against freeing a camp before its orks have even spawned.
 #[allow(clippy::too_many_arguments)]
 fn camp_rescue(
+    time: Res<Time>,
     mut town: ResMut<crate::town::TownRes>,
     mut rescued: ResMut<RescuedCamps>,
     orks: Query<&crate::orks::Ork, Without<crate::orks::WaveInvader>>,
-    cages_q: Query<(Entity, &crate::camps::Cage, &Transform)>,
+    cages_q: Query<(&crate::camps::Cage, &Transform)>,
+    mut doors_q: Query<&mut crate::camps::CageDoor>,
+    caged_q: Query<(Entity, &Captive)>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let cages = crate::camps::cage_positions();
     if rescued.done.len() != cages.len() {
@@ -612,18 +868,24 @@ fn camp_rescue(
         }
         // Warband wiped → free the captives.
         rescued.done[i] = true;
+        let key = crate::camps::CageKey::Camp(i);
         let y = crate::worldmap::ground_at_world(cage.x, cage.y).unwrap_or(0.0);
-        // Open the cage IN PLACE: swap the closed prop for the opened husk at the same pose.
-        let mut cage_tf = Transform::from_xyz(cage.x, y, cage.y);
-        for (e, c, tf) in &cages_q {
-            if c.camp == i {
-                cage_tf = *tf;
-                commands.entity(e).try_despawn();
+        let cage_tf = cages_q
+            .iter()
+            .find(|(c, _)| c.key == key)
+            .map(|(_, tf)| *tf)
+            .unwrap_or_else(|| Transform::from_xyz(cage.x, y, cage.y));
+        for mut d in &mut doors_q {
+            if d.key == key {
+                d.open = true; // the door swings — the cage itself never changes
             }
         }
-        crate::camps::open_cage(&mut commands, &mut meshes, &mut materials, cage_tf);
-        // The freed captives join the town's population (guards appear in the courtyard via
-        // `sync_population_bodies`) — and the bloodline with them: heirs ARE the headcount.
+        let freed: Vec<(Entity, u32)> =
+            caged_q.iter().filter(|(_, c)| c.key == key).map(|(e, c)| (e, c.seed)).collect();
+        release_captives(&mut commands, time.elapsed_secs(), &cage_tf, &freed);
+        // The freed captives join the town's population — and the bloodline with them: heirs
+        // ARE the headcount. Counted NOW (the walkers carry `Townsfolk`, so the body sync
+        // stays balanced while they file out and march home).
         town.0.population += CAMP_RESCUE_POP;
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(cage.x, y + 1.8, cage.y),
@@ -631,7 +893,7 @@ fn camp_rescue(
             color: Color::srgb(0.5, 1.0, 0.6),
             scale: 1.2,
         });
-        cues.write(crate::audio::AudioCue::CampRescue);
+        cues.write(crate::audio::AudioCue::CampRescue(Vec3::new(cage.x, y + 1.2, cage.y)));
         speak.write(crate::audio::Speak::new(crate::audio::Concept::FirstRescue));
     }
 }
@@ -1211,6 +1473,42 @@ fn rally_follow(
     }
 }
 
+/// Screenshot/staging hook: `FOREST_ARCHERS=1` retrains the ENTIRE standing militia as bowmen at
+/// boot — every `Townsfolk` guard gains the persistent [`Archer`] trait, and `reskin_townsfolk`
+/// swaps each body to the longbow kit on its next pass. A numeric value ≥ 2 (`FOREST_ARCHERS=12`)
+/// additionally raises `town.population` to that headcount so `sync_population_bodies` grows a
+/// whole squad of bodies to retrain (the headcount is the body-sync's source of truth — spawning
+/// bodies directly would just get them culled back). Idempotent per the `Without<Archer>` filter
+/// (late-spawned bodies get caught on later frames), env read cached like `stage_muster`. Pair
+/// with `FOREST_WAVE`/`FOREST_TOWN` to film a defended siege, or with `FOREST_MUSTER` for a war
+/// party of bowmen.
+fn stage_archers(
+    mut armed: Local<Option<Option<u32>>>,
+    mut grown: Local<bool>,
+    mut commands: Commands,
+    mut town: ResMut<crate::town::TownRes>,
+    fresh: Query<Entity, (With<Townsfolk>, With<Guard>, Without<Archer>, Without<crate::dying::Dying>)>,
+) {
+    let Some(want) = *armed.get_or_insert_with(|| {
+        std::env::var("FOREST_ARCHERS").ok().map(|s| s.trim().parse::<u32>().unwrap_or(1))
+    }) else {
+        return;
+    };
+    if want >= 2 && !*grown && town.0.population > 0 {
+        *grown = true;
+        town.0.population = town.0.population.max(want);
+    }
+    if fresh.is_empty() {
+        return;
+    }
+    let mut n = 0;
+    for e in &fresh {
+        commands.entity(e).try_insert(Archer { loosed: true });
+        n += 1;
+    }
+    info!("FOREST_ARCHERS: retrained {n} guards as archers");
+}
+
 /// Screenshot hook: `FOREST_MUSTER=1` rallies the town guard to the hero at boot (same as pressing
 /// `K`), so the capture harness's warmup frames let the war party gather into its blob and a single
 /// shot shows the muster. Pairs with `FOREST_TOWN` to stage a full town first. It re-tags any
@@ -1252,9 +1550,19 @@ fn guard_combat(
     mut commands: Commands,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut kills: MessageWriter<crate::verbs::AnimalKilled>,
+    mut arrows: ResMut<crate::projectile::ArrowSpawns>,
     hero: Query<&crate::player::Hero>,
     mut guards: Query<
-        (Entity, &mut Guard, &mut NpcHp, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath, Has<Rallied>),
+        (
+            Entity,
+            &mut Guard,
+            &mut NpcHp,
+            &mut Villager,
+            &mut Transform,
+            &mut crate::navgrid::NavPath,
+            Has<Rallied>,
+            Option<&mut Archer>,
+        ),
         Without<crate::dying::Dying>,
     >,
     mut hostiles: Query<
@@ -1288,6 +1596,7 @@ fn guard_combat(
     let hero_pos = hero.single().ok().map(|h| h.pos);
     // Effective strike for the town's current arms tier (Defense "Guard Arms" upgrades).
     let guard_dmg = guard_damage(def.villager_arms_tier);
+    let arrow_dmg = archer_damage(def.villager_arms_tier);
     // Each arms tier also widens the watch (the upgrade descs promise "chase from farther" /
     // "wider watch"): +3u detect, +4u leash per tier. Previously unwired — only damage scaled.
     let tier = def.villager_arms_tier as f32;
@@ -1307,7 +1616,7 @@ fn guard_combat(
         .collect();
     let mut dealt: Vec<(Entity, Entity, f32)> = Vec::new(); // (target, guard, dmg)
 
-    for (self_e, mut g, mut hp, mut v, mut tf, mut path, rallied) in &mut guards {
+    for (self_e, mut g, mut hp, mut v, mut tf, mut path, rallied, mut archer) in &mut guards {
         g.atk_cd -= dt;
         if !in_wave {
             // Peacetime mend — slow, so a mauling leaves a mark (no more instant dawn heal).
@@ -1344,7 +1653,49 @@ fn guard_combat(
         }
 
         if let Some((te, tp, d)) = best {
-            if d < GUARD_MELEE {
+            // An ARCHER never closes to melee: inside bow range (or mid-draw already) it plants,
+            // tracks the target, and shoots on its cadence — the arrow entity leaves the string
+            // exactly at the draw clip's release frame, aimed at the foe's LIVE chest position.
+            let mid_shot = archer.is_some() && v.atk_anim > 0.0 && now - v.atk_anim < BOW_SHOT_SECS;
+            if let Some(ar) = archer.as_deref_mut().filter(|_| d < BOW_RANGE || mid_shot) {
+                v.moving = false;
+                let to = tp - v.pos;
+                if to.length_squared() > 1e-4 {
+                    let want = to.x.atan2(to.y);
+                    v.facing += steer::wrap_pi(want - v.facing).clamp(-VIL_MAX_TURN * 2.0 * dt, VIL_MAX_TURN * 2.0 * dt);
+                }
+                if mid_shot {
+                    let shot_p = (now - v.atk_anim) / BOW_SHOT_SECS;
+                    if shot_p >= crate::player::anim::BOW_RELEASE_P && !ar.loosed {
+                        ar.loosed = true;
+                        // Loose from the bow: chest height, half a step toward the foe.
+                        let dir3 = Vec3::new(to.x, 0.0, to.y).normalize_or_zero();
+                        let from = Vec3::new(v.pos.x, tf.translation.y + 1.3, v.pos.y) + dir3 * 0.45;
+                        // Aim at the target's live chest (fall back to its map spot if it died
+                        // between target-pick and release).
+                        let aim = hostiles
+                            .get(te)
+                            .map(|(_, ttf, ..)| ttf.translation + Vec3::Y)
+                            .unwrap_or(Vec3::new(tp.x, tf.translation.y + 1.0, tp.y));
+                        arrows.0.push(crate::projectile::ArrowSpawn {
+                            from,
+                            aim,
+                            target: te,
+                            shooter: self_e,
+                            damage: arrow_dmg,
+                            rival: false,
+                        });
+                        // The string's twang — earshot-gated like the melee clash, but carries farther.
+                        if hero_pos.is_some_and(|hp| v.pos.distance(hp) < BOW_SFX_RADIUS) {
+                            cues.write(crate::audio::AudioCue::BowShot(from));
+                        }
+                    }
+                } else if g.atk_cd <= 0.0 {
+                    g.atk_cd = ARCHER_ATTACK_CD;
+                    v.atk_anim = now; // start the draw (villager_drive plays the bow clip off this)
+                    ar.loosed = false;
+                }
+            } else if d < GUARD_MELEE {
                 v.moving = false;
                 let to = tp - v.pos;
                 if to.length_squared() > 1e-4 {
@@ -1571,6 +1922,7 @@ fn villager_drive(
             &mut BipedDrive,
             Has<crate::lumberjack::Hauling>,
             Has<crate::miner::Carting>,
+            Has<Archer>,
         ),
         Without<crate::dying::Dying>,
     >,
@@ -1578,7 +1930,7 @@ fn villager_drive(
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    for (v, worker, role, mut d, hauling, carting) in &mut q {
+    for (v, worker, role, mut d, hauling, carting, is_archer) in &mut q {
         // Ease the idle↔gait blend so starts/stops aren't a snap.
         let target = if v.moving { 1.0 } else { 0.0 };
         d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
@@ -1601,12 +1953,26 @@ fn villager_drive(
             0
         };
 
-        // A live strike (stamped by guard_combat / npc_fight_back) drives an overhead swing.
-        if let Some(p) = strike_p(v.atk_anim, now) {
+        // A live strike drives the weapon animation. An archer ON DUTY (dressed with the bow —
+        // `Role::Archer`; employed on a plot they're dressed as a worker and would mime a melee
+        // swing like anyone) plays the draw-and-loose clip for the shot `guard_combat` stamped;
+        // everyone else plays the overhead melee swing.
+        if is_archer && matches!(role, Some(Role::Archer)) {
+            d.attacking = false;
+            let p = (now - v.atk_anim) / BOW_SHOT_SECS;
+            if v.atk_anim > 0.0 && (0.0..1.0).contains(&p) {
+                d.bow = true;
+                d.bow_t = p;
+            } else {
+                d.bow = false;
+            }
+        } else if let Some(p) = strike_p(v.atk_anim, now) {
+            d.bow = false;
             d.attacking = true;
             d.attack_t = p * crate::player::ATTACK_DURATION;
             d.attack_variant = 0;
         } else {
+            d.bow = false;
             d.attacking = false;
         }
         d.sitting = false;
@@ -1753,6 +2119,9 @@ fn pick_walk(v: &mut Villager, spots: &[Vec2], is_kid: bool) {
 enum Kind {
     Peasant { skin: u32, tunic: u32, hat: bool },
     Guard { skin: u32, tunic: u32 },
+    /// The ranged militiaman: longbow + quiver + leather hood ([`PeasantKind::Archer`]). Same town
+    /// pool plumbing as the guard, but [`guard_combat`] fights him at range.
+    Archer { skin: u32, tunic: u32 },
     /// A townsperson posted to a producer — distinct work clothes + a held tool (hoe / axe).
     Worker { trade: Trade, skin: u32, tunic: u32 },
 }
@@ -1780,6 +2149,8 @@ enum Held {
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Guard,
+    /// On militia duty with the longbow (only ever worn by [`Archer`]-marked townsfolk).
+    Archer,
     Working(Trade),
 }
 
@@ -1832,6 +2203,7 @@ fn spec(kind: Kind, seed: u32, kid: bool) -> VSpec {
     let (id_skin, id_tunic) = match kind {
         Kind::Peasant { skin, tunic, .. } => (skin, tunic),
         Kind::Guard { skin, tunic } => (skin, tunic),
+        Kind::Archer { skin, tunic } => (skin, tunic), // legacy box rig never grew a bow — treated as a guard
         Kind::Worker { skin, tunic, .. } => (skin, tunic),
     };
     let guard = matches!(kind, Kind::Guard { .. });
@@ -2202,6 +2574,7 @@ pub fn populate(
                 Kind::Worker { trade: Trade::Woodcutter, skin: SKIN[2], tunic: TUNIC[1] },
                 Kind::Worker { trade: Trade::Miner, skin: SKIN[0], tunic: TUNIC[3] },
                 Kind::Guard { skin: SKIN[1], tunic: TUNIC[0] },
+                Kind::Archer { skin: SKIN[2], tunic: TUNIC[2] },
             ];
             for (i, k) in kinds.into_iter().enumerate() {
                 let x = p[0] + i as f32 * 1.5 - 3.0;
@@ -2423,16 +2796,33 @@ fn spawn(
     // staff a producer by day (the `Townsfolk` pool). They carry their identity colours [`Folk`] +
     // current [`Role`] + body material so `reskin_townsfolk` can redress them as a farmer/woodcutter
     // when they take a job. The NavPath caches an A* route home for a freed captive (see `guard_combat`).
-    if let Kind::Guard { skin, tunic } = kind {
-        commands.entity(root).insert((
-            Guard { atk_cd: 0.0, post: home },
-            NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
-            crate::navgrid::NavPath::default(),
-            Townsfolk,
-            Folk { skin, tunic, seed },
-            Role::Guard,
-            BodyMat(mat.clone()),
-        ));
+    match kind {
+        Kind::Guard { skin, tunic } => {
+            commands.entity(root).insert((
+                Guard { atk_cd: 0.0, post: home },
+                NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
+                crate::navgrid::NavPath::default(),
+                Townsfolk,
+                Folk { skin, tunic, seed },
+                Role::Guard,
+                BodyMat(mat.clone()),
+            ));
+        }
+        Kind::Archer { skin, tunic } => {
+            // Same militia bundle as the guard, plus the persistent bowman trait: `guard_combat`
+            // fights this one at range, and a re-skin returns him to the bow when a day job ends.
+            commands.entity(root).insert((
+                Guard { atk_cd: 0.0, post: home },
+                Archer { loosed: true },
+                NpcHp { hp: NPC_MAX_HP, max: NPC_MAX_HP },
+                crate::navgrid::NavPath::default(),
+                Townsfolk,
+                Folk { skin, tunic, seed },
+                Role::Archer,
+                BodyMat(mat.clone()),
+            ));
+        }
+        _ => {}
     }
     root
 }
@@ -2443,6 +2833,7 @@ fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool, desert: bool) -> BipedMesh
     let trouser = PANT_TONES[(seed as usize) % PANT_TONES.len()];
     let (pk, skin, tunic) = match kind {
         Kind::Guard { skin, tunic } => (PeasantKind::Guard, skin, tunic),
+        Kind::Archer { skin, tunic } => (PeasantKind::Archer, skin, tunic),
         Kind::Worker { trade, skin, tunic } => (
             match trade {
                 Trade::Farmer => PeasantKind::Farmer,
@@ -2517,14 +2908,16 @@ fn reskin_townsfolk(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     rigs: Query<(), With<BipedRig>>,
-    mut folk: Query<(Entity, &Folk, &mut Role, &BodyMat, &Children, Option<&crate::town::Worker>), With<Townsfolk>>,
+    mut folk: Query<(Entity, &Folk, &mut Role, &BodyMat, &Children, Option<&crate::town::Worker>, Has<Archer>), With<Townsfolk>>,
 ) {
     use tileworld_core::town_store::BuildKind;
-    for (e, f, mut role, body_mat, children, worker) in &mut folk {
+    for (e, f, mut role, body_mat, children, worker, is_archer) in &mut folk {
         let desired = match worker.and_then(|w| town.0.plots.get(w.idx)).and_then(|p| p.kind) {
             Some(BuildKind::Farm) => Role::Working(Trade::Farmer),
             Some(BuildKind::Lumber) => Role::Working(Trade::Woodcutter),
             Some(BuildKind::Mine) => Role::Working(Trade::Miner),
+            // Off a day job, a bowman takes up his LONGBOW, everyone else the sword-and-board.
+            _ if is_archer => Role::Archer,
             _ => Role::Guard,
         };
         if *role == desired {
@@ -2539,6 +2932,7 @@ fn reskin_townsfolk(
         }
         let kind = match desired {
             Role::Guard => Kind::Guard { skin: f.skin, tunic: f.tunic },
+            Role::Archer => Kind::Archer { skin: f.skin, tunic: f.tunic },
             Role::Working(trade) => Kind::Worker { trade, skin: f.skin, tunic: f.tunic },
         };
         build_biped_body(&mut commands, e, kind, f.seed, false, false, &body_mat.0, &mut meshes);

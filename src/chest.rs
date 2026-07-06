@@ -406,7 +406,8 @@ pub fn populate_chests(commands: &mut Commands, meshes: &mut Assets<Mesh>, mater
         placed += 1;
     }
 
-    // ── Deep-rim war hoards: one rare top-tier reward per biome, far past the safe zone. ──
+    // ── Deep-rim war hoards: one rare top-tier reward per biome, far past the safe zone.
+    // Authored at MAP_SCALE 2.2 (`world22` rescales to the current map size).
     const HOARD_SPOTS: [(f32, f32); 5] = [
         (-69.0, -45.0), // snow massif
         (60.0, -39.0),  // desert deep
@@ -414,7 +415,9 @@ pub fn populate_chests(commands: &mut Commands, meshes: &mut Assets<Mesh>, mater
         (-60.0, 39.0),  // forest heart
         (0.0, 57.0),    // swamp mire
     ];
-    for (i, &(ax, az)) in HOARD_SPOTS.iter().enumerate() {
+    for (i, &(ax22, az22)) in HOARD_SPOTS.iter().enumerate() {
+        let spot22 = worldmap::world22(ax22, az22);
+        let (ax, az) = (spot22.x, spot22.y);
         let mut spot = None;
         'search: for ring in 0..6 {
             let r = ring as f32 * 3.0;

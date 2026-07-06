@@ -13,7 +13,7 @@
 
 use bevy::prelude::*;
 
-use crate::biome::{Backdrop, Biome, BiomeConfig, BiomeEntity, GroundDetail, ParticleKind, PropClass};
+use crate::biome::{Backdrop, Biome, BiomeConfig, GroundDetail, ParticleKind, PropClass};
 use crate::groundcover as gc;
 use crate::palette::FOREST_GROUND;
 use crate::props;
@@ -222,29 +222,13 @@ pub fn config() -> BiomeConfig {
     }
 }
 
-/// Ruins + the decor charm.
+/// The decor charm (the old dead `landmarks()` set-piece pair was dropped in the July 2026
+/// landmark overhaul — the real set-pieces live in `landmark_models.rs` now).
+#[allow(dead_code)]
 pub fn landmarks(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.9,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(meshes.add(crate::ruins::build_trilithon_mesh())),
-        MeshMaterial3d(mat.clone()),
-        Transform::from_xyz(-11.0, 0.0, -12.0).with_rotation(Quat::from_rotation_y(0.4)),
-        BiomeEntity,
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(crate::ruins::build_giant_dead_tree_mesh())),
-        MeshMaterial3d(mat),
-        Transform::from_xyz(10.0, 0.0, -13.0),
-        BiomeEntity,
-    ));
-
     crate::decor::build(commands, meshes, materials);
 }

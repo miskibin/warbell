@@ -151,6 +151,10 @@ pub(crate) fn detect_villager_events(
     use crate::siege::GamePhase;
     let now = time.elapsed_secs();
     let mut concept: Option<Concept> = None;
+    // A rescue line speaks from the CAGE (the freed captive's own mouth), not from whichever
+    // townsperson happens to stand near the hero — camps are deep in the wilderness, where the
+    // old nearest-villager rule usually found nobody and the line was silently dropped.
+    let mut rescue_at: Option<Vec3> = None;
 
     if let Some(siege) = &siege {
         let phase = siege.phase;
@@ -166,8 +170,9 @@ pub(crate) fn detect_villager_events(
 
     // Always drain the cue stream; a rescue (rare) trumps a phase line if both land this frame.
     for c in cues.read() {
-        if matches!(c, super::AudioCue::CampRescue) {
+        if let super::AudioCue::CampRescue(at) = c {
             concept = Some(Concept::Rescued);
+            rescue_at = Some(*at);
         }
     }
 
@@ -175,6 +180,10 @@ pub(crate) fn detect_villager_events(
     // One-mouth courtesy: don't speak over the hero. On a rescue, the hero fires his own
     // `FirstRescue` reaction the same frame — he claims it, the villager reacts on later ones.
     if mgr.hero_speaking(now) {
+        return;
+    }
+    if let Some(at) = rescue_at {
+        speak.write(Speak::at(c, at)); // the freed captive thanks you from the cage
         return;
     }
     let Ok(hero) = hero.single() else { return };
