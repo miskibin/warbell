@@ -329,11 +329,20 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   view-model knobs: `fp_keep` in `player/mod.rs::spawn_hero_meshes` picks which limb meshes survive
   FP (hide the **upper-arm** meshes — they balloon at the eye — but KEEP the forearm so the weapon
   has a hand and doesn't levitate); `camera::fp_body_visibility` applies it; the FP arm/sword/shield
-  poses are the `fp_amt` overrides in `anim::hero_anim`; the eye sits at `FP_EYE_H`/`FP_FWD_OFF` in
-  `player/camera.rs`; and the main-camera **near-plane** (`scene.rs::setup_camera`, `near: 0.04`) is
-  lowered so the close-held weapon doesn't slice the near-plane (that slicing was the walk-time
-  "flicker"). NB: FP melee inherently puts the enemy in your face — no view-model trick fixes that;
-  third-person is the design's combat view.
+  poses live in `anim::hero_anim` (July 2026 rework): the arms are **always viewmodel-driven in FP**
+  (the eye sits AT the chest, so third-person clips orbit the lens itself — never let them play on
+  the FP arms), a `fp_ready` weight keeps the gear in a low carry at the frame edges out of combat
+  and draws it up when a threat is near / attacking / blocking, and the whole arm chains are
+  **handedness-MIRRORED** in FP (the studio rig renders its "R" joints on the viewer's left;
+  translations flip X, rotations conjugate `(x,-y,-z)`) so the sword reads bottom-right / shield
+  bottom-left. The FP wrist/shield angles were **solved from `FOREST_FPDBG=1` camera-space probes,
+  not eyeballed** — pose-space intuition is useless through the tilted FP hand frame, so tune
+  against the probe vectors (NB: FPDBG needs `FOREST_SHOT` too — without the shot harness the app
+  idles on the start screen and the probes read the menu camera). The eye sits at
+  `FP_EYE_H`/`FP_FWD_OFF` in `player/camera.rs`; and the main-camera **near-plane**
+  (`scene.rs::setup_camera`, `near: 0.04`) is lowered so the close-held weapon doesn't slice the
+  near-plane (that slicing was the walk-time "flicker"). NB: FP melee inherently puts the enemy in
+  your face — no view-model trick fixes that; third-person is the design's combat view.
 - **Capture-harness flakes — confirm the `Screenshot saved` log line, and retry before debugging.**
   A `FOREST_SHOT` run can emit a junk frame that is NOT a code bug: a **black** frame (cold pipeline,
   see the bevy-0.19 note) or an **overview/god-cam** frame (the follow-cam hadn't engaged yet under

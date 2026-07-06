@@ -98,12 +98,23 @@ pub fn fp_debug_dump(
     fp: Res<camera::FirstPerson>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     parts: Query<(&HeroPart, &GlobalTransform)>,
+    hero_q: Query<(&Hero, &HeroHealth)>,
     mut next: Local<f32>,
 ) {
     if std::env::var("FOREST_FPDBG").is_err() || fp.blend < 0.9 || time.elapsed_secs() < *next {
         return;
     }
     *next = time.elapsed_secs() + 2.0;
+    if let Ok((hero, hh)) = hero_q.single() {
+        info!(
+            "FPDBG state threats={} combat_in={:.1} attacking={} blocking={} blend={:.2}",
+            hero.threats,
+            hero.combat_until - time.elapsed_secs(),
+            hero.attacking,
+            hh.blocking,
+            fp.blend
+        );
+    }
     let Ok(cam_gt) = cam.single() else { return };
     let inv = cam_gt.affine().inverse();
     for (p, gt) in &parts {
@@ -114,9 +125,13 @@ pub fn fp_debug_dump(
             let pos = inv.transform_point3(gt.translation());
             // A point 0.5 rig-units up the joint's local +Y — for the sword that's along the blade.
             let tip = inv.transform_point3(gt.transform_point(Vec3::Y * 0.5));
+            // Unit direction probes in camera space (-Z = forward): the blade line (+Y) and the
+            // face normal (+Z — the shield's face points at local +Z).
+            let up = (tip - pos).normalize_or_zero();
+            let face = (inv.transform_point3(gt.transform_point(Vec3::Z * 0.5)) - pos).normalize_or_zero();
             info!(
-                "FPDBG {:?} pos({:.2},{:.2},{:.2}) tip({:.2},{:.2},{:.2})",
-                p.joint, pos.x, pos.y, pos.z, tip.x, tip.y, tip.z
+                "FPDBG {:?} pos({:.2},{:.2},{:.2}) up({:.2},{:.2},{:.2}) face({:.2},{:.2},{:.2})",
+                p.joint, pos.x, pos.y, pos.z, up.x, up.y, up.z, face.x, face.y, face.z
             );
         }
     }
