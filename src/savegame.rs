@@ -567,8 +567,8 @@ mod tests {
             blight_captives_freed: vec![false, true],
             discoveries_found: 3,
             discoveries_completed: false,
-            discovered_landmarks: vec!["The Hollow Oak".into()],
-            claimed_landmark_gear: vec!["The Hollow Oak".into()],
+            discovered_landmarks: vec!["The Old Mill".into()],
+            claimed_landmark_gear: vec!["The Old Mill".into()],
             opened_chests: vec![false, true, false],
             quest: Some(QuestLog { active: 3, progress: 2.0 }),
             rival_gold: 142.5,
@@ -593,7 +593,7 @@ mod tests {
         assert_eq!(back.upgrades, data.upgrades);
         assert!(back.defenses.walls);
         assert_eq!(back.rescued_camps, vec![true, false, true]);
-        assert_eq!(back.discovered_landmarks, vec!["The Hollow Oak".to_string()]);
+        assert_eq!(back.discovered_landmarks, vec!["The Old Mill".to_string()]);
         assert_eq!(back.opened_chests, vec![false, true, false]);
         assert_eq!(back.quest, Some(QuestLog { active: 3, progress: 2.0 }));
         assert!(back.bag.has_item("potion"));

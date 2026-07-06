@@ -606,6 +606,8 @@ pub fn populate_landmarks(
             continue; // `landmark_sites` already logged the miss.
         };
         let (x, y, z, yaw) = (s.pos.x, s.y, s.pos.y, s.yaw);
+        // Greppable placement line — capture/debug sessions frame landmark close-ups from this.
+        info!("landmark {:?} placed at ({:.1}, {:.1})", biome, x, z);
         let xf = Transform::from_xyz(x, y, z)
             .with_rotation(Quat::from_rotation_y(yaw))
             .with_scale(Vec3::splat(scale));
