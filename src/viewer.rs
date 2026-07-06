@@ -9,11 +9,15 @@
 //! turntable). `main()` calls [`run`] and returns early when `FOREST_VIEW` is set.
 //!
 //! Models: `FOREST_VIEW=hero` (default) renders the knight in rest pose; honours
-//! `FOREST_EQUIP="weapon,armor"`. `FOREST_VIEW=landmark:trilithon|spire|pyramid`
-//! previews a biome landmark prop on the white vertex-colour material.
+//! `FOREST_EQUIP="weapon,armor"`. `FOREST_VIEW=landmark:mill|hut|spire|pyramid|stones`
+//! previews a biome landmark SET-PIECE — the full `LandmarkModel` (merged base + animated
+//! parts) on the white vertex-colour material, with the real `RuinsFxPlugin` animators
+//! running, auto-framed from the mesh bounds (big props need a far camera, not the
+//! character default). `FOREST_CAM` still overrides the framing.
 
 use std::f32::consts::FRAC_PI_2;
 
+use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
 
@@ -36,6 +40,7 @@ pub fn run() {
         .add_plugins(crate::quadruped::QuadrupedPlugin) // poses any previewed quadruped from its QuadDrive
         .add_plugins(crate::biped::BipedPlugin) // poses any previewed ork/peasant biped from its BipedDrive
         .add_plugins(crate::capture::CapturePlugin) // FOREST_SHOT / FOREST_CLIP (+ _ORBIT turntable)
+        .add_plugins(crate::ruins::RuinsFxPlugin) // landmark part animators (sails/orbits/pulses)
         .insert_resource(GlobalAmbientLight { brightness: 160.0, ..default() })
         .insert_resource(ClearColor(Color::srgb(0.16, 0.17, 0.20)))
         .add_systems(Startup, setup);
@@ -209,6 +214,31 @@ fn parse_cam() -> Option<(Vec3, Vec3)> {
     (n.len() == 6).then(|| (Vec3::new(n[0], n[1], n[2]), Vec3::new(n[3], n[4], n[5])))
 }
 
+/// Min/max corners of a mesh's vertices — the auto-framing input for big props.
+fn mesh_bounds(m: &Mesh) -> (Vec3, Vec3) {
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    if let Some(VertexAttributeValues::Float32x3(p)) = m.attribute(Mesh::ATTRIBUTE_POSITION) {
+        for v in p {
+            lo = lo.min(Vec3::from(*v));
+            hi = hi.max(Vec3::from(*v));
+        }
+    }
+    (lo, hi)
+}
+
+/// The landmark set-piece named by `landmark:<name>` (biome aliases accepted).
+fn landmark_model(name: &str) -> crate::ruins::LandmarkModel {
+    use crate::landmark_models as lm;
+    match name {
+        "hut" | "witch" | "swamp" => lm::witch_hut(),
+        "spire" | "snow" | "ice" => lm::frozen_spire(),
+        "pyramid" | "desert" => lm::sunken_pyramid(),
+        "stones" | "rocky" | "trilithon" | "circle" => lm::standing_stones(),
+        // `mill` / `forest` / anything else → the old mill.
+        _ => lm::old_mill(),
+    }
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -216,34 +246,46 @@ fn setup(
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
 ) {
     // Camera — framed on a ~1.8u-tall model standing at the origin (chest-height look-at).
-    let (eye, target) = parse_cam().unwrap_or((Vec3::new(0.0, 1.0, 3.0), Vec3::new(0.0, 0.85, 0.0)));
+    // The landmark path below re-frames from the model's real bounds instead.
+    let (mut eye, mut target) = parse_cam().unwrap_or((Vec3::new(0.0, 1.0, 3.0), Vec3::new(0.0, 0.85, 0.0)));
+
+    // `FOREST_VIEW=landmark:<name>` — a full landmark set-piece: merged base on the white
+    // vertex-colour material + its animated parts (RuinsFxPlugin drives them here too).
+    let view_env = std::env::var("FOREST_VIEW").unwrap_or_default();
+    if let Some(name) = view_env.strip_prefix("landmark:") {
+        let model = landmark_model(name);
+        if parse_cam().is_none() {
+            // Auto-fit: pull back proportionally to the model's bounding radius, from a
+            // low front-right three-quarter angle (shows silhouette + ground dressing).
+            let (lo, hi) = mesh_bounds(&model.base);
+            let centre = (lo + hi) * 0.5;
+            let radius = ((hi - lo) * 0.5).length().max(1.0);
+            target = Vec3::new(centre.x, centre.y * 0.9, centre.z);
+            eye = centre + Vec3::new(0.62, 0.38, 1.0).normalize() * radius * 2.1;
+        }
+        commands.spawn((Camera3d::default(), Transform::from_translation(eye).looking_at(target, Vec3::Y)));
+        spawn_stage_lights(&mut commands);
+        spawn_ground(&mut commands, &mut meshes, &mut std_mats, 14.0);
+        let white = std_mats.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.92,
+            ..default()
+        });
+        crate::ruins::spawn_landmark_model(
+            &mut commands,
+            &mut meshes,
+            &mut std_mats,
+            &white,
+            model,
+            Transform::default(),
+        );
+        return;
+    }
+
     commands.spawn((Camera3d::default(), Transform::from_translation(eye).looking_at(target, Vec3::Y)));
 
-    // Three-point-ish lighting: a shadowed key, a soft fill from the opposite side, a back rim.
-    commands.spawn((
-        DirectionalLight { illuminance: 10_000.0, shadow_maps_enabled: true, ..default() },
-        Transform::from_xyz(4.0, 7.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
-        DirectionalLight { illuminance: 3_500.0, shadow_maps_enabled: false, ..default() },
-        Transform::from_xyz(-5.0, 4.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
-        DirectionalLight { illuminance: 2_500.0, shadow_maps_enabled: false, ..default() },
-        Transform::from_xyz(0.0, 3.0, -6.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-
-    // Neutral ground disk so the model casts a shadow and isn't floating in void.
-    let ground = std_mats.add(StandardMaterial {
-        base_color: Color::srgb(0.22, 0.24, 0.27),
-        perceptual_roughness: 0.96,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(meshes.add(Circle::new(6.0))),
-        MeshMaterial3d(ground),
-        Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
-    ));
+    spawn_stage_lights(&mut commands);
+    spawn_ground(&mut commands, &mut meshes, &mut std_mats, 6.0);
 
     // `FOREST_VIEW=trees` — the harvestable "chop these for wood" resources on the clean stage
     // (quest-card art): a few tree kinds + a desert saguaro, no world scene around them. These use
@@ -285,27 +327,7 @@ fn setup(
             crate::player::HeroHealth::default(),
         ))
         .id();
-    let view = std::env::var("FOREST_VIEW").unwrap_or_default();
-    if view.starts_with("landmark:") {
-        let mesh = match view.rsplit(':').next() {
-            Some("trilithon") | Some("rocky") | Some("stones") => crate::ruins::build_trilithon_mesh(),
-            Some("spire") | Some("snow") | Some("ice") => crate::ruins::build_frozen_spire_mesh(),
-            Some("pyramid") | Some("desert") => crate::ruins::build_sunken_pyramid_mesh(),
-            _ => crate::ruins::build_trilithon_mesh(),
-        };
-        let white = std_mats.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.92,
-            ..default()
-        });
-        commands.entity(root).insert((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(white),
-            Transform::from_scale(Vec3::splat(1.3)),
-        ));
-    } else {
-        spawn_model(&mut commands, root, &mut meshes, &mat);
-    }
+    spawn_model(&mut commands, root, &mut meshes, &mat);
 }
 
 /// Spawn the model named by `FOREST_VIEW` under `root`. Add new models as `match` arms.
@@ -444,6 +466,42 @@ fn spawn_model(
             crate::player::spawn_hero_meshes(commands, root, m, meshes, mat);
         }
     }
+}
+
+/// Three-point-ish lighting: a shadowed key, a soft fill from the opposite side, a back rim.
+fn spawn_stage_lights(commands: &mut Commands) {
+    commands.spawn((
+        DirectionalLight { illuminance: 10_000.0, shadow_maps_enabled: true, ..default() },
+        Transform::from_xyz(4.0, 7.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    commands.spawn((
+        DirectionalLight { illuminance: 3_500.0, shadow_maps_enabled: false, ..default() },
+        Transform::from_xyz(-5.0, 4.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    commands.spawn((
+        DirectionalLight { illuminance: 2_500.0, shadow_maps_enabled: false, ..default() },
+        Transform::from_xyz(0.0, 3.0, -6.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+}
+
+/// Neutral ground disk so the model casts a shadow and isn't floating in void.
+/// `r` scales with the subject (6u suits a character; landmarks want more).
+fn spawn_ground(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    std_mats: &mut Assets<StandardMaterial>,
+    r: f32,
+) {
+    let ground = std_mats.add(StandardMaterial {
+        base_color: Color::srgb(0.22, 0.24, 0.27),
+        perceptual_roughness: 0.96,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Circle::new(r))),
+        MeshMaterial3d(ground),
+        Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
+    ));
 }
 
 /// `FOREST_EQUIP="weapon_id,armor_id"` → `(weapon, armor)`; either side may be empty.

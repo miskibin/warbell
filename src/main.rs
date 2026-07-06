@@ -67,6 +67,7 @@ mod hints;
 mod hud;
 mod interaction;
 mod inventory;
+mod landmark_models;
 mod landmarks;
 mod loading;
 mod lumberjack;
@@ -293,6 +294,9 @@ fn main() {
         // Rival AI stronghold: a second castle in the desert (Stronghold-Crusader-style opponent).
         // Standalone: the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(rival::RivalPlugin)
+        // Landmark set-piece animators (mill sails, orbiting shards, glow pulses). Standalone —
+        // the tuples above are at the `Plugins` arity-15 cap.
+        .add_plugins(ruins::RuinsFxPlugin)
         // Ambush snowmen: static snow-biome decor that wakes + slams when the hero nears or strikes
         // it. Standalone — the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(snowman::SnowmanPlugin)

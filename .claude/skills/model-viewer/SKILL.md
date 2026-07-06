@@ -42,8 +42,19 @@ FOREST_VIEW=hero FOREST_SHOT=/tmp/hero.png \
 
 - `FOREST_VIEW=hero` (default / any unknown value) — the player knight in **rest pose**.
   `FOREST_EQUIP="weapon_id,armor_id"` swaps gear (e.g. `FOREST_EQUIP="sword_gold,gold_armor"`).
-- New models slot into the `match` in `spawn_model()` in `src/viewer.rs` — add an arm like
-  `"ork" => { … build + spawn … }` calling that model's builder against the creature material.
+- `FOREST_VIEW=ork:scout|berserker|shaman|torch`, `peasant:farmer|miner|guard|archer[:desert]`,
+  `animal:wolf|dog|horse|deer|camel|bear|polar`, `boss:forest|snow|rocky|desert|swamp`,
+  `knight2` — the other creature families (see `spawn_model()` in `src/viewer.rs`).
+- `FOREST_VIEW=landmark:mill|hut|spire|pyramid|stones` — a full biome landmark SET-PIECE
+  (`landmark_models.rs`): the merged base mesh on the white vertex-colour material **plus its
+  animated/glowing parts**, with the real `RuinsFxPlugin` animators running — a `FOREST_CLIP`
+  here shows the mill sails actually turning, the wisps orbiting, the glows pulsing. The camera
+  **auto-fits from the model's bounds** (no hand-tuned `FOREST_CAM` needed; it still overrides).
+  Biome aliases work (`landmark:forest`, `landmark:swamp`, …).
+- `FOREST_VIEW=trees` — the harvestable tree kinds + saguaro in a row.
+- New CREATURE models slot into the `match` in `spawn_model()`; new PROPS (bare vertex-coloured
+  meshes / LandmarkModels) go in the `landmark_model()` registry instead — props don't use the
+  creature material.
 
 ### Framing
 
@@ -67,9 +78,11 @@ FOREST_VIEW=hero FOREST_CLIP=/tmp/turn FOREST_CLIP_FRAMES=120 FOREST_CLIP_FPS=30
 
 ## Notes / limits
 
-- The viewer shows the model's **rest/spawn pose** (no animator runs here). To inspect the hero's
-  *animations*, use the in-game `FOREST_ANIMTEST=walk|block` staging hook with the normal
-  `FOREST_SHOT`/`FOREST_CLIP` (that path runs the real animator).
+- Character models show their **rest/spawn pose** by default; `FOREST_VIEW_ANIM=walk|run|block|
+  attack1-3|heavy|charge|dash|jump|bow|carry|sit|…` drives the REAL game animator on the
+  previewed hero/biped/quadruped (see `viewer.rs::anim_drive` + `biped_anim_drive` +
+  `quad_anim_drive` for each family's clip list). Landmark set-pieces always run their part
+  animators (sails/orbits/pulses) — no extra flag needed.
 - Lighting here is a neutral 3-point rig, NOT the game's atmosphere/IBL — geometry, proportions
   and per-surface texture (the `surf` codes) read true, but final in-game tone differs. For a
   lighting/atmosphere check, capture in the real game (`visual-debug-cloud`).

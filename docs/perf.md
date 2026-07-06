@@ -56,6 +56,23 @@ Remove-Item Env:FOREST_FREEROAM,Env:FOREST_CAM,Env:FOREST_NOCULL -ErrorAction Si
 
 Read `main_opaque_pass_3d` from F2 in each — identical view, so the delta is purely the culling.
 
+## Terrain far-LOD (July 2026, with the MAP_SCALE 2.2 → 2.6 bump)
+
+The terrain sheets were the last full-res-everywhere geometry: chunked (48-tile blocks) and
+frustum-culled, but every on-screen chunk drew 1 quad/tile + terrace walls + marching-squares
+river banks regardless of distance. `worldmap::build_terrain_chunk_coarse` now builds a second,
+stride-4 **coarse drape** per chunk (~1/16th the vertices; no walls, no river cuts — the channel
+just dips under the always-drawn water plane; short perimeter skirts hide LOD seams). The two
+meshes swap via `VisibilityRange` at **110–136u** (camera→chunk-AABB, `use_aabb`) with a dithered
+crossfade — unlike the scatter culls this band is deliberately NON-abrupt: terrain is huge and a
+hard swap pops its silhouette; only the ring of chunks currently inside the band pays the
+per-fragment discard. The coarse mesh is `NotShadowCaster` (cascades end ~150 anyway).
+
+This is what pays for MAP_SCALE 2.6 (tiles ∝ scale², ~1.4× vs 2.2): beyond ~136u only ~1/16-density
+terrain draws, so the full-res vertex load now tracks the LOD radius, not the island size.
+`FOREST_NOCULL=1` disables the LOD together with the scatter culls (same A/B protocol above; the
+whole-island map-shot recipe already sets it).
+
 ## GPU pass breakdown (reference, from baseline F2)
 
 Captured on `igpu-strong-cpu`, boot-day, to know what each pass costs and what to target.
