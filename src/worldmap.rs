@@ -267,9 +267,12 @@ struct Pass {
 
 /// Snow massif passes: SE main ascent facing the castle + an E ramp toward the desert (the
 /// snow↔desert ring road threads it). Angles are `atan2(target_z − reg.z, target_x − reg.x)`.
+// Half-widths widened (3.0→4.5 / 2.4→3.2) when the massif grew (r 36→42): a longer ramp is
+// angularly narrower at its mouth, so at the old widths a tile centre could fall a hair outside
+// the corridor and read as a 1-class apron gap (`mesa_passes_climb_to_the_summit` regression).
 const SNOW_PASSES: [Pass; 2] = [
-    Pass { ang: 0.578, half: 3.0 },  // SE, toward the castle (main ascent)
-    Pass { ang: -0.184, half: 2.4 }, // E, toward the desert dunes
+    Pass { ang: 0.578, half: 4.5 },  // SE, toward the castle (main ascent)
+    Pass { ang: -0.184, half: 3.2 }, // E, toward the desert dunes
 ];
 /// Rock range passes: WNW main ascent (mouth at base ≈(86,39), a clear 20+ base units from the
 /// castle — due-west would run the ramp straight into the castle safe-zone's grass fray, which
@@ -292,7 +295,11 @@ const REGIONS: [Region; 6] = [
     // smooth white dome (verification FAIL) — 18 gives 2u walls (ladder 2/6/10/14/18) that
     // register as cliff bands even white-on-white in haze. Rock stays taller (22).
     // r 33→36: grow the massif into the grass freed by the shrunk swamps ("bigger mountains").
-    Region { x: 26.0, z: 24.0, r: 36.0, biome: TB::Snow, peak: 18, cliffy: true, passes: &SNOW_PASSES },
+    // r 36→42 + peak 18→20 (player: the snow-side coast mountain should be bigger + more
+    // irregular): the massif now reaches the NW `nw_headland` coast, so its flanks run into the
+    // sea as a jagged cliff front instead of tapering to a beach. Centre unchanged, so the SE/E
+    // pass corridors keep their authored angles (their half-widths grew to match the longer ramp).
+    Region { x: 26.0, z: 24.0, r: 42.0, biome: TB::Snow, peak: 20, cliffy: true, passes: &SNOW_PASSES },
     // NE dunes — shifted NW (112,28 → 101,10), so the dune field grows toward the snow massif and
     // fills the grass corridor along the top coast. Radius 34→38 to close the empty grass seam
     // between snow and desert (players noted the wide bare strip there): with snow at r33 the seam
@@ -495,12 +502,32 @@ fn omottle(x: f32, z: f32, scale: f32, seed: f32) -> f32 {
     ((o1 * 0.65 + o2 * 0.35) - 0.5) * 3.0
 }
 
+/// Outward push (in normalised-ellipse units) of the NW snow-massif coastline: a ragged HEADLAND
+/// that runs the snow mountain right out toward the map's NW corner so its flanks meet the sea in
+/// a cliff — where the ragged noise peaks the land reaches the grid boundary and simply ends in a
+/// wall (a map-edge cliff, which the player OK'd), where it dips the shore pulls back into a cove.
+/// Concentrated at the true NW corner (`wx*wz`, both west AND north of centre) and fading to zero
+/// long before the other coasts, so only the snow side is reshaped. Added identically to
+/// `is_land_shape` and `sea_field` so the shoreline the two derive never disagrees.
+fn nw_headland(x: f32, z: f32) -> f32 {
+    let wx = ((CX - x) / CX).clamp(0.0, 1.0); // 0 at centre → 1 at the west grid edge
+    let wz = ((CZ - z) / CZ).clamp(0.0, 1.0); // 0 at centre → 1 at the north grid edge
+    let corner = wx * wz;
+    if corner <= 0.0 {
+        return 0.0;
+    }
+    // Capes-and-coves: two low-frequency octaves (~10–40 base-unit features) so the extension
+    // varies along the coast into an irregular front instead of one smooth bulge.
+    let ragged = 0.5 * vnoise(x * 0.10 + 3.1, z * 0.10 - 2.3) + 0.5 * vnoise(x * 0.23 - 1.7, z * 0.23 + 4.2);
+    corner.powf(1.25) * (0.35 + 1.1 * ragged)
+}
+
 fn is_land_shape(x: f32, z: f32) -> bool {
     let dx = (x - CX).abs() / ISLAND_RX;
     let dz = (z - CZ).abs() / ISLAND_RZ;
     let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
     let coast = noise_a(x, z) * 0.08;
-    r + coast < 1.0
+    r + coast - nw_headland(x, z) < 1.0
 }
 
 /// Smooth signed distance-ish to the SEA (the real land/water shoreline) at a base-space corner,
@@ -516,7 +543,7 @@ fn sea_field(x: f32, z: f32) -> f32 {
     let dz = (z - CZ).abs() / ISLAND_RZ;
     let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
     let coast = noise_a(x, z) * 0.08;
-    let ellipse = (1.0 - (r + coast)) * ISLAND_RZ;
+    let ellipse = (1.0 - (r + coast - nw_headland(x, z))) * ISLAND_RZ;
     ellipse.max(crate::ork_fortress::blight_edge_base(x, z))
 }
 
@@ -976,9 +1003,15 @@ fn mesa_t(x: f32, z: f32, reg: &Region) -> f32 {
     let (sx, sz) = if reg.biome == TB::Snow { (0.82, 1.20) } else { (1.12, 0.88) };
     let dx = (x - reg.x) * sx;
     let dz = (z - reg.z) * sz;
+    // The snow massif runs MORE irregular than the rock range (player: "bardziej nieregularna"):
+    // a heavier broad-lobe deformation + an extra mid-frequency spur octave warp its whole
+    // silhouette into ragged spurs, so its enlarged flanks meet the NW sea-cliff on a jagged
+    // front rather than a smooth arc. The rock range keeps its tuned squat-lobed shape.
+    let (lobe, spur, rim) = if reg.biome == TB::Snow { (8.5, 4.0, 3.6) } else { (5.5, 0.0, 3.0) };
     let dc = dx.hypot(dz)
-        + noise_b(x * 0.085 + 7.0, z * 0.085 - 3.0) * 5.5 // broad lobes: silhouette deformation
-        + noise_a(x * 0.33, z * 0.33) * 3.0; // fine rim waviness
+        + noise_b(x * 0.085 + 7.0, z * 0.085 - 3.0) * lobe // broad lobes: silhouette deformation
+        + noise_a(x * 0.17 - 2.0, z * 0.17 + 5.0) * spur // mid spurs (snow only)
+        + noise_a(x * 0.33, z * 0.33) * rim; // fine rim waviness
     (1.0 - dc / reg.r).clamp(0.0, 1.0)
 }
 
