@@ -944,6 +944,74 @@ pub(crate) fn carry_pose() -> Pose {
     p
 }
 
+/// Per-variant FP viewmodel swing shaping (rig-space radians, pre-mirror). The third-person attack
+/// clips can't play on the FP arms (they orbit the lens — see the sword-arm note in [`hero_anim`]),
+/// so each attack variant gets its own compact camera-framed envelope instead of one shared
+/// wind→punch: the overhead chop cocks the blade high and drives it DOWN the frame, the horizontal
+/// slash whips it ACROSS, the thrust holds the blade level and punches the whole arm forward, and
+/// the Heavy is the chop writ large. Each `(back, fwd)` pair scales the wind-up coil and the strike
+/// punch on one joint axis.
+struct FpSwing {
+    /// Shoulder X — raise on the cock / drive on the punch.
+    sh_x: (f32, f32),
+    /// Shoulder Y — lateral pull / cross-frame sweep.
+    sh_y: (f32, f32),
+    /// Elbow fold on the cock / extension on the punch.
+    el: (f32, f32),
+    /// Wrist X — blade tips up-back / sweeps down-forward.
+    sw_x: (f32, f32),
+    /// Wrist Y — blade cocks out / whips across the frame.
+    sw_y: (f32, f32),
+}
+
+fn fp_swing(variant: u8) -> FpSwing {
+    match variant {
+        // attack2 — horizontal slash: a falling cross-cut — the blade cocks out to the sword side
+        // and sweeps across the MID frame as the arm drops and carries the hilt over. (Probe note:
+        // wrist-Y toward 0 tips the blade skyward through the tilted FP hand frame — the first cut
+        // of this clip pushed Y positive and read as a rising poke, so the lateral travel now
+        // lives in the SHOULDER and the wrist keeps the blade on the level-to-down band.)
+        1 => FpSwing {
+            sh_x: (-0.25, -0.05),
+            sh_y: (-0.50, 0.90),
+            el: (-0.25, 0.55),
+            sw_x: (-0.12, 0.30),
+            sw_y: (0.10, 0.35),
+        },
+        // attack3 — forward thrust: the wind folds the elbow deep (hilt drawn to the ribs, blade
+        // kept LEVEL at the target), the strike EXTENDS the whole arm at the frame centre — the
+        // punch reads in the reach, so the wrist barely moves (X≈2.56 is the probe-solved
+        // blade-level-forward angle for the raised FP arm; sw_x holds it there through the punch).
+        2 => FpSwing {
+            sh_x: (-0.10, 0.05),
+            sh_y: (-0.10, 0.30),
+            el: (-0.60, 1.05),
+            sw_x: (-0.12, -0.10),
+            sw_y: (0.15, 0.0),
+        },
+        // Heavy Strike — the overhead chop writ large: hauled higher, smashed hard down the middle
+        // (this shape is also what the held charge coils into). sw_x.1 stops at +0.55: the probe
+        // showed +1.05 swung the blade PAST straight-down into pointing back at the camera.
+        v if v == super::combat::HEAVY_VARIANT => FpSwing {
+            sh_x: (-0.60, 0.45),
+            sh_y: (-0.05, 0.10),
+            el: (-0.30, 0.90),
+            sw_x: (-0.95, 0.55),
+            sw_y: (0.05, 0.20),
+        },
+        // attack1 — overhead chop: blade cocked high over the shoulder, driven DOWN the frame —
+        // the Heavy's arc at a lighter scale (the first cut played the whole chop below the
+        // bottom frame edge; raising the shoulder and capping sw_x keeps the sweep IN frame).
+        _ => FpSwing {
+            sh_x: (-0.55, 0.35),
+            sh_y: (-0.05, 0.10),
+            el: (-0.32, 0.80),
+            sw_x: (-0.85, 0.55),
+            sw_y: (0.10, 0.25),
+        },
+    }
+}
+
 pub fn hero_anim(
     time: Res<Time>,
     player: Res<super::PlayerRes>,
@@ -1025,7 +1093,9 @@ pub fn hero_anim(
 
     // FP attack envelope, shared by the sword arm and wrist: `back` coils through the wind (and
     // through a held Heavy-Strike charge), `fwd` punches through the strike and eases out across
-    // the recovery.
+    // the recovery. The *direction* of the coil/punch comes from the per-variant [`fp_swing`]
+    // table, so the FP combo reads as three distinct cuts (chop / slash / thrust) like the
+    // third-person clips, instead of one repeated generic poke.
     let (fp_atk_back, fp_atk_fwd) = if hero.charge_t > CHARGE_GRACE && attack.is_none() {
         (1.0, 0.0)
     } else {
@@ -1035,6 +1105,12 @@ pub fn hero_anim(
             Some((Phase::Recovery, p)) => (0.0, 1.0 - *p),
             None => (0.0, 0.0),
         }
+    };
+    // A held charge coils into the Heavy's shape even before the release stamps the variant.
+    let fp_sw = if hero.charge_t > CHARGE_GRACE && attack.is_none() {
+        fp_swing(super::combat::HEAVY_VARIANT)
+    } else {
+        fp_swing(hero.attack_variant)
     };
 
     let (fp_breath, fp_bob_v, fp_bob_l, fp_sway) = if fp_amt > 0.0 {
@@ -1150,13 +1226,15 @@ pub fn hero_anim(
                     // itself plays on the Sword joint below). Breath/bob/sway keep it alive.
                     let (back, fwd) = (fp_atk_back, fp_atk_fwd);
                     let target = if elbow {
-                        rx(lerp(-0.35, -1.05, fp_ready) - 0.30 * back + 0.75 * fwd + fp_bob_v * 0.6)
+                        rx(lerp(-0.35, -1.05, fp_ready) + fp_sw.el.0 * back + fp_sw.el.1 * fwd + fp_bob_v * 0.6)
                     } else {
                         e3(
-                            lerp(0.10, -0.70, fp_ready) - 0.25 * back + 0.15 * fwd + fp_breath + fp_bob_v,
+                            lerp(0.10, -0.70, fp_ready) + fp_sw.sh_x.0 * back + fp_sw.sh_x.1 * fwd
+                                + fp_breath
+                                + fp_bob_v,
                             -(fp_sway + fp_bob_l) * lerp(0.5, 1.0, fp_ready) - 0.35 * fp_ready
-                                - 0.20 * back
-                                + 0.25 * fwd,
+                                + fp_sw.sh_y.0 * back
+                                + fp_sw.sh_y.1 * fwd,
                             lerp(0.12, 0.10, fp_ready),
                         )
                     };
@@ -1174,14 +1252,21 @@ pub fn hero_anim(
                 //   toward centre-down through the strike (the arm punch carries the hilt)
                 // - guard: tucked down-forward-right, out of frame — the shield is the story.
                 if fp_amt > 0.0 {
+                    // Low carry — the out-of-combat grip. The old code left the wrist entirely to
+                    // the third-person pose below `fp_ready` = 0, and through the tilted FP hand
+                    // frame the rest/gait angles read as a rigid rod jutting up across the frame
+                    // ("nie trzyma miecza" bug) — so the wrist is now owned in FP at ALL times:
+                    // relaxed here (blade angled easy down-forward out of the frame's way, riding
+                    // the walk bob), drawn up into `combat` as `fp_ready` rises.
+                    let carry = e3(3.02 + fp_bob_v * 0.4, -0.30 - fp_sway * 0.5, -0.44);
                     let combat = e3(
-                        2.68 - 0.55 * fp_atk_back + 0.55 * fp_atk_fwd + fp_bob_v * 0.5,
-                        -(0.60 + fp_sway - 0.40 * fp_atk_back - 0.65 * fp_atk_fwd),
+                        2.68 + fp_sw.sw_x.0 * fp_atk_back + fp_sw.sw_x.1 * fp_atk_fwd + fp_bob_v * 0.5,
+                        -0.60 - fp_sway + fp_sw.sw_y.0 * fp_atk_back + fp_sw.sw_y.1 * fp_atk_fwd,
                         -0.44,
                     );
-                    let target = combat.slerp(e3(-2.42, -0.60, -0.33), block_amt);
-                    let w = if attack.is_some() { fp_amt } else { fp_amt * fp_ready.max(block_amt) };
-                    rot = rot.slerp(target, w);
+                    let ready_w = if attack.is_some() { 1.0 } else { fp_ready };
+                    let target = carry.slerp(combat, ready_w).slerp(e3(-2.42, -0.60, -0.33), block_amt);
+                    rot = rot.slerp(target, fp_amt);
                 }
             }
             Joint::ShoulderL | Joint::ElbowL => {

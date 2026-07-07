@@ -587,6 +587,40 @@ pub fn ensure_combat_health(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Debug/capture hook: `FOREST_SWINGTEST=1` re-arms the attack chain on a ~1.15s loop (inside
+/// `COMBO_WINDOW`, so the combo steps through chop → slash → thrust; every 4th swing fires the
+/// Heavy) with no keypress and skipping the pointer-lock gate, so a `FOREST_FP`/`FOREST_TPS`
+/// shot/clip can frame the full swing set — same pattern as `FOREST_ROLLTEST`. Its own system
+/// (before [`player_attack`], which already sits at Bevy's 16-param ceiling).
+pub fn swing_test(
+    time: Res<Time>,
+    mode: Res<PlayMode>,
+    player: Res<PlayerRes>,
+    fp: Res<super::FirstPerson>,
+    mut cues: MessageWriter<AudioCue>,
+    mut hero_q: Query<&mut Hero>,
+    mut next: Local<f32>,
+    mut count: Local<u32>,
+) {
+    if std::env::var("FOREST_SWINGTEST").is_err() {
+        return;
+    }
+    let Ok(mut hero) = hero_q.single_mut() else { return };
+    let now_s = time.elapsed_secs();
+    if *mode != PlayMode::Play
+        || !player.0.is_alive()
+        || hero.roll_t >= 0.0
+        || hero.attacking
+        || now_s < *next
+    {
+        return;
+    }
+    *next = now_s + 1.15;
+    *count += 1;
+    begin_swing(&mut hero, *count % 4 == 0, None, now_s, fp.active);
+    cues.write(AudioCue::HeroGruntSwing);
+}
+
 pub fn player_attack(
     time: Res<Time>,
     mode: Res<PlayMode>,

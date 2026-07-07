@@ -104,13 +104,18 @@ pub fn fp_debug_dump(
     if std::env::var("FOREST_FPDBG").is_err() || fp.blend < 0.9 || time.elapsed_secs() < *next {
         return;
     }
-    *next = time.elapsed_secs() + 2.0;
+    // Under FOREST_SWINGTEST, sample fast enough to catch each swing's wind/strike (a swing is
+    // ~0.45s) — the probes are how the per-variant FP attack angles get SOLVED, not eyeballed.
+    let fast = std::env::var("FOREST_SWINGTEST").is_ok();
+    *next = time.elapsed_secs() + if fast { 0.12 } else { 2.0 };
     if let Ok((hero, hh)) = hero_q.single() {
         info!(
-            "FPDBG state threats={} combat_in={:.1} attacking={} blocking={} blend={:.2}",
+            "FPDBG state threats={} combat_in={:.1} attacking={} variant={} ap={:.2} blocking={} blend={:.2}",
             hero.threats,
             hero.combat_until - time.elapsed_secs(),
             hero.attacking,
+            hero.attack_variant,
+            if hero.attacking { hero.attack_t / hero.attack_dur } else { -1.0 },
             hh.blocking,
             fp.blend
         );
@@ -488,6 +493,7 @@ impl Plugin for PlayerPlugin {
                     movement::player_move,
                     softlock::soft_lock, // pick + gently face the soft target, drive the ring (after move so input wins)
                     block::player_block,
+                    combat::swing_test, // debug: FOREST_SWINGTEST=1 loops the attack chain for a capture
                     combat::player_attack,
                     arts::player_arts, // warden weapon arts (after move/attack so a dash sticks)
                     combat::ensure_combat_health,
