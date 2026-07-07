@@ -89,6 +89,16 @@ const ISLAND_EXP: f32 = 2.6;
 pub const SAFE_R: f32 = 12.45;
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 pub const SEA_Y: f32 = -0.4;
+/// Cliff-face mesh knobs (`build_terrain_chunk`): a tile-edge wall whose mean drop is at
+/// least `CLIFF_MIN_DROP` stops being one flat vertical quad and becomes a subdivided,
+/// noise-displaced faceted crag face (the flat quads read as Minecraft blocks on every
+/// mesa tier / coastal ridge — player report). Interior lattice rows sit on FIXED world-Y
+/// multiples of `CLIFF_ROW` so adjacent wall pieces sample identical heights along a shared
+/// corner column and stay welded; `CLIFF_SKIRT` sinks the face base below the lower shelf
+/// so the displaced bottom edge never daylights a gap.
+const CLIFF_MIN_DROP: f32 = 0.55;
+const CLIFF_ROW: f32 = 0.4;
+const CLIFF_SKIRT: f32 = 0.25;
 /// Colour-blend half-width (tiles) at biome edges.
 const BLEND: f32 = 4.5;
 
@@ -2622,6 +2632,140 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
         [v[0] / l, v[1] / l, v[2] / l]
     };
 
+    // Direction pointing DOWNHILL at world `(wx, wz)` — a pure function of position, so every
+    // wall piece touching a shared corner column (including the PERPENDICULAR pair at a convex
+    // cliff corner) computes the identical lean there and the displaced faces stay welded.
+    let downhill = |wx: f32, wz: f32| -> (f32, f32) {
+        let hcl = |dx: f32, dz: f32| -> f32 {
+            tile_at((wx + GX + dx).floor() as i32, (wz + GZ + dz).floor() as i32)
+                .map(|(_, h)| h as f32)
+                .unwrap_or(0.0) // off-map / sea reads as low → coastal cliffs lean seaward
+        };
+        let d = 0.9;
+        let ox = hcl(-d, 0.0) - hcl(d, 0.0);
+        let oz = hcl(0.0, -d) - hcl(0.0, d);
+        let l = (ox * ox + oz * oz).sqrt();
+        if l < 1e-3 { (0.0, 0.0) } else { (ox / l, oz / l) }
+    };
+
+    // Horizontal displacement for a cliff-face vertex. `w` is the lip-relative depth weight
+    // (0 at the top edge → 1 from ~1u down): zero at the lip keeps the face glued to the top
+    // quad; below, a downhill talus lean (the base swells outward like real scree-footed rock)
+    // plus two independent value-noise fields (sampled in a Y-sheared domain so every elevation
+    // band bulges differently) break the dead-flat axis-aligned plane into a natural crag.
+    // Everything is a pure function of world position + `w`, which shared columns agree on.
+    let cliff_disp = |wx: f32, y: f32, wz: f32, w: f32| -> (f32, f32) {
+        if w <= 0.001 {
+            return (0.0, 0.0);
+        }
+        let (ox, oz) = downhill(wx, wz);
+        let j1 = vnoise(wx * 1.6 + y * 1.1, wz * 1.6 - y * 0.8) - 0.5;
+        let j2 = vnoise(wz * 1.7 + y * 0.9 + 37.0, wx * 1.7 + y * 1.3) - 0.5;
+        (ox * 0.34 * w + j1 * 0.44 * w, oz * 0.34 * w + j2 * 0.44 * w)
+    };
+
+    // One tile-edge wall from the top edge (`ya`→`yb` over `pa`→`pb`) down to the lower shelf
+    // (`ba`, `bb`). A low bank keeps the old single flat quad; a real cliff (mean drop ≥
+    // CLIFF_MIN_DROP — the ≥2-class mesa/ridge walls) becomes a 3×N lattice of noise-displaced
+    // flat-shaded facets. Vertex alpha carries a NEGATIVE "cliffness" so the terrain shader
+    // paints procedural rock strata there (positive alpha stays the marsh-wetness lane).
+    let cliff_wall = |pa: (f32, f32), pb: (f32, f32), ya: f32, yb: f32, ba: f32, bb: f32,
+                      n: [f32; 3], ctop: [f32; 4], cbot: [f32; 4],
+                      idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
+        let ba = ba.min(ya);
+        let bb = bb.min(yb);
+        let drop = ((ya - ba) + (yb - bb)) * 0.5;
+        if drop < CLIFF_MIN_DROP {
+            let b = pos.len() as u32;
+            for (p, c) in [([pa.0, ya, pa.1], ctop), ([pb.0, yb, pb.1], ctop), ([pb.0, bb, pb.1], cbot), ([pa.0, ba, pa.1], cbot)] {
+                pos.push(p);
+                nrm.push(n);
+                col.push(c);
+            }
+            idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+            return;
+        }
+        let cliffk = ((drop - 0.40) / 0.90).clamp(0.0, 1.0);
+        let bot_a = ba - CLIFF_SKIRT;
+        let bot_b = bb - CLIFF_SKIRT;
+        // Interior rows on fixed world-Y levels (see CLIFF_ROW doc) — welded shared columns.
+        let lip_hi = ya.max(yb);
+        let bot_lo = bot_a.min(bot_b);
+        let k_hi = ((lip_hi - 0.10) / CLIFF_ROW).floor() as i32;
+        let k_lo = ((bot_lo + 0.10) / CLIFF_ROW).ceil() as i32;
+        let mut levels: Vec<f32> = Vec::new();
+        let mut k = k_hi;
+        while k >= k_lo && levels.len() < 14 {
+            levels.push(k as f32 * CLIFF_ROW);
+            k -= 1;
+        }
+        let nrows = levels.len() + 2;
+        const NC: usize = 3; // facet columns per 1-tile wall
+        let mut grid: Vec<[f32; 3]> = Vec::with_capacity((NC + 1) * nrows);
+        let mut gcol: Vec<[f32; 4]> = Vec::with_capacity((NC + 1) * nrows);
+        for ci in 0..=NC {
+            let t = ci as f32 / NC as f32;
+            let x0 = pa.0 + (pb.0 - pa.0) * t;
+            let z0 = pa.1 + (pb.1 - pa.1) * t;
+            let lip = ya + (yb - ya) * t;
+            let bot = bot_a + (bot_b - bot_a) * t;
+            for rj in 0..nrows {
+                let y = if rj == 0 {
+                    lip
+                } else if rj == nrows - 1 {
+                    bot
+                } else {
+                    levels[rj - 1].clamp(bot, lip)
+                };
+                let w = ((lip - y) / 1.1).clamp(0.0, 1.0);
+                let (dx, dz) = cliff_disp(x0, y, z0, w);
+                // Top→bottom tone gradient + a facet-scale value jitter so a tall face
+                // reads as varied rock, not one flat colour ramp.
+                let fr = ((lip - y) / (lip - bot).max(0.3)).clamp(0.0, 1.0);
+                let tone = 0.85 + (vnoise(x0 * 1.2 + y * 0.8, z0 * 1.2 - y * 0.6) - 0.5) * 0.60;
+                grid.push([x0 + dx, y, z0 + dz]);
+                gcol.push([
+                    (ctop[0] + (cbot[0] - ctop[0]) * fr) * tone,
+                    (ctop[1] + (cbot[1] - ctop[1]) * fr) * tone,
+                    (ctop[2] + (cbot[2] - ctop[2]) * fr) * tone,
+                    // Cliffness fades in over the first ~0.5u below the lip so the rock
+                    // albedo melts out of the top-surface colour instead of a hard seam.
+                    -(cliffk * ((lip - y) / 0.5).clamp(0.0, 1.0)),
+                ]);
+            }
+        }
+        // Flat-shaded facet triangles — the crisp low-poly crag look (per-face normals from
+        // the displaced geometry, matching the outward winding of the old wall quad).
+        for ci in 0..NC {
+            for rj in 0..nrows - 1 {
+                let ia = ci * nrows + rj;
+                let ib = (ci + 1) * nrows + rj;
+                let ic = (ci + 1) * nrows + rj + 1;
+                let id = ci * nrows + rj + 1;
+                for tri in [[ia, ib, ic], [ia, ic, id]] {
+                    let p0 = grid[tri[0]];
+                    let p1 = grid[tri[1]];
+                    let p2 = grid[tri[2]];
+                    let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+                    let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+                    let cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+                    let l = (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
+                    if l < 1e-6 {
+                        continue; // clamped row → degenerate sliver
+                    }
+                    let fnrm = [cr[0] / l, cr[1] / l, cr[2] / l];
+                    let b = pos.len() as u32;
+                    for &vi in &tri {
+                        pos.push(grid[vi]);
+                        nrm.push(fnrm);
+                        col.push(gcol[vi]);
+                    }
+                    idx.extend_from_slice(&[b, b + 1, b + 2]);
+                }
+            }
+        }
+    };
+
     const NB: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
     for iz in iz0..iz1 {
@@ -2702,17 +2846,19 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             let col_at = |i: usize| ground_color((cxz[i].0 + GX) / MAP_SCALE, (cxz[i].1 + GZ) / MAP_SCALE);
 
             // Bank wall tone: grass shows exposed dirt; snow a cliff lip; else a darkened top.
+            // Alpha 0.0 (dry), NOT 1.0 — the shader reads vertex alpha as marsh WETNESS, so the
+            // old 1.0 gave every terrace wall a full wet-sheen roughness (plastic-shiny cliffs).
             let top_col = ground_color((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE);
             let (wall_top, wall_bot) = if tb == TB::Grass {
                 let j = 0.82 + 0.32 * (noise_b(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) * 0.5 + 0.5);
                 let d = lin3(active_map().palette.dirt);
-                ([d[0] * j, d[1] * j, d[2] * j, 1.0], [d[0] * j * 0.68, d[1] * j * 0.64, d[2] * j * 0.60, 1.0])
+                ([d[0] * j, d[1] * j, d[2] * j, 0.0], [d[0] * j * 0.68, d[1] * j * 0.64, d[2] * j * 0.60, 0.0])
             } else if tb == TB::Snow {
                 let lip = lin3(active_map().palette.snow_cliff_lip);
                 let rock = lin3(active_map().palette.snow_cliff_rock);
-                ([lip[0], lip[1], lip[2], 1.0], [rock[0], rock[1], rock[2], 1.0])
+                ([lip[0], lip[1], lip[2], 0.0], [rock[0], rock[1], rock[2], 0.0])
             } else {
-                ([top_col[0] * 0.80, top_col[1] * 0.78, top_col[2] * 0.76, 1.0], [top_col[0] * 0.58, top_col[1] * 0.56, top_col[2] * 0.54, 1.0])
+                ([top_col[0] * 0.80, top_col[1] * 0.78, top_col[2] * 0.76, 0.0], [top_col[0] * 0.58, top_col[1] * 0.56, top_col[2] * 0.54, 0.0])
             };
 
             if !cut {
@@ -2748,15 +2894,9 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                         let na_y = corner_top_y_for(ga.0, ga.1, hn).unwrap_or(nflat);
                         let nb_y = corner_top_y_for(gb.0, gb.1, hn).unwrap_or(nflat);
                         if cy[a] > na_y + 0.01 || cy[b] > nb_y + 0.01 {
-                            quad(
-                                [
-                                    [cxz[a].0, cy[a], cxz[a].1],
-                                    [cxz[b].0, cy[b], cxz[b].1],
-                                    [cxz[b].0, nb_y.min(cy[b]), cxz[b].1],
-                                    [cxz[a].0, na_y.min(cy[a]), cxz[a].1],
-                                ],
-                                n,
-                                [wall_top, wall_top, wall_bot, wall_bot],
+                            cliff_wall(
+                                cxz[a], cxz[b], cy[a], cy[b], na_y, nb_y,
+                                n, wall_top, wall_bot,
                                 &mut indices, &mut positions, &mut normals, &mut colors,
                             );
                         }
@@ -2765,10 +2905,9 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                     if is_river((ix + dx) as f32 / MAP_SCALE, (iz + dz) as f32 / MAP_SCALE) {
                         continue; // river edge → the marching-squares cell owns this bank
                     }
-                    quad(
-                        [[cxz[a].0, cy[a], cxz[a].1], [cxz[b].0, cy[b], cxz[b].1], [cxz[b].0, SEA_Y, cxz[b].1], [cxz[a].0, SEA_Y, cxz[a].1]],
-                        n,
-                        [wall_top, wall_top, wall_bot, wall_bot],
+                    cliff_wall(
+                        cxz[a], cxz[b], cy[a], cy[b], SEA_Y, SEA_Y,
+                        n, wall_top, wall_bot,
                         &mut indices, &mut positions, &mut normals, &mut colors,
                     );
                 }

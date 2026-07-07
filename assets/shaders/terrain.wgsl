@@ -190,6 +190,11 @@ fn fragment(
 
     var rgb = pbr_input.material.base_color.rgb;
 
+    // Cliff-face weight. Terrain cliff-wall vertices carry a NEGATIVE alpha "cliffness"
+    // (`worldmap::build_terrain_chunk::cliff_wall`); flat ground stays 0 and marsh wetness
+    // stays positive, so `-a` cleanly isolates the crag faces for the rock layers below.
+    let cliff = clamp(-pbr_input.material.base_color.a, 0.0, 1.0);
+
     // How green-dominant the base ground is (1 = grass/forest floor, 0 = snow / sand /
     // dirt cliff). The world island runs ONE of these materials over every biome's
     // vertex colours, so the hue-bearing grass layers below must fade out where the
@@ -236,6 +241,28 @@ fn fragment(
     // chain and read as mud trenches. 0.55·wear ≈ 0.36–0.55 darkening keeps two legible worn
     // grooves without going black.
     rgb *= 1.0 - 0.55 * rut * rut_wear;
+
+    // ── Cliff-rock albedo (the "tekstura urwiska") on flagged crag faces: warped
+    //    near-horizontal SEDIMENTARY STRATA + soft-edged FRACTURE PLATES over a
+    //    stone-greyed base. Greying keeps a whisper of the vertex-colour biome hue
+    //    (sandstone / granite / snow-blue), so desert mesas and snow crags still differ.
+    //    Cheap (4 noise evals, no texture tap) and gated per-vertex, so it runs at every
+    //    quality tier — the geometry facets need the albedo to read as rock even on Low.
+    if cliff > 0.004 {
+        let wy = in.world_position.y;
+        // Strata bands: high frequency in Y, very low along XZ, undulated by a broad
+        // world-space warp so the layers never run ruler-straight.
+        let cwarp = (ter_noise(wp * 0.30) - 0.5) * 2.6;
+        let strata = ter_noise(vec2<f32>(wy * 1.5 + cwarp, dot(wp, vec2<f32>(0.35, 0.27))));
+        // Fracture plates: coarse noise quantised to a few tones with softened edges —
+        // the chiseled-slab patchwork of a real crag face.
+        let pl = ter_noise(vec2<f32>(dot(wp, vec2<f32>(0.85, 0.62)) + 13.0, wy * 0.85)) * 3.0;
+        let plate = (floor(pl) + smoothstep(0.30, 0.70, fract(pl))) / 3.0;
+        let clum = dot(rgb, vec3<f32>(0.299, 0.587, 0.114));
+        let stone = mix(rgb, vec3<f32>(clum) * vec3<f32>(1.03, 1.0, 0.95), 0.55);
+        let rockc = stone * (0.80 + strata * 0.30) * (0.82 + plate * 0.30);
+        rgb = mix(rgb, rockc, cliff * 0.88);
+    }
 
     // (3)+(4) only on High/Ultra — same coherent `params2.y` lane as the fine mottle above.
     // (3) is a TEXTURE tap + a domain-warp noise pair (the single most expensive ground op) and
@@ -308,7 +335,9 @@ fn fragment(
         rgb = mix(rgb, drift, tg.x * 0.48 * debris_w);
     }
 
-    pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), pbr_input.material.base_color.a);
+    // Clamp alpha ≥ 0 on write-back: the negative cliffness flag has served its purpose and
+    // must not leak into lighting/wetness (the wet gate below reads this same channel).
+    pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), max(pbr_input.material.base_color.a, 0.0));
 
     // ── Normal perturbation (bump) — the cure for "flat". The ground geometry is dead-flat,
     //    so every fragment was lit at the same angle. Build a height field from the same
@@ -353,7 +382,9 @@ fn fragment(
             let e2 = 0.18;
             let dha = rock_h(along + e2, wy) - rock_h(along - e2, wy);
             let dhy = rock_h(along, wy + e2) - rock_h(along, wy - e2);
-            n2 = normalize(n2 - (tang * dha + vec3<f32>(0.0, 1.0, 0.0) * dhy) * bump * 0.7 * sidew);
+            // Flagged crag faces get a stronger relief push — the displaced facet geometry
+            // plus deeper runnels is what sells the rock; plain dirt banks keep the old 0.7.
+            n2 = normalize(n2 - (tang * dha + vec3<f32>(0.0, 1.0, 0.0) * dhy) * bump * (0.7 + cliff * 0.5) * sidew);
             // Subtle crevice darkening so the relief reads in albedo too, not only in shading.
             let crev = rock_h(along, wy);
             let dk = mix(1.0, 0.82 + crev * 0.30, sidew);
