@@ -516,10 +516,14 @@ fn nw_headland(x: f32, z: f32) -> f32 {
     if corner <= 0.0 {
         return 0.0;
     }
-    // Capes-and-coves: two low-frequency octaves (~10–40 base-unit features) so the extension
-    // varies along the coast into an irregular front instead of one smooth bulge.
-    let ragged = 0.5 * vnoise(x * 0.10 + 3.1, z * 0.10 - 2.3) + 0.5 * vnoise(x * 0.23 - 1.7, z * 0.23 + 4.2);
-    corner.powf(1.25) * (0.35 + 1.1 * ragged)
+    // Capes-and-coves: two LOW-frequency octaves (~10–18 base-unit features) over a high push
+    // FLOOR (0.7). Broad features + a high floor keep the extended front CONTIGUOUS — it bends
+    // into capes and coves but rarely pinches a chunk off into a detached near-shore islet (the
+    // stray bits the player disliked); any that still form are sunk by `prune_stray_islets`. The
+    // earlier tuning (floor 0.35, a 0.23-freq octave) made small high-noise peaks near the r≈1
+    // contour flip to isolated land — exactly the shore-hugging islets.
+    let wave = 0.6 * vnoise(x * 0.055 + 3.1, z * 0.055 - 2.3) + 0.4 * vnoise(x * 0.10 - 1.7, z * 0.10 + 4.2);
+    corner.powf(1.15) * (0.7 + 0.75 * wave)
 }
 
 fn is_land_shape(x: f32, z: f32) -> bool {
@@ -1347,8 +1351,59 @@ fn build_grid() -> Arc<Grid> {
             v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
         }
     }
+    prune_stray_islets(&mut v);
     terrace_inland(&mut v);
     Arc::new(v)
+}
+
+/// Sink any small land clump the `nw_headland` coast noise pinched off just offshore — the
+/// detached, player-unreachable islets that hugged our NW shore. Flood-fills the MAIN landmass
+/// (8-connected) from the castle tile; any land NOT attached to it that lies in the NW headland
+/// zone is set back to sea, so the snow coast reads as one clean shoreline with no broken-off
+/// nubs. Scoped to `nw_headland > 0` so nothing elsewhere (the island proper, the southern
+/// Blight, deliberate features) is ever touched — and those landmasses are one connected
+/// component with the castle anyway, so the flood-fill keeps them regardless.
+fn prune_stray_islets(v: &mut [Option<(TB, i32)>]) {
+    let n = (COLS * ROWS) as usize;
+    let mut reached = vec![false; n];
+    let seed_ix = (CX * MAP_SCALE) as i32;
+    let seed_iz = (CZ * MAP_SCALE) as i32;
+    let seed = (seed_iz * COLS + seed_ix) as usize;
+    if v.get(seed).map(|t| t.is_some()).unwrap_or(false) {
+        let mut stack = vec![seed];
+        reached[seed] = true;
+        while let Some(idx) = stack.pop() {
+            let ix = (idx as i32) % COLS;
+            let iz = (idx as i32) / COLS;
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    if dx == 0 && dz == 0 {
+                        continue;
+                    }
+                    let (nx, nz) = (ix + dx, iz + dz);
+                    if nx < 0 || nz < 0 || nx >= COLS || nz >= ROWS {
+                        continue;
+                    }
+                    let ni = (nz * COLS + nx) as usize;
+                    if !reached[ni] && v[ni].is_some() {
+                        reached[ni] = true;
+                        stack.push(ni);
+                    }
+                }
+            }
+        }
+    }
+    for iz in 0..ROWS {
+        for ix in 0..COLS {
+            let idx = (iz * COLS + ix) as usize;
+            if v[idx].is_some() && !reached[idx] {
+                let (bx, bz) = (ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE);
+                if nw_headland(bx, bz) > 0.0 {
+                    v[idx] = None; // detached NW islet → back to sea
+                }
+            }
+        }
+    }
 }
 
 /// Post-process the heightfield so every **inland** land tile sits at most ONE height class
@@ -2817,14 +2872,20 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             // tone, the material-sheet routing AND the low-coast smooth-shore decision below.
             let here = tile_at(ix, iz);
             let coast_biome = here.or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)));
-            // LOW wetland sea-coast — flat (h≤1) Swamp / Blight mud flats meeting the OPEN SEA — gets
-            // the smooth marching-squares shore the rivers already use, instead of the per-tile square
-            // skirt that stepped the marsh↔sea boundary into visible tile "kwadraty" (player report).
-            // Gated to h≤1 so the deliberate sheer seaward MOUNTAIN cliffs (coast_hill / h≥2) keep
-            // their per-tile face, and skipped at river mouths (has_river) — those already cut clean.
-            let low_wet_coast = !has_river
-                && matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
-                && cwat.iter().any(|c| c.0 < 0.0); // touches sea
+            // LOW sea-coast — a flat (h≤1) tile meeting the OPEN SEA — gets the smooth
+            // marching-squares shore the rivers already use, instead of the per-tile square skirt
+            // that stepped the boundary into visible tile "kwadraty" (player report). Two cases:
+            //   • Swamp / Blight mud flats (the original de-squaring), any coast; and
+            //   • the NW snow-massif headland fringe (`nw_headland > 0`) — its low class-1 apron
+            //     that runs down to the water read as a blocky staircase (player: same "kwadraty"
+            //     on the new snow coast). Its TALL flanks (h≥2) still get the faceted cliff face;
+            //     only the lowest lip is smoothed here.
+            // Gated to h≤1 so deliberate sheer seaward MOUNTAIN cliffs (coast_hill / mesa, h≥2)
+            // keep their per-tile face, and skipped at river mouths (already cut clean).
+            let low_coast = matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
+                || matches!(coast_biome, Some((_, h)) if h <= 1
+                    && nw_headland((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE) > 0.0);
+            let low_wet_coast = !has_river && low_coast && cwat.iter().any(|c| c.0 < 0.0); // touches sea
             // Corner water field: the real river/lake SDF, OR — on a low wetland coast — a smooth SEA
             // SDF so the contour follows the true shoreline instead of snapping to the tile grid
             // (`corner_water` hands the open sea a flat constant, which is what staircased it).
