@@ -724,40 +724,64 @@ fn is_lake(x: f32, z: f32) -> bool {
 /// foam plate), and have genuinely deep centres for the bog dressing's gates; `noise_a` only
 /// waves their SHORES. Offsets avoid the S-swamp warden's arena direction (region-local
 /// ≈(0,−0.42) — see the keep-out below, which still hard-guards it).
-const POOL_BLOBS: [(f32, f32, f32, f32); 6] = [
-    (-0.38, -0.10, 0.24, 0.17),
-    (0.20, 0.30, 0.27, 0.20),
-    (0.45, -0.28, 0.17, 0.13),
-    (-0.42, 0.38, 0.16, 0.21),
-    (0.02, 0.66, 0.15, 0.12),
-    (-0.10, 0.20, 0.13, 0.10),
+// A FEW small, well-separated puddles (not the old 6-blob amoeba clusters): each swamp region
+// gets ~2–3 small pools reading as distinct kałuże. Biased AWAY from the E-marsh's western edge
+// (positive-x / southern offsets) so, in that region, they don't crowd the waterfall's blue lake
+// just west of it (the lake keep-out below also hard-guards it). Min radius fraction stays ≥ 0.11
+// (≈2.5 base at r23 / 2 base at r17) so a pool is never so small it renders as an all-white foam
+// plate. The deepest still clears the drowned-tower gate (`bog.rs`, sd < −1.1).
+const POOL_BLOBS: [(f32, f32, f32, f32); 3] = [
+    (0.28, -0.24, 0.15, 0.12), // NE puddle
+    (0.14, 0.36, 0.14, 0.13),  // SE puddle
+    (-0.22, 0.12, 0.12, 0.11), // W-central (smallest; lake-side in the E-marsh — keep-out trims it)
 ];
 
 /// World-space keep-out around the swamp warden's arena — a pool inside the boss glade would
 /// carve the fight arena into islands (warden `region_center` (0,57), GLADE_R 16 + roam 13).
 const POOL_WARDEN_KEEPOUT: f32 = 22.0;
 
-/// The WATERFALL's plunge stream (map-character overhaul pass 5), BASE space: a carved water
-/// capsule from the rock mesa's SW tier-wall foot down to the lake edge. The mesa wall stands
-/// ~12 base units back from the lake shore across a dry shelf (measured), so without this the
-/// falls poured onto grass; the stream turns the plunge into real connected water. Authored
-/// (like the lake) at the verified wall site — world ≈(60.3, 32.6). `vista::populate` stands
-/// the cascade at its head.
-const WATERFALL_STREAM: ((f32, f32), (f32, f32), f32) = ((99.4, 68.8), (94.2, 77.6), 1.1);
+/// The lake's BLUE feeder + drain capsules (BASE space, `((ax,az),(bx,bz),half)`): the water that
+/// keeps the deliberate lake a *living* body — a waterfall pours IN, a brook drains OUT — instead
+/// of a stagnant blue dot. Rendered as CLEAR water, NOT olive bog: the bog murk mask keys on
+/// `pool_sd` alone, so everything here stays blue even where the brook threads the marsh. They
+/// share the lake's plumbing (carve + footing + scatter/prop rejection) via [`is_pool`].
+///  [0] — the WATERFALL PLUNGE (map-character overhaul pass 5): from the rock mesa's SW tier-wall
+///        foot (world ≈(60.3, 32.6)) down to the lake edge. The wall stands ~12 base units back
+///        across a dry shelf, so without this the falls poured onto grass; `vista::populate`
+///        stands the cascade at capsule [0]'s head.
+///  [1..] — the OUTFLOW BROOK: the lake's south edge winding SW down to the marsh river
+///        (`HOME_RIVERS[1]` at ≈(76,102)), so lake water rejoins the course that drains to the
+///        south coast. Kept clear of the olive bog pools (see the lake keep-out in `pool_sd`).
+const BLUE_STREAMS: &[((f32, f32), (f32, f32), f32)] = &[
+    ((99.4, 68.8), (94.2, 77.6), 1.1), // [0] waterfall plunge (mesa wall → lake)
+    // [1..] the OUTFLOW BROOK, a gently WESTWARD-bending curve (not a ruler-straight canal) from
+    // the lake's south edge down to the marsh-river confluence at ≈(76.5,102):
+    ((91.0, 82.5), (90.0, 86.5), 0.70),
+    ((90.0, 86.5), (87.8, 90.0), 0.72),
+    ((87.8, 90.0), (85.5, 93.0), 0.73),
+    ((85.5, 93.0), (82.0, 95.5), 0.74),
+    ((82.0, 95.5), (79.0, 98.5), 0.75),
+    ((79.0, 98.5), (76.5, 102.0), 0.76),
+];
 
-/// Signed distance (base units, negative = water) to the waterfall plunge-stream capsule.
+/// Signed distance (base units, negative = water) to the nearest blue feeder/drain capsule. A
+/// per-position noise term frays the bank so the brook reads as an organic stream, not a smooth
+/// pipe (a touch stronger than the lake's shore wave — a brook's edge is rougher than a lakeshore).
 fn stream_sd(x: f32, z: f32) -> f32 {
-    let ((ax, az), (bx, bz), half) = WATERFALL_STREAM;
-    let (abx, abz) = (bx - ax, bz - az);
-    let t = (((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz)).clamp(0.0, 1.0);
-    let (px, pz) = (ax + abx * t, az + abz * t);
-    (x - px).hypot(z - pz) - half + noise_a(x * 0.5, z * 0.5) * 0.25
+    let mut best = f32::INFINITY;
+    for &((ax, az), (bx, bz), half) in BLUE_STREAMS {
+        let (abx, abz) = (bx - ax, bz - az);
+        let t = (((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz)).clamp(0.0, 1.0);
+        let (px, pz) = (ax + abx * t, az + abz * t);
+        best = best.min((x - px).hypot(z - pz) - half);
+    }
+    best + noise_a(x * 0.6, z * 0.6) * 0.4
 }
 
-/// The cascade anchor for `vista` (world space): the stream's head at the mesa wall foot, and
-/// the flow direction (head → lake).
+/// The cascade anchor for `vista` (world space): the plunge capsule's head at the mesa wall foot,
+/// and the flow direction (head → lake).
 pub fn waterfall_site_world() -> (Vec2, Vec2) {
-    let ((ax, az), (bx, bz), _) = WATERFALL_STREAM;
+    let ((ax, az), (bx, bz), _) = BLUE_STREAMS[0];
     let head = Vec2::new(ax * MAP_SCALE - GX, az * MAP_SCALE - GZ);
     let mouth = Vec2::new(bx * MAP_SCALE - GX, bz * MAP_SCALE - GZ);
     (head, (mouth - head).normalize())
@@ -797,6 +821,13 @@ fn pool_sd(x: f32, z: f32) -> f32 {
     }
     // The Blight owns its own ground (checked before regions in `classify`) — keep pools out.
     if crate::ork_fortress::blight_class_base(x, z).is_some() {
+        return f32::INFINITY;
+    }
+    // Keep the olive bog pools OFF the waterfall's BLUE plunge pool — the E-marsh laps right up to
+    // it, and an olive puddle bleeding onto the blue lake read as one muddy blob. Reject anything
+    // inside the lake ellipse grown by a margin (so a pool can't even touch its shore).
+    let (lx, lz, lrx, lrz) = DELIBERATE_LAKE;
+    if ((x - lx) / (lrx + 4.0)).powi(2) + ((z - lz) / (lrz + 4.0)).powi(2) < 1.0 {
         return f32::INFINITY;
     }
     // Organic shoreline: wave the ellipse edge with noise. Only nibbles ±0.9 base units, so a
@@ -1116,6 +1147,43 @@ pub fn biome_road_target(i: usize) -> Vec2 {
     } else {
         Vec2::new(reg.x * MAP_SCALE - GX, reg.z * MAP_SCALE - GZ)
     }
+}
+
+/// Is biome region `i` a cliffy mesa (snow / rock)? `roads` skips coast reaches for these — a
+/// painted road to their shore would climb the shelf walls; their routes are the pass trails.
+pub fn region_is_cliffy(i: usize) -> bool {
+    active_map().regions[i].cliffy
+}
+
+/// A coastal road endpoint reaching OUT from `from` (a biome road target) toward the nearest
+/// shore, so a biome's outer/coastal ground isn't left off the network (players noted parts of
+/// the island were cut off). Marches radially outward — the island centre is the castle at the
+/// world origin — stepping across the odd narrow river gap but stopping at the open sea, then
+/// backs a couple units inland so the road ends on the beach, not in the surf. `None` when `from`
+/// is already near the coast (nothing meaningful to extend) or points nowhere.
+pub fn coast_reach_world(from: Vec2) -> Option<Vec2> {
+    let dir = from.normalize_or_zero();
+    if dir == Vec2::ZERO {
+        return None;
+    }
+    let mut last_land = from;
+    let mut d = 4.0;
+    while d < 150.0 {
+        let p = from + dir * d;
+        if ground_at_world(p.x, p.y).is_some() {
+            last_land = p;
+        } else {
+            // Water: a short gap with land beyond is a river/pool to step over; sustained water
+            // (or the open sea here) is the coast — stop.
+            let ahead = from + dir * (d + 7.0);
+            if ground_at_world(ahead.x, ahead.y).is_none() || is_open_water_world(p.x, p.y) {
+                break;
+            }
+        }
+        d += 1.5;
+    }
+    let end = last_land - dir * 2.5;
+    (end.distance(from) >= 12.0).then_some(end)
 }
 
 /// Ring-road node for biome region `i` when the segment approaches from `other` (world): flat
@@ -1863,15 +1931,17 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Handle<Ima
     // Linear filtering smooths the 1-texel bands; the default clamp-to-edge address
     // mode makes off-texture samples read the border (open sea = max distance).
     img.sampler = linear.clone();
-    // BOG mask (map-character overhaul pass 3): 1 over the swamp's carved standing pools AND
-    // over river water inside the swamp regions, same region mapping as the shore field — the
-    // water shader swaps the vivid river palette for still dark-olive murk there and kills the
-    // foam collar (a bog doesn't lap; a marsh stream shouldn't glow turquoise between pools).
+    // BOG mask (map-character overhaul pass 3): 1 over the swamp's carved standing POOLS AND over
+    // river water inside the swamp regions, same region mapping as the shore field — the water
+    // shader swaps the vivid river palette for still dark-olive murk there and kills the foam
+    // collar (a bog doesn't lap; a marsh stream shouldn't glow turquoise between pools).
+    // NB: keys on `pool_sd` (the olive blobs), NOT `is_pool` — the latter also covers the lake's
+    // blue feeder/drain streams (`BLUE_STREAMS`), which must render as CLEAR water, not bog.
     let bog_data: Vec<u8> = (0..W * H)
         .map(|i| {
             let wx = min_x + (i % W) as f32 + 0.5;
             let wz = min_z + (i / W) as f32 + 0.5;
-            if is_pool_world(wx, wz) || (in_swamp_region_world(wx, wz) && is_river_world(wx, wz)) {
+            if pool_sd_world(wx, wz) < 0.0 || (in_swamp_region_world(wx, wz) && is_river_world(wx, wz)) {
                 255
             } else {
                 0

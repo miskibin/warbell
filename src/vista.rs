@@ -168,7 +168,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         ..default()
     });
 
-    // 1. THE WATERFALL — stands at the AUTHORED plunge-stream head (`worldmap::WATERFALL_STREAM`
+    // 1. THE WATERFALL — stands at the AUTHORED plunge-stream head (`worldmap::BLUE_STREAMS[0]`
     //    carves real water from the mesa wall's foot down to the lake, so the falls plunge into
     //    a connected stream, not onto the dry shelf). Two search generations failed here: the
     //    single-ray version landed 14u inland on grass, and a "wall within 6u of shore" fan
