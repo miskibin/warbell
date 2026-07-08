@@ -437,6 +437,22 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
         curves.push(avoid_clearings(wander(gate, target, seed ^ (i as u32).wrapping_mul(0x9E37_79B9))));
     }
 
+    // Coast reaches: from each FLAT biome's road target, one artery out toward the nearest shore
+    // so the outer/coastal half of the biome isn't roadless (players noted parts of the island were
+    // communicationally cut off). Cliffy mesas (snow, rock) are SKIPPED — reaching their coast would
+    // paint straight up the shelf walls; their routes are the pass trails. Made ARTERIES so a river
+    // between the biome and its coast gets bridged like any trunk crossing.
+    for (i, _) in biomes.iter().enumerate() {
+        if crate::worldmap::region_is_cliffy(i) {
+            continue;
+        }
+        let target = crate::worldmap::biome_road_target(i);
+        if let Some(coast) = crate::worldmap::coast_reach_world(target) {
+            note_junction(coast);
+            curves.push(avoid_clearings(wander(target, coast, seed ^ (0x00E0_0000 + i as u32))));
+        }
+    }
+
     // Ring: connect biome centres to their angular neighbours so you can circle the island.
     // Centres only SORT the ring; each segment's actual endpoints come from `biome_ring_node`,
     // which swaps a cliffy mesa for the pass mouth facing the segment's other end — the
