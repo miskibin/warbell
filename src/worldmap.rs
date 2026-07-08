@@ -267,9 +267,12 @@ struct Pass {
 
 /// Snow massif passes: SE main ascent facing the castle + an E ramp toward the desert (the
 /// snow↔desert ring road threads it). Angles are `atan2(target_z − reg.z, target_x − reg.x)`.
+// Half-widths widened (3.0→4.5 / 2.4→3.2) when the massif grew (r 36→42): a longer ramp is
+// angularly narrower at its mouth, so at the old widths a tile centre could fall a hair outside
+// the corridor and read as a 1-class apron gap (`mesa_passes_climb_to_the_summit` regression).
 const SNOW_PASSES: [Pass; 2] = [
-    Pass { ang: 0.578, half: 3.0 },  // SE, toward the castle (main ascent)
-    Pass { ang: -0.184, half: 2.4 }, // E, toward the desert dunes
+    Pass { ang: 0.578, half: 4.5 },  // SE, toward the castle (main ascent)
+    Pass { ang: -0.184, half: 3.2 }, // E, toward the desert dunes
 ];
 /// Rock range passes: WNW main ascent (mouth at base ≈(86,39), a clear 20+ base units from the
 /// castle — due-west would run the ramp straight into the castle safe-zone's grass fray, which
@@ -292,7 +295,11 @@ const REGIONS: [Region; 6] = [
     // smooth white dome (verification FAIL) — 18 gives 2u walls (ladder 2/6/10/14/18) that
     // register as cliff bands even white-on-white in haze. Rock stays taller (22).
     // r 33→36: grow the massif into the grass freed by the shrunk swamps ("bigger mountains").
-    Region { x: 26.0, z: 24.0, r: 36.0, biome: TB::Snow, peak: 18, cliffy: true, passes: &SNOW_PASSES },
+    // r 36→42 + peak 18→20 (player: the snow-side coast mountain should be bigger + more
+    // irregular): the massif now reaches the NW `nw_headland` coast, so its flanks run into the
+    // sea as a jagged cliff front instead of tapering to a beach. Centre unchanged, so the SE/E
+    // pass corridors keep their authored angles (their half-widths grew to match the longer ramp).
+    Region { x: 26.0, z: 24.0, r: 42.0, biome: TB::Snow, peak: 20, cliffy: true, passes: &SNOW_PASSES },
     // NE dunes — shifted NW (112,28 → 101,10), so the dune field grows toward the snow massif and
     // fills the grass corridor along the top coast. Radius 34→38 to close the empty grass seam
     // between snow and desert (players noted the wide bare strip there): with snow at r33 the seam
@@ -495,12 +502,39 @@ fn omottle(x: f32, z: f32, scale: f32, seed: f32) -> f32 {
     ((o1 * 0.65 + o2 * 0.35) - 0.5) * 3.0
 }
 
+/// Outward push (in normalised-ellipse units) of the NW snow-massif coastline: a ragged HEADLAND
+/// that runs the snow mountain right out toward the map's NW corner so its flanks meet the sea in
+/// a cliff — where the ragged noise peaks the land reaches the grid boundary and simply ends in a
+/// wall (a map-edge cliff, which the player OK'd), where it dips the shore pulls back into a cove.
+/// Concentrated at the true NW corner (`wx*wz`, both west AND north of centre) and fading to zero
+/// long before the other coasts, so only the snow side is reshaped. Added identically to
+/// `is_land_shape` and `sea_field` so the shoreline the two derive never disagrees.
+fn nw_headland(x: f32, z: f32) -> f32 {
+    let wx = ((CX - x) / CX).clamp(0.0, 1.0); // 0 at centre → 1 at the west grid edge
+    let wz = ((CZ - z) / CZ).clamp(0.0, 1.0); // 0 at centre → 1 at the north grid edge
+    let corner = wx * wz;
+    if corner <= 0.0 {
+        return 0.0;
+    }
+    // Capes-and-coves: two octaves with a LOW floor so the push swings widely along the coast —
+    // the shoreline wiggles in and out into a ragged, irregular front (NOT the straight edge an
+    // earlier high-floor version produced by slamming the whole coast flat against the map grid).
+    let wave = 0.55 * vnoise(x * 0.09 + 3.1, z * 0.09 - 2.3) + 0.45 * vnoise(x * 0.19 - 1.7, z * 0.19 + 4.2);
+    // Edge guard: fade the push to 0 over the last ~10 base tiles before the grid boundary, so the
+    // coast is ALWAYS shaped by this noise curve and never reaches the rectangular grid edge (which
+    // renders as a dead-straight "ruler" cliff — the player's complaint). The massif then meets the
+    // sea on a ragged curve a few tiles inside the map. `prune_stray_islets` sinks any bit the
+    // ragged swing pinches off, so the low floor can't reintroduce shore-hugging islets.
+    let edge = smoothstep(2.0, 12.0, x.min(z));
+    corner.powf(1.2) * (0.30 + 1.0 * wave) * edge
+}
+
 fn is_land_shape(x: f32, z: f32) -> bool {
     let dx = (x - CX).abs() / ISLAND_RX;
     let dz = (z - CZ).abs() / ISLAND_RZ;
     let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
     let coast = noise_a(x, z) * 0.08;
-    r + coast < 1.0
+    r + coast - nw_headland(x, z) < 1.0
 }
 
 /// Smooth signed distance-ish to the SEA (the real land/water shoreline) at a base-space corner,
@@ -516,7 +550,7 @@ fn sea_field(x: f32, z: f32) -> f32 {
     let dz = (z - CZ).abs() / ISLAND_RZ;
     let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
     let coast = noise_a(x, z) * 0.08;
-    let ellipse = (1.0 - (r + coast)) * ISLAND_RZ;
+    let ellipse = (1.0 - (r + coast - nw_headland(x, z))) * ISLAND_RZ;
     ellipse.max(crate::ork_fortress::blight_edge_base(x, z))
 }
 
@@ -976,9 +1010,15 @@ fn mesa_t(x: f32, z: f32, reg: &Region) -> f32 {
     let (sx, sz) = if reg.biome == TB::Snow { (0.82, 1.20) } else { (1.12, 0.88) };
     let dx = (x - reg.x) * sx;
     let dz = (z - reg.z) * sz;
+    // The snow massif runs MORE irregular than the rock range (player: "bardziej nieregularna"):
+    // a heavier broad-lobe deformation + an extra mid-frequency spur octave warp its whole
+    // silhouette into ragged spurs, so its enlarged flanks meet the NW sea-cliff on a jagged
+    // front rather than a smooth arc. The rock range keeps its tuned squat-lobed shape.
+    let (lobe, spur, rim) = if reg.biome == TB::Snow { (8.5, 4.0, 3.6) } else { (5.5, 0.0, 3.0) };
     let dc = dx.hypot(dz)
-        + noise_b(x * 0.085 + 7.0, z * 0.085 - 3.0) * 5.5 // broad lobes: silhouette deformation
-        + noise_a(x * 0.33, z * 0.33) * 3.0; // fine rim waviness
+        + noise_b(x * 0.085 + 7.0, z * 0.085 - 3.0) * lobe // broad lobes: silhouette deformation
+        + noise_a(x * 0.17 - 2.0, z * 0.17 + 5.0) * spur // mid spurs (snow only)
+        + noise_a(x * 0.33, z * 0.33) * rim; // fine rim waviness
     (1.0 - dc / reg.r).clamp(0.0, 1.0)
 }
 
@@ -1314,8 +1354,59 @@ fn build_grid() -> Arc<Grid> {
             v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
         }
     }
+    prune_stray_islets(&mut v);
     terrace_inland(&mut v);
     Arc::new(v)
+}
+
+/// Sink any small land clump the `nw_headland` coast noise pinched off just offshore — the
+/// detached, player-unreachable islets that hugged our NW shore. Flood-fills the MAIN landmass
+/// (8-connected) from the castle tile; any land NOT attached to it that lies in the NW headland
+/// zone is set back to sea, so the snow coast reads as one clean shoreline with no broken-off
+/// nubs. Scoped to `nw_headland > 0` so nothing elsewhere (the island proper, the southern
+/// Blight, deliberate features) is ever touched — and those landmasses are one connected
+/// component with the castle anyway, so the flood-fill keeps them regardless.
+fn prune_stray_islets(v: &mut [Option<(TB, i32)>]) {
+    let n = (COLS * ROWS) as usize;
+    let mut reached = vec![false; n];
+    let seed_ix = (CX * MAP_SCALE) as i32;
+    let seed_iz = (CZ * MAP_SCALE) as i32;
+    let seed = (seed_iz * COLS + seed_ix) as usize;
+    if v.get(seed).map(|t| t.is_some()).unwrap_or(false) {
+        let mut stack = vec![seed];
+        reached[seed] = true;
+        while let Some(idx) = stack.pop() {
+            let ix = (idx as i32) % COLS;
+            let iz = (idx as i32) / COLS;
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    if dx == 0 && dz == 0 {
+                        continue;
+                    }
+                    let (nx, nz) = (ix + dx, iz + dz);
+                    if nx < 0 || nz < 0 || nx >= COLS || nz >= ROWS {
+                        continue;
+                    }
+                    let ni = (nz * COLS + nx) as usize;
+                    if !reached[ni] && v[ni].is_some() {
+                        reached[ni] = true;
+                        stack.push(ni);
+                    }
+                }
+            }
+        }
+    }
+    for iz in 0..ROWS {
+        for ix in 0..COLS {
+            let idx = (iz * COLS + ix) as usize;
+            if v[idx].is_some() && !reached[idx] {
+                let (bx, bz) = (ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE);
+                if nw_headland(bx, bz) > 0.0 {
+                    v[idx] = None; // detached NW islet → back to sea
+                }
+            }
+        }
+    }
 }
 
 /// Post-process the heightfield so every **inland** land tile sits at most ONE height class
@@ -2784,14 +2875,20 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             // tone, the material-sheet routing AND the low-coast smooth-shore decision below.
             let here = tile_at(ix, iz);
             let coast_biome = here.or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)));
-            // LOW wetland sea-coast — flat (h≤1) Swamp / Blight mud flats meeting the OPEN SEA — gets
-            // the smooth marching-squares shore the rivers already use, instead of the per-tile square
-            // skirt that stepped the marsh↔sea boundary into visible tile "kwadraty" (player report).
-            // Gated to h≤1 so the deliberate sheer seaward MOUNTAIN cliffs (coast_hill / h≥2) keep
-            // their per-tile face, and skipped at river mouths (has_river) — those already cut clean.
-            let low_wet_coast = !has_river
-                && matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
-                && cwat.iter().any(|c| c.0 < 0.0); // touches sea
+            // LOW sea-coast — a flat (h≤1) tile meeting the OPEN SEA — gets the smooth
+            // marching-squares shore the rivers already use, instead of the per-tile square skirt
+            // that stepped the boundary into visible tile "kwadraty" (player report). Two cases:
+            //   • Swamp / Blight mud flats (the original de-squaring), any coast; and
+            //   • the NW snow-massif headland fringe (`nw_headland > 0`) — its low class-1 apron
+            //     that runs down to the water read as a blocky staircase (player: same "kwadraty"
+            //     on the new snow coast). Its TALL flanks (h≥2) still get the faceted cliff face;
+            //     only the lowest lip is smoothed here.
+            // Gated to h≤1 so deliberate sheer seaward MOUNTAIN cliffs (coast_hill / mesa, h≥2)
+            // keep their per-tile face, and skipped at river mouths (already cut clean).
+            let low_coast = matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
+                || matches!(coast_biome, Some((_, h)) if h <= 1
+                    && nw_headland((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE) > 0.0);
+            let low_wet_coast = !has_river && low_coast && cwat.iter().any(|c| c.0 < 0.0); // touches sea
             // Corner water field: the real river/lake SDF, OR — on a low wetland coast — a smooth SEA
             // SDF so the contour follows the true shoreline instead of snapping to the tile grid
             // (`corner_water` hands the open sea a flat constant, which is what staircased it).
