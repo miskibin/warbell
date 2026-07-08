@@ -19,6 +19,7 @@ use crate::dying::Dying;
 use crate::orks::Ork;
 use crate::palette::lin;
 use crate::siege::{GamePhase, Siege};
+use crate::meshkit::merged_flat;
 
 /// Most aftermath entities allowed at once (oldest reaped first).
 const MAX_MARKS: usize = 160;
@@ -286,17 +287,6 @@ fn tint_a(mut m: Mesh, hex: u32, alpha: f32) -> Mesh {
     let n = m.count_vertices();
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
     m
-}
-
-fn merged_flat(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("at least one part");
-    for p in it {
-        base.merge(&p).expect("aftermath parts share attributes");
-    }
-    base.duplicate_vertices();
-    base.compute_flat_normals();
-    base
 }
 
 /// Flat ground disc (lying in XZ, normal up) — the stain / scorch base shape.

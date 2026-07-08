@@ -24,11 +24,11 @@ use tileworld_core::defense::{
 
 use crate::economy::Defenses;
 use crate::palette::lin;
-use crate::game_state::Modal;
 use crate::orks::WaveInvader;
 use crate::player::{spawn_burst, CombatFx, Health, HeroState, PlayerRes};
 use crate::projectile::{advance_bolt, BoltStep};
 use crate::siege::{GamePhase, Siege};
+use crate::game_state::SimAppExt;
 
 /// Scale defender damage from core's TS-anchored values so towers/archers *support* the defense
 /// rather than auto-clearing the wave. Re-derived 2026-06 from the old 0.236 (tuned for ~0.35×-HP
@@ -128,8 +128,7 @@ impl Plugin for DefensePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DefenderBolts>()
             .add_systems(Startup, (setup_bolt_gfx, debug_enable_defenses))
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (
                     defenders_fire,
                     spawn_defender_bolts,
@@ -140,7 +139,7 @@ impl Plugin for DefensePlugin {
                     shrine_heal,
                     sync_keep_archers,
                 )
-                    .run_if(in_state(Modal::None)),
+                    ,
             );
     }
 }

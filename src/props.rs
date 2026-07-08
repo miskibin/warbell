@@ -15,6 +15,7 @@
 use bevy::prelude::*;
 
 use crate::palette::{lin, lin_scaled};
+use crate::meshkit::{flat_shaded, merged, tinted};
 
 // Bush greens (TS BUSH_MATS, forest-props spec lines 125-127 / 433-441):
 //   dark #3a8a3a, mid #4aa84a, light #65bb55. Used as the three bush variants' base
@@ -38,24 +39,6 @@ pub const NUM_BUSH_VARIANTS: u32 = 3;
 
 // ─── Mesh helpers (verified 0.18 API, mirrors the working reference in
 // D:/tileworld-bevy/crates/game/src/map_props.rs) ───────────────────────────────
-
-/// Tag every vertex of `m` with a uniform linear RGBA colour (REQUIRED before merge —
-/// all merged parts must share the same attribute set, incl. ATTRIBUTE_COLOR).
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-
-/// Merge several tinted parts into one mesh (all parts share POSITION/NORMAL/UV/COLOR).
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("at least one part");
-    for p in it {
-        base.merge(&p).expect("prop parts share attributes");
-    }
-    base
-}
 
 fn y(v: f32) -> Vec3 {
     Vec3::new(0.0, v, 0.0)
@@ -250,12 +233,4 @@ pub fn build_bush_mesh(variant: u32) -> Mesh {
     // Flat-shaded so the bush reads as crisp low-poly facets (like the TS game), not a
     // soft blob.
     flat_shaded(merged(parts))
-}
-
-/// Un-index + recompute per-face normals so a merged mesh shows hard, flat-shaded
-/// facets (the crisp low-poly look) instead of soft smooth shading.
-fn flat_shaded(mut m: Mesh) -> Mesh {
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
 }

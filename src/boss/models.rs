@@ -20,6 +20,7 @@ use crate::biome::Biome;
 use crate::creature::{surf, Surf};
 use crate::critters::PartKind;
 use crate::palette::lin;
+use crate::meshkit::tinted;
 
 /// One articulated boss part (pivot local to the root; mesh built in part-local space).
 pub struct BossPart {
@@ -35,11 +36,6 @@ pub struct BossSpec {
 }
 
 // ── Mesh helpers (the knight-model contract: raw primitive → place → tint → merge) ─────
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
 fn group(parts: Vec<Mesh>) -> Mesh {
     let mut it = parts.into_iter();
     let mut base = it.next().expect("at least one part");

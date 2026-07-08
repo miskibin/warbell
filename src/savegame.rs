@@ -38,7 +38,7 @@ use tileworld_core::town_store::Town;
 use tileworld_core::upgrade_store::{node_by_id, UpgradeEffect, UpgradeState};
 
 use crate::economy::{Bank, Defenses, EconomyState, Upgrades};
-use crate::game_state::{AppState, Modal};
+use crate::game_state::AppState;
 use crate::inventory::Inventory;
 use crate::landmarks::{Discoveries, Landmark};
 use crate::player::PlayerRes;
@@ -49,6 +49,7 @@ use crate::town::TownRes;
 use crate::chest::{Chest, ChestId, ChestLid, CHEST_LID_OPEN};
 use crate::ui::notice::Notice;
 use crate::villagers::RescuedCamps;
+use crate::game_state::SimAppExt;
 
 /// Bump on any breaking change to [`SaveData`] — an older/garbage file is then treated as "no
 /// save" (logged, never fatal).
@@ -150,7 +151,7 @@ impl Plugin for SaveGamePlugin {
             .add_message::<RequestSave>()
             .add_systems(Startup, detect_existing_save)
             // Snapshot at dawn (a cleared night). Gated like the rest of the sim.
-            .add_systems(Update, autosave_on_dawn.run_if(in_state(Modal::None)))
+            .add_sim_systems(autosave_on_dawn)
             // Manual save (pause-menu button). Runs in `Paused` — where the world is frozen but
             // every run-state resource still lives — so it can snapshot the current day on demand.
             .add_systems(Update, manual_save.run_if(in_state(AppState::Paused)))

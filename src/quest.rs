@@ -34,6 +34,7 @@ use crate::ui::texture::UiTextures;
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
+use crate::game_state::SimAppExt;
 
 /// The per-run quest state (wraps the parity-tested core log). Rides the save.
 #[derive(Resource, Default)]
@@ -71,13 +72,12 @@ impl Plugin for QuestPlugin {
             .add_systems(OnExit(Modal::Quest), despawn_quest_panel)
             .add_systems(Update, quest_panel_input.run_if(in_state(Modal::Quest)))
             // Detection (world running only).
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (detect_gather, detect_builds, detect_hunt, detect_survive)
-                    .run_if(in_state(Modal::None)),
+                    ,
             )
             // Open the explainer (world running only).
-            .add_systems(Update, quest_open_input.run_if(in_state(Modal::None)))
+            .add_sim_systems(quest_open_input)
             // Resolution + restore run ungated: a signal emitted while a panel is open (the War
             // Table) must be processed before the 2-frame message buffer drops it.
             .add_systems(Update, (apply_quest_signals, restore_quest_log))

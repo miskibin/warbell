@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use crate::biome::BiomeEntity;
 use crate::palette::{lin, lin_scaled};
 use crate::worldmap::is_river_world;
+use crate::meshkit::tinted;
 
 /// Half-width along the bank (the deck's SHORT axis) of a deck.
 const DECK_HALF_Z: f32 = 1.2;
@@ -392,11 +393,6 @@ fn hash01(mut s: u32) -> f32 {
     s = s.wrapping_mul(0x846c_a68b);
     s ^= s >> 16;
     (s & 0x00ff_ffff) as f32 / 16_777_216.0
-}
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
 }
 /// A tinted cuboid taking a linear colour directly (so callers can pass jittered tones).
 fn bx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {

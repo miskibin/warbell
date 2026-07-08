@@ -15,7 +15,7 @@
 
 use bevy::prelude::*;
 
-use crate::game_state::{AppState, Modal};
+use crate::game_state::AppState;
 use crate::orks::{self, OrkVariant, WaveInvader};
 use crate::player::{Health, HeroState, PendingHeroDamage};
 use crate::projectile::{BoltSpawn, BoltSpawns};
@@ -24,6 +24,7 @@ use crate::ui::anim::{anim, AnimKind};
 use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::worldmap::ground_at_world;
+use crate::game_state::SimAppExt;
 
 // ── Tuning (ported from waveStore.ts) ──────────────────────────────────────────────
 
@@ -553,13 +554,12 @@ impl Plugin for SiegePlugin {
             .add_systems(Startup, (setup_invader_armory, setup_siege_hud))
             .add_systems(PostStartup, seed_demo_wave) // FOREST_WAVE screenshot hook only
             // Pause-aware clock — advances before the sim, frozen behind any panel / outside Playing.
-            .add_systems(Update, advance_game_clock.run_if(in_state(Modal::None)))
+            .add_sim_systems(advance_game_clock)
             // Sim — frozen behind any panel / outside Playing.
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (run_director, invader_brain, siege_controls, night_warning, keep_attack_alert, director_march)
                     .after(advance_game_clock)
-                    .run_if(in_state(Modal::None)),
+                    ,
             )
             // HUD keeps drawing while frozen.
             .add_systems(Update, update_siege_hud);
@@ -567,9 +567,8 @@ impl Plugin for SiegePlugin {
         if (std::env::var("FOREST_CLIP").is_ok() || std::env::var("FOREST_PERFTEST").is_ok())
             && std::env::var("FOREST_WAVE").is_ok()
         {
-            app.add_systems(
-                Update,
-                siege_clip_refill.after(invader_brain).run_if(in_state(Modal::None)),
+            app.add_sim_systems(
+                siege_clip_refill.after(invader_brain),
             );
         }
         app

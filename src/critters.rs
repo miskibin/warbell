@@ -14,6 +14,7 @@ use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::palette::lin;
+use crate::meshkit::{merged, tinted};
 
 /// The wildlife species. Includes the three TS "monsters" (Scorpion/BogCroc/Golem) — biome
 /// menaces that hunt/charge the hero (their HP/bounty/drops come from `core::animal_config`).
@@ -62,19 +63,6 @@ pub struct CreatureSpec {
 
 // ─── Mesh helpers (local copies of the props.rs contract) ────────────────────────
 
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("at least one part");
-    for p in it {
-        base.merge(&p).expect("creature parts share attributes");
-    }
-    base
-}
 /// Merge + hard flat-shade — the crisp low-poly facets the TS models use.
 fn group(parts: Vec<Mesh>) -> Mesh {
     let mut m = merged(parts);

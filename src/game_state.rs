@@ -15,6 +15,8 @@
 //! opening one does NOT fire `OnExit(Playing)`/`OnEnter(Playing)`, so it never wipes the run.
 
 use bevy::ecs::relationship::RelatedSpawnerCommands;
+use bevy::ecs::schedule::IntoScheduleConfigs;
+use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 
 use crate::ui::anim::{anim, anim_btn, AnimKind};
@@ -49,6 +51,28 @@ pub enum Modal {
     Quest,
     /// "Warden slain" reward dialog (freezes the world; opened by `boss::reward_on_death`).
     BossReward,
+}
+
+/// Register `Update` systems that belong to the world-sim — the ones that MUST freeze when a panel
+/// opens or `Playing` is left. Exactly equivalent to
+/// `app.add_systems(Update, systems.run_if(in_state(Modal::None)))`, but it names the intent and
+/// makes the freeze-gate impossible to forget: CLAUDE.md requires every new sim system to carry
+/// that gate or it silently runs through pauses/panels. Keep plain `add_systems` for the ungated
+/// render / VFX / HUD systems that must keep drawing while the world is frozen.
+pub trait SimAppExt {
+    fn add_sim_systems<M>(
+        &mut self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) -> &mut Self;
+}
+
+impl SimAppExt for App {
+    fn add_sim_systems<M>(
+        &mut self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) -> &mut Self {
+        self.add_systems(Update, systems.run_if(in_state(Modal::None)))
+    }
 }
 
 /// Set by the fresh-run buttons (New Game / Play Again / pause Restart) to request a **full

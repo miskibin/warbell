@@ -23,8 +23,8 @@
 use bevy::prelude::*;
 
 use crate::orks::{Faction, OrkVariant};
-use crate::palette::lin;
 use crate::siege::InvaderArmory;
+use crate::meshkit::{merged_flat as merged, tinted_hex as tinted};
 
 // ── Public tags ──────────────────────────────────────────────────────────────────────
 
@@ -593,21 +593,6 @@ fn spawn_torch(commands: &mut Commands, meshes: &mut Assets<Mesh>, assets: &Scen
 
 // ── Prop meshes (vertex-coloured, flat-shaded — the shared-material contract) ───────────
 
-fn tinted(mut m: Mesh, hex: u32) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![lin(hex); n]);
-    m
-}
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("≥1 part");
-    for p in it {
-        base.merge(&p).expect("scene prop parts share attributes");
-    }
-    base.duplicate_vertices();
-    base.compute_flat_normals();
-    base
-}
 fn cube(w: f32, h: f32, d: f32, off: Vec3, hex: u32) -> Mesh {
     tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), hex)
 }

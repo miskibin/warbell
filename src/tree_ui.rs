@@ -22,12 +22,13 @@ use crate::ui::texture::UiTextures;
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
+use crate::game_state::SimAppExt;
 
 pub struct TreeUiPlugin;
 
 impl Plugin for TreeUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, open_tree.run_if(in_state(Modal::None)))
+        app.add_sim_systems(open_tree)
             .add_systems(OnEnter(Modal::UpgradeTree), spawn_tree)
             .add_systems(OnExit(Modal::UpgradeTree), despawn_tree)
             .add_systems(

@@ -54,7 +54,10 @@ pub fn default_dof() -> Dof {
     // the fully-sharp band so everything the player actually fights/loots reads crisp, far_ramp
     // 90→130 makes the distance melt come on later and more gradually, and max_radius 20→13
     // keeps the far bokeh a gentle cinematic soften instead of a smear.
-    Dof { focal: 28.0, range: 42.0, far_ramp: 130.0, max_radius: 13.0, near: NEAR, debug_view: 0.0 }
+    // 2026-07 follow-up (user: torches blur too soon / too hard): range 42→60 pushes the far-blur
+    // ONSET out from focal+42 (~70 tiles) to focal+60 (~88), so mid-distance torches/braziers stay
+    // sharp; max_radius 13→9 softens the remaining far bokeh so lit points read as flames, not smears.
+    Dof { focal: 28.0, range: 60.0, far_ramp: 130.0, max_radius: 9.0, near: NEAR, debug_view: 0.0 }
 }
 
 pub struct DofPlugin;

@@ -23,6 +23,7 @@
 
 use bevy::prelude::*;
 
+use crate::meshkit::{flat_shaded, merged, tinted};
 use crate::palette::{
     lin, AUTUMN_DARK, AUTUMN_GOLD, AUTUMN_LIGHT, AUTUMN_MID, AUTUMN_OLIVE, AUTUMN_RED, BIRCH_DARK,
     BIRCH_LIGHT, BIRCH_MARK, BIRCH_TRUNK, CUT_WOOD, DEAD_WOOD, DEAD_WOOD_DARK, FOLIAGE_DARK,
@@ -41,26 +42,6 @@ pub enum TreeKind {
     Autumn,
     /// A waist-high sawn stump with a pale ringed cut face — ground-level forest detail.
     Stump,
-}
-
-/// Tag every vertex of `m` with a flat linear colour so it can be merged with other
-/// coloured parts (all parts must carry `ATTRIBUTE_COLOR` before `Mesh::merge`).
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-
-/// Merge a non-empty list of pre-`tinted` parts into ONE mesh (so the renderer keeps
-/// them in a single batch). All parts share POSITION/NORMAL/UV_0/COLOR, so the merge
-/// always succeeds; `.expect` makes a mismatch loud rather than silent.
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("at least one part");
-    for p in it {
-        base.merge(&p).expect("tree parts share attributes");
-    }
-    base
 }
 
 /// A tapered TS trunk/branch → a Bevy `Cylinder` using the AVERAGE of the top/bottom
@@ -107,13 +88,6 @@ pub fn build_tree_mesh(kind: TreeKind) -> Mesh {
     // Flat-shade so the foliage shows crisp icosphere facets (TS `flatShading: true`)
     // rather than soft smooth "blobs"), then bake the painterly per-facet shading.
     bake_facet_shading(flat_shaded(m))
-}
-
-/// Un-index + recompute per-face normals → hard flat-shaded facets.
-fn flat_shaded(mut m: Mesh) -> Mesh {
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
 }
 
 /// Bake painterly shading into the vertex colours (call AFTER `flat_shaded`, so the

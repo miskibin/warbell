@@ -17,7 +17,7 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 
 use crate::creature::{surf, CreatureMaterial, Surf};
-use crate::palette::lin;
+use crate::meshkit::tinted_hex as tinted;
 
 // ── Species + config (port of `quadrupedSpecies.ts`) ──────────────────────────────────
 
@@ -578,11 +578,6 @@ const EYE: u32 = 0x141414;
 
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
-}
-fn tinted(mut m: Mesh, c: u32) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![lin(c); n]);
-    m
 }
 /// A bevelled box (24 verts + 12 edge bevels + 8 corner tris), origin-centred — the same softened
 /// low-poly silhouette the hero uses (`player::model::chamfer_box`), kept local here so animals read

@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use crate::boss::Slowed;
 use crate::critters::PartKind;
 use crate::dying::Dying;
-use crate::game_state::{AppState, Modal};
+use crate::game_state::AppState;
 use crate::orks::{Armory, Faction, OrkPart, OrkVariant};
 use crate::player::{CombatFx, Health, HeroState, PendingCrit, PendingHeroDamage, PlayerRes};
 use crate::siege::{GamePhase, Siege};
@@ -27,6 +27,7 @@ use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets;
 use crate::{steer, worldmap};
+use crate::game_state::SimAppExt;
 
 // ── Tuning (all forest-side) ─────────────────────────────────────────────────────────────
 /// Base HP at hero level 1, grown ×`HP_PER_LEVEL` per hero level so a fully-geared late hero still
@@ -89,7 +90,7 @@ impl Plugin for WarlordPlugin {
         app.add_systems(Update, warlord_limbs) // limb sway runs even while frozen
             .add_systems(Update, sync_warlord_bar.run_if(in_state(AppState::Playing)))
             .add_systems(OnExit(AppState::Playing), despawn_warlord_bar)
-            .add_systems(Update, (warlord_brain, warlord_death).run_if(in_state(Modal::None)));
+            .add_sim_systems((warlord_brain, warlord_death));
     }
 }
 

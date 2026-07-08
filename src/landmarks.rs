@@ -29,10 +29,11 @@ use tileworld_core::buff_store::BuffKind;
 use crate::audio::AudioCue;
 use crate::biome::{Biome, BiomeEntity};
 use crate::combat_fx::{col_kill, FloatQueue, FloatReq};
-use crate::game_state::{AppState, Modal};
+use crate::game_state::AppState;
 use crate::inventory::{try_grant, Buffs, Inventory, Toasts};
 use crate::player::{HeroState, PlayerRes};
 use crate::ui::fonts::{label, FONT_LABEL, UiFonts};
+use crate::game_state::SimAppExt;
 
 /// Walk this close to an unfound landmark → it's discovered.
 const DISCOVER_R: f32 = 6.0;
@@ -335,10 +336,9 @@ impl Plugin for LandmarksPlugin {
             .add_systems(Update, (sync_rune_hud, sync_rune_ring))
             // Fell trees crowding the landmarks once they've spawned (runs once, then idles).
             .add_systems(Update, clear_around_landmarks)
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (track_total, discover, shrine, start_rune_trial, drive_rune_trial)
-                    .run_if(in_state(Modal::None)),
+                    ,
             );
     }
 }

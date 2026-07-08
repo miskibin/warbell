@@ -25,6 +25,7 @@ use crate::biome::{Biome, BiomeEntity};
 use crate::orks::{self, Faction, VARIANTS};
 use crate::palette::lin;
 use crate::worldmap::{self, GX, GZ};
+use crate::meshkit::tinted;
 
 // ── Plugin (campfire flicker + smoke) ────────────────────────────────────────────────
 
@@ -708,11 +709,6 @@ fn ry(a: f32) -> Quat {
 }
 fn xyz(x: f32, y: f32, z: f32) -> Quat {
     Quat::from_euler(EulerRot::XYZ, x, y, z)
-}
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
 }
 fn group(parts: Vec<Mesh>) -> Mesh {
     let mut it = parts.into_iter();

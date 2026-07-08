@@ -21,6 +21,7 @@
 use bevy::prelude::*;
 
 use crate::player::HeroState;
+use crate::meshkit::tinted;
 
 /// How many fish haunt the water near the hero. Kept low — a few flickers, not a shoal.
 const FISH_COUNT: usize = 3;
@@ -105,11 +106,6 @@ impl Plugin for FishPlugin {
 }
 
 // ── Mesh helpers (local copies of the props.rs / critters.rs contract) ───────────────
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
 /// Merge + hard flat-shade for the crisp low-poly facet look (duplicate BEFORE flat-normals —
 /// `compute_flat_normals` panics on an indexed mesh).
 fn group(parts: Vec<Mesh>) -> Mesh {

@@ -28,13 +28,15 @@ use bevy::prelude::*;
 use crate::biome::{AtmoSample, BiomeAmbience, BiomeEntity, GroundDetail, ParticleKind};
 use crate::critters::PartKind;
 use crate::firelight::{self, FireLight};
-use crate::game_state::{AppState, Modal};
+use crate::game_state::AppState;
 use crate::orks::{Armory, Faction, OrkPart, OrkVariant};
 use crate::palette::lin;
 use crate::player::{HeroState, PendingHeroDamage};
 use crate::projectile::{advance_bolt, BoltStep};
 use crate::quality::GraphicsQuality;
 use crate::worldmap::{self, GX, GZ, MAP_SCALE};
+use crate::meshkit::tinted;
+use crate::game_state::SimAppExt;
 
 // ── Layout (world space; the OLD grid's south edge was z = +81 — the Blight extends it) ──
 
@@ -220,8 +222,7 @@ impl Plugin for OrkFortressPlugin {
             )
             .add_systems(OnExit(AppState::GameOver), reset_fortress_on_new_run)
             // Sim carries the freeze gate, per the game_state contract.
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (
                     denizen_brain,
                     tower_fire,
@@ -237,7 +238,7 @@ impl Plugin for OrkFortressPlugin {
                     garrison_reinforce,
                     stage_breach,
                 )
-                    .run_if(in_state(Modal::None)),
+                    ,
             );
     }
 }
@@ -3084,11 +3085,6 @@ fn ry(a: f32) -> Quat {
 }
 fn rz(a: f32) -> Quat {
     Quat::from_rotation_z(a)
-}
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
 }
 fn group(parts: Vec<Mesh>) -> Mesh {
     let mut it = parts.into_iter();

@@ -30,6 +30,7 @@ use crate::{steer, worldmap};
 use crate::audio::director::{Speak, VoiceManager};
 use crate::audio::lines::Concept;
 use crate::audio::MusicState;
+use crate::game_state::SimAppExt;
 
 // ── Tuning (all forest-side; not parity-gated) ────────────────────────────────────────
 /// Warden HP at level 1, ×`HP_GROWTH` per level. Out-stats a bare hero on purpose (mid-game) —
@@ -250,10 +251,9 @@ impl Plugin for BossPlugin {
             .add_systems(Update, warden_music_flag) // ungated: boss music holds through a panel-freeze
             .add_systems(Update, sync_boss_bar.run_if(in_state(AppState::Playing)))
             .add_systems(OnExit(AppState::Playing), despawn_boss_bar)
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (boss_brain, boss_proximity, boss_levelup, tick_status, reward_on_death)
-                    .run_if(in_state(Modal::None)),
+                    ,
             )
             // Reward dialog: spawns frozen over the world, dismissed with Continue / Enter / Esc.
             .add_systems(OnEnter(Modal::BossReward), spawn_reward_ui)

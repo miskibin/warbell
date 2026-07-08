@@ -33,6 +33,7 @@
 use bevy::prelude::*;
 
 use crate::biome::{Backdrop, Biome, BiomeConfig, BiomeEntity, GroundDetail, ParticleKind, PropClass};
+use crate::meshkit::{flat_shaded, merged, tinted};
 
 // ── Snow palette (hex lifted from the TS game's snow biome) ─────────────────────
 // Ground: snow `#eef3f8` / `#eaf1f7`, fog `#cdd8e8` — kept blue-grey, NOT pure white.
@@ -94,32 +95,6 @@ const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
 
 fn lin(c: u32) -> [f32; 4] {
     crate::palette::lin(c)
-}
-
-/// Tag every vertex of `m` with a flat linear colour (REQUIRED before merge — all parts
-/// must carry the same attribute set incl. `ATTRIBUTE_COLOR`).
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-
-/// Merge a non-empty list of pre-`tinted` parts into ONE mesh (renderer batches them).
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut b = it.next().expect("part");
-    for p in it {
-        b.merge(&p).expect("attrs");
-    }
-    b
-}
-
-/// Un-index + recompute per-face normals → crisp flat-shaded facets. MUST be called LAST
-/// on the merged mesh (`compute_flat_normals` panics on an indexed mesh).
-fn flat_shaded(mut m: Mesh) -> Mesh {
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
 }
 
 /// Bake painterly facet shading into the vertex colours (call AFTER `flat_shaded`, so the

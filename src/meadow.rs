@@ -26,6 +26,7 @@ use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
 use crate::palette::lin;
+use crate::meshkit::{merged_flat as merged, tinted};
 
 /// Radius around the campfire within which the hero rests (heals) during Prep.
 const REST_R: f32 = 3.2;
@@ -452,21 +453,6 @@ fn flame_mesh() -> Mesh {
 
 // ── tiny local mesh helpers (the props.rs contract) ────────────────────────────────
 
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("≥1 part");
-    for p in it {
-        base.merge(&p).expect("meadow parts share attributes");
-    }
-    base.duplicate_vertices();
-    base.compute_flat_normals();
-    base
-}
 fn bx(w: f32, h: f32, d: f32, off: Vec3, c: u32) -> Mesh {
     tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), lin(c))
 }

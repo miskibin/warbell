@@ -6,8 +6,9 @@
 use bevy::prelude::*;
 use tileworld_core::orb::{self, Orb, OrbKind, OrbStep, PlayerPose};
 
-use crate::game_state::{AppState, Modal};
+use crate::game_state::AppState;
 use crate::player::{HeroState, PlayerRes};
+use crate::game_state::SimAppExt;
 
 /// A reward queued by combat on a kill — split into gold + xp orbs by [`spawn_queued_orbs`].
 pub struct RewardBurst {
@@ -60,11 +61,10 @@ impl Plugin for OrbsPlugin {
             // home onto the reset hero and bank last run's gold/xp into the new run.
             .add_systems(OnExit(AppState::StartScreen), reset_orbs)
             .add_systems(OnExit(AppState::GameOver), reset_orbs)
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (spawn_queued_orbs, step_reward_orbs)
                     .chain()
-                    .run_if(in_state(Modal::None)),
+                    ,
             );
     }
 }

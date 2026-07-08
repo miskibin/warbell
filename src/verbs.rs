@@ -14,11 +14,11 @@ use crate::audio::AudioCue;
 use crate::combat_fx::FloatReq;
 use crate::critters::Species;
 use crate::economy::Bank;
-use crate::game_state::Modal;
 use crate::inventory::{try_grant, Inventory, Toasts};
 use crate::palette::lin;
 use crate::player::HeroState;
 use crate::worldmap;
+use crate::game_state::SimAppExt;
 
 /// Forest ore HP — rescaled from core's TS-anchored 500 into forest's combat units, then bumped so
 /// a boulder is a REAL dig: at the flat [`HERO_HARVEST_DMG`] (30) it's a fixed ~20 swings, all run,
@@ -108,8 +108,7 @@ impl Plugin for VerbsPlugin {
             .add_message::<AnimalKilled>()
             .init_resource::<VerbRng>()
             .add_systems(Startup, setup_drop_assets)
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (
                     mine_ore,
                     regrow_ore,
@@ -124,7 +123,7 @@ impl Plugin for VerbsPlugin {
                     animal_drops,
                     ground_pickup,
                 )
-                    .run_if(in_state(Modal::None)),
+                    ,
             )
             // Impact-juice drivers — ungated (like `dying.rs` / `combat_fx`: a mid-fall tree
             // keeps toppling behind a panel; virtual time still freezes them under a hit-stop)

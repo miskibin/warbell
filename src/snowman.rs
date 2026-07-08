@@ -20,9 +20,9 @@
 use bevy::prelude::*;
 
 use crate::audio::AudioCue;
-use crate::game_state::Modal;
 use crate::player::{Health, HeroState, PendingHeroDamage};
 use crate::steer::{self, footing};
+use crate::game_state::SimAppExt;
 
 // ── Tuning ──────────────────────────────────────────────────────────────────────────────────
 /// Hero must step this close (world units) to a dormant snowman to wake it.
@@ -125,11 +125,10 @@ impl Plugin for SnowmanPlugin {
         // the body early-returns until `WorldReady`, then runs its one-shot spawn.
         app.add_systems(Update, seed_snowmen);
         // Sim tier — frozen with the rest of the world on a panel/pause (Modal only lives in Play).
-        app.add_systems(
-            Update,
+        app.add_sim_systems(
             (snowman_brain, detect_snowman_deaths, respawn_snowmen)
                 .chain()
-                .run_if(in_state(Modal::None)),
+                ,
         );
     }
 }

@@ -25,6 +25,7 @@ use bevy::prelude::*;
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use crate::palette::lin;
+use crate::meshkit::{merged, tinted};
 
 // ── Grass palette ───────────────────────────────────────────────────────────────
 // FADED + low-contrast: desaturated, sun-bleached greens so tufts read as soft washed-out foliage
@@ -109,29 +110,9 @@ fn y(v: f32) -> Vec3 {
     Vec3::new(0.0, v, 0.0)
 }
 
-/// Tag every vertex of `m` with one flat linear colour (REQUIRED before merge — all
-/// merged parts must carry the same attribute set, incl. `ATTRIBUTE_COLOR`).
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-
 /// Linear-colour lerp (component-wise, alpha kept at `a`'s).
 fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3]]
-}
-
-/// Merge several tinted parts into ONE mesh (so identical props still batch into one
-/// draw call). `Mesh::merge` returns `Result` in 0.18 — unwrap it. All parts must share
-/// indexed-ness + attribute set (see module doc).
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("at least one part");
-    for p in it {
-        base.merge(&p).expect("ground-cover parts share attributes");
-    }
-    base
 }
 
 /// A cylinder whose centre sits at `cy` (so a stem of height `h` rooted at y=0 uses

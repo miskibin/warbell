@@ -19,6 +19,7 @@ use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
 use crate::palette::lin;
+use crate::meshkit::{flat_shaded, merged, tinted};
 
 const TAU: f32 = std::f32::consts::TAU;
 const SEED: u32 = 0xb0a7;
@@ -316,27 +317,5 @@ fn raw_tris(positions: Vec<[f32; 3]>) -> Mesh {
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; n]);
     m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 0.0]; n]);
     m.insert_indices(Indices::U32(indices));
-    m
-}
-
-/// Tag every vertex with one flat linear colour (REQUIRED before merge).
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("at least one part");
-    for p in it {
-        base.merge(&p).expect("boat parts share attributes");
-    }
-    base
-}
-
-fn flat_shaded(mut m: Mesh) -> Mesh {
-    m.duplicate_vertices();
-    m.compute_flat_normals();
     m
 }

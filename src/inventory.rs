@@ -27,6 +27,7 @@ use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
+use crate::game_state::SimAppExt;
 
 /// A quick-slot fired this frame — HUD reads it to pop the matching cell. Index is the
 /// quick-bar order: 0 = Q (food), 1 = Y, 2 = T.
@@ -147,7 +148,7 @@ impl Plugin for InventoryPlugin {
             // (Pause-menu Restart resets in-process via StartScreen → Playing — see
             // game_state::drive_fresh_run — so this OnExit(StartScreen) reset covers it; Load restores.)
             // Quick-bar (Q/Y/T) + open the satchel (Tab/I): only while playing with no panel up.
-            .add_systems(Update, (quickbar_input, open_inventory).run_if(in_state(Modal::None)))
+            .add_sim_systems((quickbar_input, open_inventory))
             // The satchel modal (freezes the world like the tree).
             .add_systems(OnEnter(Modal::Inventory), spawn_inventory_panel)
             .add_systems(OnExit(Modal::Inventory), despawn_inventory_panel)

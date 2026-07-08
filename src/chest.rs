@@ -14,12 +14,12 @@ use tileworld_core::inventory::{item_def, Bag, ItemKind};
 
 use crate::audio::{AudioCue, Concept, Speak};
 use crate::combat_fx::{col_kill, FloatQueue, FloatReq, HitFeedback};
-use crate::game_state::Modal;
 use crate::inventory::{try_grant, Inventory, Toasts};
 use crate::palette::lin;
 use crate::player::{HeroState, PlayerRes};
 use crate::verbs::forest_frontier;
 use crate::worldmap;
+use crate::game_state::SimAppExt;
 
 pub struct ChestPlugin;
 
@@ -35,7 +35,7 @@ impl Plugin for ChestPlugin {
         // Sim systems freeze behind panels/pauses; the lid swing is pure animation (a lid keeps
         // falling open behind a panel), so it stays ungated like the other impact-juice drivers.
         app.add_message::<OpenChest>()
-            .add_systems(Update, (chest_interact, chest_respawn).run_if(in_state(Modal::None)))
+            .add_sim_systems((chest_interact, chest_respawn))
             .add_systems(Update, drive_lid_swing);
     }
 }

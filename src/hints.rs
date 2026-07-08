@@ -17,7 +17,6 @@ use tileworld_core::shop_catalog::{build_shop_items, discounted_price};
 use tileworld_core::upgrade_store::{UpgradeState, UPGRADE_NODES};
 
 use crate::economy::{Bank, EconomyState, Upgrades};
-use crate::game_state::Modal;
 use crate::inventory::Inventory;
 use crate::player::PlayerRes;
 use crate::siege::{GamePhase, Siege};
@@ -25,6 +24,7 @@ use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
+use crate::game_state::SimAppExt;
 
 /// Seconds the condition must hold before the toast appears (rides out loot churn).
 const PROMOTE_DELAY: f64 = 3.0;
@@ -38,7 +38,7 @@ pub struct HintsPlugin;
 impl Plugin for HintsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_hint_root)
-            .add_systems(Update, drive_hints.run_if(in_state(Modal::None)));
+            .add_sim_systems(drive_hints);
     }
 }
 

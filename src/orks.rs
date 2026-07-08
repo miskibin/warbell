@@ -25,6 +25,7 @@ use crate::critters::PartKind;
 use crate::palette::{lin, lin_scaled};
 use crate::steer;
 use crate::worldmap;
+use crate::meshkit::tinted;
 
 /// Base root scale (the TS group scale before the per-variant `cfg.scale`). Was 0.7, bumped ×1.35
 /// with the hero/house rescale, then cut 15% (×0.85) so orks read a touch shorter than the hero.
@@ -988,11 +989,6 @@ fn rz(a: f32) -> Quat {
 }
 fn xyz(x: f32, y: f32, z: f32) -> Quat {
     Quat::from_euler(EulerRot::XYZ, x, y, z)
-}
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
 }
 fn group(parts: Vec<Mesh>) -> Mesh {
     let mut it = parts.into_iter();

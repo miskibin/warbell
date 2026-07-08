@@ -19,6 +19,7 @@ mod ambient_life;
 mod atmospherics;
 mod meadow;
 mod melee_ring;
+mod meshkit; // shared low-poly mesh helpers (tinted/merged/flat_shaded) — see the module doc
 mod audio;
 mod banner;
 mod biped;

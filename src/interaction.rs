@@ -22,6 +22,7 @@ use crate::siege::{GamePhase, Siege};
 use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
+use crate::game_state::SimAppExt;
 
 /// Interaction ranges (world units), from the 3js `cityPlan`/`Shop` constants.
 const KEEP_DIST: f32 = 4.2;
@@ -128,7 +129,7 @@ impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ActiveInteraction>()
             .add_systems(Startup, setup_prompt)
-            .add_systems(Update, drive_interaction.run_if(in_state(Modal::None)))
+            .add_sim_systems(drive_interaction)
             .add_systems(Update, update_prompt);
     }
 }

@@ -12,9 +12,9 @@ use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
 use crate::biome::Biome;
-use crate::game_state::Modal;
 use crate::player::Hero;
 use crate::worldmap;
+use crate::game_state::SimAppExt;
 
 /// Downward pull on settling dust motes.
 const GRAV: f32 = 6.0;
@@ -63,7 +63,7 @@ pub struct FootstepFxPlugin;
 impl Plugin for FootstepFxPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup)
-            .add_systems(Update, emit.run_if(in_state(Modal::None)))
+            .add_sim_systems(emit)
             // Fades are visual — keep settling even while frozen.
             .add_systems(Update, (fade_puffs, fade_ripples));
     }

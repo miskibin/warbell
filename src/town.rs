@@ -24,6 +24,7 @@ use crate::ui::anim::{anim, AnimKind};
 use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
+use crate::game_state::SimAppExt;
 
 /// A flame entity tied to a burning plot (despawned when extinguished/collapsed).
 #[derive(Component)]
@@ -248,11 +249,10 @@ impl Plugin for TownPlugin {
             // game_state::drive_fresh_run — so this OnExit(StartScreen) reap covers it; Load restores.)
             // Build mode (live — world stays unfrozen so the hero walks while placing): spawn /
             // despawn the palette on toggle, drive its rows, glow every valid plot, and place on E.
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (build_mode_toggle, build_strip_input, build_nav, build_strip_update, build_place)
                     .chain()
-                    .run_if(in_state(Modal::None)),
+                    ,
             )
             // Ungated, but self-gated on `Modal::None` inside: the palette + glow rings + the "[B]
             // Build" town prompt must be REAPED/hidden when play is left or a panel opens (a
@@ -261,21 +261,18 @@ impl Plugin for TownPlugin {
             // The timber pad marks where the NEXT house will rise (visible even outside build mode).
             .add_systems(Update, sync_house_site_pad)
             // Trailer Director (F1 → "Build stronghold"): live, real-time construction timelapse.
-            .add_systems(Update, director_build_timelapse.run_if(in_state(Modal::None)))
-            .add_systems(
-                Update,
+            .add_sim_systems(director_build_timelapse)
+            .add_sim_systems(
                 (auto_assign_workers, sync_staffed, release_orphan_workers, sync_plot_visibility)
-                    .run_if(in_state(Modal::None)),
+                    ,
             )
-            .add_systems(
-                Update,
+            .add_sim_systems(
                 (production_system, population_system, sync_population_bodies)
-                    .run_if(in_state(Modal::None)),
+                    ,
             )
             // Sim (gated): apply damage + repair only while playing.
-            .add_systems(
-                Update,
-                (apply_building_damage, repair_system).run_if(in_state(Modal::None)),
+            .add_sim_systems(
+                (apply_building_damage, repair_system),
             )
             // Rebuild building meshes to match a loaded `TownRes` (ungated; fires on a load).
             .add_systems(Update, restore_buildings)
@@ -285,7 +282,7 @@ impl Plugin for TownPlugin {
             .add_systems(Update, (stage_town_for_shot, open_build_for_shot));
         // Clip-only: raise the town one plot at a time for a construction timelapse.
         if std::env::var("FOREST_DEMO").ok().as_deref() == Some("build") {
-            app.add_systems(Update, demo_build_timelapse.run_if(in_state(Modal::None)));
+            app.add_sim_systems(demo_build_timelapse);
         }
         // Clip-only: instant working village for the peasants-at-work scene.
         if std::env::var("FOREST_DEMO").ok().as_deref() == Some("work") {

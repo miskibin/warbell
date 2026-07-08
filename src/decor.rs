@@ -32,6 +32,7 @@ use bevy::prelude::*;
 
 use crate::palette::lin;
 use crate::terrain::HALF;
+use crate::meshkit::{flat_shaded, merged, tinted};
 
 // ── Decor palette (extends palette.rs; kept local since these tones are decor-only) ──
 const LOG_BARK: u32 = 0x4f3320; // damp brown fallen-log bark
@@ -89,34 +90,6 @@ impl Rng {
 
 fn y(v: f32) -> Vec3 {
     Vec3::new(0.0, v, 0.0)
-}
-
-/// Tag every vertex of `m` with one flat linear colour (REQUIRED before merge — all
-/// merged parts must carry the same attribute set, incl. `ATTRIBUTE_COLOR`).
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-
-/// Merge several pre-`tinted` parts into ONE mesh (so identical props batch into one
-/// draw call). `Mesh::merge` returns `Result` in 0.18 — `.expect` on a mismatch.
-fn merged(parts: Vec<Mesh>) -> Mesh {
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("at least one part");
-    for p in it {
-        base.merge(&p).expect("decor parts share attributes");
-    }
-    base
-}
-
-/// Un-index + recompute per-face normals → crisp flat-shaded low-poly facets.
-/// `duplicate_vertices()` MUST run before `compute_flat_normals()` (the latter panics
-/// on an indexed mesh — see the verified-APIs doc §9).
-fn flat_shaded(mut m: Mesh) -> Mesh {
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
 }
 
 /// A faceted icosphere blob (ico detail 0), optionally squashed, centred at `off`.

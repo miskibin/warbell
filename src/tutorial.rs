@@ -27,6 +27,7 @@ use crate::ui::texture::UiTextures;
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
+use crate::game_state::SimAppExt;
 
 /// Active tab (index into [`TAB_NAMES`]). Reset to Basics each time the panel opens.
 #[derive(Resource, Default)]
@@ -50,7 +51,7 @@ impl Plugin for TutorialPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TutorialTab>()
             // Open with H — only while playing with no other panel up.
-            .add_systems(Update, open_tutorial.run_if(in_state(Modal::None)))
+            .add_sim_systems(open_tutorial)
             .add_systems(OnEnter(Modal::Tutorial), spawn_tutorial)
             .add_systems(OnExit(Modal::Tutorial), despawn_tutorial)
             // Start-menu guide: the HOW TO PLAY button (or H) opens the same panel without the

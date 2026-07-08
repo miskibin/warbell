@@ -28,6 +28,7 @@ use crate::palette::{lin, lin_scaled};
 use crate::peasant_model::{peasant_biped_meshes, PeasantKind};
 use crate::steer;
 use crate::worldmap;
+use crate::meshkit::tinted;
 
 /// Townsfolk turn at a relaxed rate. rad/s.
 const VIL_MAX_TURN: f32 = 3.0;
@@ -2944,11 +2945,6 @@ fn reskin_townsfolk(
 
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
-}
-fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
 }
 fn group(parts: Vec<Mesh>) -> Mesh {
     let mut it = parts.into_iter();

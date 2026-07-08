@@ -19,6 +19,7 @@ use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
+use crate::game_state::SimAppExt;
 
 /// The crafting-resource bank — currently just stone. Wraps the parity-tested core store.
 #[derive(Resource, Default)]
@@ -84,7 +85,7 @@ impl Plugin for EconomyPlugin {
             // reset already covers it; Load restores over it.
             // (The War Table tree panel itself lives in `tree_ui.rs` — TreeUiPlugin.)
             // Merchant shop (open with T; buys land in the bag).
-            .add_systems(Update, open_shop.run_if(in_state(Modal::None)))
+            .add_sim_systems(open_shop)
             .add_systems(OnEnter(Modal::Shop), spawn_shop)
             .add_systems(OnExit(Modal::Shop), despawn_shop)
             .add_systems(Update, (shop_interact, shop_close).run_if(in_state(Modal::Shop)));
