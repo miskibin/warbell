@@ -61,8 +61,8 @@ const BASE_SUN_LUX: f32 = 11_000.0;
 /// Swamp (`0.034`) lands at ~(45, 121). Daytime-gated, so night returns to the open baseline.
 const FOG_REF_DENSITY: f32 = 0.009;
 const FOG_MAX_DENSITY: f32 = 0.036;
-const FOG_BASE_START: f32 = 56.0; // was 40 → 46 — pushed out again (2026-07): near/mid ground should read clear
-const FOG_BASE_END: f32 = 142.0; // was 112 → 126 — 2026-07: forward visibility read short with both fogs stacked
+const FOG_BASE_START: f32 = 84.0; // was 56 — 2026-07-08: user wants much more visibility; fog starts far
+const FOG_BASE_END: f32 = 210.0; // was 142 — lighter, longer gradient to the horizon
 /// How far the foggy regions pull the clear radius / horizon IN. Kept gentle (was 43/75) so the
 /// fog reads as a long, gradual gradient that EXPANDS with distance — a sharp pull walled the
 /// swamp green close to the camera. Swamp (`d=0.034`) now ≈ (61, 153); Blight (`0.036`) ≈ (59, 150).

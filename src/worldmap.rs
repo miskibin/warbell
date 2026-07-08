@@ -2306,6 +2306,24 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
 
 /// Scatter one biome's props on its tiles (height-aware), and capture its atmosphere/weather into
 /// `state.ambiences` for the [`BiomeAmbiences`] resource (inserted at phase 10).
+/// Keep desert props (the tall saguaro cacti especially) off the ragged desert↔rock seam. The two
+/// regions overlap and `region_at` resolves the overlap with noise, so a desert tile can sit right
+/// against the rock foothills — planting cacti among the mountains. Reject a desert tile within a
+/// short margin of any rock tile so the biome edge reads clean.
+fn desert_near_rock(x: f32, z: f32) -> bool {
+    const M: f32 = 7.0;
+    const D: f32 = 4.95; // M * 0.707
+    for (dx, dz) in [
+        (M, 0.0), (-M, 0.0), (0.0, M), (0.0, -M),
+        (D, D), (-D, D), (D, -D), (-D, -D),
+    ] {
+        if tile_biome_world(x + dx, z + dz) == Some(Biome::Rocky) {
+            return true;
+        }
+    }
+    false
+}
+
 fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>, state: &mut BuildState) {
     let lo = -GX;
     let hi = GX; // square covers the whole grid; off-map tiles mask out
@@ -2349,6 +2367,7 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
                 && !crate::ork_fortress::on_gate_approach(x, z)
                 && !(crate::ork_fortress::in_blight_world(x, z) && z > 86.0)
                 && !crate::rival::near_fort(x, z)
+                && !(biome == Biome::Desert && desert_near_rock(x, z))
         },
         &|x, z| tile_top_y_world(x, z),
         // Biome cover classes differ per biome (an index-keyed lean would mis-assign), so the
@@ -2570,12 +2589,24 @@ fn spawn_terrain_sheet(
             let (x1, z1) = ((cx + TERRAIN_CHUNK).min(COLS), (cz + TERRAIN_CHUNK).min(ROWS));
             let mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
             if mesh.count_vertices() > 0 {
+                // Attach the chunk's own AABB up front. The chunk entity carries `Transform::default()`
+                // with its geometry baked in WORLD space, and the LOD `VisibilityRange` measures the
+                // camera→AABB-centre distance. Until Bevy's `calculate_bounds` fills the AABB in, the
+                // range check falls back to the entity *translation* — i.e. the world ORIGIN (castle) —
+                // so a chunk under a player standing far from the castle reads as "far" and gets pinned
+                // to the coarse drape (the "underfoot chunk stuck in low-res" bug), a window that
+                // re-opens on every world/biome rebuild. Baking the real AABB here closes that gap.
+                use bevy::camera::primitives::MeshAabb;
+                let aabb = mesh.compute_aabb();
                 let mut e = commands.spawn((
                     Mesh3d(meshes.add(mesh)),
                     MeshMaterial3d(mat.clone()),
                     Transform::default(),
                     crate::biome::BiomeEntity,
                 ));
+                if let Some(aabb) = aabb {
+                    e.insert(aabb);
+                }
                 // Terrain LOD: past TERRAIN_LOD the full-res chunk (1 quad/tile + walls +
                 // marching-squares banks) hands off to a stride-4 coarse drape — ~1/16th the
                 // vertices for the distant majority of the island. The band is a dithered
@@ -2588,7 +2619,11 @@ fn spawn_terrain_sheet(
                             end_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
                             use_aabb: true,
                         });
-                        commands.spawn((
+                        // Same AABB-up-front fix for the coarse sibling: without it, a missing AABB
+                        // would fall back to the origin and this drape could flip visible near the
+                        // castle / hidden far away — the inverse of the underfoot low-res glitch.
+                        let caabb = coarse.compute_aabb();
+                        let mut ce = commands.spawn((
                             Mesh3d(meshes.add(coarse)),
                             MeshMaterial3d(mat.clone()),
                             Transform::default(),
@@ -2602,6 +2637,9 @@ fn spawn_terrain_sheet(
                                 use_aabb: true,
                             },
                         ));
+                        if let Some(caabb) = caabb {
+                            ce.insert(caabb);
+                        }
                     }
                 }
             }

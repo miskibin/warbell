@@ -829,6 +829,7 @@ fn run_director(
     armory: Option<Res<InvaderArmory>>,
     invaders: Query<Entity, With<WaveInvader>>,
     alive_invaders: Query<(), (With<WaveInvader>, Without<crate::dying::Dying>)>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut commands: Commands,
 ) {
     let now = game.0; // pause-aware clock (NOT elapsed_secs, which ticks through pauses)
@@ -842,6 +843,7 @@ fn run_director(
     // Keep razed → defeat: clear the field and freeze.
     if siege.phase == GamePhase::Wave && keep.hp <= 0.0 {
         siege.phase = GamePhase::Defeat;
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::KeepLost));
         for e in &invaders {
             commands.entity(e).try_despawn();
         }
@@ -1056,7 +1058,11 @@ fn invader_brain(
             KEEP_POS
         };
         let atk_range = if o.shaman { orks::SHAMAN_CAST_RANGE } else { orks::ORK_ATTACK_RANGE };
-        let at_hero = chase_hero && hold_pt.is_none() && o.pos.distance(hero.pos) < atk_range;
+        // In range AND with a clear line — an invader can't club (or bolt) the hero through a wall.
+        let at_hero = chase_hero
+            && hold_pt.is_none()
+            && o.pos.distance(hero.pos) < atk_range
+            && !crate::blockers::wall_between(o.pos.x, o.pos.y, hero.pos.x, hero.pos.y);
         let at_guard = guard_tgt.is_some_and(|(_, gp)| o.pos.distance(gp) < atk_range);
         // Keep damage requires being INSIDE the walls — an ork bunched at the wall ring chops
         // nothing (walls shield the keep; only buildings + the keep itself are attackable).
@@ -1167,6 +1173,15 @@ fn invader_brain(
                     o.moving = s.moving;
                 }
                 None => o.moving = false,
+            }
+            // A ring-holder circles the hero but keeps its EYES on him (menacing surround) rather
+            // than facing down its sidestep — the same fix the camp brain carries (`orks.rs`).
+            if o.holding && chase_hero {
+                let to = hero.pos - o.pos;
+                if to.length_squared() > 1e-4 {
+                    let turn = orks::ORK_MAX_TURN * 2.0 * dt;
+                    o.facing += steer::wrap_pi(to.x.atan2(to.y) - o.facing).clamp(-turn, turn);
+                }
             }
         }
 

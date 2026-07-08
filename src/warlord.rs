@@ -322,6 +322,7 @@ fn warlord_death(
     mut siege: ResMut<Siege>,
     mut notice: ResMut<crate::ui::notice::Notice>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     q: Query<(Entity, &Transform), (With<Warlord>, With<Dying>, Without<WonAlready>)>,
 ) {
     for (e, tf) in &q {
@@ -330,6 +331,9 @@ fn warlord_death(
         siege.phase = GamePhase::Victory; // game_state watches this → AppState::GameOver (VICTORY)
         notice.push("The Warlord is slain — Gnashfang Hold is broken!".to_string(), time.elapsed_secs_f64());
         cues.write(crate::audio::AudioCue::BossRoar(tf.translation + Vec3::Y * 2.4));
+        // The win: hero triumph (head-locked) + the dying horde's wail (spatial, at the corpse).
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::WarlordSlain));
+        speak.write(crate::audio::Speak::at(crate::audio::Concept::OrkRout, tf.translation + Vec3::Y * 2.4));
     }
 }
 

@@ -220,6 +220,7 @@ fn apply_quest_signals(
     mut toasts: ResMut<Toasts>,
     mut notice: ResMut<crate::ui::notice::Notice>,
     mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -229,6 +230,7 @@ fn apply_quest_signals(
         grant_reward(q.reward, &mut player, &mut bank, &mut inv, &mut toasts, now);
         notice.push(format!("Quest complete — {}", q.title), now);
         cues.write(AudioCue::LevelUp);
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::QuestDone));
         if log.0.is_complete() {
             notice.push("Your hold stands. The keep is yours to defend.", now);
         }

@@ -88,7 +88,7 @@ impl Default for Atmospherics {
             cam_pos: Vec3::ZERO,
             // 0.010 (was 0.018 → 0.015 → 0.012): eased again on player feedback — forward
             // visibility kept reading short. The haze should layer the forest, not curtain the view.
-            density: 0.010,
+            density: 0.006, // was 0.010 — 2026-07-08: thinner haze, more forward visibility
             sun_dir: Vec3::Y,
             height_falloff: 0.07,
             fog_color: Vec3::new(0.85, 0.80, 0.66),
@@ -102,8 +102,8 @@ impl Default for Atmospherics {
             noise_strength: 0.40,
             // 24 (was 13): the fog-free bubble around the camera pushed out so nearby props /
             // enemies / the hero himself never sit in haze — the veil starts past melee range.
-            fog_start: 24.0,
-            fog_max: 0.84,
+            fog_start: 48.0, // was 24 — 2026-07-08: haze bubble pushed out, veil starts much farther
+            fog_max: 0.62, // was 0.84 — distant terrain never fully buries, keeps visibility
             fade: 0.0, // starts off; the driver raises it with daylight
             base_height: 0.0,
             _pad: 0.0,

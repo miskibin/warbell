@@ -2796,6 +2796,7 @@ fn fortress_muster(
     towers: Query<&WarTower>,
     mut director: ResMut<crate::cinematic::DirectorState>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut was_wave: Local<bool>,
 ) {
     if towers.is_empty() {
@@ -2813,6 +2814,8 @@ fn fortress_muster(
         let gate3 = Vec3::new(GATE.x, 3.0, GATE.y);
         cues.write(crate::audio::AudioCue::FortressHorn(gate3));
         cues.write(crate::audio::AudioCue::OrkRoar(Vec3::new(GATE.x, 1.5, GATE.y + 4.0)));
+        // The Hold bellows its muster order (spatial, off the gate).
+        speak.write(crate::audio::Speak::at(crate::audio::Concept::FortressMuster, Vec3::new(GATE.x, 1.5, GATE.y + 4.0)));
     }
 }
 
@@ -2892,6 +2895,7 @@ fn breach_gate(
     mut director: ResMut<crate::cinematic::DirectorState>,
     mut notice: ResMut<crate::ui::notice::Notice>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     denizens: Query<(Entity, &Denizen)>,
     mut commands: Commands,
 ) {
@@ -2906,6 +2910,9 @@ fn breach_gate(
     cues.write(crate::audio::AudioCue::FortressHorn(Vec3::new(GATE.x, 3.0, GATE.y)));
     cues.write(crate::audio::AudioCue::OrkRoar(Vec3::new(GATE.x, 1.5, GATE.y + 4.0)));
     notice.push("Gnashfang Hold is breached — kill the Warlord!".to_string(), time.elapsed_secs_f64());
+    // Hero's grim resolve + the garrison's alarm as the gate falls.
+    speak.write(crate::audio::Speak::new(crate::audio::Concept::GateBreached));
+    speak.write(crate::audio::Speak::at(crate::audio::Concept::OrkBreachAlarm, Vec3::new(GATE.x, 1.5, GATE.y + 4.0)));
     // Convert the decorative population into real combatants.
     let armory = &patrols.armory;
     let hero_level = player.0.level;

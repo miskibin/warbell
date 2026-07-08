@@ -425,6 +425,7 @@ fn population_system(
     rallied: Query<(), With<crate::villagers::Rallied>>,
     mut town: ResMut<TownRes>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
 ) {
     // Growing a new peasant is a daytime thing: while the night wave is on, the food→population
     // flow pauses entirely — losses to the horde can't be replaced until dawn.
@@ -449,6 +450,7 @@ fn population_system(
                 color: Color::srgb(0.55, 1.0, 0.6),
                 scale: 1.25,
             });
+            speak.write(crate::audio::Speak::at(crate::audio::Concept::VillagerBorn, Vec3::new(0.0, 2.0, 5.0)));
         }
         PopEvent::Starved => {
             floats.0.push(crate::combat_fx::FloatReq {
@@ -1356,6 +1358,7 @@ fn build_place(
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut built: MessageWriter<PlayerBuilt>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     existing: Query<(Entity, &BuildingMesh)>,
@@ -1386,6 +1389,8 @@ fn build_place(
                 spawn_building(&mut commands, &mut meshes, &mats.0, idx, k, &spots);
                 cues.write(crate::audio::AudioCue::UiSelect);
                 built.write(PlayerBuilt(Some(k)));
+                let at = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
+                speak.write(crate::audio::Speak::at(crate::audio::Concept::BuildRaised, Vec3::new(at.x, 2.0, at.y)));
             } else {
                 let at = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
                 push_cant_afford(&mut floats, k.cost(), &bank.0, k.label(), at);
@@ -1397,6 +1402,7 @@ fn build_place(
                 let y = crate::worldmap::ground_at_world(site.x, site.y).unwrap_or(0.0);
                 cues.write(crate::audio::AudioCue::UiSelect);
                 built.write(PlayerBuilt(None));
+                speak.write(crate::audio::Speak::at(crate::audio::Concept::BuildRaised, Vec3::new(site.x, y + 1.0, site.y)));
                 floats.0.push(FloatReq {
                     world: Vec3::new(site.x, y + 3.0, site.y),
                     text: format!("\u{1f3e0} House raised \u{2014} beds for {POP_PER_HOUSE} more"),

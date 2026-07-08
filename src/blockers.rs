@@ -205,9 +205,86 @@ pub fn is_blocked(wx: f32, wz: f32) -> bool {
     false
 }
 
+/// True if `(wx, wz)` lies inside any solid **box** obstacle (walls / towers / buildings / camp
+/// structures) — the circle obstacles (tree trunks, clutter) are ignored. Backs [`wall_between`].
+fn box_at(wx: f32, wz: f32) -> bool {
+    let buckets = BOX_BUCKETS.read().unwrap();
+    let (tx, tz) = tile(wx, wz);
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            if let Some(bucket) = buckets.get(&(tx + dx, tz + dz)) {
+                for b in bucket {
+                    let (ex, ez) = (wx - b[0], wz - b[1]);
+                    let (cos, sin) = (b[4], b[5]);
+                    let lx = cos * ex - sin * ez;
+                    let lz = sin * ex + cos * ez;
+                    if lx.abs() <= b[2] && lz.abs() <= b[3] {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// True if a solid **box** obstacle — a wall, tower, building or camp structure — sits on the
+/// straight line between `(ax, az)` and `(bx, bz)`: a melee/attack **line-of-sight** test. Combat
+/// (hero swings, ork clubs, shaman/predator strikes) calls this so a blow can't land *through* a
+/// wall — the movement layer already stops bodies clipping walls, but attack targeting was pure
+/// distance and ignored them (orks clubbing the hero across a wall, and vice-versa).
+///
+/// Circles (tree trunks, ground clutter) are deliberately NOT tested — you can fight across a
+/// sapling. Open gates register no box (the gate swing removes it, see [`remove_box_near`]), so
+/// LOS threads a gate exactly like A* does. Samples box occupancy every ~0.25u along the segment —
+/// finer than the thinnest registered wall (≥0.8u across) — so no wall is stepped over. The two
+/// endpoints are skipped: an attacker or victim standing flush against a wall must still fight
+/// along it rather than block itself.
+pub fn wall_between(ax: f32, az: f32, bx: f32, bz: f32) -> bool {
+    let (dx, dz) = (bx - ax, bz - az);
+    let len = (dx * dx + dz * dz).sqrt();
+    if len < 1e-3 {
+        return false;
+    }
+    const STEP: f32 = 0.25;
+    let n = (len / STEP).ceil().max(1.0) as i32;
+    for i in 1..n {
+        let t = i as f32 / n as f32;
+        if box_at(ax + dx * t, az + dz * t) {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// The blocker store is a set of process-global statics, so tests that `reset()`/`add_box`
+    /// must not run concurrently or they clobber each other's fixtures. Serialize them on one lock.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// A wall between attacker and target blocks the attack line-of-sight ([`wall_between`]),
+    /// while a clear diagonal past the wall's end does not, and endpoints flush against the wall
+    /// don't self-block. Guards the "orks club you through the wall" fix.
+    #[test]
+    fn wall_between_blocks_los_but_not_open_paths() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset();
+        // A thin wall spanning x∈[-2,2], centred on the z-axis at z=0 (0.4u thick across).
+        add_box(0.0, 0.0, 2.0, 0.2);
+        // Attacker south of the wall, target north of it, on the same x — line crosses the wall.
+        assert!(wall_between(0.0, -1.5, 0.0, 1.5), "a wall on the line must block LOS");
+        // Both on the same (south) side, no wall between — clear.
+        assert!(!wall_between(-1.0, -1.5, 1.0, -1.5), "same-side attack must be clear");
+        // Past the wall's end (x>2), the line misses the box — clear.
+        assert!(!wall_between(3.0, -1.5, 3.0, 1.5), "a line past the wall end is clear");
+        // Flush endpoints: standing on the wall face isn't a self-block for a short reach along it.
+        assert!(!wall_between(-1.0, 0.25, -1.0, 0.6), "endpoints at the wall don't self-block");
+        reset();
+    }
 
     /// A blocker raised on top of a stationary hero (a build-mode producer building, or a
     /// War-Table wall/tower/ballista) can leave his CENTRE in the "penetration shell": outside the
@@ -217,6 +294,7 @@ mod tests {
     /// TRUE. Guards the "stuck inside a just-built structure" fix.
     #[test]
     fn penetration_shell_reads_overlapping_but_not_inside() {
+        let _g = TEST_LOCK.lock().unwrap();
         const PLAYER_R: f32 = 0.22; // mirror player::movement::PLAYER_R
         reset();
         // A box spanning x∈[-1,1], z∈[-1,1] centred at the origin.

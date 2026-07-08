@@ -240,7 +240,9 @@ const HUT_BONE: u32 = 0xd8cfb8; // charms + the yard skull
 const HUT_POT: u32 = 0x232326; // cauldron iron
 const HUT_SHROOM: u32 = 0x9a4a68; // bog-violet toadstools
 const HUT_SMOKE: u32 = 0x9a978e;
-const WITCH_GREEN: Color = Color::srgb(0.49, 1.0, 0.6);
+// 2026-07-08: desaturated off neon (was srgb 0.49,1.0,0.6) — a sickly witchlight reads mature; a
+// pure fluorescent green read cartoonish/toylike.
+const WITCH_GREEN: Color = Color::srgb(0.44, 0.7, 0.46);
 
 /// Cauldron yard spot (model-local) — the wisps orbit above it.
 const CAULDRON: Vec3 = Vec3::new(1.75, 0.0, 1.3);
@@ -383,13 +385,13 @@ pub fn witch_hut() -> LandmarkModel {
         win(0.3, 0.3),
         Transform::from_xyz(-0.55, 2.3, 0.71).with_rotation(Quat::from_rotation_z(0.05)),
         Fx::None,
-        Glow { color: WITCH_GREEN, strength: 5.0, pulse: Some((0.7, 0.35, 0.0)) },
+        Glow { color: WITCH_GREEN, strength: 2.8, pulse: Some((0.7, 0.35, 0.0)) },
     ));
     anim.push(AnimPart::glowing(
         win(0.26, 0.34),
         Transform::from_xyz(-1.06, 2.2, -0.25).with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
         Fx::None,
-        Glow { color: WITCH_GREEN, strength: 5.0, pulse: Some((0.55, 0.35, 1.9)) },
+        Glow { color: WITCH_GREEN, strength: 2.8, pulse: Some((0.55, 0.35, 1.9)) },
     ));
 
     // The brew surface — a glowing disc riding just under the cauldron rim.
@@ -397,7 +399,7 @@ pub fn witch_hut() -> LandmarkModel {
         flat_shaded(tinted(Cylinder::new(0.31, 0.05).mesh().resolution(10).build(), lin(0xffffff))),
         Transform::from_translation(CAULDRON + yv(0.94)),
         Fx::None,
-        Glow { color: WITCH_GREEN, strength: 7.0, pulse: Some((1.6, 0.3, 0.7)) },
+        Glow { color: WITCH_GREEN, strength: 3.6, pulse: Some((1.6, 0.3, 0.7)) },
     ));
     // Three wisps circling above the brew.
     for (i, &(r, h, rate)) in [(0.3_f32, 1.15_f32, 1.1_f32), (0.42, 1.4, -0.8), (0.24, 1.65, 1.5)].iter().enumerate() {
@@ -411,7 +413,7 @@ pub fn witch_hut() -> LandmarkModel {
                 bob_freq: 1.3 + i as f32 * 0.5,
                 phase: i as f32 * 2.1,
             },
-            Glow { color: Color::srgb(0.62, 1.0, 0.69), strength: 8.0, pulse: None },
+            Glow { color: Color::srgb(0.5, 0.74, 0.52), strength: 3.4, pulse: None },
         ));
     }
 
@@ -550,7 +552,7 @@ pub fn frozen_spire() -> LandmarkModel {
         flat_shaded(tinted(ico(0.3, 0), lin(0xffffff))),
         Transform::from_xyz(0.38, 2.35, 0.52),
         Fx::None,
-        Glow { color: Color::srgb(0.35, 0.9, 1.0), strength: 9.0, pulse: Some((0.8, 0.4, 0.0)) },
+        Glow { color: Color::srgb(0.46, 0.72, 0.85), strength: 4.5, pulse: Some((0.8, 0.4, 0.0)) },
     ));
 
     // Six levitating splinters in interleaved orbits — the spire's quiet gravity.
@@ -567,7 +569,7 @@ pub fn frozen_spire() -> LandmarkModel {
             )),
             Transform::from_xyz(r, h, 0.0),
             Fx::Orbit { centre: yv(h), rate, bob_amp: 0.14, bob_freq: 0.5 + fi * 0.11, phase: fi * 1.05 },
-            Glow { color: Color::srgb(0.62, 0.86, 1.0), strength: 2.4, pulse: None },
+            Glow { color: Color::srgb(0.58, 0.72, 0.82), strength: 1.4, pulse: None },
         ));
     }
 
@@ -742,7 +744,7 @@ pub fn sunken_pyramid() -> LandmarkModel {
         flat_shaded(merged(disc)),
         Transform::from_xyz(0.0, 5.15, 0.0),
         Fx::Hover { bob_amp: 0.12, bob_freq: 0.55, spin_rate: 0.65, phase: 0.0 },
-        Glow { color: SUN_GOLD, strength: 5.0, pulse: Some((0.9, 0.22, 0.0)) },
+        Glow { color: SUN_GOLD, strength: 3.2, pulse: Some((0.9, 0.22, 0.0)) },
     ));
 
     // Gold glyph strips flanking the stair on the bottom tier, smouldering out of phase.
@@ -756,7 +758,7 @@ pub fn sunken_pyramid() -> LandmarkModel {
             flat_shaded(glyphs),
             Transform::from_xyz(x, 0.28, 2.36),
             Fx::None,
-            Glow { color: SUN_GOLD, strength: 2.6, pulse: Some((0.5, 0.4, i as f32 * 2.4)) },
+            Glow { color: SUN_GOLD, strength: 1.8, pulse: Some((0.5, 0.4, i as f32 * 2.4)) },
         ));
     }
 
@@ -941,7 +943,7 @@ pub fn standing_stones() -> LandmarkModel {
             Transform::from_xyz(x, h * 0.22, z)
                 .with_rotation(Quat::from_rotation_y(yaw) * Quat::from_rotation_z(lean)),
             Fx::None,
-            Glow { color: RUNE_AMBER, strength: 3.4, pulse: Some((0.55, 0.4, i as f32 * 1.05)) },
+            Glow { color: RUNE_AMBER, strength: 2.4, pulse: Some((0.55, 0.4, i as f32 * 1.05)) },
         ));
     }
 
@@ -963,7 +965,7 @@ pub fn standing_stones() -> LandmarkModel {
         seams,
         Transform::from_xyz(0.0, 2.3, 0.0),
         Fx::Hover { bob_amp: 0.15, bob_freq: 0.45, spin_rate: 0.3, phase: 0.0 },
-        Glow { color: RUNE_AMBER, strength: 6.0, pulse: Some((0.7, 0.35, 0.5)) },
+        Glow { color: RUNE_AMBER, strength: 3.6, pulse: Some((0.7, 0.35, 0.5)) },
     ));
 
     LandmarkModel { base, parts: anim }

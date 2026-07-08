@@ -599,12 +599,16 @@ fn tree_interact(
     mut eco: ResMut<EconomyState>,
     mut keep: ResMut<KeepHp>,
     mut acts: MessageReader<FocusActivate>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     buttons: Query<(Entity, &Interaction, &TreeNodeButton)>,
 ) {
     let activated: Vec<Entity> = acts.read().map(|a| a.0).collect();
     for (e, interaction, btn) in &buttons {
         if *interaction == Interaction::Pressed || activated.contains(&e) {
-            try_purchase(btn.0, &mut up, &mut player, &mut bank, &mut def, &mut eco, &mut keep);
+            // Only speak on a committed purchase (try_purchase returns false if unaffordable/owned).
+            if try_purchase(btn.0, &mut up, &mut player, &mut bank, &mut def, &mut eco, &mut keep) {
+                speak.write(crate::audio::Speak::new(crate::audio::Concept::UpgradeBought));
+            }
             break;
         }
     }

@@ -825,6 +825,10 @@ pub fn player_attack(
         if dir.dot(fwd) < ATTACK_CONE_DOT {
             continue;
         }
+        // Can't swing through a wall — LOS-gate the hit (walls/buildings only; foliage is fine).
+        if crate::blockers::wall_between(origin.x, origin.y, p.x, p.z) {
+            continue;
+        }
         struck.push(Vec2::new(p.x, p.z));
         hit_ents.push(e);
         hp.hp -= dmg;

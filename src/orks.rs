@@ -504,6 +504,16 @@ fn ork_brain(
                     }
                     None => o.moving = false,
                 }
+                // A ring-holder circles the hero but keeps its EYES on him (menacing surround) —
+                // `advance` just aimed its facing down the sidestep, which read as the ork turning
+                // its back and swinging at air. Override to look at the hero while it prowls.
+                if o.holding {
+                    let to = hero.pos - o.pos;
+                    if to.length_squared() > 1e-4 {
+                        let turn = ORK_MAX_TURN * 2.0 * dt;
+                        o.facing += steer::wrap_pi(to.x.atan2(to.y) - o.facing).clamp(-turn, turn);
+                    }
+                }
             }
             OrkMode::Attack => {
                 // Stand, turn to face the hero, club him on each cooldown.
@@ -514,8 +524,12 @@ fn ork_brain(
                     let turn = (ORK_MAX_TURN * 2.0 * dt).abs();
                     o.facing += steer::wrap_pi(want - o.facing).clamp(-turn, turn);
                 }
-                // Strike the HERO only (a rival brawl is resolved by `ork_brawl`).
-                if o.brawl_target.is_none() && o.atk_cd <= 0.0 {
+                // Strike the HERO only (a rival brawl is resolved by `ork_brawl`) — but not
+                // through a wall (LOS-gate both the club and the shaman bolt cast).
+                if o.brawl_target.is_none()
+                    && o.atk_cd <= 0.0
+                    && !crate::blockers::wall_between(o.pos.x, o.pos.y, hero.pos.x, hero.pos.y)
+                {
                     // Frontier-graded blow: a deep-biome warband hits ~1.6× as hard as one near
                     // the castle (pairs with its distance-scaled HP from `ensure_combat_health`).
                     let (_, dmg_mul) = crate::verbs::frontier_threat(o.pos.x, o.pos.y);

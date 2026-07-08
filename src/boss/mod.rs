@@ -705,6 +705,7 @@ fn reward_on_death(
     mut pending: ResMut<PendingReward>,
     mut next_modal: ResMut<NextState<Modal>>,
     mut notice: ResMut<Notice>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     q: Query<(Entity, &Boss), (With<Dying>, Without<Rewarded>)>,
 ) {
     for (e, b) in &q {
@@ -720,6 +721,7 @@ fn reward_on_death(
         let (boon_name, boon_desc) = boon_for(b.biome);
         pending.0 = Some(RewardInfo { boss_name: models::name(b.biome), boon_name, boon_desc });
         notice.push(format!("{} is slain!", models::name(b.biome)), time.elapsed_secs_f64());
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::WardenSlain));
         next_modal.set(Modal::BossReward);
     }
 }

@@ -517,7 +517,8 @@ fn discover(
         }
         cues.write(AudioCue::ChestOpen);
         cues.write(AudioCue::Gold);
-        speak.write(crate::audio::Speak::new(crate::audio::Concept::ChestOpen));
+        // Dedicated discovery bark (was borrowing the generic "Ooh, a chest" ChestOpen line).
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::LandmarkFound));
 
         // The beacon is NOT snuffed on discovery any more — `sync_beacons` keeps it lit as a
         // "boost ready" marker (sealed-gear trial / off-cooldown shrine) and only hides it while
@@ -673,6 +674,7 @@ fn start_rune_trial(
     mut trial: ResMut<RuneTrial>,
     mut floats: ResMut<FloatQueue>,
     mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     q: Query<(&Landmark, &Transform)>,
 ) {
     let now = time.elapsed_secs();
@@ -708,6 +710,7 @@ fn start_rune_trial(
             scale: 1.3,
         });
         cues.write(AudioCue::ChestOpen);
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::RuneTrialStart));
     }
 }
 
@@ -807,7 +810,8 @@ fn drive_rune_trial(
                         scale: 1.4,
                     });
                     cues.write(AudioCue::LevelUp);
-                    speak.write(crate::audio::Speak::new(crate::audio::Concept::ChestOpen));
+                    // Dedicated trial-won bark (was borrowing the generic ChestOpen line).
+                    speak.write(crate::audio::Speak::new(crate::audio::Concept::RuneTrialWon));
                 }
             }
 

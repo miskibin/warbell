@@ -28,8 +28,8 @@ use crate::water::WaterMaterial;
 
 /// Distance fog: clear within this many tiles of the camera, ramping to full by [`FOG_FULL`].
 /// Pushed out ×1.4 with the enlarged island so view distance keeps pace.
-const FOG_CLEAR: f32 = 68.0; // was 85 → 57 — eased back out (near objects should read clear)
-const FOG_FULL: f32 = 145.0; // was 190 → 127 — eased back out with the 2026-07 visibility pass
+const FOG_CLEAR: f32 = 100.0; // was 68 — 2026-07-08 visibility pass: fog stays clear much farther out
+const FOG_FULL: f32 = 215.0; // was 145 — lighter, reaches horizon later
 
 /// Scatter density multipliers — the original TS game was denser. `SCATTER_DENSITY`
 /// scales every main-class per-tile chance; `COVER_DENSITY` scales the ground-cover

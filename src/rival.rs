@@ -1514,6 +1514,7 @@ fn rival_fort_damage(
     mut notice: ResMut<crate::ui::notice::Notice>,
     mut rewards: ResMut<crate::orbs::RewardBursts>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     keep: Query<(), With<RivalKeep>>,
     parts: Query<Entity, Or<(With<RivalEntity>, With<RivalSoldier>, With<RivalWorker>)>>,
 ) {
@@ -1563,6 +1564,10 @@ fn rival_fort_damage(
             xp: 300,
         });
         notice.push("The rival stronghold has fallen — the raids cease.", time.elapsed_secs_f64());
+        // Hero's relief (head-locked) + the garrison's dying lament (spatial, over the ruin).
+        let cry = Vec3::new(RIVAL_CENTRE.x, gy + 1.0, RIVAL_CENTRE.y);
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::RivalFell));
+        speak.write(crate::audio::Speak::at(crate::audio::Concept::RivalLament, cry));
     }
 }
 

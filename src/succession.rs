@@ -161,6 +161,7 @@ fn drive_succession(
     mut commands: Commands,
     mut fell: MessageWriter<crate::succession_fx::HeirFell>,
     mut rose: MessageWriter<crate::succession_fx::HeirRose>,
+    mut speak: MessageWriter<crate::audio::Speak>,
 ) {
     // ── Start a beat the frame the hero falls (skip if we're already defeated → GameOver pending) ──
     if !succ.active {
@@ -276,6 +277,8 @@ fn drive_succession(
         }
         // Flash of light at the rise: the peasant becomes the knight.
         rose.write(crate::succession_fx::HeirRose { at: succ.steal_pos });
+        // The new knight takes up the watch (head-locked — the risen heir IS the hero now).
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::HeirRose));
     }
 
     if t >= RESUME_END {

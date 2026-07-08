@@ -123,6 +123,48 @@ pub enum Concept {
     //    (emitted by `boss::boss_proximity`). ──
     WardenSighted,
     NearWarden(Biome),
+    // ── New-mechanic / new-place beats (2026-07 coverage pass). These react to milestones the
+    //    original catalog predated — the fortress assault, the endgame, world-bosses, the rival,
+    //    rune-trials, succession, economy/quest steps. Combat/victory beats are NOT in `is_peaceful`
+    //    (they must survive the fight they cap); the calm economy/discovery beats ARE. ──
+    /// The Warlord is slain — Gnashfang Hold broken, the run is won (`warlord.rs`). Hero triumph.
+    WarlordSlain,
+    /// The dying horde despairs as the Warlord falls (`warlord.rs`). Ork — its own concept (not
+    /// pooled with `WarlordSlain`) so BOTH the hero cheer and the ork wail fire, per the
+    /// `NightWarning`/`SiegeFalls` split-speaker precedent.
+    OrkRout,
+    /// The Hold's gate is breached — the garrison + Warlord wake (`ork_fortress.rs`). Hero resolve.
+    GateBreached,
+    /// The garrison's alarm as the gate falls (`ork_fortress.rs`). Ork (split from `GateBreached`).
+    OrkBreachAlarm,
+    /// The fortress throws its gate open and musters for the night assault (`ork_fortress.rs`). Ork.
+    FortressMuster,
+    /// A biome Warden (world boss) is slain and its boon claimed (`boss/mod.rs`). Hero.
+    WardenSlain,
+    /// The rival desert stronghold is destroyed — the raids cease (`rival.rs`). Hero.
+    RivalFell,
+    /// The rival garrison's lament as their stronghold falls (`rival.rs`). Rival (split from
+    /// `RivalFell`).
+    RivalLament,
+    /// A "Hold the Rune" trial is begun at a landmark shrine (`landmarks.rs`). Hero.
+    RuneTrialStart,
+    /// A rune-trial is completed — sealed landmark gear granted (`landmarks.rs`). Hero.
+    RuneTrialWon,
+    /// A named landmark is discovered for the first time (`landmarks.rs`). Hero. (Replaces the
+    /// borrowed `ChestOpen` bark discovery used to reuse.)
+    LandmarkFound,
+    /// An heir takes up the fallen knight's watch — succession (`succession.rs`). Hero (the new one).
+    HeirRose,
+    /// A War Table upgrade is purchased. Hero.
+    UpgradeBought,
+    /// A town building goes up (`town.rs` `PlayerBuilt`). Villager cheer + hero note.
+    BuildRaised,
+    /// A quest-chain step completes (`quest.rs`). Hero.
+    QuestDone,
+    /// The town's numbers grow — a new villager is born (`town.rs`). Villager.
+    VillagerBorn,
+    /// The keep falls — defeat (`siege.rs`). Hero's last word.
+    KeepLost,
 }
 
 /// PEACEFUL concepts — ambient/exploration/economy lines that must fall silent the moment the hero
@@ -142,6 +184,10 @@ pub fn is_peaceful(c: Concept) -> bool {
             | AdviseBell | PrepNudge | PopLost | TownThriving
             | GoldRich | Broke | LevelUp | Equip | ChestOpen | ShrineHeal | FirstStone | Home
             | RivalIdle
+            // New calm beats — discovery/economy chatter that should fall silent in a fight. The
+            // combat/victory beats (WarlordSlain, GateBreached, WardenSlain, RivalFell, HeirRose,
+            // KeepLost, FortressMuster, RuneTrial*) are deliberately ABSENT — they must cut through.
+            | LandmarkFound | UpgradeBought | BuildRaised | QuestDone | VillagerBorn
     )
 }
 
@@ -233,11 +279,18 @@ pub const LINES: &[Line] = &[
     Line { priority: 25, ..line("standdown_ease",   Speaker::Hero, Concept::MusterStandDown, "That'll do. Ease off.") },
     Line { priority: 25, ..line("standdown_hold",   Speaker::Hero, Concept::MusterStandDown, "Hold here. Rest while you can.") },
     // ── Hero biome musings (once per biome per run via `once`) ──
-    Line { once: true, ..line("forest", Speaker::Hero, Concept::BiomeEntered(Biome::Forest), "Oh, a forest. Looks like good hunting. Might find some apples, too. Huh. Prisoners. Maybe I can help them.") },
-    Line { once: true, ..line("snow",   Speaker::Hero, Concept::BiomeEntered(Biome::Snow),   "Brr, freezing up here. Bet there's beasts to hunt. Maybe loot in the ice. Someone's locked in that cage. Should I free them?") },
-    Line { once: true, ..line("rock",   Speaker::Hero, Concept::BiomeEntered(Biome::Rocky),  "All this rock. That's a lot of ore. I could mine some. The walls could use the stone.") },
-    Line { once: true, ..line("desert", Speaker::Hero, Concept::BiomeEntered(Biome::Desert), "Desert. Great. It's hot. Something worth hunting out here, I bet. Are those captives? I could get them out.") },
-    Line { once: true, ..line("swamp",  Speaker::Hero, Concept::BiomeEntered(Biome::Swamp),  "Ugh, the marsh. Slow going. Oh, herbs. Those patch me up. And the poison stings less. Shouldn't stay long, though.") },
+    // REWORKED 2026-07 (was stale): the old versions all presumed a prisoner cage sat in every
+    // biome ("Huh, prisoners", "someone's locked in that cage", "are those captives?") — but cages
+    // spawn at scattered ork camps, not per-biome, so the line lied on most entries. They also ran
+    // long and got clipped at read_secs' 8s cap. These are shorter, cage-free, and the desert now
+    // nods the rival stronghold that lives there. NB: the .ogg clips must be RE-RECORDED to match —
+    // until then the old audio plays under the new subtitle (desync). Re-cut ids: forest/snow/rock/
+    // desert/swamp.
+    Line { once: true, ..line("forest", Speaker::Hero, Concept::BiomeEntered(Biome::Forest), "A forest. Good hunting here — apples too, if the birds left me any.") },
+    Line { once: true, ..line("snow",   Speaker::Hero, Concept::BiomeEntered(Biome::Snow),   "Freezing up here. Beasts to hunt, and there's loot buried in the ice — if the cold don't take me first.") },
+    Line { once: true, ..line("rock",   Speaker::Hero, Concept::BiomeEntered(Biome::Rocky),  "All this rock. A lot of ore in it. The keep walls could drink every ton I dig.") },
+    Line { once: true, ..line("desert", Speaker::Hero, Concept::BiomeEntered(Biome::Desert), "Desert. Hot as a forge. And that's the rival's banner on the dunes — I'm not welcome out here.") },
+    Line { once: true, ..line("swamp",  Speaker::Hero, Concept::BiomeEntered(Biome::Swamp),  "Ugh, the marsh. Slow going — but the healing herbs grow thick here. Worth the stink.") },
     // ── Hero observational remarks ──
     // Trigger: NearTown — hero near townsfolk (folded from people/name/well/townday/laugh/market/woodpile/grumble lines)
     Line { floor: 300.0, priority: 5, ..line("people_a",   Speaker::Hero, Concept::NearTown, "These people. Loud, stubborn, alive. That's the whole point of all this, isn't it.") },
@@ -283,11 +336,11 @@ pub const LINES: &[Line] = &[
     Line { floor: 300.0, priority: 5, ..line("kill_a",     Speaker::Hero, Concept::KillMusing, "One more for the pile. I stopped counting around the second winter.") },
     Line { floor: 300.0, priority: 5, ..line("kill_b",     Speaker::Hero, Concept::KillMusing, "Down. There's always another behind it. Always is.") },
     // ── Hero intro lines (once per run — the tutorial in the hero's own voice) ──
-    // Heads-up: these run ~14–17s but read_secs clamps the mouth-busy estimate at 8s, so a
-    // higher-priority hero line arriving after ~8s can cut an intro short (rare: priority 3, once,
-    // at run start).
-    Line { once: true, priority: 3, ..line("intro_a", Speaker::Hero, Concept::Intro, "Daylight's short — open the chests, gather coin and stone, buy what'll keep you breathing. When dark comes, the orks come for the keep. We hold it.") },
-    Line { once: true, priority: 3, ..line("intro_b", Speaker::Hero, Concept::Intro, "By day you scavenge — chests, ore, gold — and arm up at the War Table. By night the horde hits these walls. Keep the keep standing. Don't waste the light.") },
+    // TIGHTENED 2026-07: the old versions ran ~14–17s but read_secs clamps mouth-busy at 8s, so the
+    // back half was silently dropped mid-sentence. These are cut to land inside ~8s. RE-RECORD the
+    // intro_a/intro_b clips to match (else new subtitle over old, longer audio).
+    Line { once: true, priority: 3, ..line("intro_a", Speaker::Hero, Concept::Intro, "Daylight's short. Loot the chests, gather coin and stone, arm up. When dark falls, the orks come for the keep — and we hold it.") },
+    Line { once: true, priority: 3, ..line("intro_b", Speaker::Hero, Concept::Intro, "By day you scavenge and arm at the War Table. By night the horde hits these walls. Keep the keep standing.") },
     // ── Villager ambient chatter (nearest working townsperson, when the hero lingers) ──
     // One villager voice globally at a time (director enforces this); accepted simplification vs. the
     // old one-per-cluster model. floor:360 keeps the ~7-min rotation cycling without going silent.
@@ -463,6 +516,64 @@ pub const LINES: &[Line] = &[
     Line { floor: 600.0, ..line("warden_rock",   Speaker::Hero, Concept::NearWarden(Biome::Rocky),  "A mountain that walks. Break it, and maybe I'd learn to bring the mountain down myself.") },
     Line { floor: 600.0, ..line("warden_desert", Speaker::Hero, Concept::NearWarden(Biome::Desert), "That dead thing moves like the wind off the dunes. Put it down, and perhaps I would too.") },
     Line { floor: 600.0, ..line("warden_swamp",  Speaker::Hero, Concept::NearWarden(Biome::Swamp),  "The bog-hag's brewed every poison there is. Best her, and I'd turn that venom loose on the horde.") },
+    // ── New-mechanic / new-place beats (2026-07). Clips at `audio/vo/<dir>/<id>.ogg` still need
+    //    RECORDING — until the .ogg exists the director no-ops the line (no audio AND no subtitle,
+    //    since `play_line` gates the caption on the loaded asset). Transcripts here are the record to
+    //    record from (hero = laconic veteran; ork = broken guttural; rival = proud mercenary;
+    //    villager = dry). Priorities put the marquee wins/alarms in the urgent tier so they cut the
+    //    hero window; the quiet economy beats sit low and wait it out. ──
+    // Warlord slain — THE win. Priority 30 (nightfall tier) so nothing buries it; once per run.
+    Line { once: true, priority: 30, ..line("warlord_slain_a", Speaker::Hero, Concept::WarlordSlain, "The Warlord's down. Gnashfang Hold is broken. ...It's over. It's finally over.") },
+    Line { once: true, priority: 30, ..line("warlord_slain_b", Speaker::Hero, Concept::WarlordSlain, "Their great beast lies still. No more horns. No more nights. We're done.") },
+    // The dying horde despairs (ork, spatial — emit at the Warlord's position).
+    Line { priority: 15, ..line("ork_warlord_a", Speaker::Ork, Concept::OrkRout, "Warlord... falls. The horde... scatters.") },
+    Line { priority: 15, ..line("ork_warlord_b", Speaker::Ork, Concept::OrkRout, "No. No! Who leads us now...") },
+    // Hold gate breached. Priority 25 (keep-hurt tier), once per run.
+    Line { once: true, priority: 25, ..line("breach_hero_a", Speaker::Hero, Concept::GateBreached, "The gate's down. Nothing between me and the Warlord now. Good.") },
+    Line { once: true, priority: 25, ..line("breach_hero_b", Speaker::Hero, Concept::GateBreached, "Gnashfang's open. Whatever's in there, it's mine to end.") },
+    Line { priority: 15, ..line("breach_ork_a",  Speaker::Ork, Concept::OrkBreachAlarm, "Man inside the walls! Wake! Wake!") },
+    Line { priority: 15, ..line("breach_ork_b",  Speaker::Ork, Concept::OrkBreachAlarm, "Gate broke! Kill it — kill it now!") },
+    // Fortress musters for the night assault (ork, spatial — the gate/horn). Floored like raid-march.
+    Line { priority: 12, floor: 30.0, ..line("fort_muster_a", Speaker::Ork, Concept::FortressMuster, "Open the gate! To the keep, to the keep!") },
+    Line { priority: 12, floor: 30.0, ..line("fort_muster_b", Speaker::Ork, Concept::FortressMuster, "Gnashfang marches! Blood tonight!") },
+    Line { priority: 12, floor: 30.0, ..line("fort_muster_c", Speaker::Ork, Concept::FortressMuster, "Horns up! The knight's walls fall tonight!") },
+    // World-boss slain + boon (hero). Not once — up to five wardens; floor 600 spaces them.
+    Line { priority: 20, floor: 600.0, ..line("warden_slain_a", Speaker::Hero, Concept::WardenSlain, "The beast is dead. I can feel its strength settling into my arm. Worth the scars.") },
+    Line { priority: 20, floor: 600.0, ..line("warden_slain_b", Speaker::Hero, Concept::WardenSlain, "Down. Whatever it was guarding, it's mine now — and I'm the stronger for it.") },
+    // Rival stronghold destroyed (hero win + rival lament, spatial for the rival).
+    Line { once: true, priority: 20, ..line("rival_fell_hero_a", Speaker::Hero, Concept::RivalFell, "The rival's keep is ash. No more raids from the dunes. One less war to fight.") },
+    Line { once: true, priority: 20, ..line("rival_fell_hero_b", Speaker::Hero, Concept::RivalFell, "The Pasha's men won't trouble us again. Their sand-castle's rubble.") },
+    Line { priority: 15, ..line("rival_fell_a", Speaker::Rival, Concept::RivalLament, "The stronghold... falls. The Pasha will not forgive this.") },
+    Line { priority: 15, ..line("rival_fell_b", Speaker::Rival, Concept::RivalLament, "Our walls, our gold — all sand now. Curse you, northerner.") },
+    // Rune-trial begun (hero). Priority 15 (urgent tier) so the "here we go" lands; floored.
+    Line { priority: 15, floor: 120.0, ..line("trial_start_a", Speaker::Hero, Concept::RuneTrialStart, "The rune wakes. Hold it, the old stories say, and it yields its gift. Let's see.") },
+    Line { priority: 15, floor: 120.0, ..line("trial_start_b", Speaker::Hero, Concept::RuneTrialStart, "Guardians of the stone. Beat them, keep the rune. Simple enough.") },
+    // Rune-trial won — sealed gear (hero).
+    Line { priority: 20, floor: 120.0, ..line("trial_won_a", Speaker::Hero, Concept::RuneTrialWon, "The rune's mine. Sealed gear, forged for no living hand. It'll do.") },
+    Line { priority: 20, floor: 120.0, ..line("trial_won_b", Speaker::Hero, Concept::RuneTrialWon, "Trial's done. This is no smith's work — it hums in my grip.") },
+    // Landmark discovered (hero). Priority 12 so it clears idle chatter; floor 30 across the five.
+    Line { priority: 12, floor: 30.0, ..line("landmark_a", Speaker::Hero, Concept::LandmarkFound, "Now there's a thing. Someone raised this long before me.") },
+    Line { priority: 12, floor: 30.0, ..line("landmark_b", Speaker::Hero, Concept::LandmarkFound, "Old stones, old bones. This island keeps its secrets close.") },
+    Line { priority: 12, floor: 30.0, ..line("landmark_c", Speaker::Hero, Concept::LandmarkFound, "I'll mark this on the map. Might matter later.") },
+    // Heir rises (the new knight, mid-siege). Priority 30 so it cuts the fight; floored, not once.
+    Line { priority: 30, floor: 30.0, ..line("heir_rose_a", Speaker::Hero, Concept::HeirRose, "The knight is fallen. ...I have the watch now. The keep still stands.") },
+    Line { priority: 30, floor: 30.0, ..line("heir_rose_b", Speaker::Hero, Concept::HeirRose, "Take up the blade. Someone always must. Tonight, it's me.") },
+    // War Table upgrade purchased (hero, dry). Low musing tier, waits out the window; floored.
+    Line { priority: 8, floor: 45.0, ..line("upgrade_a", Speaker::Hero, Concept::UpgradeBought, "War Table's earned its keep. Let's see them laugh at this.") },
+    Line { priority: 8, floor: 45.0, ..line("upgrade_b", Speaker::Hero, Concept::UpgradeBought, "Good steel, coin well spent. I'll feel the difference by dark.") },
+    // Building raised (villager cheer, spatial + hero note). Peaceful — drops in a fight.
+    Line { priority: 11, floor: 30.0, ..line("build_villager_a", Speaker::Villager, Concept::BuildRaised, "Fresh timbers up! Try not to knock it down, m'lord.") },
+    Line { priority: 11, floor: 30.0, ..line("build_villager_b", Speaker::Villager, Concept::BuildRaised, "New roof, new walls. Almost feels like a town again.") },
+    Line { priority: 8,  floor: 30.0, ..line("build_hero",       Speaker::Hero,     Concept::BuildRaised, "It's going up. Brick by brick, we're harder to kill.") },
+    // Quest step complete (hero). Peaceful.
+    Line { priority: 12, floor: 30.0, ..line("quest_done_a", Speaker::Hero, Concept::QuestDone, "That's that done. One less thing gnawing at me.") },
+    Line { priority: 12, floor: 30.0, ..line("quest_done_b", Speaker::Hero, Concept::QuestDone, "Task's finished. Small victories — I'll take them where I find them.") },
+    // New villager born (villager, spatial). Peaceful.
+    Line { priority: 10, floor: 90.0, ..line("born_a", Speaker::Villager, Concept::VillagerBorn, "Another mouth born into all this. Gods help the little one.") },
+    Line { priority: 10, floor: 90.0, ..line("born_b", Speaker::Villager, Concept::VillagerBorn, "New babe in the town. More of us to complain at you, m'lord.") },
+    // Keep lost — defeat (hero's last word). Priority 30, once.
+    Line { once: true, priority: 30, ..line("keep_lost_a", Speaker::Hero, Concept::KeepLost, "The keep... it's falling. I couldn't hold it. ...I'm sorry.") },
+    Line { once: true, priority: 30, ..line("keep_lost_b", Speaker::Hero, Concept::KeepLost, "The walls are down. This is how it ends, then. Standing.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.

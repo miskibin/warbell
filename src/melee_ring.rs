@@ -5,8 +5,13 @@
 //! Only [`MELEE_CAP`] melee attackers may PRESS the hero at once; everyone else who wants him
 //! holds a loose ring at [`RING_R`] and slowly prowls around it (their steering target orbits, so
 //! they circle the fight instead of piling into one scrum and swinging as a blob). A held token
-//! expires after [`TOKEN_TIME`] and a striker releases on landing a blow, then rests
-//! [`REST_TIME`] before re-claiming — so attackers visibly ROTATE through the fight.
+//! expires after [`TOKEN_TIME`] and a striker releases on landing a blow; the freed slot is
+//! immediately re-contestable — with a crowd another waiter grabs it (attackers ROTATE through the
+//! fight), but with only one or two orks the same one re-claims and keeps pressing. (An earlier cut
+//! added a post-hit `REST_TIME` cooldown to force rotation; it *starved* small fights — a lone ork,
+//! blocked from re-claiming, retreated to prowl the ring after every single hit, reading as "the
+//! orks circle me and swing at nothing". The [`MELEE_CAP`] + [`TOKEN_TIME`] limit rotates crowds
+//! without it, so the cooldown is gone.)
 //!
 //! Deliberate exemptions, per the research on how these systems are tuned:
 //! - **Shamans** (ranged) never take melee tokens — they already hold their own cast ring, and a
@@ -37,24 +42,21 @@ pub const CLAIM_RANGE: f32 = 4.5;
 pub const MELEE_CAP: usize = 2;
 /// Max seconds a token is held before it's forcibly rotated to the next waiter.
 pub const TOKEN_TIME: f32 = 2.6;
-/// Per-ork rest after releasing a token, so the same two don't monopolise the fight.
-pub const REST_TIME: f32 = 1.0;
 /// Waiting orks prowl the ring at this fraction of their charge speed.
 pub const HOLD_SPEED: f32 = 0.55;
 
-/// The stage manager: who currently holds a melee token on the hero, and who is resting.
-/// Maps stay ork-count-bounded (expired entries are dropped on the claims that touch them).
+/// The stage manager: who currently holds a melee token on the hero.
+/// The map stays ork-count-bounded (expired entries are dropped on the claims that touch them).
 #[derive(Resource, Default)]
 pub struct MeleeRing {
     /// token holder → `elapsed_secs` the hold expires.
     holders: HashMap<Entity, f32>,
-    /// recently-released attacker → `elapsed_secs` it may claim again.
-    rested: HashMap<Entity, f32>,
 }
 
 impl MeleeRing {
     /// Claim (or keep) an attack token. Call every frame while wanting the hero; returns whether
-    /// this ork may press the attack this frame.
+    /// this ork may press the attack this frame. A freed slot is immediately re-claimable (no rest
+    /// cooldown) so a lone/last attacker keeps pressing instead of retreating to prowl the ring.
     pub fn try_claim(&mut self, e: Entity, now: f32) -> bool {
         if let Some(&exp) = self.holders.get(&e) {
             if now < exp {
@@ -62,28 +64,19 @@ impl MeleeRing {
             }
             // Held too long (e.g. never reached the hero) — rotate it out.
             self.holders.remove(&e);
-            self.rested.insert(e, now + REST_TIME);
             return false;
         }
         self.holders.retain(|_, &mut exp| now < exp); // drop stale holders (incl. the slain)
         if self.holders.len() >= MELEE_CAP {
             return false;
         }
-        match self.rested.get(&e) {
-            Some(&t) if now < t => false,
-            _ => {
-                self.rested.remove(&e);
-                self.holders.insert(e, now + TOKEN_TIME);
-                true
-            }
-        }
+        self.holders.insert(e, now + TOKEN_TIME);
+        true
     }
 
-    /// A blow landed (or the attacker broke off) — hand the token to the next waiter and rest.
-    pub fn release(&mut self, e: Entity, now: f32) {
-        if self.holders.remove(&e).is_some() {
-            self.rested.insert(e, now + REST_TIME);
-        }
+    /// A blow landed (or the attacker broke off) — free the token so the next waiter can take it.
+    pub fn release(&mut self, e: Entity, _now: f32) {
+        self.holders.remove(&e);
     }
 }
 

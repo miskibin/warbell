@@ -433,7 +433,10 @@ fn animal_brain(
                         a.timer = rng_range(&mut a.rng, 2.0, 4.0);
                         a.hunt_prey = None;
                         a.hunt_npc = None;
-                    } else if a.atk_cd <= 0.0 {
+                    } else if a.atk_cd <= 0.0
+                        && !crate::blockers::wall_between(a.pos.x, a.pos.y, a.target.x, a.target.y)
+                    {
+                        // No biting through a wall/building.
                         a.atk_cd = 1.0;
                         a.atk_anim = now; // play the lunge-bite / tail-sting / arm-slam
                         if let Some((_, bite)) = pred {
