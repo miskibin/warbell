@@ -516,14 +516,17 @@ fn nw_headland(x: f32, z: f32) -> f32 {
     if corner <= 0.0 {
         return 0.0;
     }
-    // Capes-and-coves: two LOW-frequency octaves (~10–18 base-unit features) over a high push
-    // FLOOR (0.7). Broad features + a high floor keep the extended front CONTIGUOUS — it bends
-    // into capes and coves but rarely pinches a chunk off into a detached near-shore islet (the
-    // stray bits the player disliked); any that still form are sunk by `prune_stray_islets`. The
-    // earlier tuning (floor 0.35, a 0.23-freq octave) made small high-noise peaks near the r≈1
-    // contour flip to isolated land — exactly the shore-hugging islets.
-    let wave = 0.6 * vnoise(x * 0.055 + 3.1, z * 0.055 - 2.3) + 0.4 * vnoise(x * 0.10 - 1.7, z * 0.10 + 4.2);
-    corner.powf(1.15) * (0.7 + 0.75 * wave)
+    // Capes-and-coves: two octaves with a LOW floor so the push swings widely along the coast —
+    // the shoreline wiggles in and out into a ragged, irregular front (NOT the straight edge an
+    // earlier high-floor version produced by slamming the whole coast flat against the map grid).
+    let wave = 0.55 * vnoise(x * 0.09 + 3.1, z * 0.09 - 2.3) + 0.45 * vnoise(x * 0.19 - 1.7, z * 0.19 + 4.2);
+    // Edge guard: fade the push to 0 over the last ~10 base tiles before the grid boundary, so the
+    // coast is ALWAYS shaped by this noise curve and never reaches the rectangular grid edge (which
+    // renders as a dead-straight "ruler" cliff — the player's complaint). The massif then meets the
+    // sea on a ragged curve a few tiles inside the map. `prune_stray_islets` sinks any bit the
+    // ragged swing pinches off, so the low floor can't reintroduce shore-hugging islets.
+    let edge = smoothstep(2.0, 12.0, x.min(z));
+    corner.powf(1.2) * (0.30 + 1.0 * wave) * edge
 }
 
 fn is_land_shape(x: f32, z: f32) -> bool {
