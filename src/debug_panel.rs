@@ -170,7 +170,7 @@ fn panel_ui(
     let ctx = contexts.ctx_mut()?;
     // Tell the camera controllers whether egui owns the pointer this frame (cursor over the
     // panel or dragging a widget) so they don't grab the cursor / rotate the view.
-    egui_wants.0 = ctx.wants_pointer_input() || ctx.is_pointer_over_area();
+    egui_wants.0 = ctx.egui_wants_pointer_input() || ctx.is_pointer_over_egui();
     if !panel.open {
         return Ok(());
     }

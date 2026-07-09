@@ -15,7 +15,7 @@ edition = "2024"
 # `bevy_ui_widgets` (new in 0.19) brings the headless core widgets — Slider / Checkbox /
 # RadioButton — used by the graphics Settings page (`ui/graphics_menu.rs`).
 bevy = { version = "0.19", features = ["wav", "bevy_ui_widgets"] }
-bevy_egui = "0.40" # live debug-tuning panel (egui), targets bevy 0.19
+bevy_egui = "0.41" # live debug-tuning panel (egui), targets bevy 0.19
 # Pure, deterministic game logic vendored from the ditched port (zero deps, edition 2024).
 # Source of the parity-tested stores: pathfinding, waves, upgrades, inventory, animals, etc.
 # `serde` feature on so the save system can persist Player/Bag/Town/ResourceState (savegame.rs).
