@@ -108,6 +108,7 @@ img{display:block;max-width:100%}
   transition:transform .14s var(--ease),box-shadow .14s var(--ease);
 }
 .nav-cta:hover{color:#160f06;transform:translateY(-1px);box-shadow:0 6px 20px rgba(230,173,72,.35)}
+.nav-cta svg{width:15px;height:15px;flex:none}
 
 /* GitHub star pill + itch link */
 .nav-gh{display:inline-flex;align-items:center;gap:7px;
@@ -174,11 +175,8 @@ section{position:relative;padding:clamp(64px,10vw,112px) 0;z-index:2}
 /* ── Hero ── */
 .hero{position:relative;min-height:100svh;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden}
 .hero-bg{position:absolute;inset:-6%;z-index:0;
-  background-image:var(--hero-lqip);
-  background-size:cover;background-position:center 38%;
+  background:#0c0a12 url('screenshots/forest-overview.webp') center 38%/cover no-repeat;
   will-change:transform;animation:kenburns 30s ease-in-out infinite alternate}
-.hero-bg::after{content:"";position:absolute;inset:0;
-  background:url('screenshots/forest-overview.webp') center 38%/cover no-repeat}
 @keyframes kenburns{from{transform:scale(1.04)}to{transform:scale(1.12)}}
 .hero-veil{position:absolute;inset:0;z-index:1;pointer-events:none;
   background:
@@ -243,6 +241,7 @@ section{position:relative;padding:clamp(64px,10vw,112px) 0;z-index:2}
 .loop-night .bgimg{background-image:url('screenshots/orks-night.webp')}
 .loop-night .tint{background:linear-gradient(180deg,rgba(13,11,20,.2),rgba(76,58,134,.32) 52%,rgba(8,6,14,.95))}
 .loop-tag{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.2em;text-transform:uppercase;display:inline-flex;align-items:center;gap:8px;margin-bottom:12px}
+.loop-tag svg{width:16px;height:16px;flex:none}
 .loop-day .loop-tag{color:var(--gold-hi)}
 .loop-night .loop-tag{color:#c6b1f7}
 .loop-card h3{font-size:clamp(24px,4vw,31px);color:var(--text);margin-bottom:12px}
@@ -297,6 +296,7 @@ section{position:relative;padding:clamp(64px,10vw,112px) 0;z-index:2}
   transition:transform .2s var(--ease),border-top-color .2s var(--ease),box-shadow .2s var(--ease)}
 .fcard:hover{transform:translateY(-5px);border-top-color:var(--gold);box-shadow:0 16px 38px rgba(0,0,0,.55),0 0 22px rgba(230,173,72,.07)}
 .fcard .ic{width:30px;height:30px;margin-bottom:14px;display:block;color:var(--gold)}
+.fcard .ic svg{width:100%;height:100%}
 .fcard h3{font-size:19px;color:var(--gold-hi);margin-bottom:8px;font-weight:600}
 .fcard p{color:var(--text-dim);font-size:15px;line-height:1.6}
 .fcard kbd{margin-left:2px}
@@ -321,6 +321,7 @@ section{position:relative;padding:clamp(64px,10vw,112px) 0;z-index:2}
   backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .show-copy .show-tag{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.2em;text-transform:uppercase;
   color:var(--ember-hi);display:inline-flex;align-items:center;gap:8px;margin-bottom:14px}
+.show-copy .show-tag svg{width:16px;height:16px;flex:none}
 .show-copy h3{font-size:clamp(24px,4vw,36px);color:var(--gold);margin-bottom:12px;line-height:1.12}
 .show-copy p{color:var(--text-dim);font-size:clamp(15.5px,2vw,17px);max-width:48ch}
 .show-list{list-style:none;margin-top:20px;display:flex;flex-direction:column;gap:10px}
@@ -389,7 +390,7 @@ section{position:relative;padding:clamp(64px,10vw,112px) 0;z-index:2}
 .gal a{border-radius:var(--r);overflow:hidden;border:1px solid var(--line);box-shadow:0 6px 20px var(--shadow);
   transition:transform .22s var(--ease),box-shadow .22s var(--ease),border-color .22s var(--ease)}
 .gal a:hover{transform:scale(1.025);border-color:var(--gold-deep);box-shadow:0 14px 34px var(--shadow)}
-.gal img{width:100%;aspect-ratio:16/9;object-fit:cover;cursor:zoom-in}
+.gal img{width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;cursor:zoom-in}
 
 /* ── System requirements ── */
 .specs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;max-width:960px;margin:0 auto}

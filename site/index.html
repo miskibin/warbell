@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="bg-background">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0910">
 
 <title>Warbell — Defend the Keep | Free Medieval Strategy Game</title>
 <meta name="description" content="Warbell is a free action-strategy game. By day a knight gathers, builds and upgrades; by night the bell rings and orks besiege the keep. Five biomes, a living town, a rival stronghold, and a bloodline that fights on after you fall. Download free for Windows.">
@@ -55,12 +56,12 @@
   },
   "author": { "@type": "Person", "name": "miskibin" },
   "screenshot": [
-    "https://miskibin.github.io/warbell/screenshots/forest-overview.png",
-    "https://miskibin.github.io/warbell/screenshots/combat.png",
-    "https://miskibin.github.io/warbell/screenshots/orks-night.png",
-    "https://miskibin.github.io/warbell/screenshots/war-table.png",
-    "https://miskibin.github.io/warbell/screenshots/rock.png",
-    "https://miskibin.github.io/warbell/screenshots/ork-temple.png"
+    "https://miskibin.github.io/warbell/screenshots/forest-overview.webp",
+    "https://miskibin.github.io/warbell/screenshots/combat.webp",
+    "https://miskibin.github.io/warbell/screenshots/orks-night.webp",
+    "https://miskibin.github.io/warbell/screenshots/war-table.webp",
+    "https://miskibin.github.io/warbell/screenshots/rock.webp",
+    "https://miskibin.github.io/warbell/screenshots/ork-temple.webp"
   ],
   "trailer": {
     "@type": "VideoObject",
@@ -73,6 +74,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="image" href="screenshots/forest-overview.webp" fetchpriority="high">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -83,7 +85,7 @@
 
 <nav class="nav" id="nav">
   <a class="nav-logo" href="#top">
-    <svg viewBox="0 0 32 32" fill="none"><path d="M16 3l11 4.5V17c0 6.8-5.2 11.2-11 12.5C10.2 28.2 5 23.8 5 17V7.5z" fill="#17151f" stroke="#e3a844" stroke-width="1.6" stroke-linejoin="round"/><text x="16" y="22" font-family="Cinzel,serif" font-size="13" font-weight="900" fill="#e3a844" text-anchor="middle">W</text></svg>
+    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M16 3l11 4.5V17c0 6.8-5.2 11.2-11 12.5C10.2 28.2 5 23.8 5 17V7.5z" fill="#17151f" stroke="#e3a844" stroke-width="1.6" stroke-linejoin="round"/><text x="16" y="22" font-family="Cinzel,serif" font-size="13" font-weight="900" fill="#e3a844" text-anchor="middle">W</text></svg>
     WARBELL
   </a>
   <div class="nav-links">
@@ -97,10 +99,13 @@
       <span class="gh-star" aria-hidden="true">★</span><span class="gh-count" id="ghCount">Star</span>
     </a>
     <a class="nav-itch" href="https://miskibin.itch.io/warbell" target="_blank" rel="noopener" aria-label="Warbell on itch.io">itch.io</a>
-    <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download</a>
+    <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/></svg>
+      Download
+    </a>
   </div>
   <button class="nav-toggle" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="drawer">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
   </button>
 </nav>
 
@@ -114,9 +119,9 @@
     <a href="#island" data-close>Island</a>
     <a href="#shots" data-close>Screens</a>
     <a href="changelog.html">Changelog</a>
-    <a href="https://github.com/miskibin/warbell" target="_blank" rel="noopener">★ Star on GitHub</a>
-    <a href="https://miskibin.itch.io/warbell" target="_blank" rel="noopener">🎮 Play on itch.io</a>
-    <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows</a>
+    <a href="https://github.com/miskibin/warbell" target="_blank" rel="noopener">Star on GitHub</a>
+    <a href="https://miskibin.itch.io/warbell" target="_blank" rel="noopener">Play on itch.io</a>
+    <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">Download for Windows</a>
   </nav>
 </div>
 
@@ -124,18 +129,29 @@
   <div class="hero-bg" id="heroBg"></div>
   <div class="hero-veil"></div>
   <div class="hero-inner">
-    <span class="eyebrow">Defend the Keep</span>
+    <a class="hero-badge" href="changelog.html"><span class="dot"></span><span id="verBadge">Defend the Keep</span></a>
     <h1 class="title">WARBELL</h1>
     <p class="tagline">By day you build. By night you bleed.</p>
     <p class="subline">One bloodline · one keep · a five-biome island under siege</p>
     <div class="hero-btns">
-      <a class="btn btn-primary" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows <span class="sz">· free</span></a>
-      <a class="btn btn-ghost" href="https://miskibin.itch.io/warbell" target="_blank" rel="noopener">🎮 Play on itch.io</a>
-      <a class="btn btn-ghost" href="#trailer">▶ Watch Trailer</a>
+      <a class="btn btn-primary" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/></svg>
+        Download for Windows <span class="sz">· free</span></a>
+      <a class="btn btn-ghost" href="https://miskibin.itch.io/warbell" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="11" x2="10" y2="11"/><line x1="8" y1="9" x2="8" y2="13"/><line x1="15" y1="12" x2="15.01" y2="12"/><line x1="18" y1="10" x2="18.01" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.59c-.06.6-.29 3.26-.29 4.41a3 3 0 0 0 5.83 1h7.52a3 3 0 0 0 5.83-1c0-1.15-.23-3.81-.29-4.41A4 4 0 0 0 17.32 5z"/></svg>
+        Play on itch.io</a>
+      <a class="btn btn-ghost" href="#trailer">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+        Watch Trailer</a>
     </div>
-    <p class="hero-plat">Windows 10/11 · 64-bit · signed installer</p>
+    <div class="hero-trust">
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> 100% free</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h8v8H3zM13 5h8v8h-8zM3 15h8v4H3zM13 15h8v4h-8z"/></svg> Windows 10/11</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 0 0-2.8 17.5c.5.1.7-.2.7-.5v-1.7c-2.5.5-3-1.2-3-1.2-.4-1-1-1.3-1-1.3-.8-.6.1-.6.1-.6.9.1 1.4.9 1.4.9.8 1.4 2.1 1 2.6.8.1-.6.3-1 .6-1.2-2-.2-4.1-1-4.1-4.4 0-1 .3-1.8.9-2.4-.1-.3-.4-1.2.1-2.4 0 0 .7-.2 2.4.9a8.3 8.3 0 0 1 4.4 0c1.7-1.1 2.4-.9 2.4-.9.5 1.2.2 2.1.1 2.4.6.6.9 1.4.9 2.4 0 3.4-2.1 4.2-4.1 4.4.3.3.6.9.6 1.8v2.6c0 .3.2.6.7.5A9 9 0 0 0 12 3z"/></svg> Open source</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> ~56 MB · signed</span>
+    </div>
   </div>
-  <a href="#loop" class="scrollcue" aria-label="Scroll">⌄</a>
+  <a href="#loop" class="scrollcue" aria-label="Scroll to content">⌄</a>
 </header>
 
 <!-- ── The Loop ── -->
@@ -151,7 +167,7 @@
       <div class="loop-card loop-day rv">
         <div class="bgimg"></div><div class="tint"></div>
         <div class="body">
-          <span class="loop-tag">☀ Daylight</span>
+          <span class="loop-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg> Daylight</span>
           <h3>Build the stronghold</h3>
           <p>Loot chests, mine ore and fell timber. Raise walls and towers, recruit townsfolk, take on quests, and spend hard-won gold at the War Table.</p>
           <div class="verbs"><span class="chip">Gather</span><span class="chip">Build</span><span class="chip">Recruit</span><span class="chip">Upgrade</span><span class="chip">Trade</span></div>
@@ -160,7 +176,7 @@
       <div class="loop-card loop-night rv rv-2">
         <div class="bgimg"></div><div class="tint"></div>
         <div class="body">
-          <span class="loop-tag">🌙 Nightfall</span>
+          <span class="loop-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg> Nightfall</span>
           <h3>Hold the wall</h3>
           <p>Ring the war bell and brace. Orks pour from every biome toward the keep — grunts, scouts, berserkers and warp-casting shamans. Survive until dawn.</p>
           <div class="verbs"><span class="chip">Fight</span><span class="chip">Block</span><span class="chip">Repair</span><span class="chip">Survive</span></div>
@@ -172,13 +188,15 @@
 </section>
 
 <!-- ── Trailer ── -->
-<section id="trailer">
+<section id="trailer" class="cv">
   <div class="wrap">
     <div class="sec-head rv"><span class="eyebrow">Watch</span><h2>The Trailer</h2><div class="rule"></div></div>
     <div class="trailer-outer rv">
-      <div class="yt">
-        <iframe src="https://www.youtube.com/embed/AMRBW26xBFQ?rel=0&modestbranding=1" title="Warbell trailer"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+      <div class="yt" id="yt">
+        <button class="yt-facade" id="ytFacade" aria-label="Play the Warbell trailer">
+          <span class="play"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>
+          <span class="lbl">Play trailer · 1:00</span>
+        </button>
       </div>
     </div>
   </div>
@@ -200,7 +218,7 @@
 </div>
 
 <!-- ── Feature showcase ── -->
-<section class="feat showcase" id="features">
+<section class="feat showcase cv" id="features">
   <div class="wrap">
     <div class="sec-head rv"><span class="eyebrow">What's inside</span><h2>A living warband sim</h2><div class="rule"></div>
       <p>Not just a defense game — a whole island that works, fights and grows around you. Every shot below is captured in-engine, on <strong>Ultra</strong>.</p></div>
@@ -209,10 +227,10 @@
 
       <!-- 1 · Combat -->
       <div class="show-row rv">
-        <a class="show-media" href="screenshots/combat.png"><img loading="lazy" src="screenshots/combat.png" alt="A lone knight faces a spread ork warband outside the walled keep">
+        <a class="show-media" href="screenshots/combat.webp"><img loading="lazy" width="16" height="9" src="screenshots/combat.webp" alt="A lone knight faces a spread ork warband outside the walled keep">
           <span class="num">01</span><span class="ultra">In-engine · Ultra</span></a>
         <div class="show-copy">
-          <span class="show-tag">⚔ Real-time combat</span>
+          <span class="show-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/></svg> Real-time combat</span>
           <h3>Blade, block &amp; stamina</h3>
           <p>Soft-lock the nearest threat, then swing, crit and block on a stamina budget — or hold to charge a guaranteed-crit heavy smash. Four ork breeds, each with its own brain and bite.</p>
           <ul class="show-list"><li>Soft-lock targeting &amp; combo chains</li><li>Charged heavy strikes &amp; timed blocks</li><li>Grunts · scouts · berserkers · warp-shamans</li></ul>
@@ -221,10 +239,10 @@
 
       <!-- 2 · War Table -->
       <div class="show-row flip rv">
-        <a class="show-media" href="screenshots/war-table.png"><img loading="lazy" src="screenshots/war-table.png" alt="The War Table upgrade tree — Prosperity, Bulwark, Champion and Armoury branches">
+        <a class="show-media" href="screenshots/war-table.webp"><img loading="lazy" width="16" height="9" src="screenshots/war-table.webp" alt="The War Table upgrade tree — Prosperity, Bulwark, Champion and Armoury branches">
           <span class="num">02</span><span class="ultra">In-engine · Ultra</span></a>
         <div class="show-copy">
-          <span class="show-tag">🌳 The War Table</span>
+          <span class="show-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M8.2 7.2 15.5 11M8.2 16.8 15.5 13"/></svg> The War Table</span>
           <h3>Spend blood-won gold</h3>
           <p>A branching upgrade tree — blade, armor, abilities, walls and defenses. Climb the Prosperity, Bulwark, Champion and Armoury lines night after night, and carry every unlock down the bloodline.</p>
           <ul class="show-list"><li>Four branches, dozens of nodes</li><li>Walls, towers, ballistae &amp; shrines</li><li>Upgrades persist across heirs</li></ul>
@@ -233,10 +251,10 @@
 
       <!-- 3 · Town / villagers -->
       <div class="show-row rv">
-        <a class="show-media" href="screenshots/desert-miners.png"><img loading="lazy" src="screenshots/desert-miners.png" alt="Villagers mining the desert crags and carting stone home at dusk">
+        <a class="show-media" href="screenshots/desert-miners.webp"><img loading="lazy" width="16" height="9" src="screenshots/desert-miners.webp" alt="Villagers mining the desert crags and carting stone home at dusk">
           <span class="num">03</span><span class="ultra">In-engine · Ultra</span></a>
         <div class="show-copy">
-          <span class="show-tag">🪓 A town that works</span>
+          <span class="show-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 18 9M13 7 5.5 14.5a2 2 0 0 0 0 2.8l1.2 1.2a2 2 0 0 0 2.8 0L17 11M14 4l6 6"/></svg> A town that works</span>
           <h3>Villagers with real jobs</h3>
           <p>Woodcutters fell real trees; miners chip real boulders and cart the stone home. Lay out plots, raise houses and workshops, recruit and feed townsfolk — a town with its own food, repair and burn.</p>
           <ul class="show-list"><li>Woodcutters, miners &amp; farmers at work</li><li>Build mode: houses, farms, walls, towers</li><li>Recruit, feed &amp; muster a war party</li></ul>
@@ -245,10 +263,10 @@
 
       <!-- 4 · Hold the night -->
       <div class="show-row flip rv">
-        <a class="show-media" href="screenshots/orks-night.png"><img loading="lazy" src="screenshots/orks-night.png" alt="Orks breach the walls and storm the keep under a violet night sky">
+        <a class="show-media" href="screenshots/orks-night.webp"><img loading="lazy" width="16" height="9" src="screenshots/orks-night.webp" alt="Orks breach the walls and storm the keep under a violet night sky">
           <span class="num">04</span><span class="ultra">In-engine · Ultra</span></a>
         <div class="show-copy">
-          <span class="show-tag">🌙 Hold the night</span>
+          <span class="show-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg> Hold the night</span>
           <h3>Ring the bell, brace the wall</h3>
           <p>When the war bell tolls, grunts, scouts, berserkers and warp-casting shamans pour from every biome toward the keep. Man the towers, ballistae and shrines, repair the breaches, and survive until dawn.</p>
           <ul class="show-list"><li>Escalating nightly sieges</li><li>Archer towers, ballistae &amp; healing shrines</li><li>Ring the bell to start the night on your terms</li></ul>
@@ -257,10 +275,10 @@
 
       <!-- 5 · Free the caged -->
       <div class="show-row rv">
-        <a class="show-media" href="screenshots/cage-rescue.png"><img loading="lazy" src="screenshots/cage-rescue.png" alt="The knight breaks open a horde cage to free penned captives">
+        <a class="show-media" href="screenshots/cage-rescue.webp"><img loading="lazy" width="16" height="9" src="screenshots/cage-rescue.webp" alt="The knight breaks open a horde cage to free penned captives">
           <span class="num">05</span><span class="ultra">In-engine · Ultra</span></a>
         <div class="show-copy">
-          <span class="show-tag">🔓 Free the caged</span>
+          <span class="show-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg> Free the caged</span>
           <h3>Break the pens open</h3>
           <p>The horde pens captives like cattle across the island. Clear the warband, smash the cage, and the freed take up arms at your side — every rescue another sword on the wall come nightfall.</p>
           <ul class="show-list"><li>Cages guarded across every biome</li><li>Rescues join your militia</li><li>More hands to build, mine and fight</li></ul>
@@ -269,10 +287,10 @@
 
       <!-- 6 · Rival -->
       <div class="show-row flip rv">
-        <a class="show-media" href="screenshots/rival.png"><img loading="lazy" src="screenshots/rival.png" alt="The rival warlord's walled sandstone fort out in the cactus desert">
+        <a class="show-media" href="screenshots/rival.webp"><img loading="lazy" width="16" height="9" src="screenshots/rival.webp" alt="The rival warlord's walled sandstone fort out in the cactus desert">
           <span class="num">06</span><span class="ultra">In-engine · Ultra</span></a>
         <div class="show-copy">
-          <span class="show-tag">🏯 A rival in the sands</span>
+          <span class="show-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V8l4 2V6l4 2V6l4 2V6l4 2v13z"/><path d="M4 21h16"/></svg> A rival in the sands</span>
           <h3>You're not the only lord</h3>
           <p>A Stronghold-Crusader-style human opponent holds a walled fort out in the desert — running its own tax economy, raising buildings and patrolling as it grows. Rush it early, or let it fester into a second front.</p>
           <ul class="show-list"><li>An AI keep with a live economy</li><li>Builds, taxes &amp; patrols on its own</li><li>Raid it — or race it — for the island</li></ul>
@@ -285,19 +303,19 @@
     <div class="also rv">
       <p class="also-head">— and there's more on the island —</p>
       <div class="also-grid">
-        <div class="fcard"><span class="ic">🗺️</span><h3>Five biomes &amp; roads</h3><p>Forest, snow, desert, rock and swamp on one island, laced with curving roads — each with its own camp, wildlife and weather.</p></div>
-        <div class="fcard"><span class="ic">💀</span><h3>Gnashfang Hold</h3><p>An ork fortress beyond the swamp feeds the waves — the Blight, patrols and towers that fire on sight. Breach it and end the Warlord to win.</p></div>
-        <div class="fcard"><span class="ic">🩸</span><h3>Bloodline succession</h3><p>When the hero falls, the next heir takes up the sword with every upgrade intact. Your townsfolk are your lives.</p></div>
-        <div class="fcard"><span class="ic">🧭</span><h3>Guided by quests</h3><p>A step-by-step quest chain eases you in — where to gather, when to build, how the trials work — so your first night doesn't blindside you.</p></div>
-        <div class="fcard"><span class="ic">🎒</span><h3>Satchel &amp; consumables</h3><p>Loot chests, forage, and stock food and potions into quick-slots for the fight — eat to heal, quaff to buff.</p></div>
-        <div class="fcard"><span class="ic">👁️</span><h3>First-person view</h3><p>Tap <kbd>V</kbd> to drop into a first-person viewmodel — sword and shield in hand — and take the wall eye-to-eye with the horde.</p></div>
+        <div class="fcard"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg></span><h3>Five biomes &amp; roads</h3><p>Forest, snow, desert, rock and swamp on one island, laced with curving roads — each with its own camp, wildlife and weather.</p></div>
+        <div class="fcard"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a8 8 0 0 0-5 14v3a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3a8 8 0 0 0-5-14z"/><circle cx="9" cy="11" r="1.4"/><circle cx="15" cy="11" r="1.4"/><path d="M10 19v2M14 19v2"/></svg></span><h3>Gnashfang Hold</h3><p>An ork fortress beyond the swamp feeds the waves — the Blight, patrols and towers that fire on sight. Breach it and end the Warlord to win.</p></div>
+        <div class="fcard"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></svg></span><h3>Bloodline succession</h3><p>When the hero falls, the next heir takes up the sword with every upgrade intact. Your townsfolk are your lives.</p></div>
+        <div class="fcard"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2.1 5-5 2.1 2.1-5z"/></svg></span><h3>Guided by quests</h3><p>A step-by-step quest chain eases you in — where to gather, when to build, how the trials work — so your first night doesn't blindside you.</p></div>
+        <div class="fcard"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V7a6 6 0 0 1 12 0v2M4 9h16v9a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z"/><path d="M12 13v3"/></svg></span><h3>Satchel &amp; consumables</h3><p>Loot chests, forage, and stock food and potions into quick-slots for the fight — eat to heal, quaff to buff.</p></div>
+        <div class="fcard"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></span><h3>First-person view</h3><p>Tap <kbd>V</kbd> to drop into a first-person viewmodel — sword and shield in hand — and take the wall eye-to-eye with the horde.</p></div>
       </div>
     </div>
   </div>
 </section>
 
 <!-- ── Bloodline ── -->
-<section class="blood">
+<section class="blood cv">
   <div class="wrap">
     <span class="eyebrow rv">The Bloodline</span>
     <p class="quote rv">You are not one knight.<br>You are <span class="em">a line</span> — and the blade does not fall when you do.</p>
@@ -309,59 +327,99 @@
 </section>
 
 <!-- ── Island / biomes ── -->
-<section id="island">
+<section id="island" class="cv">
   <div class="wrap">
     <div class="sec-head rv"><span class="eyebrow">Five biomes &amp; the horde</span><h2>The Island</h2><div class="rule"></div>
       <p>The keep sits at the heart. The horde holds the edges. Click any land to see it full-size.</p></div>
     <div class="biomes-grid">
-      <a class="biome b1 rv" href="screenshots/forest-glade.png"><img loading="lazy" src="screenshots/forest-glade.png" alt="Forest biome — woodland glade with a caged captive">
+      <a class="biome b1 rv" href="screenshots/forest-glade.webp"><img loading="lazy" width="16" height="10" src="screenshots/forest-glade.webp" alt="Forest biome — woodland glade with a caged captive">
         <span class="lab"><span class="n">Forest</span><span class="d"> — river-cut woodland, the keep's home</span></span></a>
-      <a class="biome rv rv-2" href="screenshots/snow.png"><img loading="lazy" src="screenshots/snow.png" alt="Snow biome — snowbound pinewood with snowmen">
+      <a class="biome rv rv-2" href="screenshots/snow.webp"><img loading="lazy" width="16" height="10" src="screenshots/snow.webp" alt="Snow biome — snowbound pinewood with snowmen">
         <span class="lab"><span class="n">Snow</span><span class="d"> — frozen pinewood &amp; ambush snowmen</span></span></a>
-      <a class="biome rv rv-3" href="screenshots/desert.png"><img loading="lazy" src="screenshots/desert.png" alt="Desert biome — cactus flats before the rival keep">
+      <a class="biome rv rv-3" href="screenshots/desert.webp"><img loading="lazy" width="16" height="10" src="screenshots/desert.webp" alt="Desert biome — cactus flats before the rival keep">
         <span class="lab"><span class="n">Desert</span><span class="d"> — cactus flats &amp; the rival fort</span></span></a>
-      <a class="biome rv" href="screenshots/rock.png"><img loading="lazy" src="screenshots/rock.png" alt="Rock highlands — glowing crystal crags and fireflies at night">
+      <a class="biome rv" href="screenshots/rock.webp"><img loading="lazy" width="16" height="10" src="screenshots/rock.webp" alt="Rock highlands — glowing crystal crags and fireflies at night">
         <span class="lab"><span class="n">Rock</span><span class="d"> — crystal crags &amp; sheer cliffs</span></span></a>
-      <a class="biome rv rv-2" href="screenshots/swamp.png"><img loading="lazy" src="screenshots/swamp.png" alt="Swamp biome — the drowned mire">
+      <a class="biome rv rv-2" href="screenshots/swamp.webp"><img loading="lazy" width="16" height="10" src="screenshots/swamp.webp" alt="Swamp biome — the drowned mire">
         <span class="lab"><span class="n">Swamp</span><span class="d"> — the drowned mire</span></span></a>
-      <a class="biome rv rv-3" href="screenshots/ork-temple.png"><img loading="lazy" src="screenshots/ork-temple.png" alt="Gnashfang Hold — the walled ork fortress amid the Blight">
+      <a class="biome rv rv-3" href="screenshots/ork-temple.webp"><img loading="lazy" width="16" height="10" src="screenshots/ork-temple.webp" alt="Gnashfang Hold — the walled ork fortress amid the Blight">
         <span class="lab"><span class="n">Gnashfang Hold</span><span class="d"> — the ork fortress &amp; the Blight</span></span></a>
     </div>
   </div>
 </section>
 
 <!-- ── Screenshots / slider ── -->
-<section id="shots" class="feat">
+<section id="shots" class="feat cv">
   <div class="wrap">
     <div class="sec-head rv"><span class="eyebrow">See the build</span><h2>Stone &amp; gold at work</h2><div class="rule"></div>
       <p>Drag the slider — same ground, before and after a few nights of fortifying.</p></div>
     <div class="ba-outer rv">
       <p class="ba-cap">The keep — bare ground vs. fully walled</p>
       <div class="ba" id="ba">
-        <img src="screenshots/castle-after.png" alt="After fortifying">
-        <div class="after"><img src="screenshots/castle-before.png" alt="Before fortifying"></div>
+        <img src="screenshots/castle-after.webp" width="16" height="9" alt="After fortifying">
+        <div class="after"><img src="screenshots/castle-before.webp" width="16" height="9" alt="Before fortifying"></div>
         <div class="line"></div>
-        <div class="knob"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M7 4l-4 6 4 6M13 4l4 6-4 6" stroke="#160f06" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="knob"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M7 4l-4 6 4 6M13 4l4 6-4 6" stroke="#160f06" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <input type="range" min="0" max="100" value="50" aria-label="Before / after">
         <span class="pill b">BEFORE</span><span class="pill a">AFTER</span>
       </div>
     </div>
     <div class="gal">
-      <a class="rv" href="screenshots/town-center.png"><img loading="lazy" src="screenshots/town-center.png" alt="The keep and its village at the heart of the island"></a>
-      <a class="rv rv-2" href="screenshots/combat.png"><img loading="lazy" src="screenshots/combat.png" alt="A lone knight faces a warband of orks outside the keep"></a>
-      <a class="rv rv-3" href="screenshots/orks-night.png"><img loading="lazy" src="screenshots/orks-night.png" alt="Orks breach the walls and storm the keep at night"></a>
-      <a class="rv" href="screenshots/cage-rescue.png"><img loading="lazy" src="screenshots/cage-rescue.png" alt="The knight breaks open a horde cage to free captives"></a>
-      <a class="rv rv-2" href="screenshots/town-center-night.png"><img loading="lazy" src="screenshots/town-center-night.png" alt="The village at dusk before the siege"></a>
-      <a class="rv rv-3" href="screenshots/rock.png"><img loading="lazy" src="screenshots/rock.png" alt="Glowing crystal crags in the rock highlands at night"></a>
-      <a class="rv" href="screenshots/hero-woods.png"><img loading="lazy" src="screenshots/hero-woods.png" alt="The cloaked knight in the forest at dawn"></a>
-      <a class="rv rv-2" href="screenshots/rival.png"><img loading="lazy" src="screenshots/rival.png" alt="The rival warlord's walled fort out in the desert"></a>
-      <a class="rv rv-3" href="screenshots/desert-miners.png"><img loading="lazy" src="screenshots/desert-miners.png" alt="Villagers mining the desert crags at dusk"></a>
+      <a class="rv" href="screenshots/town-center.webp"><img loading="lazy" width="16" height="9" src="screenshots/town-center.webp" alt="The keep and its village at the heart of the island"></a>
+      <a class="rv rv-2" href="screenshots/combat.webp"><img loading="lazy" width="16" height="9" src="screenshots/combat.webp" alt="A lone knight faces a warband of orks outside the keep"></a>
+      <a class="rv rv-3" href="screenshots/orks-night.webp"><img loading="lazy" width="16" height="9" src="screenshots/orks-night.webp" alt="Orks breach the walls and storm the keep at night"></a>
+      <a class="rv" href="screenshots/cage-rescue.webp"><img loading="lazy" width="16" height="9" src="screenshots/cage-rescue.webp" alt="The knight breaks open a horde cage to free captives"></a>
+      <a class="rv rv-2" href="screenshots/town-center-night.webp"><img loading="lazy" width="16" height="9" src="screenshots/town-center-night.webp" alt="The village at dusk before the siege"></a>
+      <a class="rv rv-3" href="screenshots/rock.webp"><img loading="lazy" width="16" height="9" src="screenshots/rock.webp" alt="Glowing crystal crags in the rock highlands at night"></a>
+      <a class="rv" href="screenshots/hero-woods.webp"><img loading="lazy" width="16" height="9" src="screenshots/hero-woods.webp" alt="The cloaked knight in the forest at dawn"></a>
+      <a class="rv rv-2" href="screenshots/rival.webp"><img loading="lazy" width="16" height="9" src="screenshots/rival.webp" alt="The rival warlord's walled fort out in the desert"></a>
+      <a class="rv rv-3" href="screenshots/desert-miners.webp"><img loading="lazy" width="16" height="9" src="screenshots/desert-miners.webp" alt="Villagers mining the desert crags at dusk"></a>
+    </div>
+  </div>
+</section>
+
+<!-- ── System requirements ── -->
+<section class="cv">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="eyebrow">Before you download</span><h2>System Requirements</h2><div class="rule"></div>
+      <p>Runs on modest hardware — the low-poly art keeps it light while the sieges stay busy.</p></div>
+    <div class="specs-grid">
+      <div class="spec rv">
+        <div class="spec-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg><h3>Minimum</h3></div>
+        <dl>
+          <dt>OS</dt><dd><strong>Windows 10</strong> 64-bit</dd>
+          <dt>CPU</dt><dd>Quad-core, 2.5 GHz</dd>
+          <dt>RAM</dt><dd>4 GB</dd>
+          <dt>GPU</dt><dd>Any DX11 / Vulkan card</dd>
+          <dt>Disk</dt><dd>~100 MB installed</dd>
+        </dl>
+      </div>
+      <div class="spec rv rv-2">
+        <div class="spec-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-2 8 9-12h-7z"/></svg><h3>Recommended</h3></div>
+        <dl>
+          <dt>OS</dt><dd><strong>Windows 11</strong> 64-bit</dd>
+          <dt>CPU</dt><dd>6-core, 3.0 GHz+</dd>
+          <dt>RAM</dt><dd>8 GB</dd>
+          <dt>GPU</dt><dd>GTX 1060 / RX 580 or better</dd>
+          <dt>Display</dt><dd>1080p / 60 Hz+</dd>
+        </dl>
+      </div>
+      <div class="spec rv rv-3">
+        <div class="spec-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 7.7 8 9 4.6-1.3 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg><h3>Good to know</h3></div>
+        <dl>
+          <dt>Price</dt><dd><strong>Free</strong> — no account, no ads</dd>
+          <dt>Installer</dt><dd>Signed <strong>.msi</strong> · ~56 MB</dd>
+          <dt>Input</dt><dd>Keyboard &amp; mouse</dd>
+          <dt>Engine</dt><dd>Bevy (Rust)</dd>
+          <dt>Saves</dt><dd>Local · offline play</dd>
+        </dl>
+      </div>
     </div>
   </div>
 </section>
 
 <!-- ── Controls ── -->
-<section>
+<section class="cv">
   <div class="wrap">
     <div class="sec-head rv"><span class="eyebrow">Get your bearings</span><h2>Controls</h2><div class="rule"></div></div>
     <div class="controls rv">
@@ -385,13 +443,37 @@
   </div>
 </section>
 
+<!-- ── FAQ ── -->
+<section class="cv">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="eyebrow">Questions</span><h2>Before the bell</h2><div class="rule"></div></div>
+    <div class="faq-list">
+      <details class="faq rv"><summary>Is Warbell really free?<span class="plus" aria-hidden="true"></span></summary>
+        <div class="faq-body">Yes — completely free, no account, no ads, no microtransactions. It's an open-source passion project. If you enjoy it, a <a href="https://github.com/miskibin/warbell" target="_blank" rel="noopener">GitHub star</a> is the only currency that helps.</div></details>
+      <details class="faq rv"><summary>What platforms are supported?<span class="plus" aria-hidden="true"></span></summary>
+        <div class="faq-body">There's a signed Windows 10/11 installer today. It's built on the Bevy engine (Rust), so Linux and macOS builds are on the horizon — watch the <a href="changelog.html">changelog</a> for news.</div></details>
+      <details class="faq rv"><summary>How long is a run?<span class="plus" aria-hidden="true"></span></summary>
+        <div class="faq-body">A night comes every few minutes of daytime prep. A full push to breach Gnashfang Hold and end the Warlord runs a few hours — but your bloodline carries upgrades forward, so no run is ever wasted.</div></details>
+      <details class="faq rv"><summary>Do I lose everything when my hero dies?<span class="plus" aria-hidden="true"></span></summary>
+        <div class="faq-body">No. When a hero falls, the next heir picks up the sword with every War Table upgrade intact. Your townsfolk are your lives — it's only over when the keep falls or the last of the line is gone.</div></details>
+      <details class="faq rv"><summary>Is there controller support?<span class="plus" aria-hidden="true"></span></summary>
+        <div class="faq-body">Warbell is built for keyboard &amp; mouse right now. Gamepad support is being explored — check the <a href="changelog.html">changelog</a> for the latest.</div></details>
+      <details class="faq rv"><summary>Can I follow development?<span class="plus" aria-hidden="true"></span></summary>
+        <div class="faq-body">Absolutely. The project is open on <a href="https://github.com/miskibin/warbell" target="_blank" rel="noopener">GitHub</a>, it's also on <a href="https://miskibin.itch.io/warbell" target="_blank" rel="noopener">itch.io</a>, and every release is logged in the <a href="changelog.html">changelog</a>.</div></details>
+    </div>
+  </div>
+</section>
+
 <!-- ── Final CTA ── -->
 <section class="cta">
   <div class="cta-bg"></div><div class="cta-veil"></div>
   <div class="cta-inner">
     <h2 class="rv">The bell is ringing.</h2>
     <p class="rv rv-2">Free, no strings, ~56 MB. Take the wall before nightfall.</p>
-    <a class="btn btn-primary rv rv-3" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows <span class="sz">· free</span></a>
+    <a class="btn btn-primary rv rv-3" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/></svg>
+      Download for Windows <span class="sz">· free</span></a>
+    <p class="cta-sub rv rv-3">Latest release <a id="ctaVer" href="changelog.html">on the changelog</a> · also on <a href="https://miskibin.itch.io/warbell" target="_blank" rel="noopener">itch.io</a></p>
   </div>
 </section>
 
@@ -402,9 +484,9 @@
       <a href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">Download</a>
       <a href="https://miskibin.itch.io/warbell" target="_blank" rel="noopener">itch.io</a>
       <a href="changelog.html">Changelog</a>
-      <a href="https://github.com/miskibin/warbell" target="_blank" rel="noopener">★ GitHub</a>
+      <a href="https://github.com/miskibin/warbell" target="_blank" rel="noopener">GitHub</a>
       <a href="https://www.youtube.com/watch?v=AMRBW26xBFQ">Trailer</a>
-      <a href="https://bevyengine.org">Built with Bevy</a>
+      <a href="https://bevyengine.org" target="_blank" rel="noopener">Built with Bevy</a>
     </div>
     <p class="sm">A game by miskibin · Made with care, swords, and far too many orks.</p>
   </div>
@@ -412,7 +494,7 @@
 
 <!-- Sticky mobile download bar -->
 <div class="mobile-cta">
-  <a href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download for Windows <span class="sz">· free · Win 10/11</span></a>
+  <a href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">Download for Windows <span class="sz">· free · Win 10/11</span></a>
 </div>
 
 <div class="lb" id="lb"><img src="" alt=""></div>
@@ -431,20 +513,37 @@
   }
 })();
 
-// live GitHub star count
+// live GitHub star count + latest release version
 (function(){
-  const el=document.getElementById('ghCount');if(!el)return;
+  const el=document.getElementById('ghCount');
   fetch('https://api.github.com/repos/miskibin/warbell')
     .then(r=>r.ok?r.json():Promise.reject())
-    .then(d=>{const n=d.stargazers_count;
-      el.textContent=n>=1000?(n/1000).toFixed(1)+'k':n;})
+    .then(d=>{if(el){const n=d.stargazers_count;el.textContent=n>=1000?(n/1000).toFixed(1)+'k':n;}})
+    .catch(()=>{});
+  const badge=document.getElementById('verBadge'), ctaVer=document.getElementById('ctaVer');
+  fetch('https://api.github.com/repos/miskibin/warbell/releases/latest')
+    .then(r=>r.ok?r.json():Promise.reject())
+    .then(d=>{const tag=d.tag_name||d.name;if(!tag)return;
+      if(badge)badge.textContent='Latest: '+tag;
+      if(ctaVer)ctaVer.textContent=tag;})
     .catch(()=>{});
 })();
 
-// sticky nav
+// sticky nav + active section highlight
 const nav=document.getElementById('nav');
 const onScroll=()=>nav.classList.toggle('solid',window.scrollY>40);
 onScroll();window.addEventListener('scroll',onScroll,{passive:true});
+const navLinks=[...document.querySelectorAll('.nav-links .lnk[href^="#"]')];
+const secFor=id=>document.querySelector(id);
+if('IntersectionObserver'in window){
+  const spy=new IntersectionObserver((ents)=>{
+    ents.forEach(e=>{if(e.isIntersecting){
+      const id='#'+e.target.id;
+      navLinks.forEach(l=>l.classList.toggle('active',l.getAttribute('href')===id));
+    }});
+  },{rootMargin:'-45% 0px -50% 0px'});
+  navLinks.forEach(l=>{const s=secFor(l.getAttribute('href'));if(s)spy.observe(s);});
+}
 
 // mobile drawer
 const drawer=document.getElementById('drawer'), navToggle=document.getElementById('navToggle');
@@ -469,6 +568,19 @@ if(heroBg&&!matchMedia('(prefers-reduced-motion:reduce)').matches){
     heroBg.style.transform=`translate(${mx*-22}px,${my*-14+sc}px)`;
     requestAnimationFrame(raf);
   })();
+}
+
+// click-to-load YouTube (keeps the page light until requested)
+const ytFacade=document.getElementById('ytFacade');
+if(ytFacade){
+  ytFacade.addEventListener('click',()=>{
+    const f=document.createElement('iframe');
+    f.src='https://www.youtube.com/embed/AMRBW26xBFQ?rel=0&modestbranding=1&autoplay=1';
+    f.title='Warbell trailer';f.allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+    f.allowFullscreen=true;
+    document.getElementById('yt').appendChild(f);
+    ytFacade.remove();
+  });
 }
 
 // before/after slider (native range handles both mouse + touch drag)
@@ -521,7 +633,7 @@ lb.addEventListener('click',()=>lb.classList.remove('open'));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')lb.classList.remove('open');});
 
 // heir torches (SVG injected)
-const torch='<svg viewBox="0 0 38 54"><rect x="16" y="20" width="6" height="30" rx="2" fill="#5a4326"/><rect x="13" y="18" width="12" height="6" rx="2" fill="#3c2c18"/><g class="flame"><path d="M19 2c4 5 6 8 6 12a6 6 0 1 1-12 0c0-3 2-6 6-12z" fill="#ffd489"/><path d="M19 7c2 3 3 5 3 7a3 3 0 1 1-6 0c0-2 1-4 3-7z" fill="#ff7355"/></g></svg>';
+const torch='<svg viewBox="0 0 38 54" aria-hidden="true"><rect x="16" y="20" width="6" height="30" rx="2" fill="#5a4326"/><rect x="13" y="18" width="12" height="6" rx="2" fill="#3c2c18"/><g class="flame"><path d="M19 2c4 5 6 8 6 12a6 6 0 1 1-12 0c0-3 2-6 6-12z" fill="#ffd489"/><path d="M19 7c2 3 3 5 3 7a3 3 0 1 1-6 0c0-2 1-4 3-7z" fill="#ff7355"/></g></svg>';
 document.querySelectorAll('.heir').forEach(h=>h.innerHTML=torch);
 </script>
 </body>
