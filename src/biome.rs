@@ -53,6 +53,9 @@ const OPEN_COVER_BOOST: f32 = 0.45;
 const SLOPE_FREE: f32 = 0.35;
 const SLOPE_TREE_THIN: f32 = 1.2;
 const SLOPE_TREE_FLOOR: f32 = 0.1;
+/// Tree spacing is authored as centre-to-centre, but cross-biome scatter passes don't share the
+/// local `tree_pts` list. This blocker clearance makes later passes respect earlier trunks too.
+const TREE_BLOCKER_CLEAR_FRAC: f32 = 0.8;
 
 /// Fog knobs: `FOREST_FOG="clear,full"` overrides at runtime (no rebuild). `clear` = the
 /// fully-clear radius; `full` = distance the fog reaches the horizon colour (smaller = thicker).
@@ -984,16 +987,25 @@ pub fn scatter_region(
             if let Some(c) = chosen {
                 let vi = pick_weighted(&c.weights, r.next());
                 let s = r.range(c.scale.0, c.scale.1);
+                let landmark_buffered = crate::ruins::near_landmark_collision_buffer(cx, cz);
+                let landmark_core = crate::ruins::near_landmark_visual_footprint(cx, cz);
                 if c.tree {
                     let p = Vec2::new(cx, cz);
+                    let tree_clear = cfg.tree_min_dist * TREE_BLOCKER_CLEAR_FRAC;
                     // Skip trunk-trees that fall inside a warden glade (the boss arena must stay
-                    // open) OR too close to a neighbour — drop the fallback prop (a bush) there
-                    // instead, so the spot keeps low cover and the glade doesn't read bald.
+                    // open), in a landmark's collision apron, OR too close to a neighbour — drop a
+                    // walk-through fallback prop there so the ground keeps understorey rather than
+                    // turning into a stripped circle.
                     if crate::boss::in_warden_glade(cx, cz)
+                        || landmark_buffered
+                        || landmark_core
                         || tree_pts.iter().any(|q| q.distance_squared(p) < min_d2)
+                        || crate::blockers::any_within(cx, cz, tree_clear)
                     {
                         // Passive non-tree prop, so it merges into the chunk's props bucket.
-                        if let Some(fb) = fallback {
+                        if let Some(fb) = fallback
+                            .filter(|fb| !landmark_core && (fb.block_radius <= 0.0 || !landmark_buffered))
+                        {
                             let fi = pick_weighted(&fb.weights, r.next());
                             let fs = r.range(fb.scale.0, fb.scale.1);
                             queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), yaw(&mut r), fs);
@@ -1044,6 +1056,10 @@ pub fn scatter_region(
                         }
                     }
                 } else {
+                    if landmark_core || (landmark_buffered && c.block_radius > 0.0) {
+                        gz += 1.0;
+                        continue;
+                    }
                     // Big non-tree props (boulders) block, scaled with the instance and capped at
                     // the blockers neighbour-scan bound. Small clutter has block_radius 0 → nothing.
                     // A floor drops the small end of a mixed class — only clearly-big boulders block;
@@ -1089,6 +1105,7 @@ pub fn scatter_region(
                         // near_road (not on_road): flat cover discs are wide, so reject any whose
                         // body would overhang a trail even if its centre is just off it.
                         || crate::roads::near_road(x, z, 0.9)
+                        || crate::ruins::near_landmark_visual_footprint(x, z)
                     {
                         continue;
                     }

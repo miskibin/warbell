@@ -46,6 +46,12 @@ const STEP_FREQ: f32 = 7.0;
 const ACCEL: f32 = 14.0;
 const DECEL: f32 = 9.0;
 pub(super) const PLAYER_R: f32 = 0.22;
+/// How far outside a trunk's collision shell the player starts getting a gentle steer assist.
+const OBSTACLE_ASSIST_SENSE: f32 = 0.55;
+/// Max sideways bias mixed into raw input near a trunk. Kept low so it helps a snag, not drives.
+const OBSTACLE_ASSIST_TANGENT: f32 = 0.26;
+/// Tiny outward bias so the player separates from bark while the tangent finds a slide path.
+const OBSTACLE_ASSIST_OUTWARD: f32 = 0.06;
 /// Walking down a terrace drops the ground a full height class (`worldmap::GROUND_STEP` 0.5) under
 /// the body in one tile. Without a snap the body floats above the new-lower ground for a frame or
 /// two each step, flicking `on_ground` off→on → the walk/fall anim strobes all the way down a
@@ -112,6 +118,33 @@ fn move_input(keys: &ButtonInput<KeyCode>, cam: Option<&Transform>) -> Option<Ve
     .clamp(-1.0, 1.0);
     let dir = fwd * fwd_amt + right * rgt_amt;
     (dir.length_squared() > 1e-6).then(|| Vec2::new(dir.x, dir.z).normalize())
+}
+
+fn obstacle_assisted_dir(pos: Vec2, input_dir: Vec2, current_vel: Vec2) -> Vec2 {
+    let (rx, rz) = blockers::circle_repulsion(pos.x, pos.y, PLAYER_R, OBSTACLE_ASSIST_SENSE);
+    let away = Vec2::new(rx, rz);
+    if away.length_squared() < 1e-6 {
+        return input_dir;
+    }
+    let away_dir = away.normalize();
+    // Only help when the player is pushing into bark; retreating or skimming past stays raw input.
+    if input_dir.dot(away_dir) >= -0.08 {
+        return input_dir;
+    }
+    let strength = away.length().min(1.0);
+    let mut tangent = Vec2::new(-away_dir.y, away_dir.x);
+    let continuity = if current_vel.length_squared() > 1e-4 {
+        current_vel.normalize()
+    } else {
+        input_dir
+    };
+    if tangent.dot(continuity) < 0.0 {
+        tangent = -tangent;
+    }
+    (input_dir
+        + tangent * (OBSTACLE_ASSIST_TANGENT * strength)
+        + away_dir * (OBSTACLE_ASSIST_OUTWARD * strength))
+        .normalize_or_zero()
 }
 
 /// Arm the **dodge roll** on Alt: pick the dive direction (move input, else a backward dive away
@@ -484,7 +517,12 @@ pub fn player_move(
         * if hero.charge_t > super::combat::CHARGE_GRACE { super::combat::CHARGE_MOVE_MULT } else { 1.0 }
         // Combat stance: strafing/backpedaling around the ringed foe is slower than advancing.
         * stance_speed_mult;
-    let desired = if moving { move_dir * want_speed } else { Vec2::ZERO };
+    let travel_dir = if moving && hero.stance_amt < 0.5 {
+        obstacle_assisted_dir(hero.pos, move_dir, hero.vel)
+    } else {
+        move_dir
+    };
+    let desired = if moving { travel_dir * want_speed } else { Vec2::ZERO };
     let ramp = if moving { ACCEL } else { DECEL }; // faster to start than to stop
     let new_vel = hero.vel + (desired - hero.vel) * (dt * ramp).min(1.0);
     hero.vel = new_vel;

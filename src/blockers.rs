@@ -166,6 +166,40 @@ pub fn any_within(wx: f32, wz: f32, margin: f32) -> bool {
     false
 }
 
+/// A small outward vector from nearby circular blockers (trees/cacti), weighted by how close the
+/// body is to their collision shell. This is intentionally circle-only: walls and buildings already
+/// slide well via axis-separated movement, while trunks are the snaggy case that benefits from a
+/// subtle steer assist.
+pub fn circle_repulsion(wx: f32, wz: f32, body_r: f32, sense_r: f32) -> (f32, f32) {
+    let map = CIRCLES.read().unwrap();
+    let (tx, tz) = tile(wx, wz);
+    let sense = sense_r.max(0.0);
+    let reach = 1 + (body_r + sense).ceil() as i32;
+    let mut out_x = 0.0;
+    let mut out_z = 0.0;
+    for dx in -reach..=reach {
+        for dz in -reach..=reach {
+            if let Some(bucket) = map.get(&(tx + dx, tz + dz)) {
+                for &(cx, cz, r) in bucket {
+                    let (ex, ez) = (wx - cx, wz - cz);
+                    let d2 = ex * ex + ez * ez;
+                    if d2 <= 1e-6 {
+                        continue;
+                    }
+                    let d = d2.sqrt();
+                    let influence = r + body_r + sense;
+                    if d < influence {
+                        let w = ((influence - d) / sense.max(0.001)).clamp(0.0, 1.0);
+                        out_x += (ex / d) * w;
+                        out_z += (ez / d) * w;
+                    }
+                }
+            }
+        }
+    }
+    (out_x, out_z)
+}
+
 /// True if `(wx, wz)` lies inside any solid obstacle (a circle or an oriented box).
 pub fn is_blocked(wx: f32, wz: f32) -> bool {
     {
@@ -306,6 +340,22 @@ mod tests {
         // read false there, so the broadened escape can't be abused to clip through a wall in play.
         assert!(!is_blocked(1.0 + PLAYER_R + 0.01, 0.0));
         assert!(!any_within(1.0 + PLAYER_R + 0.01, 0.0, PLAYER_R));
+        reset();
+    }
+
+    #[test]
+    fn circle_repulsion_points_away_from_nearby_trunks_only() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset();
+        add(0.0, 0.0, 0.5);
+        add_box(2.0, 0.0, 0.5, 0.5);
+
+        let (x, z) = circle_repulsion(0.75, 0.0, 0.22, 0.45);
+        assert!(x > 0.0, "near a trunk on the east side should push east");
+        assert!(z.abs() < 0.01, "a symmetric trunk contact should not add sideways noise");
+
+        let (far_x, far_z) = circle_repulsion(2.0, 0.0, 0.22, 0.45);
+        assert_eq!((far_x, far_z), (0.0, 0.0), "box blockers are ignored by the tree assist");
         reset();
     }
 }

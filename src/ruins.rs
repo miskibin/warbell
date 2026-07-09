@@ -511,6 +511,33 @@ const SITE_PARAMS: [(crate::biome::Biome, f32, f32); 5] = [
     (crate::biome::Biome::Swamp, 1.4, 1.5),
 ];
 
+/// Extra collision-free apron around each landmark's real footprint. Scatter can still place
+/// walk-through bushes, pebbles and ground cover here; only trunks / blocking boulders stay out.
+const LANDMARK_COLLISION_APRON: f32 = 4.0;
+/// Tiny visual core that stays empty so scatter does not poke straight through the landmark mesh.
+const LANDMARK_VISUAL_APRON: f32 = 0.75;
+
+fn near_site_with_apron(x: f32, z: f32, apron: f32) -> bool {
+    let p = Vec2::new(x, z);
+    landmark_sites().iter().any(|site| {
+        SITE_PARAMS
+            .iter()
+            .find(|(biome, _, _)| *biome == site.biome)
+            .is_some_and(|(_, scale, foot_r)| {
+                let r = foot_r * scale + apron;
+                site.pos.distance_squared(p) < r * r
+            })
+    })
+}
+
+pub fn near_landmark_collision_buffer(x: f32, z: f32) -> bool {
+    near_site_with_apron(x, z, LANDMARK_COLLISION_APRON)
+}
+
+pub fn near_landmark_visual_footprint(x: f32, z: f32) -> bool {
+    near_site_with_apron(x, z, LANDMARK_VISUAL_APRON)
+}
+
 /// The five landmark spots, chosen once (flattest valid candidate per biome) and cached. Decoupled
 /// from `blockers` — those aren't populated this early (the road field bakes at the ground pass,
 /// long before scatter) — so spots shifted slightly vs. the old post-scatter search; the

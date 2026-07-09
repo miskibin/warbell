@@ -5,16 +5,16 @@
 //! pieces in the yard: Town Guard Arms raises an armory corner, the Tax Office opens a counting
 //! booth, the Healing Shrine gets an actual shrine, Reinforced Keep scaffolds the keep wall,
 //! Tower Mastery lights standing braziers by the towers, the Arsenal unlocks go up on display
-//! stands. The upgrade tree becomes visible history — you can read a run's purchases off the
-//! courtyard.
+//! stands. Small/thin props stay visual-only so the courtyard reads lived-in without snagging
+//! movement; the upgrade tree becomes visible history you can read off a run's purchases.
 //!
 //! All parts follow the castle's conventions: built from [`crate::castle::Mats`]'s shared
 //! textured materials at local origin (base y = 0, front +Z), baked to a world spot by
 //! [`build`], and revealed by [`sync_decor`] off the live [`Defenses`] / [`EconomyState`] /
 //! [`Upgrades`] / town state (flag-driven, so staged `FOREST_DEFEND` shots and loaded saves
-//! both show the right dressing). Each piece is **solid**: [`sync_decor`] registers a tight
-//! oriented collision box ([`DecorSolid`]) in [`crate::blockers`] the first frame the piece is
-//! shown, so the hero (and AI) route around the props instead of walking through them — lazy +
+//! both show the right dressing). Chunky pieces can be **solid**: [`sync_decor`] registers a tight
+//! oriented collision box ([`DecorSolid`]) in [`crate::blockers`] the first frame such a piece is
+//! shown, so the hero (and AI) route around major props instead of walking through them — lazy +
 //! once-only because the blocker set is append-only (same model as `castle::sync_castle`). Every
 //! spot is hand-picked clear of the keep, bell, gate lanes, torches, training dummies, house
 //! slots and the path network.
@@ -222,13 +222,13 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     };
 
     // ── Day-one life (Always) ────────────────────────────────────────────────────
-    // Each piece carries a tight collision footprint (local half-extents) — the hero now slides
-    // around the props instead of walking through them. Sized to the prop's solid ground mass.
-    set(notice_board_parts(), Vec3::new(-3.3, 0.0, 4.4), 0.35, DecorGate::Always, Vec2::new(0.7, 0.18));
-    set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::new(0.6, 0.3));
+    // Small furniture is visual-only so the plaza lanes stay smooth; larger upgrade structures
+    // below keep tight collision footprints where walking through them would look wrong.
+    set(notice_board_parts(), Vec3::new(-3.3, 0.0, 4.4), 0.35, DecorGate::Always, Vec2::ZERO);
+    set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::ZERO);
     // (The old plaza market-goods pile lived here — removed; the merchant shop by the south gate
     // (`villagers::shop_parts`) is now the town's single market focal point.)
-    set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::new(0.62, 0.2));
+    set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::ZERO);
     // A few lantern posts along the main lanes (thinned down — the bailey was getting busy).
     for (lx, lz, lyaw) in [
         (2.0, -6.6, 0.0),
@@ -239,8 +239,8 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     }
 
     // ── Filled in as the town grows (House(n): shown once houses > n) ───────────
-    set(garden_parts(), Vec3::new(-4.2, 0.0, -9.4), 0.15, DecorGate::House(1), Vec2::new(0.6, 0.48));
-    set(woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2), Vec2::new(0.62, 0.32));
+    set(garden_parts(), Vec3::new(-4.2, 0.0, -9.4), 0.15, DecorGate::House(1), Vec2::ZERO);
+    set(woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2), Vec2::ZERO);
     // Laundry line = cloth hung overhead on a string between two thin posts — you walk UNDER it.
     // No collision (a 2.6-wide box across the lane just walls off the courtyard for no reason).
     set(laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1), Vec2::ZERO);
@@ -249,22 +249,22 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // ── Upgrade set pieces ───────────────────────────────────────────────────────
     // The armory corner west of the plaza: racked spears + shields + a leather stand (tier 1),
     // extended with steel — sword rail + iron stand (tier 2). Arsenal unlocks join on display.
-    set(armory_parts(), Vec3::new(-8.6, 0.0, 3.0), 0.5, DecorGate::ArmsTier(1), Vec2::new(1.0, 0.4));
-    set(armory_veteran_parts(), Vec3::new(-8.2, 0.0, 4.9), 0.8, DecorGate::ArmsTier(2), Vec2::new(0.9, 0.35));
+    set(armory_parts(), Vec3::new(-8.6, 0.0, 3.0), 0.5, DecorGate::ArmsTier(1), Vec2::new(0.7, 0.3));
+    set(armory_veteran_parts(), Vec3::new(-8.2, 0.0, 4.9), 0.8, DecorGate::ArmsTier(2), Vec2::ZERO);
     set(axe_display_parts(), Vec3::new(-6.9, 0.0, 6.3), 0.9, DecorGate::Weapon("axe"), Vec2::new(0.32, 0.25));
     set(sword_display_parts(), Vec3::new(-7.9, 0.0, 7.6), 1.1, DecorGate::Weapon("sword_gold"), Vec2::new(0.3, 0.25));
-    set(grindstone_parts(), Vec3::new(-5.6, 0.0, 8.4), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::new(0.45, 0.32));
+    set(grindstone_parts(), Vec3::new(-5.6, 0.0, 8.4), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::ZERO);
 
     // Civic east side: the tax-collector's counting booth; the shrine the heal aura lives in.
-    set(tax_booth_parts(), Vec3::new(8.5, 0.0, 2.9), -0.6, DecorGate::TaxOffice, Vec2::new(0.85, 0.6));
-    set(shrine_parts(), Vec3::new(8.0, 0.0, -3.4), -0.8, DecorGate::Shrine, Vec2::new(0.52, 0.42));
+    set(tax_booth_parts(), Vec3::new(8.5, 0.0, 2.9), -0.6, DecorGate::TaxOffice, Vec2::new(0.65, 0.45));
+    set(shrine_parts(), Vec3::new(8.0, 0.0, -3.4), -0.8, DecorGate::Shrine, Vec2::new(0.4, 0.32));
 
     // Bounty board inside the north gate — wanted papers for the ork warlords.
-    set(bounty_board_parts(), Vec3::new(3.4, 0.0, -10.4), 0.1, DecorGate::Purchased("eco_bounty"), Vec2::new(0.78, 0.18));
+    set(bounty_board_parts(), Vec3::new(3.4, 0.0, -10.4), 0.1, DecorGate::Purchased("eco_bounty"), Vec2::ZERO);
 
     // Reinforced Keep: a mason's scaffold against the keep's west wall + dressed stone waiting.
-    set(scaffold_parts(), Vec3::new(-3.55, 0.0, 0.0), 0.0, DecorGate::Reinforced, Vec2::new(0.45, 1.7));
-    set(stone_pile_parts(), Vec3::new(-4.8, 0.0, 1.3), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.5));
+    set(scaffold_parts(), Vec3::new(-3.55, 0.0, 0.0), 0.0, DecorGate::Reinforced, Vec2::ZERO);
+    set(stone_pile_parts(), Vec3::new(-4.8, 0.0, 1.3), 0.3, DecorGate::Reinforced, Vec2::ZERO);
 
     // Tower Mastery: a standing fire basket inside each wall corner (the crews work all night).
     for (sx, sz) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {

@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use ron::ser::{to_string_pretty, PrettyConfig};
 use serde::{Deserialize, Serialize};
 
 const CURRENT_VERSION: u32 = 1;
@@ -28,17 +30,45 @@ pub(crate) struct ActiveMapAuthoring {
     map: Option<Arc<MapAuthoring>>,
 }
 
+#[derive(Resource)]
+struct MapEditorPanel {
+    open: bool,
+    selected_biome: AuthorBiome,
+    radius_base: f32,
+    feather_base: f32,
+    undo_regions: Vec<Vec<BiomeRegion>>,
+    redo_regions: Vec<Vec<BiomeRegion>>,
+    status: String,
+}
+
+impl Default for MapEditorPanel {
+    fn default() -> Self {
+        Self {
+            open: std::env::var("FOREST_MAP_EDITOR").is_ok(),
+            selected_biome: AuthorBiome::Forest,
+            radius_base: 14.0,
+            feather_base: DEFAULT_REGION_FEATHER,
+            undo_regions: Vec::new(),
+            redo_regions: Vec::new(),
+            status: String::from("Map editor idle"),
+        }
+    }
+}
+
 pub struct MapAuthoringPlugin;
 
 impl Plugin for MapAuthoringPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ActiveMapAuthoring>()
-            .add_systems(Startup, load_authoring_from_env);
+            .init_resource::<MapEditorPanel>()
+            .add_systems(Startup, load_authoring_from_env)
+            .add_systems(Update, toggle_editor_panel)
+            .add_systems(EguiPrimaryContextPass, editor_ui);
     }
 }
 
 fn load_authoring_from_env(mut active: ResMut<ActiveMapAuthoring>) {
-    let Some(path) = std::env::var_os("FOREST_MAP_AUTHORING").map(PathBuf::from) else {
+    let Some(path) = authoring_path_from_env() else {
         install_active(None);
         return;
     };
@@ -66,6 +96,16 @@ fn load_authoring_from_env(mut active: ResMut<ActiveMapAuthoring>) {
             install_active(None);
         }
     }
+}
+
+fn authoring_path_from_env() -> Option<PathBuf> {
+    std::env::var_os("FOREST_MAP_AUTHORING")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("FOREST_MAP_EDITOR")
+                .is_ok()
+                .then(|| PathBuf::from("assets/maps/home_authoring.ron"))
+        })
 }
 
 fn install_active(map: Option<Arc<MapAuthoring>>) {
@@ -115,6 +155,30 @@ impl MapAuthoring {
         let map: Self = ron::from_str(&src).map_err(|err| format!("RON parse failed: {err}"))?;
         map.validate_schema()?;
         Ok(map)
+    }
+
+    fn blank(name: String) -> Self {
+        Self {
+            version: CURRENT_VERSION,
+            name,
+            target: AuthorMap::Home,
+            biome_regions: Vec::new(),
+            height_patches: Vec::new(),
+            river_splines: Vec::new(),
+            road_strokes: Vec::new(),
+            scatter_paint: Vec::new(),
+            poi_placements: Vec::new(),
+            validation: ValidationRules::default(),
+        }
+    }
+
+    pub fn save_ron(&self, path: impl AsRef<Path>) -> Result<(), String> {
+        self.validate_schema()?;
+        let pretty = PrettyConfig::default();
+        let src =
+            to_string_pretty(self, pretty).map_err(|err| format!("RON write failed: {err}"))?;
+        std::fs::write(path.as_ref(), src).map_err(|err| format!("write failed: {err}"))?;
+        Ok(())
     }
 
     fn validate_schema(&self) -> Result<(), String> {
@@ -208,6 +272,38 @@ pub(crate) enum AuthorBiome {
     Desert,
     Swamp,
     Blight,
+}
+
+impl Default for AuthorBiome {
+    fn default() -> Self {
+        AuthorBiome::Forest
+    }
+}
+
+impl AuthorBiome {
+    const ALL: [AuthorBiome; 8] = [
+        AuthorBiome::Grass,
+        AuthorBiome::Sand,
+        AuthorBiome::Forest,
+        AuthorBiome::Rock,
+        AuthorBiome::Snow,
+        AuthorBiome::Desert,
+        AuthorBiome::Swamp,
+        AuthorBiome::Blight,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            AuthorBiome::Grass => "Grass",
+            AuthorBiome::Sand => "Sand",
+            AuthorBiome::Forest => "Forest",
+            AuthorBiome::Rock => "Rock",
+            AuthorBiome::Snow => "Snow",
+            AuthorBiome::Desert => "Desert",
+            AuthorBiome::Swamp => "Swamp",
+            AuthorBiome::Blight => "Blight",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -388,6 +484,189 @@ pub(crate) struct AuthoringSample {
     pub height_delta: i32,
 }
 
+fn toggle_editor_panel(keys: Res<ButtonInput<KeyCode>>, mut panel: ResMut<MapEditorPanel>) {
+    if keys.just_pressed(KeyCode::F4) {
+        panel.open = !panel.open;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn editor_ui(
+    mut contexts: EguiContexts,
+    mut panel: ResMut<MapEditorPanel>,
+    mut active: ResMut<ActiveMapAuthoring>,
+    mut pending: ResMut<crate::biome::PendingBuild>,
+    mut world_ready: ResMut<crate::biome::WorldReady>,
+    hero_q: Query<&crate::player::Hero>,
+) -> Result {
+    let ctx = contexts.ctx_mut()?;
+    if !panel.open {
+        return Ok(());
+    }
+
+    let hero_base = hero_q
+        .iter()
+        .next()
+        .map(|hero| world_to_base(hero.pos))
+        .unwrap_or((72.0, 54.0));
+    let path_label = active
+        .path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| String::from("<no FOREST_MAP_AUTHORING path>"));
+    let region_count = active
+        .map
+        .as_ref()
+        .map(|map| map.biome_regions.len())
+        .unwrap_or(0);
+
+    egui::Window::new("Map Editor (F4)")
+        .default_width(330.0)
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.label("v0: soft biome-region painter");
+            ui.monospace(path_label);
+            ui.label(format!("regions: {region_count}"));
+            ui.label(format!("hero base: {:.1}, {:.1}", hero_base.0, hero_base.1));
+            ui.separator();
+
+            egui::ComboBox::from_label("Biome")
+                .selected_text(panel.selected_biome.label())
+                .show_ui(ui, |ui| {
+                    for biome in AuthorBiome::ALL {
+                        ui.selectable_value(&mut panel.selected_biome, biome, biome.label());
+                    }
+                });
+            ui.add(egui::Slider::new(&mut panel.radius_base, 2.0..=48.0).text("radius"));
+            ui.add(egui::Slider::new(&mut panel.feather_base, 0.0..=24.0).text("soft edge"));
+
+            if ui.button("Paint soft region under hero").clicked() {
+                let mut map = editable_map(&active);
+                panel.undo_regions.push(map.biome_regions.clone());
+                map.biome_regions.push(BiomeRegion {
+                    id: format!(
+                        "paint-{}-{}",
+                        panel.selected_biome.label().to_lowercase(),
+                        map.biome_regions.len() + 1
+                    ),
+                    biome: panel.selected_biome,
+                    center_base: hero_base,
+                    radius_base: panel.radius_base,
+                    feather_base: panel.feather_base,
+                });
+                panel.redo_regions.clear();
+                panel.status = format!(
+                    "Painted {} at {:.1},{:.1}",
+                    panel.selected_biome.label(),
+                    hero_base.0,
+                    hero_base.1
+                );
+                install_edited_map(&mut active, map);
+            }
+
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!panel.undo_regions.is_empty(), egui::Button::new("Undo"))
+                    .clicked()
+                {
+                    if let Some(prev) = panel.undo_regions.pop() {
+                        let mut map = editable_map(&active);
+                        panel.redo_regions.push(map.biome_regions.clone());
+                        map.biome_regions = prev;
+                        panel.status = String::from("Undo");
+                        install_edited_map(&mut active, map);
+                    }
+                }
+                if ui
+                    .add_enabled(!panel.redo_regions.is_empty(), egui::Button::new("Redo"))
+                    .clicked()
+                {
+                    if let Some(next) = panel.redo_regions.pop() {
+                        let mut map = editable_map(&active);
+                        panel.undo_regions.push(map.biome_regions.clone());
+                        map.biome_regions = next;
+                        panel.status = String::from("Redo");
+                        install_edited_map(&mut active, map);
+                    }
+                }
+                if ui
+                    .add_enabled(region_count > 0, egui::Button::new("Clear regions"))
+                    .clicked()
+                {
+                    let mut map = editable_map(&active);
+                    panel.undo_regions.push(map.biome_regions.clone());
+                    map.biome_regions.clear();
+                    panel.redo_regions.clear();
+                    panel.status = String::from("Cleared biome regions");
+                    install_edited_map(&mut active, map);
+                }
+            });
+
+            ui.horizontal(|ui| {
+                if ui.button("Save").clicked() {
+                    save_active_map(&active, &mut panel);
+                }
+                if ui.button("Save + Rebuild").clicked() {
+                    if save_active_map(&active, &mut panel) {
+                        crate::worldmap::clear_tile_cache();
+                        install_active(active.map.clone());
+                        pending.0 = true;
+                        world_ready.0 = false;
+                        panel.status = String::from("Saved and queued rebuild");
+                    }
+                }
+            });
+
+            ui.separator();
+            ui.label(&panel.status);
+        });
+    Ok(())
+}
+
+fn world_to_base(pos: Vec2) -> (f32, f32) {
+    (
+        (pos.x + crate::worldmap::GX) / crate::worldmap::MAP_SCALE,
+        (pos.y + crate::worldmap::GZ) / crate::worldmap::MAP_SCALE,
+    )
+}
+
+fn editable_map(active: &ActiveMapAuthoring) -> MapAuthoring {
+    active
+        .map
+        .as_deref()
+        .cloned()
+        .unwrap_or_else(|| MapAuthoring::blank(String::from("Home authoring")))
+}
+
+fn install_edited_map(active: &mut ActiveMapAuthoring, map: MapAuthoring) {
+    let map = Arc::new(map);
+    active.map = Some(map.clone());
+    install_active(Some(map));
+    crate::worldmap::clear_tile_cache();
+}
+
+fn save_active_map(active: &ActiveMapAuthoring, panel: &mut MapEditorPanel) -> bool {
+    let Some(path) = active.path.as_ref() else {
+        panel.status =
+            String::from("No authoring path; set FOREST_MAP_AUTHORING or FOREST_MAP_EDITOR=1");
+        return false;
+    };
+    let Some(map) = active.map.as_deref() else {
+        panel.status = String::from("No active authoring map to save");
+        return false;
+    };
+    match map.save_ron(path) {
+        Ok(()) => {
+            panel.status = format!("Saved {}", path.display());
+            true
+        }
+        Err(err) => {
+            panel.status = format!("Save failed: {err}");
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,5 +717,26 @@ mod tests {
         assert!(channel.water);
         let bank = map.sample_base(4.0, 3.0);
         assert!(!bank.water);
+    }
+
+    #[test]
+    fn saves_ron_asset_roundtrip() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("warbell-map-authoring-{}.ron", std::process::id()));
+        let mut map = MapAuthoring::blank(String::from("Roundtrip"));
+        map.biome_regions.push(BiomeRegion {
+            id: String::from("roundtrip-desert"),
+            biome: AuthorBiome::Desert,
+            center_base: (72.0, 54.0),
+            radius_base: 12.0,
+            feather_base: 4.0,
+        });
+
+        map.save_ron(&path).expect("save succeeds");
+        let loaded = MapAuthoring::load_ron(&path).expect("load saved asset");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(loaded.biome_regions.len(), 1);
+        assert_eq!(loaded.biome_regions[0].biome, AuthorBiome::Desert);
     }
 }

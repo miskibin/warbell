@@ -468,10 +468,10 @@ pub fn build(
         // (they did at the old −2.4/+2.2 spots). Tent at 0.7× the fortress size to fit the camp.
         let mut prop_rng = site.seed | 1;
         let solids = vec![
-            (crate::ork_fortress::tent_mesh(0.7, &mut prop_rng), v(-2.3, 0.0, -2.1), 0.0_f32, (1.3_f32, 1.1_f32)),
-            (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.25, 0.25)),
+            (crate::ork_fortress::tent_mesh(0.7, &mut prop_rng), v(-2.3, 0.0, -2.1), 0.0_f32, (1.05_f32, 0.85_f32)),
+            (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
             (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
-            (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.55, 0.55)),
+            (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.32, 0.32)),
         ];
         for (m, local, lyaw, (hw, hd)) in solids {
             let h = meshes.add(m);
@@ -507,8 +507,7 @@ pub fn build(
         crate::blockers::add_obb(cage_world.x, cage_world.z, 1.2, 1.2, site.rot + 0.6);
 
         // Log sit-stumps ringing the fire (fire is at local (0.2,0,0)) — orks roost on these
-        // between musters. Small footprint blockers so the hero bumps them but they don't wall
-        // the camp.
+        // between musters. Decorative-only: tiny stump blockers made camp melee snaggy.
         for (i, local) in [v(1.25, 0.0, 0.5), v(-0.5, 0.0, 0.95), v(0.45, 0.0, -1.05)].into_iter().enumerate() {
             let w = place(local);
             let seed = site.seed.wrapping_add(i as u32 * 37).wrapping_add(7) | 1;
@@ -518,7 +517,6 @@ pub fn build(
                 Transform { translation: w, rotation: ry((seed % 628) as f32 / 100.0), scale: Vec3::ONE },
                 BiomeEntity,
             ));
-            crate::blockers::add(w.x, w.z, 0.26);
         }
         // The banner's cloth — a fluttering faction flag on the pole `banner_mesh` left bare.
         let flag = crate::banner::spawn_flag(
