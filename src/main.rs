@@ -17,27 +17,29 @@
 mod aftermath;
 mod ambient_life;
 mod atmospherics;
+mod meadow;
+mod melee_ring;
+mod meshkit; // shared low-poly mesh helpers (tinted/merged/flat_shaded) — see the module doc
 mod audio;
 mod banner;
+mod biped;
 mod biome;
+mod bridges;
 mod biome_desert;
 mod biome_forest;
 mod biome_rocky;
 mod biome_snow;
 mod biome_swamp;
-mod biped;
 mod blockers;
 mod boats;
-mod bog;
 mod boss;
-mod bridges;
 mod build_fx;
 mod camps;
 mod capture;
+mod cinematic;
 mod castle;
 mod castle_decor;
 mod chest;
-mod cinematic;
 mod combat_fx;
 mod compass;
 mod controls;
@@ -47,12 +49,13 @@ mod critters;
 mod debug_panel;
 mod debug_stats;
 mod decor;
-mod defenses;
 mod demo;
+mod defenses;
 mod distant_isles;
 mod dof;
 mod dying;
 mod economy;
+mod tree_ui;
 mod firelight;
 mod fish;
 mod footstep_fx;
@@ -71,9 +74,6 @@ mod loading;
 mod lumberjack;
 mod mainmenu;
 mod map_authoring;
-mod meadow;
-mod melee_ring;
-mod meshkit; // shared low-poly mesh helpers (tinted/merged/flat_shaded) — see the module doc
 mod miner;
 mod navgrid;
 mod nightsky;
@@ -83,23 +83,22 @@ mod orks;
 mod outline;
 mod palette;
 mod particles;
-mod peasant_model;
 mod perftest;
-mod player;
-mod poi;
-mod postfx;
 mod previs_knight;
+mod peasant_model;
+mod player;
+mod postfx;
 mod projectile;
 mod props;
 mod quadruped;
 mod quality;
 mod quest;
-mod rival;
 mod roads;
+mod rival;
 mod ruins;
 mod savegame;
-mod scene;
 mod scenes;
+mod scene;
 mod separation;
 mod shutters;
 mod siege;
@@ -113,16 +112,17 @@ mod terrain;
 mod town;
 mod town_meshes;
 mod training_dummies;
-mod tree_ui;
 mod trees;
 mod tutorial;
 mod ui;
 mod verbs;
-mod viewer;
 mod vignettes;
+mod bog;
+mod poi;
 mod villagers;
 mod vista;
 mod visual;
+mod viewer;
 mod warlord;
 mod water;
 mod wayside;
@@ -145,10 +145,7 @@ fn main() {
     // Screenshot harness window: render at a fixed high resolution + scale-factor 1.0 so the
     // captured PNG is crisp. (A small/low-res capture minifies the ground detail texture to a
     // washed-out pale mean — the real game at native res looks lush.)
-    let mut window = Window {
-        title: "Warbell".into(),
-        ..default()
-    };
+    let mut window = Window { title: "Warbell".into(), ..default() };
     if std::env::var("FOREST_SHOT").is_ok() {
         window.resolution =
             bevy::window::WindowResolution::new(1920, 1080).with_scale_factor_override(1.0);
@@ -183,10 +180,7 @@ fn main() {
                 // Shrink the world→audio distance scale so spatial falloff is gentle enough
                 // that animals within `audio::AUDIBLE_RANGE` are actually audible (at scale
                 // 1.0 a 30-unit distance is near-silent). Tune alongside per-species volume.
-                .set(AudioPlugin {
-                    default_spatial_scale: SpatialScale::new(0.15),
-                    ..default()
-                }),
+                .set(AudioPlugin { default_spatial_scale: SpatialScale::new(0.15), ..default() }),
         )
         // Dev-only map authoring overlay loader. Inactive unless `FOREST_MAP_AUTHORING=<path>` is set.
         .add_plugins(map_authoring::MapAuthoringPlugin)
@@ -198,9 +192,9 @@ fn main() {
             tree_ui::TreeUiPlugin,       // the War Table upgrade-tree graph panel (U / keep E)
             inventory::InventoryPlugin,  // bag + buffs + pickup toasts (quick-bar Q/Z/X/C)
             verbs::VerbsPlugin,          // biome verbs: ore mining (HeroSwing) → stone
-            defenses::DefensePlugin, // towers/archers/ballista/shrine + war bell (upgrade-gated)
+            defenses::DefensePlugin,     // towers/archers/ballista/shrine + war bell (upgrade-gated)
             succession::SuccessionPlugin, // bloodline heir pool: fall → next heir; empty → Defeat
-            orbs::OrbsPlugin,        // reward orbs (gold/xp motes) from kills
+            orbs::OrbsPlugin,            // reward orbs (gold/xp motes) from kills
             scene::ScenePlugin,
             terrain::TerrainPlugin, // registers the terrain material
             water::WaterPlugin,     // registers the water material
@@ -216,12 +210,12 @@ fn main() {
         .add_plugins(fish::FishPlugin) // fish that glide under water near the hero + occasionally leap
         .add_plugins((
             wind::WindPlugin,
-            wildlife::WildlifePlugin, // ambient animals: wander/graze/startle + limb anim
-            audio::GameAudioPlugin,   // event-driven SFX/voice/music/ambience (wav feature on)
-            castle::CastlePlugin,     // central castle (built in worldmap) + chimney smoke
-            orks::OrksPlugin,         // camp warbands: idle/patrol AI + biped limb anim
+            wildlife::WildlifePlugin,   // ambient animals: wander/graze/startle + limb anim
+            audio::GameAudioPlugin,     // event-driven SFX/voice/music/ambience (wav feature on)
+            castle::CastlePlugin,       // central castle (built in worldmap) + chimney smoke
+            orks::OrksPlugin,           // camp warbands: idle/patrol AI + biped limb anim
             projectile::ProjectilePlugin, // shaman homing bolts (drains BoltSpawns)
-            camps::CampsPlugin,       // ork camps (built in worldmap): campfire flicker + smoke
+            camps::CampsPlugin,         // ork camps (built in worldmap): campfire flicker + smoke
             villagers::VillagersPlugin, // castle townsfolk: idle/stroll AI + biped limb anim
             debug_panel::DebugPanelPlugin, // live egui tuning panel (toggle: F1)
             controls::ControlsPlugin,
@@ -229,7 +223,7 @@ fn main() {
             player::PlayerPlugin, // playable knight: locomotion + follow-cam (` toggles free-roam)
             hud::HudPlugin,       // minimal HP + block-stamina bars
             combat_fx::CombatFxPlugin, // floating numbers, ork HP bars/hurt-flash, hero hit feedback
-            siege::SiegePlugin, // night-wave assault: phases, spawn ring, invader AI, keep HP
+            siege::SiegePlugin,   // night-wave assault: phases, spawn ring, invader AI, keep HP
         ))
         .add_plugins((
             boats::BoatsPlugin, // background sailboats drifting on the ocean
@@ -243,18 +237,18 @@ fn main() {
             landmarks::LandmarksPlugin, // landmark POIs: discovery caches + shrine buffs + beacons
             footstep_fx::FootstepFxPlugin, // dust puffs / water ripples under the hero's feet
             interaction::InteractionPlugin, // contextual E (keep→upgrades, merchant→shop, bell→night)
-            debug_stats::DebugStatsPlugin,  // read-only perf/state telemetry overlay (toggle: F2)
-            quality::QualityPlugin,         // explicit Low/High graphics presets (set in Settings)
-            subtitles::SubtitlePlugin,      // bottom-centre captions for spoken villager lines
-            tutorial::TutorialPlugin,       // tabbed "How to Play" help panel (toggle: H)
+            debug_stats::DebugStatsPlugin, // read-only perf/state telemetry overlay (toggle: F2)
+            quality::QualityPlugin, // explicit Low/High graphics presets (set in Settings)
+            subtitles::SubtitlePlugin, // bottom-centre captions for spoken villager lines
+            tutorial::TutorialPlugin, // tabbed "How to Play" help panel (toggle: H)
         ))
         .add_plugins((
-            nightsky::NightSkyPlugin,        // stars + moon dome that fade in after dark
+            nightsky::NightSkyPlugin, // stars + moon dome that fade in after dark
             firelight::FireLightPlugin, // flickering point-lights on campfires + torches (night)
-            shutters::ShutterPlugin,    // house window shutters swing shut at dusk (curfew read)
-            banner::BannerPlugin,       // fluttering cloth flags (keep spire, towers, ork camps)
+            shutters::ShutterPlugin, // house window shutters swing shut at dusk (curfew read)
+            banner::BannerPlugin, // fluttering cloth flags (keep spire, towers, ork camps)
             aftermath::AftermathPlugin, // persistent battle traces (stains, gear, scorches)
-            town::TownPlugin,           // city-building: plots, build menu, economy, burn/repair
+            town::TownPlugin, // city-building: plots, build menu, economy, burn/repair
             lumberjack::LumberjackPlugin, // woodcutters fell real trees (safe zone + threat sense)
             miner::MinerPlugin, // stone miners work real boulders + cart the stone home (ranges far)
             savegame::SaveGamePlugin, // dawn autosave + Continue/New Game (one slot)
@@ -263,7 +257,7 @@ fn main() {
             castle_decor::CastleDecorPlugin, // courtyard dressing + upgrade-bought set pieces
             ork_fortress::OrkFortressPlugin, // Gnashfang Hold + the Blight: fortress, patrols, hero-firing towers
             cinematic::CinematicPlugin, // keyframed camera paths for trailer shots (FOREST_SHOT_ID)
-            build_fx::BuildFxPlugin,    // construction pop-in + dust when structures raise
+            build_fx::BuildFxPlugin, // construction pop-in + dust when structures raise
         ))
         .add_plugins((
             scenes::ScenesPlugin, // hand-staged looped trailer tableaus (F1 Director → Scenes)
@@ -274,7 +268,7 @@ fn main() {
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog
             warlord::WarlordPlugin, // the Warlord of Gnashfang Hold: the final boss + win condition
             mainmenu::MainMenuPlugin, // title-screen ambiance: orbit cam + dusk + embers/fireflies + credits
-            loading::LoadingPlugin,   // branded boot veil over the first ~1s blank frame
+            loading::LoadingPlugin, // branded boot veil over the first ~1s blank frame
             trees::TreeDebugPlugin, // FOREST_TREELINE="x,z" parks one of each tree kind for model shots
             hints::HintsPlugin, // bottom-right affordance toasts: spend/equip nudges (Prep-only)
             quest::QuestPlugin, // tutorial quest chain: right-center tracker + J explainer card
