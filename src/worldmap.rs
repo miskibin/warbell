@@ -28,8 +28,8 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::biome::{
-    scatter_region, AtmoSample, Backdrop, Biome, BiomeAmbience, BiomeAmbiences, BiomeConfig,
-    GroundDetail, ParticleKind, PropClass,
+    AtmoSample, Backdrop, Biome, BiomeAmbience, BiomeAmbiences, BiomeConfig, GroundDetail,
+    ParticleKind, PropClass, scatter_region,
 };
 use crate::groundcover as gc;
 use crate::palette::lin;
@@ -104,8 +104,15 @@ const BLEND: f32 = 4.5;
 
 /// Shared daytime atmosphere: (sky, fog_density, sun_color, sun_illuminance,
 /// ambient_color, ambient_brightness, sun_pos). Light fog so the big island reads across.
-pub const ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
-    (0xb4d2ec, 0.0060, 0xffedc7, 11_000.0, 0xe6edf5, 165.0, Vec3::new(80.0, 110.0, 40.0));
+pub const ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) = (
+    0xb4d2ec,
+    0.0060,
+    0xffedc7,
+    11_000.0,
+    0xe6edf5,
+    165.0,
+    Vec3::new(80.0, 110.0, 40.0),
+);
 
 // ── Biome palette (sRGB hex) for the blended ground colour ──────────────────────
 // Every per-map ground tone lives in a `Palette` so a second map is a pure data swap (see
@@ -215,8 +222,8 @@ const PAL_ASH: Palette = Palette {
     snow_cliff_lip: 0xd0d8e2,
     snow_cliff_rock: 0x565b64,
     road_dirt: 0x4a3a26,
-    lava_basalt: 0x2a2421, // cooled crust between the seams
-    lava_seam: 0xc8521a,   // glowing crack
+    lava_basalt: 0x2a2421,   // cooled crust between the seams
+    lava_seam: 0xc8521a,     // glowing crack
     lava_seam_hot: 0xffb347, // white-hot core
 };
 
@@ -236,6 +243,19 @@ enum TB {
     /// draws its own ground (basalt + glowing magma seams) but maps to [`Biome::Swamp`] for
     /// gameplay, so standing in it burns (the swamp poison-and-slow floor, reskinned).
     Lava,
+}
+
+fn tb_from_author_biome(biome: crate::map_authoring::AuthorBiome) -> TB {
+    match biome {
+        crate::map_authoring::AuthorBiome::Grass => TB::Grass,
+        crate::map_authoring::AuthorBiome::Sand => TB::Sand,
+        crate::map_authoring::AuthorBiome::Forest => TB::Forest,
+        crate::map_authoring::AuthorBiome::Rock => TB::Rock,
+        crate::map_authoring::AuthorBiome::Snow => TB::Snow,
+        crate::map_authoring::AuthorBiome::Desert => TB::Desert,
+        crate::map_authoring::AuthorBiome::Swamp => TB::Swamp,
+        crate::map_authoring::AuthorBiome::Blight => TB::Blight,
+    }
 }
 
 struct Region {
@@ -271,8 +291,14 @@ struct Pass {
 // angularly narrower at its mouth, so at the old widths a tile centre could fall a hair outside
 // the corridor and read as a 1-class apron gap (`mesa_passes_climb_to_the_summit` regression).
 const SNOW_PASSES: [Pass; 2] = [
-    Pass { ang: 0.578, half: 4.5 },  // SE, toward the castle (main ascent)
-    Pass { ang: -0.184, half: 3.2 }, // E, toward the desert dunes
+    Pass {
+        ang: 0.578,
+        half: 4.5,
+    }, // SE, toward the castle (main ascent)
+    Pass {
+        ang: -0.184,
+        half: 3.2,
+    }, // E, toward the desert dunes
 ];
 /// Rock range passes: WNW main ascent (mouth at base ≈(86,39), a clear 20+ base units from the
 /// castle — due-west would run the ramp straight into the castle safe-zone's grass fray, which
@@ -280,12 +306,18 @@ const SNOW_PASSES: [Pass; 2] = [
 /// (compression→release: the desert↔rock ring road runs its floor). The SW rim by the lake is
 /// deliberately passless — that wall is the waterfall cliff (vista pass).
 const ROCK_PASSES: [Pass; 2] = [
-    Pass { ang: -2.60, half: 3.0 }, // WNW, toward the castle side (main ascent)
+    Pass {
+        ang: -2.60,
+        half: 3.0,
+    }, // WNW, toward the castle side (main ascent)
     // N canyon toward the desert. NOT -1.88 (straight at the desert centre): the rival
     // stronghold's forced-flat plateau (world (66,-88), r 30) sits on that line and cuts
     // class-1 bays across the ramp; -1.60 exits the canyon ~34 world units east of the fort —
     // the ring road passes the rival's walls, then climbs the slot.
-    Pass { ang: -1.60, half: 2.4 },
+    Pass {
+        ang: -1.60,
+        half: 2.4,
+    },
 ];
 
 const REGIONS: [Region; 6] = [
@@ -299,31 +331,79 @@ const REGIONS: [Region; 6] = [
     // irregular): the massif now reaches the NW `nw_headland` coast, so its flanks run into the
     // sea as a jagged cliff front instead of tapering to a beach. Centre unchanged, so the SE/E
     // pass corridors keep their authored angles (their half-widths grew to match the longer ramp).
-    Region { x: 26.0, z: 24.0, r: 42.0, biome: TB::Snow, peak: 20, cliffy: true, passes: &SNOW_PASSES },
+    Region {
+        x: 26.0,
+        z: 24.0,
+        r: 42.0,
+        biome: TB::Snow,
+        peak: 20,
+        cliffy: true,
+        passes: &SNOW_PASSES,
+    },
     // NE dunes — shifted NW (112,28 → 101,10), so the dune field grows toward the snow massif and
     // fills the grass corridor along the top coast. Radius 34→38 to close the empty grass seam
     // between snow and desert (players noted the wide bare strip there): with snow at r33 the seam
     // shrinks from ~10 to ~4 base, and region_at's wobble/fray makes the two biomes meet on an
     // organic edge instead of a clean grass gutter. Still biased NORTH so the dunes don't bulge onto
     // the keep — at z10 the south reach is ~z48, clear of the castle safe-ring (south edge ~z36).
-    Region { x: 101.0, z: 10.0, r: 38.0, biome: TB::Desert, peak: 0, cliffy: false, passes: &[] },
+    Region {
+        x: 101.0,
+        z: 10.0,
+        r: 38.0,
+        biome: TB::Desert,
+        peak: 0,
+        cliffy: false,
+        passes: &[],
+    },
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
     // the safe-zone fray instead of a 33-unit trek). peak 18→22 + cliffy (pass 1): the tallest
     // biome is now a real tiered MESA — flat shelves, 2.5u sheer walls between them, climbable
     // only via ROCK_PASSES; `terrace_inland` exempts it (`cliff_exempt_base`).
     // r 34→38: the tallest biome grows down toward the shrunk SE marsh — more mountain, less bog.
-    Region { x: 116.0, z: 57.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
+    Region {
+        x: 116.0,
+        z: 57.0,
+        r: 38.0,
+        biome: TB::Rock,
+        peak: 22,
+        cliffy: true,
+        passes: &ROCK_PASSES,
+    },
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
     // MAP_SCALE 2.2 bump. Snow/desert radii stay (their shared seam is already tuned tight).
-    Region { x: 32.0, z: 80.0, r: 36.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // SW forest
-    Region { x: 72.0, z: 92.0, r: 23.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // S swamp (r 29→23: less bog)
+    Region {
+        x: 32.0,
+        z: 80.0,
+        r: 36.0,
+        biome: TB::Forest,
+        peak: 0,
+        cliffy: false,
+        passes: &[],
+    }, // SW forest
+    Region {
+        x: 72.0,
+        z: 92.0,
+        r: 23.0,
+        biome: TB::Swamp,
+        peak: 0,
+        cliffy: false,
+        passes: &[],
+    }, // S swamp (r 29→23: less bog)
     // Eastern marsh arm: fills the open grass strip that ran between the S swamp and the
     // rocky mine range (world x +30…+66, z +15…+60), so the marsh laps right up to the
     // foot of the mines instead of leaving a grass corridor. Rock's mountain priority in
     // `region_at` auto-clips the east edge (the mines stay rock), and the castle safe-ring
     // forces grass at the centre, so this only eats the in-between grass.
-    Region { x: 102.0, z: 78.0, r: 17.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // E marsh (r 24→17: yields to the rock range)
+    Region {
+        x: 102.0,
+        z: 78.0,
+        r: 17.0,
+        biome: TB::Swamp,
+        peak: 0,
+        cliffy: false,
+        passes: &[],
+    }, // E marsh (r 24→17: yields to the rock range)
 ];
 
 struct Plateau {
@@ -333,10 +413,30 @@ struct Plateau {
     peak: i32,
 }
 const PLATEAUS: [Plateau; 4] = [
-    Plateau { x: 98.0, z: 72.0, r: 9.0, peak: 5 },
-    Plateau { x: 52.0, z: 50.0, r: 7.0, peak: 4 },
-    Plateau { x: 90.0, z: 36.0, r: 7.0, peak: 5 }, // NE mesa on the desert fringe
-    Plateau { x: 20.0, z: 62.0, r: 7.0, peak: 4 }, // W forest highland
+    Plateau {
+        x: 98.0,
+        z: 72.0,
+        r: 9.0,
+        peak: 5,
+    },
+    Plateau {
+        x: 52.0,
+        z: 50.0,
+        r: 7.0,
+        peak: 4,
+    },
+    Plateau {
+        x: 90.0,
+        z: 36.0,
+        r: 7.0,
+        peak: 5,
+    }, // NE mesa on the desert fringe
+    Plateau {
+        x: 20.0,
+        z: 62.0,
+        r: 7.0,
+        peak: 4,
+    }, // W forest highland
 ];
 
 const DELIBERATE_LAKE: (f32, f32, f32, f32) = (92.0, 80.0, 5.0, 3.0); // x,z,rx,rz
@@ -347,8 +447,15 @@ const DELIBERATE_LAKE: (f32, f32, f32, f32) = (92.0, 80.0, 5.0, 3.0); // x,z,rx,
 /// saturated ember sun washed snow to tan and erased every biome's colour. Low sun = long hostile
 /// shadows. Same tuple shape as [`ATMOSPHERE`]; fog stays moderate (heavy volumetric fog blacks
 /// the Atmosphere sky — see the ultra-graphics note).
-const ASH_ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
-    (0x5a3b32, 0.0075, 0xffdca8, 10_500.0, 0x6a5e54, 145.0, Vec3::new(90.0, 64.0, 30.0));
+const ASH_ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) = (
+    0x5a3b32,
+    0.0075,
+    0xffdca8,
+    10_500.0,
+    0x6a5e54,
+    145.0,
+    Vec3::new(90.0, 64.0, 30.0),
+);
 
 /// Ashlands biome layout — the same five biome kinds (reskinned by [`PAL_ASH`]) placed in a
 /// deliberately DIFFERENT arrangement from the home island, so the world reads as a new place
@@ -358,12 +465,60 @@ const ASH_ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
 // treatment is tuned for the home island first; give the charcoal massif its own pass set when
 // the Ashlands gets its character pass.
 const ASH_REGIONS: [Region; 6] = [
-    Region { x: 24.0, z: 54.0, r: 32.0, biome: TB::Rock, peak: 18, cliffy: false, passes: &[] }, // W charcoal massif (home put it E)
-    Region { x: 112.0, z: 26.0, r: 28.0, biome: TB::Snow, peak: 9, cliffy: false, passes: &[] }, // NE ashfall drifts
-    Region { x: 110.0, z: 82.0, r: 30.0, biome: TB::Desert, peak: 0, cliffy: false, passes: &[] }, // SE bleached dunes
-    Region { x: 58.0, z: 92.0, r: 26.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // S burnt grove
-    Region { x: 96.0, z: 48.0, r: 18.0, biome: TB::Lava, peak: 0, cliffy: false, passes: &[] }, // E lava field (the signature biome)
-    Region { x: 70.0, z: 14.0, r: 20.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // N sulfur seep
+    Region {
+        x: 24.0,
+        z: 54.0,
+        r: 32.0,
+        biome: TB::Rock,
+        peak: 18,
+        cliffy: false,
+        passes: &[],
+    }, // W charcoal massif (home put it E)
+    Region {
+        x: 112.0,
+        z: 26.0,
+        r: 28.0,
+        biome: TB::Snow,
+        peak: 9,
+        cliffy: false,
+        passes: &[],
+    }, // NE ashfall drifts
+    Region {
+        x: 110.0,
+        z: 82.0,
+        r: 30.0,
+        biome: TB::Desert,
+        peak: 0,
+        cliffy: false,
+        passes: &[],
+    }, // SE bleached dunes
+    Region {
+        x: 58.0,
+        z: 92.0,
+        r: 26.0,
+        biome: TB::Forest,
+        peak: 0,
+        cliffy: false,
+        passes: &[],
+    }, // S burnt grove
+    Region {
+        x: 96.0,
+        z: 48.0,
+        r: 18.0,
+        biome: TB::Lava,
+        peak: 0,
+        cliffy: false,
+        passes: &[],
+    }, // E lava field (the signature biome)
+    Region {
+        x: 70.0,
+        z: 14.0,
+        r: 20.0,
+        biome: TB::Swamp,
+        peak: 0,
+        cliffy: false,
+        passes: &[],
+    }, // N sulfur seep
 ];
 
 /// Which world a run generates. `u8` on the wire (0 = Home, default) so it rides the save +
@@ -451,7 +606,8 @@ pub fn active_atmosphere() -> (u32, f32, u32, f32, u32, f32, Vec3) {
 // ── Procedural generation (ported from tileMap.ts, base space) ──────────────────
 fn noise_a(x: f32, z: f32) -> f32 {
     let p = active_map().noise_phase;
-    (x * 0.13 + 1.7 + p).sin() * (z * 0.11 - 2.3 + p).cos() + (x * 0.31 + z * 0.29 + 4.5 + p).sin() * 0.5
+    (x * 0.13 + 1.7 + p).sin() * (z * 0.11 - 2.3 + p).cos()
+        + (x * 0.31 + z * 0.29 + 4.5 + p).sin() * 0.5
 }
 fn noise_b(x: f32, z: f32) -> f32 {
     let p = active_map().noise_phase;
@@ -467,7 +623,9 @@ fn noise_b(x: f32, z: f32) -> f32 {
 // patchiness with NO repeating structure.
 fn vhash(ix: i32, iz: i32) -> f32 {
     // lowbias32-style integer hash → well-distributed, no axis correlation.
-    let mut h = (ix as u32).wrapping_mul(0x9E37_79B1).wrapping_add((iz as u32).wrapping_mul(0x85EB_CA77));
+    let mut h = (ix as u32)
+        .wrapping_mul(0x9E37_79B1)
+        .wrapping_add((iz as u32).wrapping_mul(0x85EB_CA77));
     h ^= h >> 16;
     h = h.wrapping_mul(0x7FEB_352D);
     h ^= h >> 15;
@@ -497,8 +655,14 @@ fn vnoise(x: f32, z: f32) -> f32 {
 fn omottle(x: f32, z: f32, scale: f32, seed: f32) -> f32 {
     let f = 0.021 * scale; // ≈ the effective per-unit frequency of `noise_a(x*scale)`
     let s = seed + active_map().noise_phase;
-    let o1 = vnoise((0.857 * x - 0.515 * z) * f + s, (0.515 * x + 0.857 * z) * f + s * 1.3); // ~31°
-    let o2 = vnoise((0.602 * x - 0.799 * z) * f * 2.1 + s * 0.7, (0.799 * x + 0.602 * z) * f * 2.1 + s); // ~53°
+    let o1 = vnoise(
+        (0.857 * x - 0.515 * z) * f + s,
+        (0.515 * x + 0.857 * z) * f + s * 1.3,
+    ); // ~31°
+    let o2 = vnoise(
+        (0.602 * x - 0.799 * z) * f * 2.1 + s * 0.7,
+        (0.799 * x + 0.602 * z) * f * 2.1 + s,
+    ); // ~53°
     ((o1 * 0.65 + o2 * 0.35) - 0.5) * 3.0
 }
 
@@ -519,7 +683,8 @@ fn nw_headland(x: f32, z: f32) -> f32 {
     // Capes-and-coves: two octaves with a LOW floor so the push swings widely along the coast —
     // the shoreline wiggles in and out into a ragged, irregular front (NOT the straight edge an
     // earlier high-floor version produced by slamming the whole coast flat against the map grid).
-    let wave = 0.55 * vnoise(x * 0.09 + 3.1, z * 0.09 - 2.3) + 0.45 * vnoise(x * 0.19 - 1.7, z * 0.19 + 4.2);
+    let wave = 0.55 * vnoise(x * 0.09 + 3.1, z * 0.09 - 2.3)
+        + 0.45 * vnoise(x * 0.19 - 1.7, z * 0.19 + 4.2);
     // Edge guard: fade the push to 0 over the last ~10 base tiles before the grid boundary, so the
     // coast is ALWAYS shaped by this noise curve and never reaches the rectangular grid edge (which
     // renders as a dead-straight "ruler" cliff — the player's complaint). The massif then meets the
@@ -556,8 +721,16 @@ fn sea_field(x: f32, z: f32) -> f32 {
 
 fn dist_from_coast(x: f32, z: f32) -> i32 {
     let mut min = 10;
-    const DIRS: [(f32, f32); 8] =
-        [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)];
+    const DIRS: [(f32, f32); 8] = [
+        (1.0, 0.0),
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (0.0, -1.0),
+        (1.0, 1.0),
+        (1.0, -1.0),
+        (-1.0, 1.0),
+        (-1.0, -1.0),
+    ];
     for (dx, dz) in DIRS {
         for d in 1..=10 {
             if !is_land_shape(x + dx * d as f32, z + dz * d as f32) {
@@ -595,22 +768,58 @@ struct RiverDef {
 // and well clear of the castle safe-zone (so it isn't clipped to dry grass).
 const HOME_RIVERS: &[RiverDef] = &[
     // Snowmelt — gathers in the forest SOUTH of the snow massif (clear of the peak) and runs west.
-    RiverDef { pts: &[(42.0, 60.0), (30.0, 68.0), (18.0, 76.0), (6.0, 84.0)], w_src: 0.42, w_mouth: 0.78 },
+    RiverDef {
+        pts: &[(42.0, 60.0), (30.0, 68.0), (18.0, 76.0), (6.0, 84.0)],
+        w_src: 0.42,
+        w_mouth: 0.78,
+    },
     // Marsh river — west of the rock range (clear of it), draining south through the swamp.
-    RiverDef { pts: &[(72.0, 84.0), (74.0, 93.0), (76.0, 102.0), (78.0, 108.0)], w_src: 0.42, w_mouth: 0.72 },
+    RiverDef {
+        pts: &[(72.0, 84.0), (74.0, 93.0), (76.0, 102.0), (78.0, 108.0)],
+        w_src: 0.42,
+        w_mouth: 0.72,
+    },
     // North brook — east frontier, clear of the rock range, to the north coast.
-    RiverDef { pts: &[(78.0, 33.0), (76.0, 24.0), (74.0, 14.0), (72.0, 5.0), (70.0, -3.0)], w_src: 0.4, w_mouth: 0.64 },
+    RiverDef {
+        pts: &[
+            (78.0, 33.0),
+            (76.0, 24.0),
+            (74.0, 14.0),
+            (72.0, 5.0),
+            (70.0, -3.0),
+        ],
+        w_src: 0.4,
+        w_mouth: 0.64,
+    },
 ];
 
 // Ashlands — its own three courses off ITS highlands (rock massif W, snow drifts NE): a west
 // torrent off the charcoal massif to the west coast, a north seep, and an eastern drain.
 const ASH_RIVERS: &[RiverDef] = &[
     // Clear of the W charcoal massif — drains south.
-    RiverDef { pts: &[(66.0, 72.0), (68.0, 82.0), (70.0, 92.0), (72.0, 101.0)], w_src: 0.35, w_mouth: 0.7 },
+    RiverDef {
+        pts: &[(66.0, 72.0), (68.0, 82.0), (70.0, 92.0), (72.0, 101.0)],
+        w_src: 0.35,
+        w_mouth: 0.7,
+    },
     // Clear of the NE snow drifts — north to the coast.
-    RiverDef { pts: &[(80.0, 44.0), (78.0, 32.0), (76.0, 20.0), (74.0, 8.0), (72.0, -2.0)], w_src: 0.35, w_mouth: 0.66 },
+    RiverDef {
+        pts: &[
+            (80.0, 44.0),
+            (78.0, 32.0),
+            (76.0, 20.0),
+            (74.0, 8.0),
+            (72.0, -2.0),
+        ],
+        w_src: 0.35,
+        w_mouth: 0.66,
+    },
     // East drain.
-    RiverDef { pts: &[(78.0, 66.0), (84.0, 76.0), (90.0, 86.0), (96.0, 96.0)], w_src: 0.35, w_mouth: 0.62 },
+    RiverDef {
+        pts: &[(78.0, 66.0), (84.0, 76.0), (90.0, 86.0), (96.0, 96.0)],
+        w_src: 0.35,
+        w_mouth: 0.62,
+    },
 ];
 
 fn active_rivers() -> &'static [RiverDef] {
@@ -636,7 +845,11 @@ fn river_points() -> Arc<RiverField> {
         .or_insert_with(|| {
             let mut pts: Vec<(f32, f32, f32)> = Vec::new();
             for (ri, def) in active_rivers().iter().enumerate() {
-                let seg: Vec<f32> = def.pts.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).collect();
+                let seg: Vec<f32> = def
+                    .pts
+                    .windows(2)
+                    .map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1))
+                    .collect();
                 let total: f32 = seg.iter().sum::<f32>().max(1e-3);
                 let seed = ri as f32 * 17.0 + 3.0; // decorrelate each river's wander/width noise
                 let mut acc = 0.0;
@@ -671,7 +884,12 @@ fn river_points() -> Arc<RiverField> {
                 }
             }
             // Padded bbox: max half (~1.4) + edge noise (~0.4) + a margin.
-            let mut bb = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+            let mut bb = [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ];
             for &(x, z, _) in &pts {
                 bb[0] = bb[0].min(x);
                 bb[1] = bb[1].min(z);
@@ -679,7 +897,10 @@ fn river_points() -> Arc<RiverField> {
                 bb[3] = bb[3].max(z);
             }
             const PAD: f32 = 2.5;
-            Arc::new(RiverField { pts, bb: [bb[0] - PAD, bb[1] - PAD, bb[2] + PAD, bb[3] + PAD] })
+            Arc::new(RiverField {
+                pts,
+                bb: [bb[0] - PAD, bb[1] - PAD, bb[2] + PAD, bb[3] + PAD],
+            })
         })
         .clone()
 }
@@ -719,14 +940,20 @@ fn river_blocked(x: f32, z: f32) -> bool {
     // terrain margin): a river clipping a steep mountain base left broken slivers + carved channels
     // fighting the mountain heightfield (the "rivers in the mountains cause bugs" report).
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
-    let near_peak = active_map().regions.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 5.0);
+    let near_peak = active_map()
+        .regions
+        .iter()
+        .any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 5.0);
     dist_from_castle(x, z) < SAFE_R
         || near_peak
         || crate::ork_fortress::blight_class_base(x, z).is_some()
 }
 fn in_mountain(x: f32, z: f32) -> bool {
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
-    active_map().regions.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 2.0)
+    active_map()
+        .regions
+        .iter()
+        .any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 2.0)
 }
 fn is_river(x: f32, z: f32) -> bool {
     !river_blocked(x, z) && river_sd(x, z) < 0.0
@@ -958,7 +1185,8 @@ fn inland_hills(x: f32, z: f32, dc: f32, max: i32) -> i32 {
     // Thresholds lowered + a 5th class added (map-character overhaul feedback: "musi być
     // więcej drobnych pagórków") — the frontier rolls noticeably now instead of reading as a
     // flat sheet with rare knolls. Still nested → every face stays a 1-class walkable step.
-    let roll = noise_a(x * 0.3 + 9.0, z * 0.3 - 5.0) + noise_b(x * 0.16 - 4.0, z * 0.16 + 8.0) * 0.6;
+    let roll =
+        noise_a(x * 0.3 + 9.0, z * 0.3 - 5.0) + noise_b(x * 0.16 - 4.0, z * 0.16 + 8.0) * 0.6;
     let h = if roll > 2.05 {
         5
     } else if roll > 1.6 {
@@ -1038,14 +1266,22 @@ fn mountain_height(x: f32, z: f32, reg: &Region) -> i32 {
 /// and lobed, and the broad low-frequency octave deforms each WHOLE silhouette (not just the
 /// rims) so neither reads as a compass-drawn circle.
 fn mesa_t(x: f32, z: f32, reg: &Region) -> f32 {
-    let (sx, sz) = if reg.biome == TB::Snow { (0.82, 1.20) } else { (1.12, 0.88) };
+    let (sx, sz) = if reg.biome == TB::Snow {
+        (0.82, 1.20)
+    } else {
+        (1.12, 0.88)
+    };
     let dx = (x - reg.x) * sx;
     let dz = (z - reg.z) * sz;
     // The snow massif runs MORE irregular than the rock range (player: "bardziej nieregularna"):
     // a heavier broad-lobe deformation + an extra mid-frequency spur octave warp its whole
     // silhouette into ragged spurs, so its enlarged flanks meet the NW sea-cliff on a jagged
     // front rather than a smooth arc. The rock range keeps its tuned squat-lobed shape.
-    let (lobe, spur, rim) = if reg.biome == TB::Snow { (8.5, 4.0, 3.6) } else { (5.5, 0.0, 3.0) };
+    let (lobe, spur, rim) = if reg.biome == TB::Snow {
+        (8.5, 4.0, 3.6)
+    } else {
+        (5.5, 0.0, 3.0)
+    };
     let dc = dx.hypot(dz)
         + noise_b(x * 0.085 + 7.0, z * 0.085 - 3.0) * lobe // broad lobes: silhouette deformation
         + noise_a(x * 0.17 - 2.0, z * 0.17 + 5.0) * spur // mid spurs (snow only)
@@ -1070,7 +1306,11 @@ fn mesa_height(x: f32, z: f32, reg: &Region) -> i32 {
         return rc;
     }
     let t = mesa_t(x, z, reg);
-    let tiers: &[f32] = if reg.biome == TB::Snow { &SNOW_TIERS } else { &MESA_TIERS };
+    let tiers: &[f32] = if reg.biome == TB::Snow {
+        &SNOW_TIERS
+    } else {
+        &MESA_TIERS
+    };
     if t < tiers[0] {
         // Foot apron: low fringe so the mesa rises out of walkable ground, not a moat of cliff.
         return if t > tiers[0] * 0.5 { 2 } else { 1 };
@@ -1137,7 +1377,10 @@ fn cliff_exempt_base(x: f32, z: f32) -> bool {
     }) {
         return true;
     }
-    active_map().regions.iter().any(|r| r.cliffy && r.peak > 0 && pass_class(x, z, r).is_some())
+    active_map()
+        .regions
+        .iter()
+        .any(|r| r.cliffy && r.peak > 0 && pass_class(x, z, r).is_some())
 }
 
 /// True near (within `pad` base tiles outside) a cliffy region's rim — the flat "contrast apron"
@@ -1319,8 +1562,9 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         return None;
     }
     let d = dist_from_coast(x, z) as f32;
-    let beach_w =
-        1.0 + (1.0 + (x * 0.6 + z * 0.42 + 2.1).sin() * 0.8 + (x * 1.25 - z * 0.95 + 0.4).sin() * 0.6).max(0.0);
+    let beach_w = 1.0
+        + (1.0 + (x * 0.6 + z * 0.42 + 2.1).sin() * 0.8 + (x * 1.25 - z * 0.95 + 0.4).sin() * 0.6)
+            .max(0.0);
     if d <= beach_w {
         return Some((TB::Sand, 1));
     }
@@ -1340,7 +1584,11 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         }
     }
     // Plateaus skip cliffy mesa regions (a smooth plateau cone would breach the tier walls).
-    let ph = if in_cliffy(x, z) { 0 } else { plateau_height(x, z) };
+    let ph = if in_cliffy(x, z) {
+        0
+    } else {
+        plateau_height(x, z)
+    };
     if ph > 0 {
         // A plateau inside a flat biome blob keeps that biome (desert mesa, forest highland);
         // out on the frontier it's a grass plateau.
@@ -1371,7 +1619,11 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         // reads wet from the algae ground tint + reeds instead; standing water stays for the rivers
         // and the deliberate lake, which are big enough to render as real water.)
         if reg.peak > 0 {
-            let h = if reg.cliffy { mesa_height(x, z, reg) } else { mountain_height(x, z, reg) };
+            let h = if reg.cliffy {
+                mesa_height(x, z, reg)
+            } else {
+                mountain_height(x, z, reg)
+            };
             return Some((reg.biome, h));
         }
         // Swamp (map-character overhaul pass 3): a coherent BOG — standing murky water in the
@@ -1388,10 +1640,18 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         // Flat biomes get the inland-hills field: dunes in the desert, wooded rises in the forest;
         // lava stays perfectly flat. Next to a mesa rim the hills flatten to a contrast APRON —
         // tall reads tall beside flat.
-        let max = if near_cliffy_rim(x, z, 8.0) || reg.biome == TB::Lava { 1 } else { 4 };
+        let max = if near_cliffy_rim(x, z, 8.0) || reg.biome == TB::Lava {
+            1
+        } else {
+            4
+        };
         return Some((reg.biome, inland_hills(x, z, dc, max)));
     }
-    let h = if near_cliffy_rim(x, z, 8.0) { 1 } else { inland_hills(x, z, dc, 5) };
+    let h = if near_cliffy_rim(x, z, 8.0) {
+        1
+    } else {
+        inland_hills(x, z, dc, 5)
+    };
     let forest_n = noise_a(x, z) * noise_b(x + 7.0, z - 3.0);
     if forest_n > 0.35 {
         return Some((TB::Forest, h));
@@ -1406,6 +1666,16 @@ type Grid = Vec<Option<(TB, i32)>>;
 /// switch-back. The one-time regen is fully covered by the loading veil. `tiles()` hands out a
 /// cheap `Arc` clone; every reader goes through `tile_at`, so the swap is invisible to them.
 static TILES: OnceLock<Mutex<HashMap<u8, Arc<Grid>>>> = OnceLock::new();
+
+/// Drop memoised terrain grids after the editor loads or mutates an authoring asset. Roads/bridges
+/// are still procedural in this foundation pass; future road-paint integration should get matching
+/// cache invalidation in `roads.rs` / `bridges.rs`.
+pub(crate) fn clear_tile_cache() {
+    if let Some(cache) = TILES.get() {
+        cache.lock().expect("tile cache poisoned").clear();
+    }
+}
+
 fn tiles() -> Arc<Grid> {
     let id = active_id();
     let cache = TILES.get_or_init(|| Mutex::new(HashMap::new()));
@@ -1419,12 +1689,48 @@ fn build_grid() -> Arc<Grid> {
     let mut v = Vec::with_capacity((COLS * ROWS) as usize);
     for iz in 0..ROWS {
         for ix in 0..COLS {
-            v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
+            let bx = ix as f32 / MAP_SCALE;
+            let bz = iz as f32 / MAP_SCALE;
+            v.push(apply_authoring_tile(bx, bz, classify(bx, bz)));
         }
     }
     prune_stray_islets(&mut v);
     terrace_inland(&mut v);
     Arc::new(v)
+}
+
+fn authoring_sample_base(x: f32, z: f32) -> crate::map_authoring::AuthoringSample {
+    if active_id() == MapId::Home as u8 {
+        crate::map_authoring::sample_base(x, z)
+    } else {
+        crate::map_authoring::AuthoringSample::default()
+    }
+}
+
+fn authoring_water_sd_base(x: f32, z: f32) -> Option<f32> {
+    if active_id() == MapId::Home as u8 {
+        crate::map_authoring::water_signed_distance_base(x, z)
+    } else {
+        None
+    }
+}
+
+fn apply_authoring_tile(x: f32, z: f32, tile: Option<(TB, i32)>) -> Option<(TB, i32)> {
+    let sample = authoring_sample_base(x, z);
+    if sample.water {
+        return None;
+    }
+    let Some((mut tb, mut h)) = tile else {
+        return None;
+    };
+    if let Some(biome) = sample.biome {
+        tb = tb_from_author_biome(biome);
+    }
+    if let Some(class) = sample.height_class {
+        h = class;
+    }
+    h = (h + sample.height_delta).clamp(1, 20);
+    Some((tb, h))
 }
 
 /// Sink any small land clump the `nw_headland` coast noise pinched off just offshore — the
@@ -1560,12 +1866,18 @@ pub fn tile_biome_world(wx: f32, wz: f32) -> Option<Biome> {
     }
 }
 pub fn is_grass_world(wx: f32, wz: f32) -> bool {
-    matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Grass))
+    matches!(
+        tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0),
+        Some(TB::Grass)
+    )
 }
 /// Is world `(x, z)` a Lava-field tile? Lava maps to gameplay [`Biome::Swamp`], so scatter keys
 /// off the underlying `TB` directly (swamp props are kept off it; basalt boulders go on it).
 fn is_lava_world(wx: f32, wz: f32) -> bool {
-    matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Lava))
+    matches!(
+        tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0),
+        Some(TB::Lava)
+    )
 }
 /// Smoothed terrain height at integer grid CORNER `(cx, cz)` **as seen from a tile of class
 /// `h_ref`**: the mean flat-top Y of the corner's land tiles that are CLUSTER-CONNECTED to
@@ -1580,7 +1892,10 @@ fn is_lava_world(wx: f32, wz: f32) -> bool {
 /// own flat top).
 fn corner_top_y_for(cx: i32, cz: i32, h_ref: i32) -> Option<f32> {
     let mut hs: [Option<i32>; 4] = [None; 4];
-    for (k, (ax, az)) in [(cx - 1, cz - 1), (cx, cz - 1), (cx - 1, cz), (cx, cz)].into_iter().enumerate() {
+    for (k, (ax, az)) in [(cx - 1, cz - 1), (cx, cz - 1), (cx - 1, cz), (cx, cz)]
+        .into_iter()
+        .enumerate()
+    {
         hs[k] = tile_at(ax, az).map(|(_, h)| h);
     }
     // Seed with tiles ≤1 class from the reference, then chain outward (≤4 tiles → 3 passes).
@@ -1632,8 +1947,16 @@ fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
     // Combine the water sources into ONE corner field (nearest water wins) so marching-squares cuts
     // a smooth shore for the lake AND the swamp bog pools too, not just rivers. The lake/pools
     // aren't gated by `river_blocked` (that's a river-only keep-out); they carry their own gating.
-    let river = if river_blocked(bx, bz) { f32::INFINITY } else { river_sd(bx, bz) };
-    let sd = river.min(lake_sd(bx, bz)).min(pool_or_stream_sd(bx, bz));
+    let river = if river_blocked(bx, bz) {
+        f32::INFINITY
+    } else {
+        river_sd(bx, bz)
+    };
+    let authored_water = authoring_water_sd_base(bx, bz).unwrap_or(f32::INFINITY);
+    let sd = river
+        .min(lake_sd(bx, bz))
+        .min(pool_or_stream_sd(bx, bz))
+        .min(authored_water);
     (sd, sd < 0.0)
 }
 
@@ -1651,7 +1974,10 @@ fn smooth_surface_y(wx: f32, wz: f32) -> Option<f32> {
     // tile is land by centre yet half water on screen. Reject the exact water area here (cheap:
     // `river_sd` early-outs outside the rivers' bbox; `pool_sd` outside the swamp interiors) so
     // the hero/NPCs/scatter can't stand on the rendered-water half.
-    if is_river(gx / MAP_SCALE, gz / MAP_SCALE) || is_pool(gx / MAP_SCALE, gz / MAP_SCALE) {
+    if is_river(gx / MAP_SCALE, gz / MAP_SCALE)
+        || is_pool(gx / MAP_SCALE, gz / MAP_SCALE)
+        || authoring_water_sd_base(gx / MAP_SCALE, gz / MAP_SCALE).is_some_and(|sd| sd < 0.0)
+    {
         return None;
     }
     let ix = gx.floor() as i32;
@@ -1698,7 +2024,11 @@ pub(crate) fn rivers_world() -> Vec<Vec<(f32, f32)>> {
     active_rivers()
         .iter()
         .map(|def| {
-            let seg: Vec<f32> = def.pts.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).collect();
+            let seg: Vec<f32> = def
+                .pts
+                .windows(2)
+                .map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1))
+                .collect();
             let mut out = Vec::new();
             for (si, w) in def.pts.windows(2).enumerate() {
                 let (ax, az) = w[0];
@@ -1726,7 +2056,9 @@ pub fn is_river_world(wx: f32, wz: f32) -> bool {
     if crate::rival::fort_flat_zone(wx, wz) {
         return false;
     }
-    is_river((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
+    let bx = (wx + GX) / MAP_SCALE;
+    let bz = (wz + GZ) / MAP_SCALE;
+    is_river(bx, bz) || authoring_water_sd_base(bx, bz).is_some_and(|sd| sd < 0.0)
 }
 
 /// True ONLY over a real standing-water body — the deliberate **lake** or the open **sea** off the
@@ -1756,7 +2088,11 @@ fn lin3(hex: u32) -> [f32; 3] {
     [l[0], l[1], l[2]]
 }
 fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
 }
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -1895,10 +2231,23 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     if blight_w > 0.0 {
         col = mix3(col, biome_col_at(TB::Blight, x, z), blight_w);
     }
+    let authored = authoring_sample_base(x, z);
+    if let Some(biome) = authored.biome {
+        let tb = tb_from_author_biome(biome);
+        let w = authored.biome_weight.clamp(0.0, 1.0);
+        col = mix3(col, biome_col_at(tb, x, z), w);
+        if tb == TB::Swamp {
+            wet = wet.max(w);
+        }
+    }
     // Sandy coast fade — damped inside the Blight: `dist_from_coast` only knows the OLD
     // island shape, so without the damp the whole southern landmass would tint to beach.
     let dco = dist_from_coast(x, z) as f32;
-    col = mix3(col, lin3(p.sand), smoothstep(3.5, 0.5, dco) * 0.85 * (1.0 - blight_w));
+    col = mix3(
+        col,
+        lin3(p.sand),
+        smoothstep(3.5, 0.5, dco) * 0.85 * (1.0 - blight_w),
+    );
     // Universal mottle — value jitter + a slow warm/cool hue wander over the *blended*
     // colour, so biome interiors (forest, sand, snow…) get texture too, not just the open
     // grass. Multiplicative and small: it breaks the flat fill without recolouring a biome.
@@ -1928,7 +2277,11 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
         // mountains read as invisible. On rock, blend HARDER and toward a lighter packed-earth so
         // the road pops against the crags; other biomes keep the softer authored tint.
         let rocky = matches!(tile_biome_world(wx, wz), Some(Biome::Rocky));
-        let (road_col, road_blend) = if rocky { (0xba9057u32, 0.95) } else { (p.road_dirt, 0.85) };
+        let (road_col, road_blend) = if rocky {
+            (0xba9057u32, 0.95)
+        } else {
+            (p.road_dirt, 0.85)
+        };
         // Readability rework (map-character overhaul pass 2): a road reads via its EDGE, not a
         // linear smear. The old `road_s * blend` faded the tint out over the whole falloff, which
         // is exactly why the paths "melted into the biome". Now: a full-strength packed CORE with
@@ -1939,7 +2292,11 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
         // see `roads::bake_rut_mask` + `terrain.wgsl`.)
         let core_w = smoothstep(0.30, 0.55, road_s);
         let verge_w = smoothstep(0.02, 0.14, road_s) * (1.0 - smoothstep(0.18, 0.34, road_s));
-        col = mix3(col, lin3(road_col), (verge_w * 0.28 + core_w * road_blend).min(1.0));
+        col = mix3(
+            col,
+            lin3(road_col),
+            (verge_w * 0.28 + core_w * road_blend).min(1.0),
+        );
     }
     let yard_s = crate::castle::yard_strength(wx, wz);
     if yard_s > 0.0 {
@@ -1987,33 +2344,55 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Handle<Ima
     for z in 0..H {
         for x in 0..W {
             let mut v = d[idx(x, z)];
-            if x > 0 { v = v.min(d[idx(x - 1, z)] + 1.0); }
-            if z > 0 { v = v.min(d[idx(x, z - 1)] + 1.0); }
-            if x > 0 && z > 0 { v = v.min(d[idx(x - 1, z - 1)] + DIAG); }
-            if x + 1 < W && z > 0 { v = v.min(d[idx(x + 1, z - 1)] + DIAG); }
+            if x > 0 {
+                v = v.min(d[idx(x - 1, z)] + 1.0);
+            }
+            if z > 0 {
+                v = v.min(d[idx(x, z - 1)] + 1.0);
+            }
+            if x > 0 && z > 0 {
+                v = v.min(d[idx(x - 1, z - 1)] + DIAG);
+            }
+            if x + 1 < W && z > 0 {
+                v = v.min(d[idx(x + 1, z - 1)] + DIAG);
+            }
             d[idx(x, z)] = v;
         }
     }
     for z in (0..H).rev() {
         for x in (0..W).rev() {
             let mut v = d[idx(x, z)];
-            if x + 1 < W { v = v.min(d[idx(x + 1, z)] + 1.0); }
-            if z + 1 < H { v = v.min(d[idx(x, z + 1)] + 1.0); }
-            if x + 1 < W && z + 1 < H { v = v.min(d[idx(x + 1, z + 1)] + DIAG); }
-            if x > 0 && z + 1 < H { v = v.min(d[idx(x - 1, z + 1)] + DIAG); }
+            if x + 1 < W {
+                v = v.min(d[idx(x + 1, z)] + 1.0);
+            }
+            if z + 1 < H {
+                v = v.min(d[idx(x, z + 1)] + 1.0);
+            }
+            if x + 1 < W && z + 1 < H {
+                v = v.min(d[idx(x + 1, z + 1)] + DIAG);
+            }
+            if x > 0 && z + 1 < H {
+                v = v.min(d[idx(x - 1, z + 1)] + DIAG);
+            }
             d[idx(x, z)] = v;
         }
     }
 
-    let data: Vec<u8> =
-        d.iter().map(|v| ((v / SHORE_MAX).clamp(0.0, 1.0) * 255.0) as u8).collect();
+    let data: Vec<u8> = d
+        .iter()
+        .map(|v| ((v / SHORE_MAX).clamp(0.0, 1.0) * 255.0) as u8)
+        .collect();
     let linear = ImageSampler::Descriptor(ImageSamplerDescriptor {
         mag_filter: ImageFilterMode::Linear,
         min_filter: ImageFilterMode::Linear,
         ..default()
     });
     let mut img = Image::new(
-        Extent3d { width: W as u32, height: H as u32, depth_or_array_layers: 1 },
+        Extent3d {
+            width: W as u32,
+            height: H as u32,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         data,
         TextureFormat::R8Unorm,
@@ -2032,7 +2411,9 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Handle<Ima
         .map(|i| {
             let wx = min_x + (i % W) as f32 + 0.5;
             let wz = min_z + (i / W) as f32 + 0.5;
-            if pool_sd_world(wx, wz) < 0.0 || (in_swamp_region_world(wx, wz) && is_river_world(wx, wz)) {
+            if pool_sd_world(wx, wz) < 0.0
+                || (in_swamp_region_world(wx, wz) && is_river_world(wx, wz))
+            {
                 255
             } else {
                 0
@@ -2040,7 +2421,11 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Handle<Ima
         })
         .collect();
     let mut bog_img = Image::new(
-        Extent3d { width: W as u32, height: H as u32, depth_or_array_layers: 1 },
+        Extent3d {
+            width: W as u32,
+            height: H as u32,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         bog_data,
         TextureFormat::R8Unorm,
@@ -2084,7 +2469,17 @@ pub fn build(
 ) {
     let mut state = BuildState::default();
     for step in 0..BUILD_STEPS {
-        build_step(step, commands, meshes, images, std_mats, terrain_mats, water_mats, creature_mats, &mut state);
+        build_step(
+            step,
+            commands,
+            meshes,
+            images,
+            std_mats,
+            terrain_mats,
+            water_mats,
+            creature_mats,
+            &mut state,
+        );
     }
 }
 
@@ -2122,7 +2517,10 @@ pub fn build_step(
         15 => crate::villagers::populate(
             commands,
             meshes,
-            state.village_mats.as_ref().expect("castle (phase 13) runs before village props (phase 15)"),
+            state
+                .village_mats
+                .as_ref()
+                .expect("castle (phase 13) runs before village props (phase 15)"),
             creature_mats,
         ),
         16 => crate::training_dummies::populate(commands, meshes, std_mats),
@@ -2131,7 +2529,10 @@ pub fn build_step(
         19 => crate::town::populate_plots(
             commands,
             meshes,
-            state.village_mats.as_ref().expect("castle (phase 13) runs before town plots (phase 19)"),
+            state
+                .village_mats
+                .as_ref()
+                .expect("castle (phase 13) runs before town plots (phase 19)"),
         ),
         20 => crate::verbs::populate_forage(commands, meshes, std_mats),
         21 => crate::chest::populate_chests(commands, meshes, std_mats),
@@ -2165,7 +2566,12 @@ pub fn build_step(
 // ── Build phases (each one [`build_step`] arm; see the old `build` doc for the why of each) ──
 
 /// The island proper: grass blade-grain detail, all tiles that aren't Blight/Swamp/Lava.
-fn bs_grass_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
+fn bs_grass_sheet(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    terrain_mats: &mut Assets<TerrainMaterial>,
+) {
     let grass_detail = GroundDetail {
         scale: 0.18,
         strength: 0.52,
@@ -2177,15 +2583,28 @@ fn bs_grass_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
         grain: 0.72,
         streak: 0.5,
     };
-    let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, Some(rut_mask_image(images)), images, terrain_mats);
-    spawn_terrain_sheet(commands, meshes, ground_mat, |tb| tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava);
+    let ground_mat = crate::terrain::make_material(
+        &grass_detail,
+        1.0,
+        Some(rut_mask_image(images)),
+        images,
+        terrain_mats,
+    );
+    spawn_terrain_sheet(commands, meshes, ground_mat, |tb| {
+        tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava
+    });
 }
 
 /// The swamp: bespoke wet blotchy mottle (not the grass blades), lower roughness for a bog sheen.
-fn bs_swamp_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
+fn bs_swamp_sheet(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    terrain_mats: &mut Assets<TerrainMaterial>,
+) {
     let swamp_detail = GroundDetail {
         scale: 0.16,
-        strength: 0.6, // a touch stronger so the wet/dry blotch reads
+        strength: 0.6,  // a touch stronger so the wet/dry blotch reads
         variation: 1.0, // max blotch → standing wet pools vs. exposed muck
         seed: 11.0,
         dark: 0x1f2b18, // deeper near-black-green: the standing bog-water pools (was 0x2c3522)
@@ -2201,12 +2620,23 @@ fn bs_swamp_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
     // that `ground_color` feathers over the biome BLEND band, so both sheets resolve the SAME
     // roughness at a shared boundary vertex → no seam, while the marsh interior (alpha≈1) still reads
     // as the wet ~0.40-roughness muck it did before (player: "bardziej mokre bagno").
-    let swamp_mat = crate::terrain::make_material(&swamp_detail, 1.0, Some(rut_mask_image(images)), images, terrain_mats);
+    let swamp_mat = crate::terrain::make_material(
+        &swamp_detail,
+        1.0,
+        Some(rut_mask_image(images)),
+        images,
+        terrain_mats,
+    );
     spawn_terrain_sheet(commands, meshes, swamp_mat, |tb| tb == TB::Swamp);
 }
 
 /// The Blight: its own filthy beaten-earth grain so the trampled mud reads near the keep.
-fn bs_blight_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
+fn bs_blight_sheet(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    terrain_mats: &mut Assets<TerrainMaterial>,
+) {
     let blight_detail = GroundDetail {
         scale: 0.26,
         strength: 0.60,
@@ -2218,13 +2648,24 @@ fn bs_blight_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &
         grain: 0.88,
         streak: 0.55,
     };
-    let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, Some(rut_mask_image(images)), images, terrain_mats);
+    let blight_mat = crate::terrain::make_material(
+        &blight_detail,
+        0.97,
+        Some(rut_mask_image(images)),
+        images,
+        terrain_mats,
+    );
     spawn_terrain_sheet(commands, meshes, blight_mat, |tb| tb == TB::Blight);
 }
 
 /// Lava field (map 2 only): basalt crust sheet; magma seams ride the vertex colour. No-op on maps
 /// without lava so the home island never builds an empty sheet.
-fn bs_lava_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
+fn bs_lava_sheet(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    terrain_mats: &mut Assets<TerrainMaterial>,
+) {
     if !active_map().has_lava {
         return;
     }
@@ -2239,7 +2680,13 @@ fn bs_lava_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mu
         grain: 0.80,
         streak: 0.40,
     };
-    let lava_mat = crate::terrain::make_material(&lava_detail, 0.90, Some(rut_mask_image(images)), images, terrain_mats);
+    let lava_mat = crate::terrain::make_material(
+        &lava_detail,
+        0.90,
+        Some(rut_mask_image(images)),
+        images,
+        terrain_mats,
+    );
     spawn_terrain_sheet(commands, meshes, lava_mat, |tb| tb == TB::Lava);
 }
 
@@ -2254,7 +2701,11 @@ fn rut_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     }
     let (data, w, h, region) = crate::roads::bake_rut_mask();
     let mut img = Image::new(
-        Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+        Extent3d {
+            width: w as u32,
+            height: h as u32,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         data,
         TextureFormat::R8Unorm,
@@ -2272,12 +2723,29 @@ fn rut_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
 
 /// The sea plane + shore-distance bake + background sailboats, then plan the ork camps (BEFORE
 /// scatter, so their clearings can be reserved out of the prop placement).
-fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>, water_mats: &mut Assets<WaterMaterial>) {
-    let sea_mesh = meshes.add(Plane3d::default().mesh().size(900.0, 900.0).subdivisions(8).build());
+fn bs_sea_and_boats(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    std_mats: &mut Assets<StandardMaterial>,
+    water_mats: &mut Assets<WaterMaterial>,
+) {
+    let sea_mesh = meshes.add(
+        Plane3d::default()
+            .mesh()
+            .size(900.0, 900.0)
+            .subdivisions(8)
+            .build(),
+    );
     let (shore_tex, bog_tex, shore_region) = bake_shore_distance(images);
     let sea = water_mats.add(ExtendedMaterial {
         base: StandardMaterial {
-            base_color: Color::srgba(0x2f as f32 / 255.0, 0x6f as f32 / 255.0, 0xae as f32 / 255.0, 0.9),
+            base_color: Color::srgba(
+                0x2f as f32 / 255.0,
+                0x6f as f32 / 255.0,
+                0xae as f32 / 255.0,
+                0.9,
+            ),
             perceptual_roughness: 0.24,
             reflectance: 0.5,
             alpha_mode: AlphaMode::Blend,
@@ -2294,7 +2762,12 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
             bog: Some(bog_tex),
         },
     });
-    commands.spawn((Mesh3d(sea_mesh), MeshMaterial3d(sea), Transform::from_xyz(0.0, SEA_Y, 0.0), crate::biome::BiomeEntity));
+    commands.spawn((
+        Mesh3d(sea_mesh),
+        MeshMaterial3d(sea),
+        Transform::from_xyz(0.0, SEA_Y, 0.0),
+        crate::biome::BiomeEntity,
+    ));
 
     // Island shape is authored in BASE space (CX/CZ, ISLAND_R*); convert to world.
     let isle_c = Vec2::new(CX * MAP_SCALE - GX, CZ * MAP_SCALE - GZ);
@@ -2314,8 +2787,14 @@ fn desert_near_rock(x: f32, z: f32) -> bool {
     const M: f32 = 7.0;
     const D: f32 = 4.95; // M * 0.707
     for (dx, dz) in [
-        (M, 0.0), (-M, 0.0), (0.0, M), (0.0, -M),
-        (D, D), (-D, D), (D, -D), (-D, -D),
+        (M, 0.0),
+        (-M, 0.0),
+        (0.0, M),
+        (0.0, -M),
+        (D, D),
+        (-D, D),
+        (D, -D),
+        (-D, -D),
     ] {
         if tile_biome_world(x + dx, z + dz) == Some(Biome::Rocky) {
             return true;
@@ -2324,7 +2803,13 @@ fn desert_near_rock(x: f32, z: f32) -> bool {
     false
 }
 
-fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>, state: &mut BuildState) {
+fn bs_scatter_biome(
+    biome: Biome,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    std_mats: &mut Assets<StandardMaterial>,
+    state: &mut BuildState,
+) {
     let lo = -GX;
     let hi = GX; // square covers the whole grid; off-map tiles mask out
     let mut cfg = config_for(biome);
@@ -2340,7 +2825,13 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
         let (sky, fog, sun_c, sun_i, amb_c, amb_b, _s) = active_atmosphere();
         AtmoSample::from_raw(sky, sun_c, sun_i, amb_c, amb_b, fog)
     };
-    state.ambiences.push((biome, BiomeAmbience { atmo, particle: cfg.particle }));
+    state.ambiences.push((
+        biome,
+        BiomeAmbience {
+            atmo,
+            particle: cfg.particle,
+        },
+    ));
     scatter_region(
         &cfg,
         commands,
@@ -2391,21 +2882,31 @@ fn bs_insert_ambiences(commands: &mut Commands, state: &mut BuildState) {
 }
 
 /// Snow drifts banked against terrace walls where a snow tile abuts a higher neighbour.
-fn bs_snow_drifts(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+fn bs_snow_drifts(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    std_mats: &mut Assets<StandardMaterial>,
+) {
     let drift_mat = std_mats.add(StandardMaterial {
         base_color: Color::WHITE, // vertex colour carries the hue (mesh contract)
         perceptual_roughness: 0.62,
         reflectance: 0.5,
         ..default()
     });
-    let drift_meshes: Vec<Handle<Mesh>> =
-        (0..3).map(|v| meshes.add(crate::biome_snow::build_mound_mesh(v))).collect();
+    let drift_meshes: Vec<Handle<Mesh>> = (0..3)
+        .map(|v| meshes.add(crate::biome_snow::build_mound_mesh(v)))
+        .collect();
     for iz in 0..ROWS {
         for ix in 0..COLS {
-            let Some((TB::Snow, h)) = tile_at(ix, iz) else { continue };
-            let mut rng = tileworld_core::rng::Mulberry32::new((iz * COLS + ix) as u32 ^ 0x5eed_d81f);
+            let Some((TB::Snow, h)) = tile_at(ix, iz) else {
+                continue;
+            };
+            let mut rng =
+                tileworld_core::rng::Mulberry32::new((iz * COLS + ix) as u32 ^ 0x5eed_d81f);
             for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                let Some((_, nh)) = tile_at(ix + dx, iz + dz) else { continue };
+                let Some((_, nh)) = tile_at(ix + dx, iz + dz) else {
+                    continue;
+                };
                 if nh <= h || rng.next() > 0.35 {
                     continue;
                 }
@@ -2432,7 +2933,11 @@ fn bs_snow_drifts(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
 }
 
 /// Grass frontier cover (tufts/clover/flowers) on grass tiles, around the castle/camps/plots.
-fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+fn bs_grass_cover(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    std_mats: &mut Assets<StandardMaterial>,
+) {
     let lo = -GX;
     let hi = GX;
     let grass_cfg = grass_config();
@@ -2440,7 +2945,11 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
     // grass + sun-flowers (poppies/buttercups) take the dry/trodden sweeps, while ferns, clover
     // and mushrooms cluster in the damp green hollows — so WHICH plant you see matches the patch
     // it grows on. The reskin's dead-litter cover is one class, so it just ignores the lean.
-    let meadow_affinity: &[f32] = if active_id() == 0 { &[-0.6, 0.5, 0.9, -0.15, 1.0] } else { &[] };
+    let meadow_affinity: &[f32] = if active_id() == 0 {
+        &[-0.6, 0.5, 0.9, -0.15, 1.0]
+    } else {
+        &[]
+    };
     scatter_region(
         &grass_cfg,
         commands,
@@ -2480,40 +2989,48 @@ fn config_for(b: Biome) -> BiomeConfig {
 /// invasive — the litter family is already neutral/dead-toned, so we just scatter that instead.)
 fn frontier_cover() -> Vec<PropClass> {
     if active_id() != 0 {
-        return vec![
-            PropClass {
-                variants: (0..gc::NUM_LITTER_VARIANTS).map(|v| (gc::build_floor_litter_mesh(v), 1.0)).collect(),
-                chance: 0.26,
-                scale: (0.7, 1.35),
-                tree: false,
-                block_radius: 0.0,
-            },
-        ];
+        return vec![PropClass {
+            variants: (0..gc::NUM_LITTER_VARIANTS)
+                .map(|v| (gc::build_floor_litter_mesh(v), 1.0))
+                .collect(),
+            chance: 0.26,
+            scale: (0.7, 1.35),
+            tree: false,
+            block_radius: 0.0,
+        }];
     }
     vec![
         PropClass {
-            variants: (0..gc::NUM_GRASS_VARIANTS).map(|v| (gc::build_grass_tuft_mesh(v), 1.0)).collect(),
+            variants: (0..gc::NUM_GRASS_VARIANTS)
+                .map(|v| (gc::build_grass_tuft_mesh(v), 1.0))
+                .collect(),
             chance: 0.32,
             scale: (0.6, 1.25),
             tree: false,
             block_radius: 0.0,
         },
         PropClass {
-            variants: (0..gc::NUM_CLOVER_VARIANTS).map(|v| (gc::build_clover_mesh(v), 1.0)).collect(),
+            variants: (0..gc::NUM_CLOVER_VARIANTS)
+                .map(|v| (gc::build_clover_mesh(v), 1.0))
+                .collect(),
             chance: 0.30,
             scale: (0.7, 1.2),
             tree: false,
             block_radius: 0.0,
         },
         PropClass {
-            variants: (0..gc::NUM_FERN_VARIANTS).map(|v| (gc::build_fern_mesh(v), 1.0)).collect(),
+            variants: (0..gc::NUM_FERN_VARIANTS)
+                .map(|v| (gc::build_fern_mesh(v), 1.0))
+                .collect(),
             chance: 0.10,
             scale: (0.5, 0.95),
             tree: false,
             block_radius: 0.0,
         },
         PropClass {
-            variants: (0..gc::NUM_FLOWER_VARIANTS).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
+            variants: (0..gc::NUM_FLOWER_VARIANTS)
+                .map(|v| (gc::build_flower_mesh(v), 1.0))
+                .collect(),
             chance: 0.16,
             scale: (0.8, 1.4),
             tree: false,
@@ -2537,11 +3054,23 @@ fn grass_config() -> BiomeConfig {
         ground_color: active_map().palette.grass,
         ground_roughness: 0.95,
         detail: GroundDetail {
-            scale: 0.18, strength: 0.4, variation: 0.7, seed: 1.0,
-            dark: 0x356b28, base: 0x5d9e44, light: 0x95d162, grain: 0.55, streak: 0.5,
+            scale: 0.18,
+            strength: 0.4,
+            variation: 0.7,
+            seed: 1.0,
+            dark: 0x356b28,
+            base: 0x5d9e44,
+            light: 0x95d162,
+            grain: 0.55,
+            streak: 0.5,
         },
-        sky: 0xb4d2ec, fog_density: 0.0035, sun_color: 0xffedc7, sun_illuminance: 11_000.0,
-        ambient_color: 0xe6edf5, ambient_brightness: 95.0, sun_pos: Vec3::new(80.0, 110.0, 40.0),
+        sky: 0xb4d2ec,
+        fog_density: 0.0035,
+        sun_color: 0xffedc7,
+        sun_illuminance: 11_000.0,
+        ambient_color: 0xe6edf5,
+        ambient_brightness: 95.0,
+        sun_pos: Vec3::new(80.0, 110.0, 40.0),
         seed: 7777,
         tree_min_dist: 2.0,
         classes: vec![],
@@ -2550,9 +3079,17 @@ fn grass_config() -> BiomeConfig {
         river: false,
         river_color: 0x2f8fd6,
         backdrop: Backdrop {
-            land_dir: 0.0, land_arc: std::f32::consts::PI, ocean: false, ocean_color: 0x2f6fae,
-            hill_body: 0x8f9aa0, hill_cap: 0xb8c2c6, hill_foot: 0x7a8890,
-            treeline: false, treeline_dark: 0x2c4a34, treeline_mid: 0x365c3e, hill_h: (40.0, 90.0),
+            land_dir: 0.0,
+            land_arc: std::f32::consts::PI,
+            ocean: false,
+            ocean_color: 0x2f6fae,
+            hill_body: 0x8f9aa0,
+            hill_cap: 0xb8c2c6,
+            hill_foot: 0x7a8890,
+            treeline: false,
+            treeline_dark: 0x2c4a34,
+            treeline_mid: 0x365c3e,
+            hill_h: (40.0, 90.0),
         },
         particle: ParticleKind::None,
     }
@@ -2586,7 +3123,10 @@ fn spawn_terrain_sheet(
     while cz < ROWS {
         let mut cx = 0;
         while cx < COLS {
-            let (x1, z1) = ((cx + TERRAIN_CHUNK).min(COLS), (cz + TERRAIN_CHUNK).min(ROWS));
+            let (x1, z1) = (
+                (cx + TERRAIN_CHUNK).min(COLS),
+                (cz + TERRAIN_CHUNK).min(ROWS),
+            );
             let mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
             if mesh.count_vertices() > 0 {
                 // Attach the chunk's own AABB up front. The chunk entity carries `Transform::default()`
@@ -2686,7 +3226,8 @@ fn build_terrain_chunk_coarse(
     let mut indices: Vec<u32> = Vec::new();
 
     // Ground height at a stride-grid corner (world Y), `None` over water / off the island.
-    let corner_y = |cx: i32, cz: i32| -> Option<f32> { smooth_surface_y(cx as f32 - GX, cz as f32 - GZ) };
+    let corner_y =
+        |cx: i32, cz: i32| -> Option<f32> { smooth_surface_y(cx as f32 - GX, cz as f32 - GZ) };
     // Sea-tucked height for a wet corner: just under the water plane so the drape dips beneath.
     const WET_Y: f32 = SEA_Y - 0.12;
     let nrm3 = |v: [f32; 3]| {
@@ -2713,7 +3254,9 @@ fn build_terrain_chunk_coarse(
             // Route the cell to a sheet by its centre tile (or any land corner on the coast).
             let centre = tile_at((cx + x1) / 2, (cz + z1) / 2);
             let class = centre.or_else(|| {
-                [(cx, cz), (x1, cz), (x1, z1), (cx, z1)].iter().find_map(|&(gx, gz)| tile_at(gx, gz))
+                [(cx, cz), (x1, cz), (x1, z1), (cx, z1)]
+                    .iter()
+                    .find_map(|&(gx, gz)| tile_at(gx, gz))
             });
             let Some((tb, _)) = class else {
                 cx += LOD_STRIDE;
@@ -2747,7 +3290,8 @@ fn build_terrain_chunk_coarse(
                 [p[3][0], y[3], p[3][2]],
             ];
             let n = [cn(cx, cz), cn(x1, cz), cn(x1, z1), cn(cx, z1)];
-            let c = corners.map(|(gx, gz)| ground_color(gx as f32 / MAP_SCALE, gz as f32 / MAP_SCALE));
+            let c =
+                corners.map(|(gx, gz)| ground_color(gx as f32 / MAP_SCALE, gz as f32 / MAP_SCALE));
             push_quad(p, n, c);
 
             // Perimeter skirt: cell edges lying on the CHUNK boundary drop a short apron so a
@@ -2783,7 +3327,10 @@ fn build_terrain_chunk_coarse(
     if positions.is_empty() {
         return None;
     }
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
@@ -2801,30 +3348,40 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
     let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    let quad =
-        |p: [[f32; 3]; 4], n: [f32; 3], c: [[f32; 4]; 4], idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
-            let b = pos.len() as u32;
-            for k in 0..4 {
-                pos.push(p[k]);
-                nrm.push(n);
-                col.push(c[k]);
-            }
-            idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
-        };
+    let quad = |p: [[f32; 3]; 4],
+                n: [f32; 3],
+                c: [[f32; 4]; 4],
+                idx: &mut Vec<u32>,
+                pos: &mut Vec<[f32; 3]>,
+                nrm: &mut Vec<[f32; 3]>,
+                col: &mut Vec<[f32; 4]>| {
+        let b = pos.len() as u32;
+        for k in 0..4 {
+            pos.push(p[k]);
+            nrm.push(n);
+            col.push(c[k]);
+        }
+        idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+    };
 
     // Like `quad` but with a PER-VERTEX normal — lets the rounded lip shade smoothly (no
     // flat-facet crease) and, by giving a convex corner's two chamfers the SAME diagonal corner
     // normal, kills the diagonal fold artifact at terrace corners.
-    let quadn =
-        |p: [[f32; 3]; 4], n: [[f32; 3]; 4], c: [[f32; 4]; 4], idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
-            let b = pos.len() as u32;
-            for k in 0..4 {
-                pos.push(p[k]);
-                nrm.push(n[k]);
-                col.push(c[k]);
-            }
-            idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
-        };
+    let quadn = |p: [[f32; 3]; 4],
+                 n: [[f32; 3]; 4],
+                 c: [[f32; 4]; 4],
+                 idx: &mut Vec<u32>,
+                 pos: &mut Vec<[f32; 3]>,
+                 nrm: &mut Vec<[f32; 3]>,
+                 col: &mut Vec<[f32; 4]>| {
+        let b = pos.len() as u32;
+        for k in 0..4 {
+            pos.push(p[k]);
+            nrm.push(n[k]);
+            col.push(c[k]);
+        }
+        idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+    };
 
     let nrm3 = |v: [f32; 3]| {
         let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-4);
@@ -2844,7 +3401,11 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
         let ox = hcl(-d, 0.0) - hcl(d, 0.0);
         let oz = hcl(0.0, -d) - hcl(0.0, d);
         let l = (ox * ox + oz * oz).sqrt();
-        if l < 1e-3 { (0.0, 0.0) } else { (ox / l, oz / l) }
+        if l < 1e-3 {
+            (0.0, 0.0)
+        } else {
+            (ox / l, oz / l)
+        }
     };
 
     // Horizontal displacement for a cliff-face vertex. `w` is the lip-relative depth weight
@@ -2868,15 +3429,30 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
     // CLIFF_MIN_DROP — the ≥2-class mesa/ridge walls) becomes a 3×N lattice of noise-displaced
     // flat-shaded facets. Vertex alpha carries a NEGATIVE "cliffness" so the terrain shader
     // paints procedural rock strata there (positive alpha stays the marsh-wetness lane).
-    let cliff_wall = |pa: (f32, f32), pb: (f32, f32), ya: f32, yb: f32, ba: f32, bb: f32,
-                      n: [f32; 3], ctop: [f32; 4], cbot: [f32; 4],
-                      idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
+    let cliff_wall = |pa: (f32, f32),
+                      pb: (f32, f32),
+                      ya: f32,
+                      yb: f32,
+                      ba: f32,
+                      bb: f32,
+                      n: [f32; 3],
+                      ctop: [f32; 4],
+                      cbot: [f32; 4],
+                      idx: &mut Vec<u32>,
+                      pos: &mut Vec<[f32; 3]>,
+                      nrm: &mut Vec<[f32; 3]>,
+                      col: &mut Vec<[f32; 4]>| {
         let ba = ba.min(ya);
         let bb = bb.min(yb);
         let drop = ((ya - ba) + (yb - bb)) * 0.5;
         if drop < CLIFF_MIN_DROP {
             let b = pos.len() as u32;
-            for (p, c) in [([pa.0, ya, pa.1], ctop), ([pb.0, yb, pb.1], ctop), ([pb.0, bb, pb.1], cbot), ([pa.0, ba, pa.1], cbot)] {
+            for (p, c) in [
+                ([pa.0, ya, pa.1], ctop),
+                ([pb.0, yb, pb.1], ctop),
+                ([pb.0, bb, pb.1], cbot),
+                ([pa.0, ba, pa.1], cbot),
+            ] {
                 pos.push(p);
                 nrm.push(n);
                 col.push(c);
@@ -2947,7 +3523,11 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                     let p2 = grid[tri[2]];
                     let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
                     let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-                    let cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+                    let cr = [
+                        e1[1] * e2[2] - e1[2] * e2[1],
+                        e1[2] * e2[0] - e1[0] * e2[2],
+                        e1[0] * e2[1] - e1[1] * e2[0],
+                    ];
                     let l = (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
                     if l < 1e-6 {
                         continue; // clamped row → degenerate sliver
@@ -2982,7 +3562,8 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             // Biome of this cell (land tile here, or nearest land neighbour) — drives colour, skirt
             // tone, the material-sheet routing AND the low-coast smooth-shore decision below.
             let here = tile_at(ix, iz);
-            let coast_biome = here.or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)));
+            let coast_biome =
+                here.or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)));
             // LOW sea-coast — a flat (h≤1) tile meeting the OPEN SEA — gets the smooth
             // marching-squares shore the rivers already use, instead of the per-tile square skirt
             // that stepped the boundary into visible tile "kwadraty" (player report). Two cases:
@@ -3002,7 +3583,12 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             // (`corner_water` hands the open sea a flat constant, which is what staircased it).
             let rs = if low_wet_coast {
                 let sf = |cx: i32, cz: i32| sea_field(cx as f32 / MAP_SCALE, cz as f32 / MAP_SCALE);
-                [sf(ix, iz), sf(ix + 1, iz), sf(ix + 1, iz + 1), sf(ix, iz + 1)]
+                [
+                    sf(ix, iz),
+                    sf(ix + 1, iz),
+                    sf(ix + 1, iz + 1),
+                    sf(ix, iz + 1),
+                ]
             } else {
                 [cwat[0].0, cwat[1].0, cwat[2].0, cwat[3].0]
             };
@@ -3047,33 +3633,58 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 let n = corner_top_y_for(cx, cz - 1, h).unwrap_or(flat);
                 nrm3([w - e, 2.0, n - s])
             };
-            let cnn = [cn(ix, iz), cn(ix + 1, iz), cn(ix + 1, iz + 1), cn(ix, iz + 1)];
-            let col_at = |i: usize| ground_color((cxz[i].0 + GX) / MAP_SCALE, (cxz[i].1 + GZ) / MAP_SCALE);
+            let cnn = [
+                cn(ix, iz),
+                cn(ix + 1, iz),
+                cn(ix + 1, iz + 1),
+                cn(ix, iz + 1),
+            ];
+            let col_at =
+                |i: usize| ground_color((cxz[i].0 + GX) / MAP_SCALE, (cxz[i].1 + GZ) / MAP_SCALE);
 
             // Bank wall tone: grass shows exposed dirt; snow a cliff lip; else a darkened top.
             // Alpha 0.0 (dry), NOT 1.0 — the shader reads vertex alpha as marsh WETNESS, so the
             // old 1.0 gave every terrace wall a full wet-sheen roughness (plastic-shiny cliffs).
-            let top_col = ground_color((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE);
+            let top_col =
+                ground_color((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE);
             let (wall_top, wall_bot) = if tb == TB::Grass {
-                let j = 0.82 + 0.32 * (noise_b(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) * 0.5 + 0.5);
+                let j = 0.82
+                    + 0.32 * (noise_b(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) * 0.5 + 0.5);
                 let d = lin3(active_map().palette.dirt);
-                ([d[0] * j, d[1] * j, d[2] * j, 0.0], [d[0] * j * 0.68, d[1] * j * 0.64, d[2] * j * 0.60, 0.0])
+                (
+                    [d[0] * j, d[1] * j, d[2] * j, 0.0],
+                    [d[0] * j * 0.68, d[1] * j * 0.64, d[2] * j * 0.60, 0.0],
+                )
             } else if tb == TB::Snow {
                 let lip = lin3(active_map().palette.snow_cliff_lip);
                 let rock = lin3(active_map().palette.snow_cliff_rock);
-                ([lip[0], lip[1], lip[2], 0.0], [rock[0], rock[1], rock[2], 0.0])
+                (
+                    [lip[0], lip[1], lip[2], 0.0],
+                    [rock[0], rock[1], rock[2], 0.0],
+                )
             } else {
-                ([top_col[0] * 0.80, top_col[1] * 0.78, top_col[2] * 0.76, 0.0], [top_col[0] * 0.58, top_col[1] * 0.56, top_col[2] * 0.54, 0.0])
+                (
+                    [top_col[0] * 0.80, top_col[1] * 0.78, top_col[2] * 0.76, 0.0],
+                    [top_col[0] * 0.58, top_col[1] * 0.56, top_col[2] * 0.54, 0.0],
+                )
             };
 
             if !cut {
                 // Full land tile. Skirts drop to the sea ONLY toward non-river water (coast / lake /
                 // off-map); a river edge here is owned by the marching-squares neighbour, so skip it.
                 quadn(
-                    [[cxz[0].0, cy[0], cxz[0].1], [cxz[1].0, cy[1], cxz[1].1], [cxz[2].0, cy[2], cxz[2].1], [cxz[3].0, cy[3], cxz[3].1]],
+                    [
+                        [cxz[0].0, cy[0], cxz[0].1],
+                        [cxz[1].0, cy[1], cxz[1].1],
+                        [cxz[2].0, cy[2], cxz[2].1],
+                        [cxz[3].0, cy[3], cxz[3].1],
+                    ],
                     cnn,
                     [col_at(0), col_at(1), col_at(2), col_at(3)],
-                    &mut indices, &mut positions, &mut normals, &mut colors,
+                    &mut indices,
+                    &mut positions,
+                    &mut normals,
+                    &mut colors,
                 );
                 for (dx, dz) in NB {
                     // Edge corner indices for this side (CCW corner order 0,1,2,3).
@@ -3100,9 +3711,19 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                         let nb_y = corner_top_y_for(gb.0, gb.1, hn).unwrap_or(nflat);
                         if cy[a] > na_y + 0.01 || cy[b] > nb_y + 0.01 {
                             cliff_wall(
-                                cxz[a], cxz[b], cy[a], cy[b], na_y, nb_y,
-                                n, wall_top, wall_bot,
-                                &mut indices, &mut positions, &mut normals, &mut colors,
+                                cxz[a],
+                                cxz[b],
+                                cy[a],
+                                cy[b],
+                                na_y,
+                                nb_y,
+                                n,
+                                wall_top,
+                                wall_bot,
+                                &mut indices,
+                                &mut positions,
+                                &mut normals,
+                                &mut colors,
                             );
                         }
                         continue;
@@ -3111,9 +3732,19 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                         continue; // river edge → the marching-squares cell owns this bank
                     }
                     cliff_wall(
-                        cxz[a], cxz[b], cy[a], cy[b], SEA_Y, SEA_Y,
-                        n, wall_top, wall_bot,
-                        &mut indices, &mut positions, &mut normals, &mut colors,
+                        cxz[a],
+                        cxz[b],
+                        cy[a],
+                        cy[b],
+                        SEA_Y,
+                        SEA_Y,
+                        n,
+                        wall_top,
+                        wall_bot,
+                        &mut indices,
+                        &mut positions,
+                        &mut normals,
+                        &mut colors,
                     );
                 }
             } else {
@@ -3187,10 +3818,18 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                         nx /= nl;
                         nz /= nl;
                         quad(
-                            [[x0, pp[i][1], z0], [x1, pp[j][1], z1], [x1, SEA_Y, z1], [x0, SEA_Y, z0]],
+                            [
+                                [x0, pp[i][1], z0],
+                                [x1, pp[j][1], z1],
+                                [x1, SEA_Y, z1],
+                                [x0, SEA_Y, z0],
+                            ],
                             [nx, 0.0, nz],
                             [wall_top, wall_top, wall_bot, wall_bot],
-                            &mut indices, &mut positions, &mut normals, &mut colors,
+                            &mut indices,
+                            &mut positions,
+                            &mut normals,
+                            &mut colors,
                         );
                     }
                 }
@@ -3198,7 +3837,10 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
         }
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
@@ -3226,11 +3868,15 @@ mod tests {
         let mut cliffs: Vec<((i32, i32), (i32, i32), i32, i32)> = Vec::new();
         for iz in 0..ROWS {
             for ix in 0..COLS {
-                let Some((_, h)) = tile_at(ix, iz) else { continue };
+                let Some((_, h)) = tile_at(ix, iz) else {
+                    continue;
+                };
                 // Only +x / +z neighbours so each edge is counted once.
                 for (dx, dz) in [(1, 0), (0, 1)] {
                     let (nx, nz) = (ix + dx, iz + dz);
-                    let Some((_, nh)) = tile_at(nx, nz) else { continue };
+                    let Some((_, nh)) = tile_at(nx, nz) else {
+                        continue;
+                    };
                     if skip(ix, iz) || skip(nx, nz) {
                         continue;
                     }
@@ -3282,7 +3928,10 @@ mod tests {
                     }
                     last = (cx, cz);
                     let Some((_, h)) = tile_at(cx, cz) else {
-                        panic!("pass {pi} of {:?} region crosses non-land at grid ({cx},{cz})", reg.biome)
+                        panic!(
+                            "pass {pi} of {:?} region crosses non-land at grid ({cx},{cz})",
+                            reg.biome
+                        )
                     };
                     if (h - prev).abs() > worst.0 {
                         worst = ((h - prev).abs(), (cx, cz), prev, h);
@@ -3357,4 +4006,3 @@ mod tests {
         }
     }
 }
-
