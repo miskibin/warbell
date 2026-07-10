@@ -345,9 +345,24 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   idles on the start screen and the probes read the menu camera). The eye sits at
   `FP_EYE_H`/`FP_FWD_OFF` in `player/camera.rs`; and the main-camera **near-plane**
   (`scene.rs::setup_camera`, `near: 0.04`) is lowered so the close-held weapon doesn't slice the
-  near-plane (that slicing was the walk-time "flicker"). NB: FP melee inherently puts the enemy in
-  your face — no view-model trick fixes that; third-person is the design's combat view.
+  near-plane (that slicing was the walk-time "flicker"). July 2026 FP-combat polish knobs:
+  per-variant swing shaping is `anim::fp_swing` (wind/punch endpoints + `sw_roll` edge-roll about
+  the blade axis + `arc` mid-strike crescent). **The FP eye sits ~0.2u from the shoulder pivot, so
+  any real shoulder-Y sweep parks the forearm ON the lens (whole frames black out) — cross-frame
+  travel must live in the WRIST**, with `sw_x` compensating the tilted hand frame (a big wrist yaw
+  alone reads as a rising poke). Swings also drive a small per-variant **camera swing-sway**
+  (`anim::fp_cam_sway` → `FirstPerson::sway`, applied post-`look_at` in `player_camera`; a lean,
+  never a shake) and an FP **close-quarters FOV widen** (`camera::FP_CLOSE_FOV_DEG` eased off the
+  ringed foe's distance) buys back a melee-range ork's silhouette. Enemy **HP bars clamp into a
+  view cone above the eye** (`combat_fx::HP_BAR_CONE_SLOPE` — the bar slides down toward the chest
+  and pulls toward a close camera, shrinking) so a towering foe's bar stays on screen in FP melee.
+  NB: FP melee inherently puts the enemy in your face — the widen softens it, but no view-model
+  trick removes it; third-person is the design's combat view.
 - **Capture-harness flakes — confirm the `Screenshot saved` log line, and retry before debugging.**
+  For `FOREST_CLIP`, set `FOREST_CLIP_WARMUP=70`+ — the default 30 records the tail of the boot
+  **loading veil** (`loading.rs`, lifts ~1.4s of sim time): the first ~50 saved frames render
+  dimmed/black *behind an intact HUD* in every scene, which reads exactly like a full-frame
+  rendering bug and is invariant to any code change (a whole session was once lost chasing it).
   A `FOREST_SHOT` run can emit a junk frame that is NOT a code bug: a **black** frame (cold pipeline,
   see the bevy-0.19 note) or an **overview/god-cam** frame (the follow-cam hadn't engaged yet under
   `FOREST_FP`/`FOREST_TPS`). And if the run **crashed** (e.g. a wgpu validation error) no new PNG is

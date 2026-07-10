@@ -52,6 +52,16 @@ const HP_BAR_Y_NPC: f32 = 1.2;
 /// Beyond this camera distance a bar is hidden — keeps far-off damaged enemies from floating
 /// bars across the sky (they read as detached when the body's behind trees / off-screen).
 const HP_BAR_MAX_DIST: f32 = 26.0;
+/// Max height a bar may float ABOVE THE CAMERA EYE, as a slope over horizontal distance (≈tan 20°).
+/// In first-person melee a `WORLD_BUMP`-scaled ork towers over the 1.32 eye, so its overhead bar
+/// (root + ~2.1) sits far outside the top of the frame — past this cone the bar slides DOWN onto
+/// the foe's chest/face line where it stays readable. Third person is untouched in practice: the
+/// orbit eye rides above head height, so the cone almost never binds.
+const HP_BAR_CONE_SLOPE: f32 = 0.36;
+/// Within this camera distance a *lowered* bar is pulled toward the lens (out of the body it now
+/// overlaps — depth-test would bury a chest-height quad inside the torso) and the whole bar is
+/// shrunk, so an at-arm's-length bar doesn't stripe across half the frame.
+const HP_BAR_NEAR: f32 = 4.0;
 
 // ── Ported float colours ────────────────────────────────────────────────────
 /// Red `-N` when the hero is struck (`#ff5a4a`).
@@ -98,11 +108,23 @@ fn spawn_floats(
     mut commands: Commands,
     time: Res<Time>,
     fonts: Res<UiFonts>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
     mut q: ResMut<FloatQueue>,
 ) {
     let now = time.elapsed_secs();
+    let cam_pos = cam_q.single().map(|gt| gt.translation()).ok();
     for r in q.0.drain(..) {
         let len = r.text.chars().count();
+        // Same close-range clamp as the HP bars: hit sites anchor numbers ~2.2u above the
+        // target, which at FP melee range is far above the frame's top edge — every damage
+        // number on a point-blank foe spawned invisible. Cap the anchor to a view cone above
+        // the camera eye (minus a little rise headroom) so close-quarters numbers pop where
+        // the player is actually looking.
+        let mut world = r.world;
+        if let Some(cp) = cam_pos {
+            let flat = Vec2::new(world.x - cp.x, world.z - cp.z).length();
+            world.y = world.y.min(cp.y + flat * HP_BAR_CONE_SLOPE - FLOAT_RISE * 0.4);
+        }
         commands.spawn((
             Text::new(r.text),
             // Rounded to a whole-pixel bucket (drive_floats animates within the same integer set):
@@ -119,7 +141,7 @@ fn spawn_floats(
             },
             UiTransform::IDENTITY,
             GlobalZIndex(20),
-            FloatText { anchor: r.world, born: now, color: r.color, scale: r.scale, len },
+            FloatText { anchor: world, born: now, color: r.color, scale: r.scale, len },
         ));
     }
 }
@@ -434,15 +456,37 @@ fn drive_hp_bars(
             *vis = Visibility::Hidden;
             continue;
         }
-        let head = ork_gt.translation() + Vec3::Y * bar.y;
+        let root = ork_gt.translation();
+        let mut head = root + Vec3::Y * bar.y;
+        // Close-range readability (the FP melee case): as the camera closes inside HP_BAR_NEAR
+        // the bar SLIDES DOWN from overhead to the foe's CHEST — at arm's length even a
+        // cone-clamped overhead bar sits right at the frame's top edge (a WORLD_BUMP ork's bar
+        // floats ~0.8u above the 1.32 FP eye), while the chest line reads dead-centre. A view
+        // cone above the eye catches the mid-range in between, and any lowered bar is pulled
+        // toward the camera so the depth test doesn't bury it inside the torso.
+        let flat = Vec2::new(head.x - cam_pos.x, head.z - cam_pos.z).length();
+        let closeness = ((HP_BAR_NEAR - flat) / HP_BAR_NEAR).clamp(0.0, 1.0);
+        let chest = root.y + bar.y * 0.55;
+        let mut want_y = head.y - (head.y - chest) * closeness;
+        let max_y = cam_pos.y + flat * HP_BAR_CONE_SLOPE;
+        want_y = want_y.min(max_y).max(chest.min(head.y));
+        if want_y < head.y {
+            head.y = want_y;
+            let pull = closeness * 0.8;
+            head += (cam_pos - head).normalize_or_zero() * pull;
+        }
         // Cull distant bars so a damaged enemy across the map doesn't float a bar in the sky.
-        if head.distance(cam_pos) > HP_BAR_MAX_DIST {
+        let dist = head.distance(cam_pos);
+        if dist > HP_BAR_MAX_DIST {
             *vis = Visibility::Hidden;
             continue;
         }
         *vis = Visibility::Visible;
         tf.translation = head;
         tf.look_at(cam_pos, Vec3::Y); // billboard (materials are double-sided)
+        // Close-up shrink: a 0.6u quad at arm's length stripes across the frame; ease it down as
+        // the camera closes (full size at/inside third-person follow distances).
+        tf.scale = Vec3::splat((dist / HP_BAR_NEAR).clamp(0.55, 1.0));
         let hurting = hurt.is_some_and(|h| now < h.until);
         for &c in children {
             if let Ok((mut fg_tf, mut fg_mat)) = fgs.get_mut(c) {

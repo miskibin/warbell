@@ -68,6 +68,12 @@ const FP_FWD_OFF: f32 = 0.05;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;
+/// First-person close-quarters FOV widen: up to this many degrees as the ringed foe closes from
+/// [`FP_CLOSE_RANGE`] to point-blank. Enemies are taller than the 1.32 FP eye and stop at melee
+/// range, so without this a big foe is one face filling the lens. Eased slowly (~3/s) so it reads
+/// as breathing room, never a zoom pump; scaled by the FP blend so third person is untouched.
+const FP_CLOSE_FOV_DEG: f32 = 8.0;
+const FP_CLOSE_RANGE: f32 = 3.5;
 
 /// Build-mode camera pose — eye + look-at, framing the WHOLE settlement (the castle at the origin)
 /// centred above the bottom build palette. The look-target is pushed forward (z = 5, toward the
@@ -154,6 +160,15 @@ pub struct FirstPerson {
     pub active: bool,
     pub blend: f32,
     pub pitch: f32,
+    /// FP swing camera-sway (screen-space radians: x = pitch(+up), y = yaw(+left), z = roll),
+    /// written by `anim::hero_anim` from the attack envelopes and applied here on top of the
+    /// settled FP pose — one smooth lean per cut (anticipation pulls opposite, the strike rides
+    /// the blade), NOT a shake. Zeroed outside FP.
+    pub sway: Vec3,
+    /// Smoothed FP close-quarters FOV widen (degrees). A `WORLD_BUMP`-scaled ork at melee range
+    /// fills the whole first-person frame (face-in-lens); this eases a modest wide-angle in as
+    /// the ringed foe closes, buying back its silhouette + HP bar. See `FP_CLOSE_FOV_DEG`.
+    pub close_fov: f32,
 }
 
 /// Backtick toggles Play ↔ FreeRoam. Leaving Play frees the cursor and syncs the fly-cam's
@@ -411,6 +426,14 @@ pub fn player_camera(
     cam_tf.translation = eye;
     cam_tf.look_at(look, Vec3::Y);
 
+    // FP swing sway: the small smooth camera lean `anim::hero_anim` derives from the attack
+    // envelopes (anticipation ↔ strike). Composed AFTER look_at so it tilts the settled view;
+    // purely cosmetic — `hero.facing`/aim still come from the un-swayed look_yaw above.
+    if fpb > 0.0 && fp.sway != Vec3::ZERO {
+        let s = fp.sway * fpb;
+        cam_tf.rotation *= Quat::from_euler(EulerRot::YXZ, s.y, s.x, s.z);
+    }
+
     // Trauma-based screen shake + FOV punch layered on the settled pose (fed by combat_fx on hits).
     // Damped by ~75% in first person: at eye-scale the raw high-frequency jitter would fill the
     // whole view (a motion-sickness + photosensitive-oscillation hazard) — damped, not removed, so
@@ -433,6 +456,18 @@ pub fn player_camera(
             cam_tf.translation += jitter * s;
         }
     }
+    // FP close-quarters widen: ramp by how close the ringed foe stands (soft_pos already tracks
+    // the engaged hostile). Slow ease both ways so a foe crossing the range can't pump the FOV.
+    let want_close = if fp.active {
+        hero.soft_pos.map_or(0.0, |tp| {
+            ((FP_CLOSE_RANGE - tp.distance(hero.pos)) / FP_CLOSE_RANGE).clamp(0.0, 1.0)
+        })
+    } else {
+        0.0
+    };
+    fp.close_fov +=
+        (want_close * FP_CLOSE_FOV_DEG - fp.close_fov) * (1.0 - (-time.delta_secs() * 3.0).exp());
+
     // FOV = rest (captured once) + decaying combat punch (damped in FP) + a gentle sprint widen for a
     // sense of speed.
     if let Projection::Perspective(p) = &mut *cam_proj {
@@ -441,6 +476,6 @@ pub fn player_camera(
         let speed_fov = hero.run_amt.clamp(0.0, 1.0) * SPRINT_FOV_DEG;
         // A slight wide-angle as the combat dolly pulls back, so a mob fight reads the arena.
         let combat_fov = orbit.combat * COMBAT_FOV_PER_UNIT;
-        p.fov = base + (kick + speed_fov + combat_fov).to_radians();
+        p.fov = base + (kick + speed_fov + combat_fov + fp.close_fov * fpb).to_radians();
     }
 }

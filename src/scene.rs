@@ -700,6 +700,7 @@ fn env_cam() -> Option<Transform> {
 fn drive_dof_focus(
     mode: Res<crate::player::PlayMode>,
     build_mode: Res<crate::town::BuildMode>,
+    fp: Res<crate::player::FirstPerson>,
     mut cam_q: Query<(&GlobalTransform, &mut crate::dof::Dof), With<Camera3d>>,
     hero_q: Query<&crate::player::Hero>,
     mut saved_radius: Local<Option<f32>>,
@@ -731,10 +732,23 @@ fn drive_dof_focus(
         return;
     }
     let target = if *mode == crate::player::PlayMode::Play {
-        hero_q
+        let hero_d = hero_q
             .single()
             .map(|h| cam_tf.translation().distance(Vec3::new(h.pos.x, h.y + 1.0, h.pos.y)))
-            .unwrap_or(28.0)
+            .unwrap_or(28.0);
+        // First person: the camera IS (in) the hero, so the camera→hero distance is ~0.33 —
+        // a focal plane parked ON the lens defocuses the whole world, and any CoC excuse
+        // (most visibly mid-swing) washed the entire FP frame into one flat smear of the
+        // dominant colour. Focus the ringed foe instead (never closer than 2, which would
+        // re-park the plane on the viewmodel), or a combat mid-ground when nothing's ringed;
+        // `max` with the dolly distance keeps the third⇄first transition smooth.
+        let fp_focus = hero_q
+            .single()
+            .ok()
+            .and_then(|h| h.soft_pos.map(|tp| tp.distance(h.pos)))
+            .map(|d| d.clamp(2.0, 12.0))
+            .unwrap_or(6.0);
+        hero_d.max(fp.blend.clamp(0.0, 1.0) * fp_focus)
     } else {
         // Free-cam / clips: focus the hero when he's the subject (close to the camera, e.g. the
         // chase-cam scenes), so he stays sharp; otherwise a fixed mid-ground plane.

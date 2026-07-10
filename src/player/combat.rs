@@ -1312,6 +1312,7 @@ pub(crate) fn spawn_splat(commands: &mut Commands, fx: &CombatFx, mats: &mut Ass
 pub fn hero_blade_trail(
     time: Res<Time>,
     fx: Option<Res<CombatFx>>,
+    fp: Res<super::FirstPerson>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
     mut last_tip: Local<Option<Vec3>>,
@@ -1319,6 +1320,14 @@ pub fn hero_blade_trail(
     weapon_q: Query<&GlobalTransform, With<super::HeroWeapon>>,
 ) {
     let Some(fx) = fx else { return };
+    // First person: NO ribbon. The tip path sweeps right across the lens (the whole viewmodel
+    // lives within ~0.5u of the eye), so each camera-rolled segment quad lands ON the camera as
+    // a frame-filling pale wash — the mysterious "whole frame goes tan/black mid-swing" frames
+    // that survived every arm retune. The FP swing reads through the arm + camera sway instead.
+    if fp.blend > 0.3 {
+        *last_tip = None;
+        return;
+    }
     let Ok(hero) = hero_q.single() else { return };
     let phase = if hero.attacking { hero.attack_t / hero.attack_dur } else { -1.0 };
     if !(0.25..0.55).contains(&phase) {

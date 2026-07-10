@@ -56,6 +56,14 @@ Notes:
 - Expect **~3–5 minutes per shot** on llvmpipe (the `software rendering ... very slow`
   warning and the X11 `XSETTINGS` warning are normal). Wrap in `timeout 570` so a hang
   can't eat the Bash tool's 10-minute ceiling.
+- **FOREST_CLIP: set `FOREST_CLIP_WARMUP=70`+ — the default 30 records the boot LOADING
+  VEIL.** The veil (a full-screen dark backdrop, `loading.rs`) lifts ~1.4s of *sim* time
+  after boot, so with the default 30-frame warmup the first ~50 saved frames are dimmed
+  grey / pure black *behind an intact HUD*, in every scene. This is spectacularly
+  misleading when you're debugging a visual: it reads as "some mesh/overlay blacks out my
+  frames at t≈1.1–1.4s" and it is invariant to any code you change (an entire debugging
+  session was once lost to chasing it as a viewmodel bug). It is NOT a game bug — real
+  players never see it; the SHOT harness warms ≥240 frames precisely to skip it.
 - Run shots **sequentially**, not in parallel — llvmpipe saturates all cores.
 - The HUD renders over the scene (the harness boots straight into Playing); ignore it.
 - Sim time during a capture is short (frame `dt` is clamped), but wandering NPCs still
@@ -76,9 +84,11 @@ All `FOREST_*` env hooks from CLAUDE.md work here; the load-bearing ones for vis
 | `FOREST_BIOME` / `FOREST_PANEL` / `FOREST_MENU` | biome view / UI panels / start screen |
 
 Useful anchors for framing (castle at world origin, 1 tile = 1 unit):
-- Hero default spawn: just outside the **north gate** at ~`(0, -15)`, facing the castle
-  (+Z). A good close-up: `FOREST_CAM="0.55,0.8,-13.85,0,0.45,-15"`. Mirror x (or use
-  `-0.55`) to see the shield side.
+- Hero default spawn: `player::spawn_point()` = **`(-26, 18)`**, facing the castle at the
+  origin (bearing ≈ `(0.82, 0, -0.57)` — mostly +X, a bit −Z). `FOREST_HERO` moves the hero
+  but KEEPS this boot bearing, so anything staged "in front" (an orkline for an FP shot)
+  must sit along `hero + d·(0.82, -0.57)` — NOT simply at `z+d`. (An earlier version of this
+  note claimed spawn ≈ `(0,-15)`; that's stale — staging placed off it lands out of frame.)
 - Walls run at `x=±17`, `z=±12` with gates at the axis midpoints (`castle::gate_centers`).
 - Hero is small (~0.9u tall after `HERO_SCALE`); a camera ~1.5–2u away at y≈0.8–1.0
   looking at y≈0.45 fills the frame. Orks are ~1.3–1.6u; back off to 4–9u for a group.
