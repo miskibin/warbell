@@ -94,6 +94,7 @@ mod quality;
 mod quest;
 mod roads;
 mod rival;
+mod rts;
 mod ruins;
 mod savegame;
 mod scenes;
@@ -295,6 +296,9 @@ fn main() {
         // Rival AI stronghold: a second castle in the desert (Stronghold-Crusader-style opponent).
         // Standalone: the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(rival::RivalPlugin)
+        // RTS skirmish mode "Potyczka" (FOREST_RTS=1): iso camera, base-building, mirrored AI.
+        // Inert in Campaign — every system inside is gated on `rts::in_skirmish`.
+        .add_plugins(rts::RtsPlugin)
         // Landmark set-piece animators (mill sails, orbiting shards, glow pulses). Standalone —
         // the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(ruins::RuinsFxPlugin)
