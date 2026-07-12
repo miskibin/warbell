@@ -81,14 +81,16 @@ pub struct SuccessionPlugin;
 
 impl Plugin for SuccessionPlugin {
     fn build(&self, app: &mut App) {
+        // Campaign-only: succession (hero death → heir rises) is a hero mechanic with no analogue
+        // in the RTS. Resources stay registered; every system is gated.
         app.init_resource::<Lives>()
             .init_resource::<Succession>()
-            .add_systems(OnExit(AppState::StartScreen), reset_lives)
-            .add_systems(OnExit(AppState::GameOver), reset_lives)
+            .add_systems(OnExit(AppState::StartScreen), reset_lives.run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(AppState::GameOver), reset_lives.run_if(crate::rts::in_campaign))
             // `OnExit(GameOver)` fires on an in-process Continue (fresh runs relaunch instead);
             // `reset_lives` clears the defeat flag before `apply_pending_load` restores the save.
             // Ungated: the heir count shown in the HUD tracks the town even while frozen.
-            .add_systems(Update, mirror_heirs)
+            .add_systems(Update, mirror_heirs.run_if(crate::rts::in_campaign))
             // The beat is world-sim (slows time, despawns the stolen townsperson, moves the hero),
             // so it carries the `Modal::None` freeze-gate too — a panel opened mid-beat must freeze
             // it like the rest of the sim, not keep mutating the world behind the panel.
@@ -96,15 +98,16 @@ impl Plugin for SuccessionPlugin {
                 Update,
                 (drive_succession, watch_bloodline)
                     .run_if(in_state(AppState::Playing))
-                    .run_if(in_state(crate::game_state::Modal::None)),
+                    .run_if(in_state(crate::game_state::Modal::None))
+                    .run_if(crate::rts::in_campaign),
             )
             // Safety: a pause / GameOver mid-beat must never leave the world stuck in slow-mo.
-            .add_systems(OnExit(AppState::Playing), end_beat_safely);
+            .add_systems(OnExit(AppState::Playing), end_beat_safely.run_if(crate::rts::in_campaign));
 
         // `FOREST_SUCCESSION=1`: stage a hero death shortly after boot so the beat can be filmed /
         // screenshotted via the capture harness (same `FOREST_*` staging-hook style as the rest).
         if std::env::var("FOREST_SUCCESSION").is_ok() {
-            app.add_systems(Update, force_succession.run_if(in_state(AppState::Playing)));
+            app.add_systems(Update, force_succession.run_if(in_state(AppState::Playing)).run_if(crate::rts::in_campaign));
         }
     }
 }

@@ -91,8 +91,9 @@ struct CompassPip {
 pub struct CompassPlugin;
 impl Plugin for CompassPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_compass)
-            .add_systems(Update, (update_compass, update_blips));
+        // Campaign-only: the hero compass strip has no place in the RTS iso view.
+        app.add_systems(Startup, setup_compass.run_if(crate::rts::in_campaign))
+            .add_systems(Update, (update_compass, update_blips).run_if(crate::rts::in_campaign));
     }
 }
 

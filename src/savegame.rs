@@ -145,23 +145,26 @@ pub struct SaveGamePlugin;
 
 impl Plugin for SaveGamePlugin {
     fn build(&self, app: &mut App) {
+        // Resources + messages stay registered in both modes (game_state reads `PendingLoad` and
+        // `SaveExists` non-optionally). No save/load in Skirmish — every system is Campaign-only.
         app.init_resource::<PendingLoad>()
             .init_resource::<SaveExists>()
             .add_message::<GameLoaded>()
             .add_message::<RequestSave>()
-            .add_systems(Startup, detect_existing_save)
+            .add_systems(Startup, detect_existing_save.run_if(crate::rts::in_campaign))
             // Snapshot at dawn (a cleared night). Gated like the rest of the sim.
-            .add_sim_systems(autosave_on_dawn)
+            .add_sim_systems(autosave_on_dawn.run_if(crate::rts::in_campaign))
             // Manual save (pause-menu button). Runs in `Paused` — where the world is frozen but
             // every run-state resource still lives — so it can snapshot the current day on demand.
-            .add_systems(Update, manual_save.run_if(in_state(AppState::Paused)))
+            .add_systems(Update, manual_save.run_if(in_state(AppState::Paused)).run_if(crate::rts::in_campaign))
             // Apply a pending load the moment a run is playing (cheap no-op when nothing pending).
-            .add_systems(Update, apply_pending_load.run_if(in_state(AppState::Playing)))
+            .add_systems(Update, apply_pending_load.run_if(in_state(AppState::Playing)).run_if(crate::rts::in_campaign))
             // Reconcile world entities from the GameLoaded snapshot (ungated; fires once per load).
             // `restore_active_map` rebuilds the terrain if the loaded run was on a different map.
             .add_systems(
                 Update,
-                (restore_discovered_landmarks, restore_opened_chests, restore_active_map),
+                (restore_discovered_landmarks, restore_opened_chests, restore_active_map)
+                    .run_if(crate::rts::in_campaign),
             );
     }
 }

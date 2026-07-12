@@ -127,10 +127,12 @@ pub struct InteractionPlugin;
 
 impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
+        // Campaign-only: contextual hero E-prompts (shop / gate / recruit) have no hero to drive
+        // them in Skirmish. `drive_interaction` also takes `Res<HeroState>` non-optionally.
         app.init_resource::<ActiveInteraction>()
-            .add_systems(Startup, setup_prompt)
-            .add_sim_systems(drive_interaction)
-            .add_systems(Update, update_prompt);
+            .add_systems(Startup, setup_prompt.run_if(crate::rts::in_campaign))
+            .add_sim_systems(drive_interaction.run_if(crate::rts::in_campaign))
+            .add_systems(Update, update_prompt.run_if(crate::rts::in_campaign));
     }
 }
 

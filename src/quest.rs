@@ -58,31 +58,33 @@ pub struct QuestPlugin;
 
 impl Plugin for QuestPlugin {
     fn build(&self, app: &mut App) {
+        // Campaign-only: the quest chain (tracker, explainer, detection) has no place in Skirmish.
+        // Resources + the `QuestSignal` message stay registered so ungated writers elsewhere link.
         app.init_resource::<QuestLogRes>()
             .init_resource::<QuestTracking>()
             .add_message::<QuestSignal>()
-            .add_systems(Startup, setup_quest_root)
+            .add_systems(Startup, setup_quest_root.run_if(crate::rts::in_campaign))
             // Fresh run → restart the chain (mirrors the economy/town resets).
-            .add_systems(OnExit(AppState::StartScreen), reset_quests)
-            .add_systems(OnExit(AppState::GameOver), reset_quests)
+            .add_systems(OnExit(AppState::StartScreen), reset_quests.run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(AppState::GameOver), reset_quests.run_if(crate::rts::in_campaign))
             // Opening the upgrade tree is a state transition, not a Modal::None event.
-            .add_systems(OnEnter(Modal::UpgradeTree), detect_war_table)
+            .add_systems(OnEnter(Modal::UpgradeTree), detect_war_table.run_if(crate::rts::in_campaign))
             // Explainer card.
-            .add_systems(OnEnter(Modal::Quest), spawn_quest_panel)
-            .add_systems(OnExit(Modal::Quest), despawn_quest_panel)
-            .add_systems(Update, quest_panel_input.run_if(in_state(Modal::Quest)))
+            .add_systems(OnEnter(Modal::Quest), spawn_quest_panel.run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(Modal::Quest), despawn_quest_panel.run_if(crate::rts::in_campaign))
+            .add_systems(Update, quest_panel_input.run_if(in_state(Modal::Quest)).run_if(crate::rts::in_campaign))
             // Detection (world running only).
             .add_sim_systems(
                 (detect_gather, detect_builds, detect_hunt, detect_survive)
-                    ,
+                    .run_if(crate::rts::in_campaign),
             )
             // Open the explainer (world running only).
-            .add_sim_systems(quest_open_input)
+            .add_sim_systems(quest_open_input.run_if(crate::rts::in_campaign))
             // Resolution + restore run ungated: a signal emitted while a panel is open (the War
             // Table) must be processed before the 2-frame message buffer drops it.
-            .add_systems(Update, (apply_quest_signals, restore_quest_log))
+            .add_systems(Update, (apply_quest_signals, restore_quest_log).run_if(crate::rts::in_campaign))
             // The tracker checks the modal state itself (hidden behind panels / on menus).
-            .add_systems(Update, drive_tracker);
+            .add_systems(Update, drive_tracker.run_if(crate::rts::in_campaign));
     }
 }
 

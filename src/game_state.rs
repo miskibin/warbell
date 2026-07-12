@@ -157,6 +157,12 @@ impl Plugin for GameStatePlugin {
 /// True when an env hook wants to boot straight into a running world (screenshots / demos).
 /// `FOREST_MENU=1` overrides — it keeps the start screen up so the harness can shoot it.
 fn skip_menu() -> bool {
+    // Skirmish ("Potyczka") has no campaign start screen — `FOREST_RTS=1` boots straight into the
+    // arena (spec §14, and the campaign menu's New/Continue routing is meaningless there). Checked
+    // first so even `FOREST_MENU=1` can't raise the campaign title over a skirmish boot.
+    if matches!(crate::rts::mode_from_env(), crate::rts::GameMode::Skirmish) {
+        return true;
+    }
     if std::env::var("FOREST_MENU").is_ok() {
         return false;
     }
@@ -169,6 +175,28 @@ fn skip_menu() -> bool {
         // still look plausible (entity/mesh counts come from the unconditional Startup world-build).
         // Previously this only worked by accident when a run happened to also set FOREST_WAVE.
         || std::env::var("FOREST_PERFTEST").is_ok()
+}
+
+/// Relaunch the game as a **fresh process**, entering Potyczka (`skirmish = true`) or the classic
+/// campaign (`false`). This is the ONLY way to switch [`crate::rts::GameMode`], which is decided
+/// once at boot from `FOREST_RTS` (`rts::mode_from_env`) and never changes mid-process — so the
+/// mode toggle spawns a new exe carrying (or explicitly dropping) the flag, then exits this one.
+///
+/// Note the asymmetry with the campaign New Game reset, which is *in-process* (`FreshRunPending` →
+/// `drive_fresh_run`, window kept): only the **mode** needs a fresh boot; a same-mode restart does
+/// not. On "Menu główne" we `env_remove` the flag so the child does NOT inherit this skirmish
+/// process's `FOREST_RTS` and lands back in the campaign. A failed spawn is a no-op (we stay put).
+fn relaunch_process(skirmish: bool) {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let mut cmd = std::process::Command::new(exe);
+    if skirmish {
+        cmd.env("FOREST_RTS", "1");
+    } else {
+        cmd.env_remove("FOREST_RTS"); // don't let a skirmish parent leak the flag into the campaign child
+    }
+    if cmd.spawn().is_ok() {
+        std::process::exit(0); // hand the window over to the fresh process
+    }
 }
 
 // ── In-process fresh run (the "full reset", no relaunch) ─────────────────────────────────
@@ -291,7 +319,9 @@ fn pause_toggle(
     mut next_modal: ResMut<NextState<Modal>>,
     confirm: Res<ConfirmWipe>,
     gfx_menu: Res<crate::ui::graphics_menu::GraphicsMenuOpen>,
-    mut build_mode: ResMut<crate::town::BuildMode>,
+    // `Option` so Esc-pause keeps working in Skirmish even if the campaign town plugin (which owns
+    // `BuildMode`) isn't present — RTS build placement is its own input-state resource, not this one.
+    build_mode: Option<ResMut<crate::town::BuildMode>>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
@@ -305,9 +335,11 @@ fn pause_toggle(
         return;
     }
     // Build mode is a live placement state (not a panel) — Esc leaves it instead of pausing.
-    if build_mode.active {
-        build_mode.active = false;
-        return;
+    if let Some(mut build_mode) = build_mode {
+        if build_mode.active {
+            build_mode.active = false;
+            return;
+        }
     }
     match app.get() {
         AppState::Playing => {
@@ -323,18 +355,32 @@ fn pause_toggle(
     }
 }
 
-/// Hand off to the GameOver screen when the siege reaches an end state.
+/// Hand off to the GameOver screen when the run reaches an end state. In **Campaign** that's the
+/// `Siege.phase` reaching Victory/Defeat (unchanged); in **Skirmish** it's the [`crate::rts::RtsOutcome`]
+/// resolving (a Town Hall razed) — see spec §9. The campaign path is behaviourally identical to before.
 fn watch_end(
+    mode: Res<crate::rts::GameMode>,
     siege: Option<Res<crate::siege::Siege>>,
+    outcome: Res<crate::rts::RtsOutcome>,
     app: Res<State<AppState>>,
     mut next_app: ResMut<NextState<AppState>>,
 ) {
     if *app.get() != AppState::Playing {
         return;
     }
-    if let Some(s) = siege {
-        if matches!(s.phase, crate::siege::GamePhase::Victory | crate::siege::GamePhase::Defeat) {
-            next_app.set(AppState::GameOver);
+    match *mode {
+        crate::rts::GameMode::Campaign => {
+            if let Some(s) = siege {
+                if matches!(s.phase, crate::siege::GamePhase::Victory | crate::siege::GamePhase::Defeat)
+                {
+                    next_app.set(AppState::GameOver);
+                }
+            }
+        }
+        crate::rts::GameMode::Skirmish => {
+            if *outcome != crate::rts::RtsOutcome::Undecided {
+                next_app.set(AppState::GameOver);
+            }
         }
     }
 }
@@ -454,6 +500,7 @@ fn gameover_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
+    mode: Res<crate::rts::GameMode>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
@@ -462,6 +509,13 @@ fn gameover_input(
 ) {
     if confirm.0.is_some() {
         return; // dialog owns the keyboard
+    }
+    // Skirmish: Enter replays the skirmish (a fresh process); nothing else applies (no save).
+    if matches!(*mode, crate::rts::GameMode::Skirmish) {
+        if keys.just_pressed(KeyCode::Enter) {
+            relaunch_process(true);
+        }
+        return;
     }
     let cur_diff = current_difficulty(siege.as_deref());
     let defeat = !matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
@@ -499,6 +553,10 @@ struct StartResumeButton;
 /// The "Settings" button on the start screen — opens the graphics Settings page.
 #[derive(Component)]
 struct StartSettingsButton;
+/// The "Potyczka" button on the start screen — enters the RTS skirmish mode by relaunching the exe
+/// with `FOREST_RTS=1` (the mode can only be picked at boot; see [`relaunch_process`]).
+#[derive(Component)]
+struct SkirmishButton;
 /// The "Credits" button on the start screen — opens the credits overlay ([`mainmenu::CreditsOpen`]).
 #[derive(Component)]
 struct CreditsButton;
@@ -710,6 +768,26 @@ fn spawn_start_screen(
                 ))
                 .with_children(|b| {
                     b.spawn(label(&fonts.extrabold, "NEW GAME", 19.0, INK));
+                });
+                // Potyczka — the RTS skirmish mode. A separate entry point (not a campaign run), so
+                // it relaunches the exe with FOREST_RTS=1 rather than starting a run in-process.
+                m.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
+                        border: widgets::border(1.0),
+                        border_radius: radius(11.0),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        ..default()
+                    },
+                    widgets::btn_primary_paint(),
+                    SkirmishButton,
+                    anim_btn(AnimKind::Rise, 0.37, 0.7),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.extrabold, "POTYCZKA", 19.0, INK));
+                    b.spawn(label(&fonts.semibold, "SKIRMISH · RTS", 11.0, KICKER));
                 });
                 // Difficulty selector.
                 m.spawn((
@@ -1004,11 +1082,15 @@ fn spawn_pause_screen(
     mut commands: Commands,
     fonts: Res<UiFonts>,
     save: Res<crate::savegame::SaveExists>,
-    siege: Res<crate::siege::Siege>,
+    // `Option` so it's robust whether or not the siege resource exists in Skirmish (siege is a
+    // campaign-only subsystem); the save controls below only apply in Campaign anyway.
+    siege: Option<Res<crate::siege::Siege>>,
+    mode: Res<crate::rts::GameMode>,
 ) {
+    let skirmish = matches!(*mode, crate::rts::GameMode::Skirmish);
     let has_save = save.0;
     // Manual save is a day-only action (a mid-siege snapshot would resume in the wrong place).
-    let can_save = matches!(siege.phase, crate::siege::GamePhase::Prep);
+    let can_save = matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Prep));
 
     commands.spawn((modal_root(50), PausedUi)).with_children(|root| {
         root.spawn((
@@ -1045,35 +1127,43 @@ fn spawn_pause_screen(
                 },
                 BackgroundColor(BORDER_SOFT),
             ));
-            // Save the current run on demand. Disabled (dim) during a night assault.
-            if can_save {
-                pause_btn(c, &fonts.extrabold, "SAVE GAME", PauseSaveBtn, (), 0.11);
+            if skirmish {
+                // Skirmish has no save/load and no in-process campaign reset — the mode is chosen at
+                // boot, so both a fresh skirmish and a return to the campaign menu are exe relaunches
+                // (handled in `pause_click`). Reuse the Restart / Main Menu markers for the routing.
+                pause_btn(c, &fonts.extrabold, "NOWA POTYCZKA", PauseRestartBtn, (), 0.11);
+                pause_btn(c, &fonts.extrabold, "MENU GŁÓWNE", PauseMenuBtn, (), 0.14);
             } else {
-                c.spawn((
-                    Node {
-                        width: Val::Px(264.0),
-                        padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        border: widgets::border(1.0),
-                        border_radius: radius(R_BTN),
-                        ..default()
-                    },
-                    BackgroundColor(rgba(196, 144, 62, 0.16)),
-                    BorderColor::all(rgba(244, 204, 132, 0.22)),
-                    anim(AnimKind::PopIn, 0.11, 0.28),
-                ))
-                .with_children(|b| {
-                    b.spawn(label(&fonts.bold, "SAVE GAME  (by day only)", 14.0, GREY));
-                });
+                // Save the current run on demand. Disabled (dim) during a night assault.
+                if can_save {
+                    pause_btn(c, &fonts.extrabold, "SAVE GAME", PauseSaveBtn, (), 0.11);
+                } else {
+                    c.spawn((
+                        Node {
+                            width: Val::Px(264.0),
+                            padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border: widgets::border(1.0),
+                            border_radius: radius(R_BTN),
+                            ..default()
+                        },
+                        BackgroundColor(rgba(196, 144, 62, 0.16)),
+                        BorderColor::all(rgba(244, 204, 132, 0.22)),
+                        anim(AnimKind::PopIn, 0.11, 0.28),
+                    ))
+                    .with_children(|b| {
+                        b.spawn(label(&fonts.bold, "SAVE GAME  (by day only)", 14.0, GREY));
+                    });
+                }
+                if has_save {
+                    pause_btn(c, &fonts.extrabold, "LOAD LAST SAVE", PauseLoadBtn, (), 0.12);
+                }
+                pause_btn(c, &fonts.extrabold, "RESTART", PauseRestartBtn, (), 0.14);
+                // Back to the title screen — the run stays frozen in memory, so RESUME there returns
+                // to exactly this point.
+                pause_btn(c, &fonts.extrabold, "MAIN MENU", PauseMenuBtn, (), 0.16);
             }
-            if has_save {
-                pause_btn(c, &fonts.extrabold, "LOAD LAST SAVE", PauseLoadBtn, (), 0.12);
-            }
-            pause_btn(c, &fonts.extrabold, "RESTART", PauseRestartBtn, (), 0.14);
-            // Back to the title screen — the run stays frozen in memory, so RESUME there returns
-            // to exactly this point.
-            pause_btn(c, &fonts.extrabold, "MAIN MENU", PauseMenuBtn, (), 0.16);
 
             c.spawn((
                 label(&fonts.regular, "Esc to resume", FONT_BODY, GREY),
@@ -1103,6 +1193,7 @@ fn pause_click(
     mut next_app: ResMut<NextState<AppState>>,
     mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
+    mode: Res<crate::rts::GameMode>,
     mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
@@ -1113,9 +1204,27 @@ fn pause_click(
     if confirm.0.is_some() {
         return; // dialog owns input
     }
+    let skirmish = matches!(*mode, crate::rts::GameMode::Skirmish);
     let cur_diff = current_difficulty(siege.as_deref());
     for (interaction, resume, load, restart_b, gfx_b, save_b, menu_b) in &q {
         if *interaction != Interaction::Pressed {
+            continue;
+        }
+        // Skirmish: Resume + Settings work in place; Restart / Main Menu are mode changes, so they
+        // relaunch (the campaign save/load/in-process-reset routing below never runs here).
+        if skirmish {
+            if resume.is_some() {
+                next_app.set(AppState::Playing);
+            }
+            if gfx_b.is_some() {
+                gfx_menu.0 = true;
+            }
+            if restart_b.is_some() {
+                relaunch_process(true); // NOWA POTYCZKA — fresh skirmish process
+            }
+            if menu_b.is_some() {
+                relaunch_process(false); // MENU GŁÓWNE — relaunch into the campaign (drop the flag)
+            }
             continue;
         }
         if resume.is_some() {
@@ -1152,18 +1261,36 @@ fn spawn_gameover_screen(
     siege: Option<Res<crate::siege::Siege>>,
     player: Option<Res<crate::player::PlayerRes>>,
     save: Res<crate::savegame::SaveExists>,
+    mode: Res<crate::rts::GameMode>,
+    outcome: Res<crate::rts::RtsOutcome>,
 ) {
-    let won = matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
-    let (title, col) = if won {
+    let skirmish = matches!(*mode, crate::rts::GameMode::Skirmish);
+    // Skirmish (Potyczka) is decided by which Town Hall fell (spec §9); Campaign by the siege phase.
+    let won = if skirmish {
+        matches!(*outcome, crate::rts::RtsOutcome::PlayerWon)
+    } else {
+        matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory))
+    };
+    let (title, col) = if skirmish {
+        if won {
+            ("ZWYCIĘSTWO", rgb(255, 231, 154))
+        } else {
+            ("PORAŻKA", rgb(255, 106, 90))
+        }
+    } else if won {
         ("VICTORY", rgb(255, 231, 154))
     } else {
         ("THE KEEP HAS FALLEN", rgb(255, 106, 90))
     };
-    let stats = player
-        .map(|p| format!("Level {}     Gold {}", p.0.level, p.0.gold))
-        .unwrap_or_default();
+    // Subtitle: campaign shows the hero's stats; skirmish states which hall was razed.
+    let stats = if skirmish {
+        if won { "Wrogi ratusz zburzony".to_string() } else { "Twój ratusz padł".to_string() }
+    } else {
+        player.map(|p| format!("Level {}     Gold {}", p.0.level, p.0.gold)).unwrap_or_default()
+    };
     // On a defeat with a save, offer to resume last night; a victory ends the saga (no Continue).
-    let can_continue = !won && save.0;
+    // Skirmish has no save/continue at all (mode is relaunch-per-run).
+    let can_continue = !skirmish && !won && save.0;
 
     commands.spawn((modal_root(50), GameOverUi)).with_children(|root| {
         root.spawn((
@@ -1205,7 +1332,13 @@ fn spawn_gameover_screen(
             anim_btn(AnimKind::FloatUp, 0.4, 0.5),
         ))
         .with_children(|b| {
-            let txt = if can_continue { "NEW GAME" } else { "PLAY AGAIN" };
+            let txt = if skirmish {
+                "ZAGRAJ PONOWNIE"
+            } else if can_continue {
+                "NEW GAME"
+            } else {
+                "PLAY AGAIN"
+            };
             b.spawn(label(&fonts.extrabold, txt, 15.0, INK));
         });
         // Back to the title screen (secondary).
@@ -1233,7 +1366,7 @@ fn spawn_gameover_screen(
             anim_btn(AnimKind::FloatUp, 0.5, 0.5),
         ))
         .with_children(|b| {
-            b.spawn(label(&fonts.bold, "MAIN MENU", 13.0, GOLD));
+            b.spawn(label(&fonts.bold, if skirmish { "MENU GŁÓWNE" } else { "MAIN MENU" }, 13.0, GOLD));
         });
     });
 }
@@ -1252,6 +1385,7 @@ fn start_click(
             Option<&MapSeg>,
             Option<&QuitButton>,
             Option<&StartSettingsButton>,
+            Option<&SkirmishButton>,
         ),
         Changed<Interaction>,
     >,
@@ -1272,12 +1406,15 @@ fn start_click(
     }
     let mut siege = siege;
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, play, cont, resume, cred, seg, mapseg, quit, settings_b) in &q {
+    for (interaction, play, cont, resume, cred, seg, mapseg, quit, settings_b, skirmish_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
         if quit.is_some() {
             exit.write(AppExit::Success);
+        }
+        if skirmish_b.is_some() {
+            relaunch_process(true); // enter Potyczka — a fresh boot with FOREST_RTS=1 (exits this process)
         }
         if settings_b.is_some() {
             gfx_menu.0 = true; // open the graphics Settings page over the start screen
@@ -1336,6 +1473,8 @@ fn map_name(m: crate::worldmap::MapId) -> &'static str {
     match m {
         crate::worldmap::MapId::Home => "Green Isle",
         crate::worldmap::MapId::Ashlands => "Ashlands",
+        // Entered via the Potyczka relaunch, never the M-cycle — named here for completeness.
+        crate::worldmap::MapId::Arena => "Arena",
     }
 }
 /// Whether a map is finished enough to ship without a caveat. Ashlands is a playable prototype
@@ -1351,7 +1490,10 @@ fn cycle_map(keys: Res<ButtonInput<KeyCode>>, mut active: ResMut<crate::worldmap
     }
     active.0 = match active.0 {
         crate::worldmap::MapId::Home => crate::worldmap::MapId::Ashlands,
-        crate::worldmap::MapId::Ashlands => crate::worldmap::MapId::Home,
+        // Arena is skirmish-only (relaunch flag), not part of the campaign M-cycle.
+        crate::worldmap::MapId::Ashlands | crate::worldmap::MapId::Arena => {
+            crate::worldmap::MapId::Home
+        }
     };
 }
 
@@ -1386,6 +1528,7 @@ fn gameover_click(
     >,
     mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
+    mode: Res<crate::rts::GameMode>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
@@ -1395,9 +1538,20 @@ fn gameover_click(
     if confirm.0.is_some() {
         return;
     }
+    let skirmish = matches!(*mode, crate::rts::GameMode::Skirmish);
     let cur_diff = current_difficulty(siege.as_deref());
     for (interaction, again, cont, menu_b) in &q {
         if *interaction != Interaction::Pressed {
+            continue;
+        }
+        // Skirmish: both actions are mode-scoped relaunches (no save/continue exists here).
+        if skirmish {
+            if again.is_some() {
+                relaunch_process(true); // ZAGRAJ PONOWNIE — fresh skirmish process
+            }
+            if menu_b.is_some() {
+                relaunch_process(false); // MENU GŁÓWNE — relaunch into the campaign
+            }
             continue;
         }
         if menu_b.is_some() {

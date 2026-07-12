@@ -112,10 +112,13 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_hud, setup_inv_hud))
+        // Campaign-only: the hero HP/stamina/inventory/town HUD chrome is replaced by the RTS HUD
+        // (src/rts/hud.rs) in Skirmish.
+        app.add_systems(Startup, (setup_hud, setup_inv_hud).run_if(crate::rts::in_campaign))
             .add_systems(
                 Update,
-                (setup_stat_bar, update_hud, update_inv_hud, update_town_stats, flash_quick_slots),
+                (setup_stat_bar, update_hud, update_inv_hud, update_town_stats, flash_quick_slots)
+                    .run_if(crate::rts::in_campaign),
             );
         // (Build mode is entered via the contextual "[B] Build" prompt near the town — see
         // `town::build_prompt` / `build_mode_toggle` — not an always-on HUD button.)

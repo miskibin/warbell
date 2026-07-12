@@ -35,15 +35,16 @@ pub struct SuccessionAlertPlugin;
 
 impl Plugin for SuccessionAlertPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_banner)
-            .add_systems(Update, (watch_heirs, drive_stingers))
-            .add_systems(OnExit(AppState::StartScreen), clear_stingers)
-            .add_systems(OnExit(AppState::GameOver), clear_stingers);
+        // Campaign-only: the last-heir alert banner is part of the hero succession mechanic.
+        app.add_systems(Startup, setup_banner.run_if(crate::rts::in_campaign))
+            .add_systems(Update, (watch_heirs, drive_stingers).run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(AppState::StartScreen), clear_stingers.run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(AppState::GameOver), clear_stingers.run_if(crate::rts::in_campaign));
 
         // `FOREST_LASTHERO=1`: empty the heir pool a beat after boot so the stinger + persistent
         // banner can be shot in isolation (same staging-hook style as the other `FOREST_*` vars).
         if std::env::var("FOREST_LASTHERO").is_ok() {
-            app.add_systems(Update, force_last_hero.run_if(in_state(AppState::Playing)));
+            app.add_systems(Update, force_last_hero.run_if(in_state(AppState::Playing)).run_if(crate::rts::in_campaign));
         }
     }
 }

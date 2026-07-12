@@ -452,14 +452,24 @@ impl Plugin for PlayerPlugin {
             .init_resource::<combat::HitStop>()
             .insert_resource(orbit)
             .insert_resource(camera::FirstPerson { active: fp_boot, ..default() })
+            // `setup_combat_fx` stays UNGATED: it inserts the shared `CombatFx` resource that
+            // ungated modules (projectile/defenses impact sparks) read, and RTS archer arrows
+            // reuse those FX in Skirmish. Everything hero-specific below is Campaign-only.
             .add_systems(Startup, combat::setup_combat_fx)
-            .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, charge::spawn_charge_bar, debug_grant_boons, softlock::spawn_target_ring))
+            .add_systems(
+                PostStartup,
+                (spawn_hero, arts::spawn_arts_hud, charge::spawn_charge_bar, debug_grant_boons, softlock::spawn_target_ring)
+                    .run_if(crate::rts::in_campaign),
+            )
             // Fresh run: wipe progression + revive the hero on a new run (NOT on un-pause).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                reset_player,
+                reset_player.run_if(crate::rts::in_campaign),
             )
-            .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_player)
+            .add_systems(
+                OnExit(crate::game_state::AppState::GameOver),
+                reset_player.run_if(crate::rts::in_campaign),
+            )
             // Render/input — keep running even when the world is frozen (so the paused scene
             // still draws + you can leave free-roam). `toggle_mode` is the backtick free-cam.
             .add_systems(
@@ -482,7 +492,10 @@ impl Plugin for PlayerPlugin {
                     arts::sync_arts_hud, // ability-chip HUD (show/dim per readiness)
                     charge::sync_charge_bar, // heavy-strike charge bar (show/fill per hold)
                     charge::heavy_tip, // one-time "Hold LMB" hint near the first enemy
-                ),
+                )
+                    // Campaign-only: no hero in Skirmish, and `player_camera` must not fight the
+                    // RTS iso camera (which drives the SAME single Camera3d).
+                    .run_if(crate::rts::in_campaign),
             )
             // World-sim — gated on the freeze condition (`Modal::None` ⇒ Playing, no panel).
             // `player_move`/`attack` also early-return outside `PlayMode::Play` (free-roam).
@@ -501,7 +514,8 @@ impl Plugin for PlayerPlugin {
                     health::hero_death_anim, // keel-over pose; last so it owns the dead transform
                 )
                     .chain()
-                    .run_if(in_state(crate::game_state::Modal::None)),
+                    .run_if(in_state(crate::game_state::Modal::None))
+                    .run_if(crate::rts::in_campaign),
             );
     }
 }

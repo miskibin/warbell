@@ -37,8 +37,9 @@ pub struct HintsPlugin;
 
 impl Plugin for HintsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_hint_root)
-            .add_sim_systems(drive_hints);
+        // Campaign-only: the hero-economy hint toasts don't apply to the RTS.
+        app.add_systems(Startup, setup_hint_root.run_if(crate::rts::in_campaign))
+            .add_sim_systems(drive_hints.run_if(crate::rts::in_campaign));
     }
 }
 

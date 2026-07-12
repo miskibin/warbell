@@ -548,34 +548,37 @@ pub struct SiegePlugin;
 
 impl Plugin for SiegePlugin {
     fn build(&self, app: &mut App) {
+        // The `Siege`/`KeepHp`/`GameTime` resources stay inserted in both modes (game_state reads
+        // `Siege.phase` and the pause screen reads it non-optionally); only the systems are gated
+        // Campaign-only — Skirmish has no night waves (RtsOutcome ends the RTS run instead).
         app.init_resource::<KeepHp>()
             .init_resource::<Siege>()
             .init_resource::<GameTime>()
-            .add_systems(Startup, (setup_invader_armory, setup_siege_hud))
-            .add_systems(PostStartup, seed_demo_wave) // FOREST_WAVE screenshot hook only
+            .add_systems(Startup, (setup_invader_armory, setup_siege_hud).run_if(crate::rts::in_campaign))
+            .add_systems(PostStartup, seed_demo_wave.run_if(crate::rts::in_campaign)) // FOREST_WAVE screenshot hook only
             // Pause-aware clock — advances before the sim, frozen behind any panel / outside Playing.
-            .add_sim_systems(advance_game_clock)
+            .add_sim_systems(advance_game_clock.run_if(crate::rts::in_campaign))
             // Sim — frozen behind any panel / outside Playing.
             .add_sim_systems(
                 (run_director, invader_brain, siege_controls, night_warning, keep_attack_alert, director_march)
                     .after(advance_game_clock)
-                    ,
+                    .run_if(crate::rts::in_campaign),
             )
             // HUD keeps drawing while frozen.
-            .add_systems(Update, update_siege_hud);
+            .add_systems(Update, update_siege_hud.run_if(crate::rts::in_campaign));
         // Clip-capture (or the perf harness): sustain the assault for a long recording / leak test.
         if (std::env::var("FOREST_CLIP").is_ok() || std::env::var("FOREST_PERFTEST").is_ok())
             && std::env::var("FOREST_WAVE").is_ok()
         {
             app.add_sim_systems(
-                siege_clip_refill.after(invader_brain),
+                siege_clip_refill.after(invader_brain).run_if(crate::rts::in_campaign),
             );
         }
         app
             // Fresh run: reset on leaving the start screen or game-over (NOT on un-pausing,
             // which is a Playing↔Paused transition and never touches these).
-            .add_systems(OnExit(AppState::StartScreen), reset_siege)
-            .add_systems(OnExit(AppState::GameOver), reset_siege);
+            .add_systems(OnExit(AppState::StartScreen), reset_siege.run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(AppState::GameOver), reset_siege.run_if(crate::rts::in_campaign));
         // No OnExit(Paused) reset: pause-menu Restart resets in-process by routing through
         // StartScreen → Playing (see game_state::drive_fresh_run), so OnExit(StartScreen) covers it.
     }

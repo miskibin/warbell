@@ -50,8 +50,10 @@ pub struct TutorialPlugin;
 impl Plugin for TutorialPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TutorialTab>()
-            // Open with H — only while playing with no other panel up.
-            .add_sim_systems(open_tutorial)
+            // Open with H — only while playing with no other panel up. Campaign-only (the RTS
+            // has no hero tutorial); the menu-context systems below are StartScreen-gated and
+            // never fire in Skirmish (which boots straight into Playing).
+            .add_sim_systems(open_tutorial.run_if(crate::rts::in_campaign))
             .add_systems(OnEnter(Modal::Tutorial), spawn_tutorial)
             .add_systems(OnExit(Modal::Tutorial), despawn_tutorial)
             // Start-menu guide: the HOW TO PLAY button (or H) opens the same panel without the
