@@ -235,7 +235,10 @@ fn hit_test(
     time: Res<Time>,
     hero: Res<crate::player::HeroState>,
     mut commands: Commands,
-    mut orks: Query<(Entity, &GlobalTransform, &mut Ork), Without<crate::dying::Dying>>,
+    mut orks: Query<
+        (Entity, &GlobalTransform, &mut Ork, Option<&mut HitSquash>),
+        Without<crate::dying::Dying>,
+    >,
     mut floats: ResMut<FloatQueue>,
     mut hitstop: ResMut<crate::player::HitStop>,
     mut feedback: ResMut<HitFeedback>,
@@ -252,7 +255,7 @@ fn hit_test(
     *t = 0.6;
     let now = time.elapsed_secs();
     let mut best: Option<(Entity, Vec3, f32)> = None;
-    for (e, gt, _) in &orks {
+    for (e, gt, _, _) in &orks {
         let p = gt.translation();
         let d = Vec2::new(p.x - hero.pos.x, p.z - hero.pos.y).length();
         if best.is_none_or(|b| d < b.2) {
@@ -282,16 +285,25 @@ fn hit_test(
     };
     *tier += 1;
     let crit = label == "CRIT";
-    if let Ok((_, _, mut o)) = orks.get_mut(e) {
+    let mut squash = None;
+    if let Ok((_, _, mut o, sq)) = orks.get_mut(e) {
         o.hit_recoil = now;
         // The shove — same push the real hit site applies (crit/heavy shove harder).
         o.kb = dir * if crit || heavy { crate::player::KNOCKBACK_CRIT } else { crate::player::KNOCKBACK };
         if heavy || crit {
             o.atk_anim = 0.0; // stagger: cancel any wind-up
         }
+        squash = sq;
     }
     commands.entity(e).try_insert(HurtFlash::new(now, intensity));
-    commands.entity(e).try_insert(HitSquash::new(now, amp, false));
+    // Re-kick in place (see the drive-squash rest-scale note) so repeated staged hits never
+    // re-capture a mid-squash scale as rest and strand the ork flat.
+    match squash {
+        Some(mut s) => s.restart(now, amp),
+        None => {
+            commands.entity(e).try_insert(HitSquash::new(now, amp, false));
+        }
+    }
     floats.0.push(FloatReq { world: p + Vec3::Y * 2.2, text: label.into(), color: col_ork_hit(), scale: 1.2 });
     // Camera + clock: the same tiered punch `player_attack` lands.
     feedback.shake_dir = recoil;
@@ -398,6 +410,9 @@ fn ensure_hp_bars(
     // Rival soldiers are biped guards carrying `Health` (not `NpcHp`) — give them the same bar as
     // the townsfolk so the player can read a guard's HP as they whittle it down.
     rivals: Query<Entity, (With<crate::rival::RivalSoldier>, With<Health>, Without<HasHpBar>)>,
+    // Snowmen are full HP enemies (`Health` + `Snowman`) the hero fights — give them a bar too so
+    // they read as foes, not decor, while you whittle them down.
+    snowmen: Query<Entity, (With<crate::snowman::Snowman>, With<Health>, Without<HasHpBar>)>,
 ) {
     // Orks + townsfolk were enlarged by WORLD_BUMP (animals were not), so lift their bars to match
     // the taller heads. The base sits at y=0 and scales about it, so head height scales by the bump.
@@ -414,6 +429,9 @@ fn ensure_hp_bars(
     for e in &rivals {
         spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y_NPC * bump);
     }
+    for e in &snowmen {
+        spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y);
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -425,7 +443,13 @@ fn drive_hp_bars(
     // Vitals come from `Health` (orks/animals) OR `NpcHp` (town NPCs) — whichever the target carries.
     targets: Query<
         (&GlobalTransform, Option<&Health>, Option<&crate::villagers::NpcHp>, Option<&HurtFlash>, Option<&crate::dying::Dying>),
-        Or<(With<Ork>, With<crate::wildlife::Animal>, With<crate::villagers::NpcHp>, With<crate::rival::RivalSoldier>)>,
+        Or<(
+            With<Ork>,
+            With<crate::wildlife::Animal>,
+            With<crate::villagers::NpcHp>,
+            With<crate::rival::RivalSoldier>,
+            With<crate::snowman::Snowman>,
+        )>,
     >,
     mut bars: Query<(Entity, &HpBar, &mut Transform, &mut Visibility, &Children)>,
     mut fgs: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), (With<HpBarFg>, Without<HpBar>)>,

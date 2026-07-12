@@ -322,7 +322,13 @@ fn step_arrows(
     mut kills: MessageWriter<crate::verbs::AnimalKilled>,
     mut arrows: Query<(Entity, &mut Arrow, &mut Transform)>,
     mut hostiles: Query<
-        (Entity, &Transform, &mut crate::player::Health, Option<&crate::wildlife::Animal>),
+        (
+            Entity,
+            &Transform,
+            &mut crate::player::Health,
+            Option<&crate::wildlife::Animal>,
+            Option<&mut crate::combat_fx::HitSquash>,
+        ),
         (
             // The same hostile set the guard melee engages (`villagers::guard_combat`).
             Or<(
@@ -414,13 +420,23 @@ fn step_arrows(
                 }
             }
             if let Some(he) = hit {
-                if let Ok((_, htf, mut hp, animal)) = hostiles.get_mut(he) {
+                if let Ok((_, htf, mut hp, animal, squash)) = hostiles.get_mut(he) {
                     if hp.hp > 0.0 {
                         hp.hp -= a.damage;
                         // Light struck-feedback (no camera punch — it's not the hero's blow): the
-                        // target blinks + squashes so a landed shaft visibly *thuds* home.
+                        // target blinks + squashes so a landed shaft visibly *thuds* home. Re-kick an
+                        // in-flight squash in place (rapid arrows) rather than inserting a fresh one —
+                        // a fresh insert forgets the true rest scale and re-captures the mid-squash
+                        // (flattened) scale as "rest", stranding the ork squashed flat forever.
                         commands.entity(he).try_insert(crate::combat_fx::HurtFlash::new(now, 0.4));
-                        commands.entity(he).try_insert(crate::combat_fx::HitSquash::new(now, 0.09, false));
+                        match squash {
+                            Some(mut s) => s.restart(now, 0.09),
+                            None => {
+                                commands
+                                    .entity(he)
+                                    .try_insert(crate::combat_fx::HitSquash::new(now, 0.09, false));
+                            }
+                        }
                         if hp.hp <= 0.0 {
                             // Topple the kill along the shaft's line — it falls the way it was shot.
                             crate::dying::begin_dying_struck(&mut commands, he, now, Vec2::new(dir.x, dir.z), false);

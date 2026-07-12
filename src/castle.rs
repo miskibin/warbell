@@ -1317,6 +1317,7 @@ fn swing_bell(
     }
 }
 
+#[allow(dead_code)] // torches temporarily unspawned (read as unnatural); kept for easy restore
 fn torch_parts() -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
     v.push((bx(0.12, 1.0, 0.12, 0.0, 0.5, 0.0), M::Wood)); // post
@@ -1643,13 +1644,9 @@ pub fn build(
     }
     spawn(bell_frame_parts(), Vec3::new(BELL_POS.x, 0.0, BELL_POS.y), BELL_YAW, Vec3::ONE, CastleKind::Always);
 
-    // Torches: gate torches reveal with the gate; the keep-door pair is always lit.
-    for (x, z, rot) in gates() {
+    // Torches temporarily removed (read as unnatural) — only the war-braziers light the gates for now.
+    for (x, z, _rot) in gates() {
         let half = GATE_GAP / 2.0 + 0.5;
-        for sx in [-half, half] {
-            let local = Quat::from_rotation_y(rot) * Vec3::new(sx, 0.0, 1.0);
-            spawn(torch_parts(), Vec3::new(x + local.x, 0.0, z + local.z), 0.0, Vec3::ONE, CastleKind::Gate);
-        }
         // War-braziers flanking the gate APPROACH (outside the walls, clear of the gate lane):
         // the night siege's melee happens right here, and on the moon-dark ground it filmed as
         // black-on-black. `out` is the true outward axis (gates are axis-aligned on the
@@ -1661,10 +1658,6 @@ pub fn build(
             spawn(brazier_parts(), p, 0.0, Vec3::ONE, CastleKind::Gate);
         }
     }
-    for sx in [-2.3_f32, 2.3] {
-        spawn(torch_parts(), Vec3::new(sx, 0.0, 3.4), 0.0, Vec3::ONE, CastleKind::Always);
-    }
-
     // The settlement's working corners: woodpile, hay store, cart, draw-well. Permanent (`Always`)
     // — the courtyard never goes blank, walls or no walls. Tucked into the four courtyard corners
     // (±10, ±6), clear of the gates, the bell, the paths and every house slot.
@@ -1677,23 +1670,9 @@ pub fn build(
     // last `spawn` closure call so the `commands`/`meshes` borrows are free again.
     spawn_bell_swing(commands, meshes, &mats);
 
-    // Pooled flicker-lights at each torch flame — the `torch_parts` geometry is emissive-only, so
-    // the gates/keep door read flat in the dark without these. Tagged with the SAME `CastlePart`
-    // as the torch they sit on, so `sync_castle` lights gate torches only once the gate is built
-    // and a Hidden light casts nothing. Spawned here (not in the torch loop above) because the
-    // `spawn` closure holds `&mut commands` until its last call just above. Flame local y = 1.22.
-    for (x, z, rot) in gates() {
+    // Pooled flicker-lights — only the war-braziers remain (gate/keep torches removed for now).
+    for (x, z, _rot) in gates() {
         let half = GATE_GAP / 2.0 + 0.5;
-        for (k, sx) in [-half, half].into_iter().enumerate() {
-            let local = Quat::from_rotation_y(rot) * Vec3::new(sx, 0.0, 1.0);
-            commands.spawn((
-                Transform::from_translation(Vec3::new(x + local.x, 1.25, z + local.z)),
-                Visibility::Hidden,
-                CastlePart { kind: CastleKind::Gate },
-                BiomeEntity,
-                crate::firelight::torch_light(x * 0.7 + z * 0.31 + k as f32 * 2.1),
-            ));
-        }
         // The war-braziers' pools (same gate lifecycle; flame local y = 1.5).
         let out = Vec3::new(x, 0.0, z).normalize();
         let perp = Vec3::new(-out.z, 0.0, out.x);
@@ -1708,16 +1687,6 @@ pub fn build(
             ));
         }
     }
-    for sx in [-2.3_f32, 2.3] {
-        commands.spawn((
-            Transform::from_translation(Vec3::new(sx, 1.25, 3.4)),
-            Visibility::Inherited, // keep-door torches are always lit
-            CastlePart { kind: CastleKind::Always },
-            BiomeEntity,
-            crate::firelight::torch_light(sx * 1.3),
-        ));
-    }
-
     // Curfew shutters over each house's front window — a wooden pair that swings shut as night
     // falls (`shutters::drive_shutters`), so the lit town visibly buttons up before the siege (and
     // a closed leaf hides the glowing pane, reading as "lamp out"). Built here, after the `spawn`

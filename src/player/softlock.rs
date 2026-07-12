@@ -79,7 +79,14 @@ pub fn soft_lock(
     hostiles: Query<
         (Entity, &GlobalTransform, Option<&Animal>),
         (
-            Or<(With<Ork>, With<Boss>, With<Warlord>, With<RivalSoldier>, With<Animal>)>,
+            Or<(
+                With<Ork>,
+                With<Boss>,
+                With<Warlord>,
+                With<RivalSoldier>,
+                With<Animal>,
+                With<crate::snowman::Snowman>,
+            )>,
             Without<Dying>,
         ),
     >,
