@@ -132,6 +132,11 @@ fn spawn_clouds(
     if std::env::var("FOREST_NOCLOUDS").is_ok() {
         return;
     }
+    // Same blanket problem in the RTS skirmish: the iso ortho camera looks down through the
+    // cloud band the whole match, so the arena skips the layer entirely.
+    if crate::rts::mode_from_env() == crate::rts::GameMode::Skirmish {
+        return;
+    }
     let cloud_mat = mats.add(StandardMaterial {
         base_color: Color::srgb(1.0, 1.0, 1.0),
         // Small white emissive keeps the shaded side bright (clouds, not grey rocks).

@@ -488,8 +488,8 @@ fn active_map() -> &'static MapDef {
     }
 }
 /// True while the RTS-skirmish arena is the active world — the arena takes its own early branches
-/// in [`classify`], [`ground_color`], the still-water fields and [`build_step`].
-fn is_arena() -> bool {
+/// in [`classify`], [`ground_color`], the still-water fields, [`build_step`] and `roads`.
+pub fn is_arena() -> bool {
     active_id() == MapId::Arena as u8
 }
 /// The active map's atmosphere tuple (read by `biome::apply_build` + [`build`]).

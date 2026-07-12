@@ -236,6 +236,7 @@ pub(crate) fn track_hero_threat(
                 With<crate::warlord::Warlord>,
                 With<crate::rival::RivalSoldier>,
                 With<crate::rival::RivalRaider>,
+                With<crate::snowman::Snowman>,
             )>,
             Without<crate::dying::Dying>,
         ),
@@ -391,7 +392,10 @@ impl Plugin for GameAudioPlugin {
                     detect_gear_found,
                     advice::detect_town_advice,
                 )
-                    .run_if(in_state(crate::game_state::Modal::None)),
+                    .run_if(in_state(crate::game_state::Modal::None))
+                    // Hero-voice triggers are campaign beats (intro, biome entry, siege…);
+                    // the skirmish has no hero to speak them.
+                    .run_if(crate::rts::in_campaign),
             )
             // Villager + ork + hero-remark voices only while actually playing (no chatter in
             // menus / panels). Ordered AFTER the hero's own voice so it sets this frame's
@@ -400,7 +404,10 @@ impl Plugin for GameAudioPlugin {
                 Update,
                 (npc::detect_villager_ambient, npc::detect_villager_events, ork::detect_ork_voices, rival_voice::detect_rival_voices, detect_hero_remarks)
                     .after(voice::play_voice_cues)
-                    .run_if(in_state(crate::game_state::AppState::Playing)),
+                    .run_if(in_state(crate::game_state::AppState::Playing))
+                    // Campaign speakers only — skirmish bodies reuse these models but the
+                    // barks reference hero/keep/siege context that doesn't exist there.
+                    .run_if(crate::rts::in_campaign),
             )
             // The director is the PLAYBACK layer — gated on `Playing` (like every sibling audio
             // system) so an in-flight line finishes through a panel. The SIM layer is the

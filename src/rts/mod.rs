@@ -341,6 +341,31 @@ pub fn train_cost(kind: UnitKind) -> Cost {
 
 pub const TRAIN_SECS: f32 = 8.0;
 
+// ---------------------------------------------------------------- build + training interfaces
+
+/// What the player is currently placing (HUD build strip sets it; `build.rs` drives the ghost
+/// and clears it on place/cancel). `None` = normal command input.
+#[derive(Resource, Default)]
+pub struct Placing(pub Option<BuildingKind>);
+
+/// HUD (or the AI) asks a barracks to enqueue a unit. `units.rs` validates (cost + free
+/// worker + pop) and drives the queue.
+#[derive(Message)]
+pub struct TrainOrder {
+    pub building: Entity,
+    pub kind: UnitKind,
+}
+
+/// Live training state on a barracks: FIFO queue (depth ≤ 3) + progress through the current
+/// trainee's `TRAIN_SECS`. HUD reads it for buttons/progress; `units.rs` drives it.
+#[derive(Component, Default)]
+pub struct TrainQueue {
+    pub queue: Vec<UnitKind>,
+    pub progress: f32,
+}
+
+pub const TRAIN_QUEUE_DEPTH: usize = 3;
+
 // ---------------------------------------------------------------- selection + commands
 
 /// Marker on currently selected player entities (units or one building).
@@ -387,6 +412,8 @@ impl Plugin for RtsPlugin {
             .init_resource::<RtsPop>()
             .init_resource::<RtsOutcome>()
             .add_message::<RtsOrder>()
+            .add_message::<TrainOrder>()
+            .init_resource::<Placing>()
             .add_plugins((
                 camera::RtsCameraPlugin,
                 pick::RtsPickPlugin,

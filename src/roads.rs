@@ -420,6 +420,22 @@ fn catmull(ctrl: &[Vec2]) -> Vec<Vec2> {
 /// space-filling layer of thin CAPILLARY trails branching off the arteries so nearly everywhere is
 /// within a short walk of a path without the whole island reading as road.
 fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
+    // Skirmish arena: none of the campaign anchors (castle gates, biome regions, camps,
+    // landmarks) exist, and reaching for them panics on the empty region slice. The arena's only
+    // road is the straight base→centre→base lane `worldmap::ground_color_arena` paints — return
+    // it as two densely-sampled artery segments so on_road/openness/speed_mult/ruts all agree
+    // with the painted tint (no `wander` jitter: the paint is straight, the network must be too).
+    if crate::worldmap::is_arena() {
+        let sample = |p0: Vec2, p1: Vec2| -> Vec<Vec2> {
+            let steps = (p0.distance(p1) / CELL).ceil().max(1.0) as usize;
+            (0..=steps).map(|s| p0.lerp(p1, s as f32 / steps as f32)).collect()
+        };
+        note_junction(Vec2::ZERO);
+        return vec![
+            (sample(crate::rts::PLAYER_BASE, Vec2::ZERO), HALF_W),
+            (sample(Vec2::ZERO, crate::rts::RIVAL_BASE), HALF_W),
+        ];
+    }
     let gates = crate::castle::gate_centers();
     let biomes = biome_centres();
     let seed = 0x51ED_2A37u32;
