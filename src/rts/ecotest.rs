@@ -12,7 +12,6 @@
 //! Pure staging/verification — registers nothing unless the env var is set.
 
 use std::collections::HashMap;
-use std::f32::consts::TAU;
 
 use bevy::app::AppExit;
 use bevy::prelude::*;
@@ -68,19 +67,7 @@ impl Plugin for RtsEcoTestPlugin {
     }
 }
 
-/// Ring-search a valid spot for `kind` around `centre` (nearest ring first).
-fn find_spot(kind: BuildingKind, centre: Vec2, deposits: &[Vec2]) -> Option<Vec2> {
-    for r in [6.0f32, 8.0, 10.0, 13.0, 16.0] {
-        for k in 0..16 {
-            let a = k as f32 / 16.0 * TAU;
-            let pos = (centre + Vec2::new(a.cos(), a.sin()) * r).round();
-            if build::placement_valid(kind, Side::Player, pos, deposits) {
-                return Some(pos);
-            }
-        }
-    }
-    None
-}
+// Spot search lives in `build::find_spot` (shared with the RC bridge's auto-spot build op).
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn ecotest_drive(
@@ -117,8 +104,8 @@ fn ecotest_drive(
                 a.distance_squared(base).partial_cmp(&b.distance_squared(base)).unwrap_or(std::cmp::Ordering::Equal)
             });
         let Some(grove) = grove else { return };
-        let mill = find_spot(BuildingKind::Sawmill, grove, &dep_pos);
-        let farm = find_spot(BuildingKind::Farm, base, &dep_pos);
+        let mill = build::find_spot(BuildingKind::Sawmill, Side::Player, grove, &dep_pos);
+        let farm = build::find_spot(BuildingKind::Farm, Side::Player, base, &dep_pos);
         let (Some(mill), Some(farm)) = (mill, farm) else {
             println!("RTS_ECOTEST FAIL: no valid staging spot (mill/farm)");
             exit.write(AppExit::error());

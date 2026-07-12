@@ -92,6 +92,7 @@ mod props;
 mod quadruped;
 mod quality;
 mod quest;
+mod rc;
 mod roads;
 mod rival;
 mod rts;
@@ -299,6 +300,9 @@ fn main() {
         // RTS skirmish mode "Potyczka" (FOREST_RTS=1): iso camera, base-building, mirrored AI.
         // Inert in Campaign — every system inside is gated on `rts::in_skirmish`.
         .add_plugins(rts::RtsPlugin)
+        // Remote-control bridge for agent/manual testing (FOREST_RC=<dir>): JSON commands in,
+        // JSON game-state snapshots out. Inert without the env var.
+        .add_plugins(rc::RcPlugin)
         // Landmark set-piece animators (mill sails, orbiting shards, glow pulses). Standalone —
         // the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(ruins::RuinsFxPlugin)

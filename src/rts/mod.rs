@@ -394,7 +394,7 @@ pub enum Order {
 // ---------------------------------------------------------------- outcome
 
 /// Set when a Town Hall dies; `game_state::watch_end` (parameterized) flips to GameOver.
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RtsOutcome {
     #[default]
     Undecided,

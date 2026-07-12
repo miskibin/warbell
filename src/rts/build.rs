@@ -346,6 +346,21 @@ pub fn placement_valid(kind: BuildingKind, side: Side, pos: Vec2, deposits: &[Ve
     hi - lo <= FLAT_TOLERANCE
 }
 
+/// Ring-search a valid placement for `kind` around `centre` (nearest ring first). Shared by the
+/// ecotest stager and the RC bridge's auto-spot `build` op.
+pub fn find_spot(kind: BuildingKind, side: Side, centre: Vec2, deposits: &[Vec2]) -> Option<Vec2> {
+    for r in [4.0f32, 6.0, 8.0, 10.0, 13.0, 16.0] {
+        for k in 0..16 {
+            let a = k as f32 / 16.0 * std::f32::consts::TAU;
+            let pos = (centre + Vec2::new(a.cos(), a.sin()) * r).round();
+            if placement_valid(kind, side, pos, deposits) {
+                return Some(pos);
+            }
+        }
+    }
+    None
+}
+
 /// Validate → spend (all-or-nothing) → raise a scaffold. Returns whether the building went up. The
 /// single entry point for BOTH the ghost path and the AI (`ai.rs`), so their rules can't diverge.
 #[allow(clippy::too_many_arguments)]
