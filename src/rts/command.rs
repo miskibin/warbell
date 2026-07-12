@@ -3,7 +3,7 @@
 //! This module owns the movement vocabulary the whole RTS depends on — `MoveTo`, `AttackTarget`,
 //! `HarvestAt`, `unit_speed`, and `rts_move_units` — so `workers.rs` (haul loop) and wave-3's
 //! `units.rs`/`ai.rs` (combat brains) drive units by inserting these EXACT components rather than
-//! each rolling their own locomotion. Player input (RMB context command + A attack-move latch) and
+//! each rolling their own locomotion. Player input (RMB context command + F attack-move latch) and
 //! the AI both emit `RtsOrder` messages; `rts_consume_orders` fans them into per-unit `MoveTo`
 //! goals; `rts_move_units` walks every `MoveTo` entity along an A* `NavPath` (staggered replans),
 //! exactly like `villagers::worker_steer` / the siege invaders.
@@ -45,8 +45,12 @@ pub struct AttackTarget(pub Entity);
 #[derive(Component)]
 pub struct HarvestAt(pub Entity);
 
-/// Attack-move latch (armed by `A`, consumed by the next LMB/RMB). A shared resource so `select.rs`
+/// Attack-move latch (armed by `F`, consumed by the next LMB/RMB). A shared resource so `select.rs`
 /// suppresses click-select while it's armed (LMB then means attack-move, not selection).
+///
+/// NB deliberately NOT the RTS-conventional `A`: WASD pans the iso camera (`camera.rs`), so an `A`
+/// latch armed on every pan-left and silently ate the next click — the "selection doesn't work"
+/// bug. `F` (fight) is free of the camera cluster.
 #[derive(Resource, Default)]
 pub struct AttackMove(pub bool);
 
@@ -89,7 +93,7 @@ impl Plugin for RtsCommandPlugin {
 }
 
 /// Player input → `RtsOrder`. RMB with a unit selection: enemy unit/building → Attack, deposit →
-/// Harvest, else ground → Move. `A` latches attack-move for the next LMB/RMB → AttackMove.
+/// Harvest, else ground → Move. `F` latches attack-move for the next LMB/RMB → AttackMove.
 #[allow(clippy::too_many_arguments)]
 fn rts_issue_orders(
     mouse: Res<ButtonInput<MouseButton>>,
@@ -109,8 +113,8 @@ fn rts_issue_orders(
         attack.0 = false;
         return;
     }
-    if keys.just_pressed(KeyCode::KeyA) {
-        attack.0 = true; // arm attack-move for the next click
+    if keys.just_pressed(KeyCode::KeyF) {
+        attack.0 = true; // arm attack-move for the next click (F — see the AttackMove doc: A pans)
     }
 
     let Ok(win) = windows.single() else { return };
@@ -143,7 +147,11 @@ fn rts_issue_orders(
             cam_tf,
             cursor,
             pick::UNIT_PICK_PX,
-            enemy_units.iter().filter(|(_, _, s)| **s == Side::Rival).map(|(e, gt, _)| (e, gt.translation())),
+            enemy_units
+                .iter()
+                .filter(|(_, _, s)| **s == Side::Rival)
+                // Mid-chest pick point, same as select.rs (feet project below the visual body).
+                .map(|(e, gt, _)| (e, gt.translation() + Vec3::Y * pick::UNIT_PICK_Y)),
         );
         let hit_bld = pick::nearest_within(
             camera,

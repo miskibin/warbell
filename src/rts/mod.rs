@@ -14,6 +14,7 @@ pub mod build;
 pub mod camera;
 pub mod command;
 pub mod deposits;
+pub mod ecotest;
 pub mod hud;
 pub mod pick;
 pub mod select;
@@ -427,6 +428,7 @@ impl Plugin for RtsPlugin {
                 units::RtsUnitsPlugin,
                 ai::RtsAiPlugin,
                 hud::RtsHudPlugin,
+                ecotest::RtsEcoTestPlugin,
             ));
     }
 }

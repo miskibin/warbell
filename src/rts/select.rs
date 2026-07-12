@@ -144,7 +144,11 @@ fn selection_input(
             cam_tf,
             end,
             pick::UNIT_PICK_PX,
-            units.iter().filter(|(_, _, s)| **s == Side::Player).map(|(e, gt, _)| (e, gt.translation())),
+            units
+                .iter()
+                .filter(|(_, _, s)| **s == Side::Player)
+                // Pick against mid-chest, not the feet (see UNIT_PICK_Y) — a click on the body hits.
+                .map(|(e, gt, _)| (e, gt.translation() + Vec3::Y * pick::UNIT_PICK_Y)),
         );
         if let Some(e) = unit_hit {
             if shift {

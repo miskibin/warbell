@@ -52,13 +52,33 @@ impl Plugin for RtsDepositsPlugin {
 
 /// Cosmetic parts belonging to a [`Deposit`] anchor, felled in order as the site depletes.
 /// `parts[i].1` is the part's nav-blocker centre (rocks) or `None` (trees register none).
+/// `pub(super)` so `workers.rs` can aim a harvester at a real standing tree/boulder
+/// ([`nearest_standing_part`]) instead of the invisible anchor.
 #[derive(Component)]
-struct DepositVisuals {
+pub(super) struct DepositVisuals {
     parts: Vec<(Entity, Option<Vec2>)>,
     /// `remaining` at spawn — the denominator for the standing-fraction.
     start: f64,
     /// How many parts have already been felled (index into `parts`).
     felled: usize,
+}
+
+/// World XZ of the standing (not-yet-felled) visual part nearest `from` — the actual tree trunk /
+/// boulder a worker should walk to and chop at. `None` if the site has no standing part (spent).
+pub(super) fn nearest_standing_part(
+    vis: &DepositVisuals,
+    transforms: &Query<&Transform>,
+    from: Vec2,
+) -> Option<Vec2> {
+    vis.parts[vis.felled.min(vis.parts.len())..]
+        .iter()
+        .filter_map(|(e, _)| transforms.get(*e).ok())
+        .map(|t| Vec2::new(t.translation.x, t.translation.z))
+        .min_by(|a, b| {
+            a.distance_squared(from)
+                .partial_cmp(&b.distance_squared(from))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
 }
 
 /// Take up to `amount` from a deposit, returning what was actually extracted (clamped at the

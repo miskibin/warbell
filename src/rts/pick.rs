@@ -18,8 +18,13 @@ impl Plugin for RtsPickPlugin {
     fn build(&self, _app: &mut App) {}
 }
 
-/// Screen-space pick radius (px) for a unit body under the cursor (spec §4).
-pub const UNIT_PICK_PX: f32 = 18.0;
+/// Screen-space pick radius (px) for a unit body under the cursor (spec §4, widened for feel).
+pub const UNIT_PICK_PX: f32 = 24.0;
+
+/// Where on a unit body the pick ray tests: entity translation is the FEET, but the player clicks
+/// the torso/head — under the ~50°-pitch iso cam the feet project a good 20px below the visual
+/// body, so picking at the feet made clicks on the body miss. Lift the sample to mid-chest.
+pub const UNIT_PICK_Y: f32 = 0.9;
 /// Larger radius for buildings — bigger footprints read from farther on screen.
 pub const BUILDING_PICK_PX: f32 = 40.0;
 /// Deposits are chunky world features; a generous radius so RMB-harvest is forgiving.

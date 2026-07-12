@@ -10,8 +10,10 @@
 //! animate the legs off the [`Villager`] pose we keep in sync each frame.
 //!
 //! State machine (per worker, [`Haul`]): `Start` (pick a deposit / field, issue a MoveTo) →
-//! `ToDeposit`/`Farm` (walk / tend) → `Gather` (a ~3s work timer) → `Carry` (shoulder a load prop,
-//! MoveTo the own Town Hall) → bank into [`RtsBanks`] → back to `Start`.
+//! `ToDeposit`/`Farm` (walk / tend) → `Gather` (a ~3s work timer at a REAL standing tree/boulder,
+//! swinging the tool via `Villager::atk_anim`) → `Carry` (shoulder a load prop, MoveTo **its own
+//! producer building** — the sawmill/quarry/mine/farm it's bonded to, NOT the Town Hall) → bank
+//! into [`RtsBanks`] → back to `Start`.
 
 use std::collections::HashSet;
 use std::f32::consts::TAU;
@@ -27,6 +29,11 @@ use crate::villagers::{Trade, Villager};
 
 /// Seconds a worker spends gathering at a deposit before shouldering a load.
 const GATHER_SECS: f32 = 3.0;
+/// Tool-swing cadence (s) while gathering — stamps `Villager::atk_anim` so `villager_limbs` plays
+/// the overhead chop/pick swing (the campaign lumberjack read).
+const SWING_EVERY: f32 = 0.85;
+/// How far short of the tree/boulder the worker stands to work it (chopping distance).
+const WORK_STANDOFF: f32 = 0.8;
 /// Seconds a farmer tends the field before carrying a food sack home.
 const FARM_SECS: f32 = 10.0;
 /// Arrival slop (world units) at a deposit / the hall drop-off.
@@ -105,13 +112,14 @@ impl Haul {
 enum Phase {
     /// Decide the next trip: pick a deposit (or tend a field) and issue the MoveTo.
     Start,
-    /// Walking to `Entity` (the target deposit).
-    ToDeposit(Entity),
-    /// Standing at deposit `Entity`, working the gather timer.
-    Gather(Entity),
+    /// Walking to deposit `de` — specifically to `spot`, the standing tree/boulder chosen for this
+    /// trip (so the worker chops AT a trunk, not at the grove's invisible anchor).
+    ToDeposit { de: Entity, spot: Vec2 },
+    /// Standing beside `spot` at deposit `de`, working the gather timer (tool swings play).
+    Gather { de: Entity, spot: Vec2 },
     /// Tending the field beside the farm (food cycle, no deposit).
     Farm,
-    /// Carrying a banked load home to the Town Hall.
+    /// Carrying a load back to the worker's own producer building (sawmill/quarry/mine/farm).
     Carry(CarryKind),
 }
 
@@ -314,6 +322,8 @@ fn worker_haul(
     assets: Res<CarryAssets>,
     buildings: Query<(&RtsBuilding, &Side, &Transform, Has<crate::dying::Dying>)>,
     mut deposits: Query<(Entity, &mut Deposit, &Transform)>,
+    dep_vis: Query<&crate::rts::deposits::DepositVisuals>,
+    part_tf: Query<&Transform>,
     mut workers: Query<
         (
             Entity,
@@ -329,6 +339,7 @@ fn worker_haul(
     >,
 ) {
     let dt = time.delta_secs();
+    let now = time.elapsed_secs();
     // Snapshot of live (non-spent) deposits for the nearest-search; owned, so it doesn't hold a
     // borrow while we later `get_mut` a deposit to draw from it.
     let dep_list: Vec<(Entity, DepositKind, Vec2)> = deposits
@@ -337,13 +348,13 @@ fn worker_haul(
         .map(|(e, d, t)| (e, d.kind, Vec2::new(t.translation.x, t.translation.z)))
         .collect();
 
-    for (we, side, mut haul, assigned, wtf, has_moveto, harvest, vil) in &mut workers {
+    for (we, side, mut haul, assigned, wtf, has_moveto, harvest, mut vil) in &mut workers {
         let wpos = Vec2::new(wtf.translation.x, wtf.translation.z);
 
         // Keep the Villager pose in sync with the mover-driven transform so the biped animator (if
         // it runs in this mode) walks the legs; otherwise this is a harmless no-op and the body
         // glides (accepted POC fallback).
-        if let Some(mut v) = vil {
+        if let Some(v) = vil.as_mut() {
             if has_moveto {
                 let d = wpos - haul.last;
                 if d.length_squared() > 1e-5 {
@@ -368,16 +379,17 @@ fn worker_haul(
             continue;
         }
         let b_kind = b.kind;
-        let home = base_of(*side);
+        // Loads bank at the worker's OWN producer building (sawmill/quarry/mine/farm) — the whole
+        // point of building one near the resource. (Fleeing still runs for `base_of`.)
+        let dropoff = Vec2::new(btf.translation.x, btf.translation.z);
         let dk = harvest_kind(b_kind);
 
         match haul.phase {
             Phase::Start => {
                 if b_kind == BuildingKind::Farm {
                     // Tend a spot beside the farm (deterministic per worker).
-                    let fp = Vec2::new(btf.translation.x, btf.translation.z);
                     let a = (we.to_bits() % 360) as f32 * TAU / 360.0;
-                    let spot = fp + Vec2::new(a.cos(), a.sin()) * 2.5;
+                    let spot = dropoff + Vec2::new(a.cos(), a.sin()) * 2.5;
                     commands.entity(we).try_insert(MoveTo { goal: spot, fight: false });
                     haul.phase = Phase::Farm;
                     haul.timer = FARM_SECS;
@@ -395,8 +407,16 @@ fn worker_haul(
                     }
                     let target = target.or_else(|| nearest(&dep_list, dk, wpos));
                     if let Some((de, dpos)) = target {
-                        commands.entity(we).try_insert(MoveTo { goal: dpos, fight: false });
-                        haul.phase = Phase::ToDeposit(de);
+                        // Work a REAL standing tree/boulder of the site, not the invisible anchor:
+                        // walk to a chopping stand-off beside the nearest standing part.
+                        let spot = dep_vis
+                            .get(de)
+                            .ok()
+                            .and_then(|v| crate::rts::deposits::nearest_standing_part(v, &part_tf, wpos))
+                            .unwrap_or(dpos);
+                        let stand = spot + (wpos - spot).normalize_or_zero() * WORK_STANDOFF;
+                        commands.entity(we).try_insert(MoveTo { goal: stand, fight: false });
+                        haul.phase = Phase::ToDeposit { de, spot };
                     } else {
                         // Nothing left to harvest → idle (unassign).
                         commands.entity(we).try_remove::<(Assigned, Haul)>();
@@ -408,12 +428,11 @@ fn worker_haul(
                     commands.entity(assigned.building).try_remove::<Staffed>();
                 }
             }
-            Phase::ToDeposit(de) => match deposits.get(de) {
-                Ok((_, d, t)) if d.remaining > 0.0 => {
-                    let dpos = Vec2::new(t.translation.x, t.translation.z);
-                    if !has_moveto || wpos.distance(dpos) <= ARRIVE {
+            Phase::ToDeposit { de, spot } => match deposits.get(de) {
+                Ok((_, d, _)) if d.remaining > 0.0 => {
+                    if !has_moveto || wpos.distance(spot) <= ARRIVE {
                         commands.entity(we).try_remove::<MoveTo>();
-                        haul.phase = Phase::Gather(de);
+                        haul.phase = Phase::Gather { de, spot };
                         haul.timer = GATHER_SECS;
                     }
                 }
@@ -423,7 +442,19 @@ fn worker_haul(
                     haul.phase = Phase::Start;
                 }
             },
-            Phase::Gather(de) => {
+            Phase::Gather { de, spot } => {
+                // Face the trunk and swing the tool on a cadence — `villager_limbs` plays the
+                // overhead chop off `atk_anim`, so the work reads like the campaign lumberjack.
+                if let Some(v) = vil.as_mut() {
+                    let d = spot - wpos;
+                    if d.length_squared() > 1e-4 {
+                        v.facing = d.x.atan2(d.y);
+                    }
+                    let prev = haul.timer;
+                    if (prev / SWING_EVERY).ceil() != ((prev - dt) / SWING_EVERY).ceil() {
+                        v.atk_anim = now;
+                    }
+                }
                 haul.timer -= dt;
                 if haul.timer <= 0.0 {
                     // `dk` is Some here (Gather only entered for producers).
@@ -433,7 +464,7 @@ fn worker_haul(
                         if got > 0.0 {
                             let child = spawn_carry(&mut commands, &assets, kind, we);
                             haul.carry = Some(child);
-                            commands.entity(we).try_insert(MoveTo { goal: home, fight: false });
+                            commands.entity(we).try_insert(MoveTo { goal: dropoff, fight: false });
                             haul.phase = Phase::Carry(kind);
                         } else {
                             haul.phase = Phase::Start; // depleted mid-gather
@@ -444,16 +475,23 @@ fn worker_haul(
                 }
             }
             Phase::Farm => {
+                // Field-work swings (a hoe rhythm, slower than the chop).
+                if let Some(v) = vil.as_mut() {
+                    let prev = haul.timer;
+                    if (prev / 1.4).ceil() != ((prev - dt) / 1.4).ceil() {
+                        v.atk_anim = now;
+                    }
+                }
                 haul.timer -= dt;
                 if haul.timer <= 0.0 {
                     let child = spawn_carry(&mut commands, &assets, CarryKind::Food, we);
                     haul.carry = Some(child);
-                    commands.entity(we).try_insert(MoveTo { goal: home, fight: false });
+                    commands.entity(we).try_insert(MoveTo { goal: dropoff, fight: false });
                     haul.phase = Phase::Carry(CarryKind::Food);
                 }
             }
             Phase::Carry(kind) => {
-                if !has_moveto || wpos.distance(home) <= ARRIVE {
+                if !has_moveto || wpos.distance(dropoff) <= ARRIVE {
                     let amt = per_trip(kind);
                     let bank = banks.side_mut(*side);
                     match kind {
