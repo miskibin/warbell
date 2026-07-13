@@ -296,10 +296,12 @@ fn deplete_deposit_visuals(
     time: Res<Time>,
     mut commands: Commands,
     mut cues: MessageWriter<crate::audio::AudioCue>,
-    mut q: Query<(Entity, &Deposit, &mut DepositVisuals)>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
+    mut q: Query<(Entity, &Deposit, &Transform, &mut DepositVisuals)>,
 ) {
     let now = time.elapsed_secs();
-    for (anchor, dep, mut vis) in &mut q {
+    for (anchor, dep, atf, mut vis) in &mut q {
+        let apos = Vec2::new(atf.translation.x, atf.translation.z);
         let max = vis.parts.len();
         let frac = if vis.start > 0.0 { (dep.remaining / vis.start).clamp(0.0, 1.0) } else { 0.0 };
         // ceil so a site with any stock left keeps at least one standing part.
@@ -307,13 +309,15 @@ fn deplete_deposit_visuals(
         let desired_felled = max.saturating_sub(standing.min(max));
         while vis.felled < desired_felled && vis.felled < max {
             let (e, blocker) = vis.parts[vis.felled];
-            // Fell sound: a tree crashing / a boulder shattering.
-            match dep.kind {
-                DepositKind::Wood => cues.write(crate::audio::AudioCue::TreeFall { cactus: false }),
-                DepositKind::Stone | DepositKind::Gold => {
-                    cues.write(crate::audio::AudioCue::OreShatter)
-                }
-            };
+            // Fell sound (only if on-screen): a tree crashing / a boulder shattering.
+            if focus.in_earshot(apos) {
+                match dep.kind {
+                    DepositKind::Wood => cues.write(crate::audio::AudioCue::TreeFall { cactus: false }),
+                    DepositKind::Stone | DepositKind::Gold => {
+                        cues.write(crate::audio::AudioCue::OreShatter)
+                    }
+                };
+            }
             crate::dying::begin_dying(&mut commands, e, now); // topple + reap (~1.4s)
             if let Some(p) = blocker {
                 crate::blockers::remove_at(p.x, p.y);

@@ -46,6 +46,7 @@ mod controls;
 mod creature;
 mod creature_anim;
 mod critters;
+mod cursor;
 mod debug_panel;
 mod debug_stats;
 mod decor;
@@ -303,6 +304,8 @@ fn main() {
         // Remote-control bridge for agent/manual testing (FOREST_RC=<dir>): JSON commands in,
         // JSON game-state snapshots out. Inert without the env var.
         .add_plugins(rc::RcPlugin)
+        // Game-wide custom cursor (gold reticle replacing the OS pointer in every state).
+        .add_plugins(cursor::CursorPlugin)
         // Landmark set-piece animators (mill sails, orbiting shards, glow pulses). Standalone —
         // the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(ruins::RuinsFxPlugin)

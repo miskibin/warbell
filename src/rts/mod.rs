@@ -14,7 +14,6 @@ pub mod audio;
 pub mod build;
 pub mod camera;
 pub mod command;
-pub mod cursor;
 pub mod deposits;
 pub mod ecotest;
 pub mod minimap;
@@ -435,7 +434,6 @@ impl Plugin for RtsPlugin {
                 ecotest::RtsEcoTestPlugin,
                 audio::RtsAudioPlugin,
                 minimap::RtsMinimapPlugin,
-                cursor::RtsCursorPlugin,
             ));
     }
 }

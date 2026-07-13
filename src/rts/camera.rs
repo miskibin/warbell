@@ -79,6 +79,16 @@ pub struct RtsCamFocus {
     pub zoom: f32,
 }
 
+impl RtsCamFocus {
+    /// True if `world_xz` is close enough to the camera focus to be worth a sound — i.e. roughly
+    /// on-screen. The visible area scales with the ortho `zoom` (vertical world-units of view), so
+    /// the earshot radius does too. 2D cues (chop/mine/impact) don't attenuate with distance, so
+    /// this gate is what keeps off-screen work silent — "only what's on screen makes noise".
+    pub fn in_earshot(&self, world_xz: Vec2) -> bool {
+        world_xz.distance(self.pos) < self.zoom * 1.3 + 8.0
+    }
+}
+
 impl Default for RtsCamFocus {
     fn default() -> Self {
         // Capture aid: `FOREST_RTS_CAM="x,z[,zoom]"` opens the camera elsewhere (e.g. framing the

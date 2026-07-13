@@ -83,6 +83,7 @@ fn low_resource_advice(
 /// systems). Only PLAYER townsfolk chatter; the rival has its own `RivalIdle` pool elsewhere.
 fn villager_chatter(
     time: Res<Time>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
     mut speak: MessageWriter<Speak>,
     mut acc: Local<f32>,
     workers: Query<(&GlobalTransform, &Side, &RtsUnit), Without<crate::dying::Dying>>,
@@ -92,9 +93,14 @@ fn villager_chatter(
         return;
     }
     *acc -= CHATTER_EVERY;
+    // Only townsfolk that are roughly on-screen chatter (an off-screen remark reads as a phantom).
     let mine: Vec<Vec3> = workers
         .iter()
-        .filter(|(_, s, u)| **s == Side::Player && u.kind == UnitKind::Worker)
+        .filter(|(gt, s, u)| {
+            **s == Side::Player
+                && u.kind == UnitKind::Worker
+                && focus.in_earshot(Vec2::new(gt.translation().x, gt.translation().z))
+        })
         .map(|(gt, _, _)| gt.translation())
         .collect();
     if mine.is_empty() {

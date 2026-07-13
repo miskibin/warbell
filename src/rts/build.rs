@@ -455,6 +455,7 @@ fn grow_buildings(
     mut pop: ResMut<RtsPop>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
+    focus: Res<super::camera::RtsCamFocus>,
     mut q: Query<(Entity, &mut UnderConstruction, &mut Transform, &mut RtsBuilding, &Side), Without<Crumbling>>,
 ) {
     let dt = time.delta_secs();
@@ -492,12 +493,14 @@ fn grow_buildings(
         commands.spawn(crate::build_fx::DustBurst::building(Vec3::new(pos.x, tf.translation.y, pos.y)));
         commands.entity(e).try_remove::<UnderConstruction>();
 
-        // Completion feedback: a wooden "raised!" thunk for both sides + a villager cheer for the
-        // player's builds ("Fresh timbers up!").
-        let at = Vec3::new(pos.x, tf.translation.y, pos.y);
-        cues.write(crate::audio::AudioCue::ChestOpen);
-        if *side == Side::Player {
-            speak.write(crate::audio::Speak::at(crate::audio::Concept::BuildRaised, at));
+        // Completion feedback (only for on-screen builds — otherwise the rival's off-screen town
+        // thunks in your ear): a wooden "raised!" note + a villager cheer for the player's builds.
+        if focus.in_earshot(pos) {
+            let at = Vec3::new(pos.x, tf.translation.y, pos.y);
+            cues.write(crate::audio::AudioCue::ChestOpen);
+            if *side == Side::Player {
+                speak.write(crate::audio::Speak::at(crate::audio::Concept::BuildRaised, at));
+            }
         }
     }
 }

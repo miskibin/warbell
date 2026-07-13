@@ -287,6 +287,7 @@ fn drive_train_queue(
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
     mut q: Query<(&RtsBuilding, &Side, &Transform, &mut TrainQueue)>,
 ) {
     let dt = time.delta_secs();
@@ -314,7 +315,7 @@ fn drive_train_queue(
         let pos = bpos + dir * (half + 1.2);
         let seed = 0x50_1D_00 ^ (side.ix() as u32 * 131 + (time.elapsed_secs() * 1000.0) as u32);
         spawn_soldier(&mut commands, &mut meshes, &mut creature_mats, *side, kind, pos, seed);
-        if *side == Side::Player {
+        if *side == Side::Player && focus.in_earshot(pos) {
             cues.write(crate::audio::AudioCue::UiSelect); // "unit ready" click (no dedicated jingle)
         }
     }
@@ -369,6 +370,7 @@ fn acquire_targets(
     mut commands: Commands,
     idx: Res<TargetIndex>,
     mut speak: MessageWriter<crate::audio::Speak>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
     seekers: Query<
         (Entity, &Side, &RtsUnit, &Transform, Option<&MoveTo>),
         (Without<AttackTarget>, Without<Converting>, Without<Dying>),
@@ -418,8 +420,8 @@ fn acquire_targets(
             }
         }
         // Enemy war-bark as a rival soldier locks on (fires once per engagement — Without<AttackTarget>
-        // gates re-barks; the director spaces overlapping ones). Gives the enemy a voice in a fight.
-        if *side == Side::Rival {
+        // gates re-barks; the director spaces overlapping ones). Only if on-screen.
+        if *side == Side::Rival && focus.in_earshot(from) {
             speak.write(crate::audio::Speak::at(crate::audio::Concept::RivalSpot, tf.translation));
         }
         commands.entity(e).try_insert(AttackTarget(target));
@@ -438,6 +440,7 @@ fn melee_brain(
     mut commands: Commands,
     idx: Res<TargetIndex>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
     mut atk: Query<
         (
             Entity,
@@ -478,7 +481,9 @@ fn melee_brain(
             if melee.cd <= 0.0 {
                 melee.cd = MELEE_CD;
                 vil.atk_anim = now; // villager_drive plays the overhead swing
-                cues.write(crate::audio::AudioCue::GuardStrike(tf.translation)); // spatial swing+thud
+                if focus.in_earshot(from) {
+                    cues.write(crate::audio::AudioCue::GuardStrike(tf.translation)); // swing+thud
+                }
                 dealt.push((target.0, unit_damage(UnitKind::Swordsman)));
             }
         } else {
@@ -517,6 +522,7 @@ fn archer_brain(
     mut arrows: ResMut<crate::projectile::ArrowSpawns>,
     mut hits: ResMut<ArrowHits>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
     mut atk: Query<
         (
             Entity,
@@ -587,7 +593,9 @@ fn archer_brain(
                 // Loose: chest height, half a step toward the foe; aim at the target's chest.
                 let dir3 = Vec3::new(tp.x - from.x, 0.0, tp.y - from.y).normalize_or_zero();
                 let bow = Vec3::new(from.x, tf.translation.y + 1.3, from.y) + dir3 * 0.45;
-                cues.write(crate::audio::AudioCue::BowShot(bow)); // spatial bowstring snap
+                if focus.in_earshot(from) {
+                    cues.write(crate::audio::AudioCue::BowShot(bow)); // bowstring snap
+                }
                 let aim = Vec3::new(t.pos.x, t.pos.y + 1.0, t.pos.z);
                 arrows.0.push(crate::projectile::ArrowSpawn {
                     from: bow,
@@ -673,12 +681,15 @@ fn reap_units(
     mut commands: Commands,
     time: Res<Time>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
-    q: Query<(Entity, &crate::player::Health), (With<RtsUnit>, Without<Dying>)>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
+    q: Query<(Entity, &crate::player::Health, &Transform), (With<RtsUnit>, Without<Dying>)>,
 ) {
     let now = time.elapsed_secs();
-    for (e, hp) in &q {
+    for (e, hp, tf) in &q {
         if hp.hp <= 0.0 {
-            cues.write(crate::audio::AudioCue::Impact { kill: true, crit: false }); // kill thud
+            if focus.in_earshot(Vec2::new(tf.translation.x, tf.translation.z)) {
+                cues.write(crate::audio::AudioCue::Impact { kill: true, crit: false }); // kill thud
+            }
             begin_dying(&mut commands, e, now);
         }
     }
@@ -689,6 +700,7 @@ fn reap_units(
 fn soldier_death(
     mut pop: ResMut<RtsPop>,
     mut speak: MessageWriter<crate::audio::Speak>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
     dead: Query<(&RtsUnit, &Side, &Transform), Added<Dying>>,
 ) {
     for (unit, side, tf) in &dead {
@@ -697,8 +709,8 @@ fn soldier_death(
         }
         let ps = &mut pop.0[side.ix()];
         ps.count = ps.count.saturating_sub(1);
-        // A rival soldier's death cry (player militia has no voiced death line).
-        if *side == Side::Rival {
+        // A rival soldier's death cry (player militia has no voiced death line). Only if on-screen.
+        if *side == Side::Rival && focus.in_earshot(Vec2::new(tf.translation.x, tf.translation.z)) {
             speak.write(crate::audio::Speak::at(crate::audio::Concept::RivalDeath, tf.translation));
         }
     }
