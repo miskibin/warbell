@@ -697,8 +697,58 @@ fn scaffold_frame(footprint: u32) -> Mesh {
     merged_flat(parts)
 }
 
+// ── decorative clutter ("durnostojki") — the low-poly props the buildings sit among, matched to
+//    the prop style on the campaign producer meshes (barn/sawpit/log-yard). All base at y = 0. ──
+
+/// A banded wooden barrel (cuboid — all building parts must share the Cuboid/Cone attribute set to
+/// merge, so no Cylinder here).
+fn barrel(x: f32, z: f32) -> Vec<Mesh> {
+    let wood = lin(0x7a5326);
+    let band = lin(0x2a1c10);
+    vec![
+        tinted(cuboid(0.36, 0.52, 0.36, x, 0.26, z), wood),
+        tinted(cuboid(0.4, 0.06, 0.4, x, 0.15, z), band),
+        tinted(cuboid(0.4, 0.06, 0.4, x, 0.4, z), band),
+    ]
+}
+
+/// A small stack of two crates.
+fn crate_stack(x: f32, z: f32) -> Vec<Mesh> {
+    let w = lin(0x8a6a3a);
+    let e = lin(0x53381d);
+    vec![
+        tinted(cuboid(0.5, 0.5, 0.5, x, 0.25, z), w),
+        tinted(cuboid(0.54, 0.06, 0.54, x, 0.25, z), e), // mid band
+        tinted(cuboid(0.4, 0.4, 0.4, x + 0.13, 0.7, z - 0.1), w),
+    ]
+}
+
+/// A tied straw bale.
+fn hay_bale(x: f32, z: f32) -> Vec<Mesh> {
+    let straw = lin(0xcaa84e);
+    let tie = lin(0x9a7a34);
+    vec![
+        tinted(cuboid(0.72, 0.44, 0.46, x, 0.22, z), straw),
+        tinted(cuboid(0.74, 0.07, 0.1, x, 0.22, z - 0.13), tie),
+        tinted(cuboid(0.74, 0.07, 0.1, x, 0.22, z + 0.13), tie),
+    ]
+}
+
+/// A stack of split logs (running along X) with pale cut ends.
+fn woodpile(x: f32, z: f32) -> Vec<Mesh> {
+    let log = lin(0x6b4a2a);
+    let cut = lin(0xc8a86a);
+    let mut v = Vec::new();
+    for (dz, dy) in [(-0.15_f32, 0.14_f32), (0.15, 0.14), (0.0, 0.35)] {
+        v.push(tinted(cuboid(0.9, 0.22, 0.22, x, dy, z + dz), log));
+        v.push(tinted(cuboid(0.05, 0.2, 0.2, x - 0.45, dy, z + dz), cut));
+    }
+    v
+}
+
 /// **Town Hall** (footprint 4×4): a compact keep — a broad stone block under a timber upper storey
-/// and a pyramidal roof, with corner merlons, a warm-glowing door + windows, and a side banner.
+/// and a pyramidal roof, with corner merlons, a warm-glowing door + windows, a side banner, a corner
+/// watchtower, crenellations, and a settlement's worth of clutter (barrels / crates / hay / a well).
 fn townhall_parts(side: Side) -> Vec<Mesh> {
     let stone = pal(0x8a8b95, 0xc2a878, side);
     let dark = pal(0x6a6b73, 0xa8895c, side);
@@ -729,7 +779,47 @@ fn townhall_parts(side: Side) -> Vec<Mesh> {
     for sx in [-0.8, 0.8] {
         v.push(tinted(cuboid(0.3, 0.4, 0.06, sx, 1.15, 1.32), glow));
     }
+    // Crenellations ringing the stone block top (between the corner merlons).
+    for sx in [-0.5_f32, 0.0, 0.5] {
+        for sz in [-1.3_f32, 1.3] {
+            v.push(tinted(cuboid(0.3, 0.28, 0.18, sx, 1.89, sz), stone));
+        }
+    }
+    for sz in [-0.5_f32, 0.0, 0.5] {
+        for sx in [-1.3_f32, 1.3] {
+            v.push(tinted(cuboid(0.18, 0.28, 0.3, sx, 1.89, sz), stone));
+        }
+    }
+    // Corner watchtower (−X −Z corner): a taller stone shaft with its own conical roof + a slit.
+    let (tx, tz) = (-1.35, -1.35);
+    v.push(tinted(cuboid(0.95, 3.2, 0.95, tx, 1.6, tz), stone));
+    for (dx, dz) in [(-0.42_f32, -0.42_f32), (0.42, -0.42), (-0.42, 0.42), (0.42, 0.42)] {
+        v.push(tinted(cuboid(0.22, 0.3, 0.22, tx + dx, 3.3, tz + dz), stone)); // tower merlons
+    }
+    v.push(tinted(pyramid(0.72, 0.85, 3.35), roof));
+    v.push(tinted(cuboid(0.12, 0.5, 0.06, tx, 2.4, tz + 0.5), door)); // slit
+    // Clutter around the base (kept inside the 4×4 footprint, off the +Z door lane).
+    v.extend(barrel(1.55, 1.4));
+    v.extend(barrel(1.85, 1.05));
+    v.extend(crate_stack(1.6, -1.4));
+    v.extend(hay_bale(0.2, -1.7));
+    v.extend(well_prop(-1.4, 1.5));
     v
+}
+
+/// A small stone draw-well prop (square stone ring + two posts + a beam + a little roof).
+fn well_prop(x: f32, z: f32) -> Vec<Mesh> {
+    let stone = lin(0x8a8b95);
+    let wood = lin(0x5a3a22);
+    let water = lin(0x2a4a5a);
+    vec![
+        tinted(cuboid(0.8, 0.5, 0.8, x, 0.25, z), stone),
+        tinted(cuboid(0.6, 0.08, 0.6, x, 0.5, z), water),
+        tinted(cuboid(0.08, 1.0, 0.08, x - 0.42, 0.5, z), wood),
+        tinted(cuboid(0.08, 1.0, 0.08, x + 0.42, 0.5, z), wood),
+        tinted(cuboid(0.06, 0.06, 0.95, x, 1.0, z), wood), // ridge beam
+        tinted(cuboid(0.95, 0.1, 0.7, x, 1.1, z), wood),   // flat roof plate
+    ]
 }
 
 /// **Barracks** (footprint 4×4): a long timber hall under a peaked roof, with a fronting door and a
@@ -773,6 +863,24 @@ fn barracks_parts(side: Side) -> Vec<Mesh> {
     for dx in [-0.3, 0.0, 0.3] {
         v.push(tinted(cuboid(0.05, 1.05, 0.05, rx + dx, 0.55, 0.6), iron));
     }
+    // Training pell: a stout post with a crossbar + a straw-bound head, in the yard.
+    let (px, pz) = (1.5, -0.75);
+    v.push(tinted(cuboid(0.16, 1.5, 0.16, px, 0.75, pz), timber));
+    v.push(tinted(cuboid(0.9, 0.12, 0.12, px, 1.15, pz), timber)); // arms
+    v.push(tinted(cuboid(0.26, 0.3, 0.26, px, 1.55, pz), lin(0xcaa84e))); // straw head
+    // Two shields leaning on the hall's front wall (flat cuboids — merge-safe).
+    for (sx, col) in [(-1.4_f32, 0x8a4a2a), (-1.0, 0x3a5a7a)] {
+        v.push(tinted(
+            cuboid(0.44, 0.5, 0.08, 0.0, 0.0, 0.0)
+                .rotated_by(Quat::from_rotation_z(0.14))
+                .translated_by(Vec3::new(sx, 0.52, 0.95)),
+            lin(col),
+        ));
+        v.push(tinted(cuboid(0.12, 0.12, 0.05, sx, 0.52, 1.0), lin(0xcaa24a))); // boss
+    }
+    // Yard clutter.
+    v.extend(barrel(0.6, 0.75));
+    v.extend(hay_bale(1.75, 0.7));
     v
 }
 
@@ -790,8 +898,17 @@ fn house_parts(side: Side) -> Vec<Mesh> {
     for (sx, sz) in [(-0.75, -0.65), (0.75, -0.65), (-0.75, 0.65), (0.75, 0.65)] {
         v.push(tinted(cuboid(0.14, 0.9, 0.14, sx, 0.45, sz), beam));
     }
+    // Cross-timbering on the front wall (the half-timbered look) + a sill under the window.
+    v.push(tinted(cuboid(1.5, 0.1, 0.05, 0.0, 0.62, 0.66), beam));
+    v.push(tinted(cuboid(0.34, 0.06, 0.12, 0.5, 0.46, 0.68), beam)); // window box
     v.push(tinted(pyramid(1.15, 0.7, 0.9), roof));
     v.push(tinted(cuboid(0.4, 0.6, 0.06, 0.0, 0.3, 0.66), door));
     v.push(tinted(cuboid(0.3, 0.3, 0.06, 0.5, 0.62, 0.67), glow));
+    // Chimney (−X back corner) with a stone cap.
+    v.push(tinted(cuboid(0.24, 1.4, 0.24, -0.5, 0.7, -0.4), lin(0x7c6a5a)));
+    v.push(tinted(cuboid(0.32, 0.1, 0.32, -0.5, 1.42, -0.4), lin(0x5a4a3a)));
+    // Cottage clutter (kept tight to the 2×2 footprint).
+    v.extend(barrel(0.9, 0.9));
+    v.extend(woodpile(-0.85, -0.1));
     v
 }
