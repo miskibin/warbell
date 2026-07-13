@@ -42,6 +42,7 @@ impl Plugin for RtsDepositsPlugin {
             Update,
             (
                 spawn_arena_deposits.run_if(in_skirmish),
+                spawn_arena_hills.run_if(in_skirmish),
                 deplete_deposit_visuals
                     .run_if(in_skirmish)
                     .run_if(in_state(crate::game_state::Modal::None)),
@@ -139,6 +140,57 @@ fn spawn_arena_deposits(
         let remaining = if mid { GOLD_REMAIN_MID } else { GOLD_REMAIN };
         let rocks = if mid { CLUSTER_ROCKS_MID } else { CLUSTER_ROCKS };
         spawn_cluster(&mut commands, DepositKind::Gold, &gold_mesh, &rock_mat, *site, remaining, rocks, &mut seed);
+    }
+}
+
+/// Crown each arena terrain hill (from [`crate::worldmap::arena_hills`]) with a cosmetic boulder
+/// mound — big grey rocks stacked toward the centre so the rise reads as a small rocky mountain,
+/// not just grey ground. Purely scenery (no `Deposit`); the boulders register modest nav blockers
+/// like the deposit clusters, and they sit on the flanks well off the base-to-base lane. One-shot on
+/// [`crate::biome::WorldReady`].
+fn spawn_arena_hills(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    ready: Res<crate::biome::WorldReady>,
+    mut done: Local<bool>,
+) {
+    if *done || !ready.0 {
+        return;
+    }
+    *done = true;
+    let rock_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.95,
+        metallic: 0.05,
+        ..default()
+    });
+    let mesh = meshes.add(boulder_mesh(false));
+    let (hills, hill_r) = crate::worldmap::arena_hills();
+    let mut seed: u32 = 0x40C_5EED;
+    for c in hills {
+        // A dozen boulders: one big centre crag + a scree skirt fading out to `hill_r`.
+        let n = 12;
+        for k in 0..n {
+            let (rx, rz, sc) = if k == 0 {
+                (c.x, c.y, 2.4) // the summit crag
+            } else {
+                let ang = crate::wildlife::rng_range(&mut seed, 0.0, TAU);
+                let rr = crate::wildlife::rng_range(&mut seed, 0.6, hill_r * 0.85);
+                let sc = crate::wildlife::rng_range(&mut seed, 0.8, 1.8) * (1.0 - rr / (hill_r * 1.3));
+                (c.x + ang.cos() * rr, c.y + ang.sin() * rr, sc.max(0.5))
+            };
+            let ry = crate::worldmap::ground_at_world(rx, rz).unwrap_or(0.0);
+            let yaw = crate::wildlife::rng_range(&mut seed, 0.0, TAU);
+            crate::blockers::add(rx, rz, ROCK_BLOCK_R * sc * 0.8);
+            commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(rock_mat.clone()),
+                Transform::from_xyz(rx, ry, rz)
+                    .with_rotation(Quat::from_rotation_y(yaw))
+                    .with_scale(Vec3::splat(sc)),
+            ));
+        }
     }
 }
 

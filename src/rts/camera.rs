@@ -27,9 +27,19 @@ use bevy::pbr::DistanceFog;
 // ── fixed iso framing (spec §3) — never rotates in the POC (R is reserved for build rotation) ──
 /// Iso yaw: the view spins 45° off the world axes so the arena reads as a diamond.
 const ISO_YAW: f32 = std::f32::consts::FRAC_PI_4; // 45°
-/// Iso elevation (camera looks down at ~50° below horizontal). ≈ `50f32.to_radians()`, spelled as a
-/// literal because `to_radians` isn't a `const fn`.
-const ISO_PITCH: f32 = 0.872_665; // ≈ 50°
+/// Iso elevation (camera looks down at ~35° below horizontal — a lower, more oblique iso tilt than
+/// the old ~50° that read near-top-down; `FOREST_RTS_PITCH=<deg>` overrides for tuning). ≈
+/// `35f32.to_radians()`, spelled as a literal because `to_radians` isn't a `const fn`.
+const ISO_PITCH_DEFAULT: f32 = 0.610_865; // ≈ 35°
+
+/// Iso pitch in radians, honouring `FOREST_RTS_PITCH=<degrees>` for live tuning.
+fn iso_pitch() -> f32 {
+    std::env::var("FOREST_RTS_PITCH")
+        .ok()
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .map(|deg| deg.to_radians())
+        .unwrap_or(ISO_PITCH_DEFAULT)
+}
 /// Eye distance from the focus along the view axis. In an ORTHO projection this does **not** change
 /// apparent size (only what falls inside near/far), so it's simply "far enough above the arena that
 /// no geometry clips the eye plane" — the zoom is driven by the ortho viewport height instead.
@@ -234,7 +244,7 @@ fn rts_drive_camera(
     // ── target iso pose over the terrain-riding focus ──
     let gy = crate::worldmap::ground_at_world(focus.pos.x, focus.pos.y).unwrap_or(0.0);
     let look = Vec3::new(focus.pos.x, gy, focus.pos.y);
-    let (ps, pc) = ISO_PITCH.sin_cos();
+    let (ps, pc) = iso_pitch().sin_cos();
     let target_eye = look + Vec3::new(sy * pc, ps, cy * pc) * ISO_DIST;
 
     // Glide toward the target (snap on the first frame / a big jump so it doesn't ease in from the

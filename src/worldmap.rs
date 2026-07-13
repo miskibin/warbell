@@ -1355,7 +1355,7 @@ pub fn cliff_shelf_world(wx: f32, wz: f32) -> bool {
 /// (base centre ≈40u out + plateau radius 13 = ~53) plus a beach ring, so both bases sit on solid
 /// ground with ocean beyond. `rts::ARENA_RADIUS` (46) is the open *play* core; the land extends a
 /// little past it to hold the diagonally-placed bases.
-const ARENA_LAND_R: f32 = 62.0;
+const ARENA_LAND_R: f32 = 52.0;
 /// Sandy beach ring width (world units) just inside the waterline.
 const ARENA_BEACH_W: f32 = 6.0;
 /// Force-flat base-plateau radius (world units) around each `rts` base centre — level grass
@@ -1374,7 +1374,7 @@ const ARENA_ROAD_CORE: f32 = 1.1;
 const ARENA_ROAD_FLAT: f32 = 3.6;
 /// Inner radius (world units) of the decorative wooded fringe: trees ring the outer field so the
 /// centre stays an open battlefield.
-const ARENA_FOREST_R0: f32 = 30.0;
+const ARENA_FOREST_R0: f32 = 24.0;
 /// Keep trees this far (world units) from a base centre — the plateau (13) plus a clear apron.
 const ARENA_BASE_CLEAR: f32 = 17.0;
 /// Force-flat disc radius around each deposit spot (kept level + tree-free for wave-2 props).
@@ -1389,9 +1389,41 @@ const ARENA_ROAD_CLEAR: f32 = 6.0;
 /// `[1]` = rival-side (the negation through the origin), `[2]` = the contested centre spot. The
 /// three contested spots sit on the fair bisector (`z = x`, perpendicular to the road), so each is
 /// equidistant from both bases. Wave-2's `rts` modules spawn the actual groves / outcrops / veins.
-const ARENA_WOOD: [Vec2; 3] = [Vec2::new(-14.0, 40.0), Vec2::new(14.0, -40.0), Vec2::new(-16.0, -16.0)];
-const ARENA_STONE: [Vec2; 3] = [Vec2::new(-40.0, 14.0), Vec2::new(40.0, -14.0), Vec2::new(22.0, 22.0)];
-const ARENA_GOLD: [Vec2; 3] = [Vec2::new(-12.0, 30.0), Vec2::new(12.0, -30.0), Vec2::new(7.0, 7.0)];
+const ARENA_WOOD: [Vec2; 3] = [Vec2::new(-11.0, 32.0), Vec2::new(11.0, -32.0), Vec2::new(-13.0, -13.0)];
+const ARENA_STONE: [Vec2; 3] = [Vec2::new(-32.0, 11.0), Vec2::new(32.0, -11.0), Vec2::new(18.0, 18.0)];
+const ARENA_GOLD: [Vec2; 3] = [Vec2::new(-8.0, 27.0), Vec2::new(8.0, -27.0), Vec2::new(6.0, 6.0)];
+
+/// Ornamental lake on the west flank (world XZ centre + radius) — off the base-to-base lane and
+/// clear of every deposit. `classify_arena` carves it (returns `None`, so the sea plane shows
+/// through as shallow water); shore foam bakes automatically from the water mask.
+const ARENA_LAKE_C: Vec2 = Vec2::new(-30.0, -6.0);
+const ARENA_LAKE_R: f32 = 8.0;
+/// Small rocky hills on the other three flanks (N / S / E). Terraced cones — walkable, no nav
+/// blockers — that read as rocky rises; `ground_color_arena` tints their tiles rock-grey.
+const ARENA_HILLS: [Vec2; 3] = [Vec2::new(4.0, 38.0), Vec2::new(-4.0, -38.0), Vec2::new(38.0, 7.0)];
+const ARENA_HILL_R: f32 = 7.0;
+
+/// The arena rocky-hill centres (world XZ) + their radius — exposed so the `rts` deposits module can
+/// crown each terrain hill with a cosmetic boulder mound (the terrain tint alone read too flat).
+pub fn arena_hills() -> (Vec<Vec2>, f32) {
+    (ARENA_HILLS.to_vec(), ARENA_HILL_R)
+}
+
+/// Raised height class of the arena rocky hills at world `(wx,wz)` — a terraced cone peaking ~2
+/// classes above the flat field — or `None` if outside every hill. Shared by [`classify_arena`]
+/// (terrain) and [`ground_color_arena`] (grey tint) so the colour matches the raised tiles.
+fn arena_hill_class(wx: f32, wz: f32) -> Option<i32> {
+    let p = Vec2::new(wx, wz);
+    let mut best: Option<f32> = None;
+    for c in ARENA_HILLS {
+        let d = (p - c).length();
+        if d < ARENA_HILL_R {
+            let t = 1.0 - d / ARENA_HILL_R;
+            best = Some(best.map_or(t, |b: f32| b.max(t)));
+        }
+    }
+    best.map(|t| ARENA_FLAT_CLASS + (t * 2.0).round() as i32)
+}
 
 /// The arena's mirrored deposit sites, in world XZ. Consumed by the wave-2 `rts` deposit module,
 /// which spawns the real tree groves (wood), stone outcrops and gold veins on these spots — the
@@ -1476,6 +1508,11 @@ fn classify_arena(x: f32, z: f32) -> Option<(TB, i32)> {
     if dep_d < ARENA_DEPOSIT_FLAT {
         return Some((TB::Grass, ARENA_FLAT_CLASS));
     }
+    // Ornamental lake (west flank): carve a hole so the sea plane reads through as shallow water.
+    // After the base/road/deposit returns above, so it can never eat a build plot or the lane.
+    if (p - ARENA_LAKE_C).length() < ARENA_LAKE_R {
+        return None;
+    }
     // Sandy beach ring at the waterline.
     if r > ARENA_LAND_R - ARENA_BEACH_W + coast {
         return Some((TB::Sand, 1));
@@ -1487,6 +1524,16 @@ fn classify_arena(x: f32, z: f32) -> Option<(TB, i32)> {
     // clear of the bases and deposit spots. The road / base / deposit force-flat checks above have
     // already returned, so a Forest tile can never land on them.
     let base_clear = (p - crate::rts::PLAYER_BASE).length().min((p - crate::rts::RIVAL_BASE).length());
+    // Rocky hills on the free flanks — terraced (walkable, no blockers), clear of bases, deposits,
+    // the lake and the road. Take priority over the tree fringe so a hill reads as rock, not woods.
+    if base_clear > ARENA_BASE_CLEAR
+        && dep_d > ARENA_DEPOSIT_CLEAR
+        && arena_road_dist(wx, wz) > ARENA_ROAD_CLEAR
+    {
+        if let Some(hc) = arena_hill_class(wx, wz) {
+            return Some((TB::Rock, hc));
+        }
+    }
     let forested = r > ARENA_FOREST_R0
         && r < ARENA_LAND_R - ARENA_BEACH_W - 2.0
         && base_clear > ARENA_BASE_CLEAR
@@ -1531,6 +1578,12 @@ fn ground_color_arena(x: f32, z: f32) -> [f32; 4] {
         (col[1] * v).clamp(0.0, 1.0),
         (col[2] * v * (1.0 - warm)).clamp(0.0, 1.0),
     ];
+    // Rock-grey rise on the hill tiles (blend grows toward each hill's peak so the slope reads
+    // rocky). Matches the raised `TB::Rock` tiles from `classify_arena`.
+    if let Some(hc) = arena_hill_class(wx, wz) {
+        let t = ((hc - ARENA_FLAT_CLASS) as f32 / 2.0).clamp(0.25, 1.0);
+        col = mix3(col, [0.30, 0.29, 0.27], t * 0.72);
+    }
     // Worn dirt road, baked into the ground (same core/verge styling as `ground_color`).
     let road_s = arena_road_strength(wx, wz);
     if road_s > 0.0 {

@@ -10,11 +10,13 @@
 use bevy::prelude::*;
 
 pub mod ai;
+pub mod audio;
 pub mod build;
 pub mod camera;
 pub mod command;
 pub mod deposits;
 pub mod ecotest;
+pub mod minimap;
 pub mod hud;
 pub mod pick;
 pub mod select;
@@ -72,10 +74,11 @@ impl Side {
 
 /// Arena base centres (world XZ; castle-at-origin frame). The arena generator flattens a
 /// plateau at each and the deposits mirror through the origin.
-pub const PLAYER_BASE: Vec2 = Vec2::new(-28.0, 28.0);
-pub const RIVAL_BASE: Vec2 = Vec2::new(28.0, -28.0);
-/// Usable land radius of the arena ellipse (tiles = world units); ocean beyond.
-pub const ARENA_RADIUS: f32 = 46.0;
+pub const PLAYER_BASE: Vec2 = Vec2::new(-22.0, 22.0);
+pub const RIVAL_BASE: Vec2 = Vec2::new(22.0, -22.0);
+/// Usable land radius of the arena ellipse (tiles = world units); ocean beyond. Kept ≥ the base
+/// centre distance (~31) so the camera can still frame both bases after the map shrank.
+pub const ARENA_RADIUS: f32 = 36.0;
 
 pub fn base_of(side: Side) -> Vec2 {
     match side {
@@ -429,6 +432,8 @@ impl Plugin for RtsPlugin {
                 ai::RtsAiPlugin,
                 hud::RtsHudPlugin,
                 ecotest::RtsEcoTestPlugin,
+                audio::RtsAudioPlugin,
+                minimap::RtsMinimapPlugin,
             ));
     }
 }

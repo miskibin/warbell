@@ -75,7 +75,8 @@ fn selection_input(
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     mut drag: ResMut<RtsDrag>,
     mut commands: Commands,
-    units: Query<(Entity, &GlobalTransform, &Side), (With<RtsUnit>, Without<Dying>)>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    units: Query<(Entity, &GlobalTransform, &Side, &RtsUnit), Without<Dying>>,
     buildings: Query<(Entity, &GlobalTransform, &Side), (With<RtsBuilding>, Without<Dying>)>,
     sel_all: Query<Entity, With<Selected>>,
     sel_buildings: Query<Entity, (With<Selected>, With<RtsBuilding>)>,
@@ -118,8 +119,10 @@ fn selection_input(
         drag.box_active = false;
 
         if box_mode {
-            // Box select: own units inside the rect. Shift adds (keep units) but always drops any
-            // selected building; a plain box clears everything first. Buildings are never box-picked.
+            // Box select: own **combat** units inside the rect (workers run the economy on their own;
+            // a drag-box is for grabbing the army, standard RTS). Single-click still picks a lone
+            // worker below. Shift adds (keep units) but always drops any selected building; a plain
+            // box clears everything first. Buildings are never box-picked.
             let (min, max) = (start.min(end), start.max(end));
             if shift {
                 for b in &sel_buildings {
@@ -130,10 +133,18 @@ fn selection_input(
                     commands.entity(e).try_remove::<Selected>();
                 }
             }
-            for (e, gt, side) in &units {
-                if *side == Side::Player && pick::in_screen_rect(camera, cam_tf, gt.translation(), min, max) {
+            let mut any = false;
+            for (e, gt, side, unit) in &units {
+                if *side == Side::Player
+                    && unit.kind != crate::rts::UnitKind::Worker
+                    && pick::in_screen_rect(camera, cam_tf, gt.translation(), min, max)
+                {
                     commands.entity(e).try_insert(Selected);
+                    any = true;
                 }
+            }
+            if any {
+                cues.write(crate::audio::AudioCue::UiSelect);
             }
             return;
         }
@@ -146,9 +157,9 @@ fn selection_input(
             pick::UNIT_PICK_PX,
             units
                 .iter()
-                .filter(|(_, _, s)| **s == Side::Player)
+                .filter(|(_, _, s, _)| **s == Side::Player)
                 // Pick against mid-chest, not the feet (see UNIT_PICK_Y) — a click on the body hits.
-                .map(|(e, gt, _)| (e, gt.translation() + Vec3::Y * pick::UNIT_PICK_Y)),
+                .map(|(e, gt, _, _)| (e, gt.translation() + Vec3::Y * pick::UNIT_PICK_Y)),
         );
         if let Some(e) = unit_hit {
             if shift {
@@ -167,6 +178,7 @@ fn selection_input(
                 }
                 commands.entity(e).try_insert(Selected);
             }
+            cues.write(crate::audio::AudioCue::UiSelect);
             return;
         }
 

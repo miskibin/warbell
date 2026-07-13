@@ -214,6 +214,7 @@ fn ghost_placement(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     deposits_q: Query<&Transform, With<Deposit>>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
 ) {
     let Some(assets) = assets else { return };
 
@@ -281,6 +282,7 @@ fn ghost_placement(
         && valid
         && try_place(&mut commands, &assets, &mut banks, &deposits, kind, Side::Player, snapped, ghost.rot_steps)
     {
+        cues.write(crate::audio::AudioCue::UiSelect); // placement confirm
         placing.0 = None;
         clear_ghost(&mut commands, &mut ghost);
         ghost.rot_steps = 0;
@@ -451,6 +453,8 @@ fn grow_buildings(
     time: Res<Time>,
     mut commands: Commands,
     mut pop: ResMut<RtsPop>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut q: Query<(Entity, &mut UnderConstruction, &mut Transform, &mut RtsBuilding, &Side), Without<Crumbling>>,
 ) {
     let dt = time.delta_secs();
@@ -487,6 +491,14 @@ fn grow_buildings(
 
         commands.spawn(crate::build_fx::DustBurst::building(Vec3::new(pos.x, tf.translation.y, pos.y)));
         commands.entity(e).try_remove::<UnderConstruction>();
+
+        // Completion feedback: a wooden "raised!" thunk for both sides + a villager cheer for the
+        // player's builds ("Fresh timbers up!").
+        let at = Vec3::new(pos.x, tf.translation.y, pos.y);
+        cues.write(crate::audio::AudioCue::ChestOpen);
+        if *side == Side::Player {
+            speak.write(crate::audio::Speak::at(crate::audio::Concept::BuildRaised, at));
+        }
     }
 }
 

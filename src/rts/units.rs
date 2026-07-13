@@ -286,6 +286,7 @@ fn drive_train_queue(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut q: Query<(&RtsBuilding, &Side, &Transform, &mut TrainQueue)>,
 ) {
     let dt = time.delta_secs();
@@ -313,6 +314,9 @@ fn drive_train_queue(
         let pos = bpos + dir * (half + 1.2);
         let seed = 0x50_1D_00 ^ (side.ix() as u32 * 131 + (time.elapsed_secs() * 1000.0) as u32);
         spawn_soldier(&mut commands, &mut meshes, &mut creature_mats, *side, kind, pos, seed);
+        if *side == Side::Player {
+            cues.write(crate::audio::AudioCue::UiSelect); // "unit ready" click (no dedicated jingle)
+        }
     }
 }
 
@@ -427,6 +431,7 @@ fn melee_brain(
     time: Res<Time>,
     mut commands: Commands,
     idx: Res<TargetIndex>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut atk: Query<
         (
             Entity,
@@ -467,6 +472,7 @@ fn melee_brain(
             if melee.cd <= 0.0 {
                 melee.cd = MELEE_CD;
                 vil.atk_anim = now; // villager_drive plays the overhead swing
+                cues.write(crate::audio::AudioCue::GuardStrike(tf.translation)); // spatial swing+thud
                 dealt.push((target.0, unit_damage(UnitKind::Swordsman)));
             }
         } else {
@@ -504,6 +510,7 @@ fn archer_brain(
     idx: Res<TargetIndex>,
     mut arrows: ResMut<crate::projectile::ArrowSpawns>,
     mut hits: ResMut<ArrowHits>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut atk: Query<
         (
             Entity,
@@ -574,6 +581,7 @@ fn archer_brain(
                 // Loose: chest height, half a step toward the foe; aim at the target's chest.
                 let dir3 = Vec3::new(tp.x - from.x, 0.0, tp.y - from.y).normalize_or_zero();
                 let bow = Vec3::new(from.x, tf.translation.y + 1.3, from.y) + dir3 * 0.45;
+                cues.write(crate::audio::AudioCue::BowShot(bow)); // spatial bowstring snap
                 let aim = Vec3::new(t.pos.x, t.pos.y + 1.0, t.pos.z);
                 arrows.0.push(crate::projectile::ArrowSpawn {
                     from: bow,

@@ -112,6 +112,7 @@ fn rts_issue_orders(
     enemy_buildings: Query<(Entity, &GlobalTransform, &Side), (With<RtsBuilding>, Without<Dying>)>,
     deposits: Query<(Entity, &GlobalTransform), With<Deposit>>,
     mut orders: MessageWriter<RtsOrder>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
 ) {
     // Build placement owns the pointer; drop the latch and bail.
     if placing.0.is_some() {
@@ -138,6 +139,7 @@ fn rts_issue_orders(
             if !units.is_empty() {
                 if let Some(g) = pick::cursor_ray_ground(camera, cam_tf, cursor) {
                     orders.write(RtsOrder { units, order: Order::AttackMove(g) });
+                    cues.write(crate::audio::AudioCue::UiSelect);
                 }
             }
         }
@@ -183,6 +185,7 @@ fn rts_issue_orders(
             return;
         };
         orders.write(RtsOrder { units, order });
+        cues.write(crate::audio::AudioCue::UiSelect);
     }
 }
 
