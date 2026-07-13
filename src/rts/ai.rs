@@ -40,14 +40,16 @@ use super::{
 const START_DELAY: f32 = 8.0;
 /// Think cadence — one decision pass every this many seconds (mirrors `rival_economy`'s discipline).
 const THINK_INTERVAL: f32 = 5.0;
-/// Stop building once the base holds this many AI-raised structures (Town Hall is pre-placed, uncounted).
-const BUILD_MAX: usize = 12;
+/// Stop building once the base holds this many AI-raised structures (Town Hall is pre-placed,
+/// uncounted). Bigger-game scale — the rival raises a real town.
+const BUILD_MAX: usize = 20;
 /// Keep at least this many workers hauling — the AI won't train a soldier that would drop below it.
-const MIN_WORKERS: usize = 4;
-/// First attack wave launches at this army size; each launched wave raises it by 2 up to the cap.
-const WAVE_START: u32 = 6;
-const WAVE_STEP: u32 = 2;
-const WAVE_CAP: u32 = 14;
+const MIN_WORKERS: usize = 7;
+/// First attack wave launches at this army size; each launched wave raises it up to the cap. Scaled
+/// up for the bigger-game armies.
+const WAVE_START: u32 = 8;
+const WAVE_STEP: u32 = 3;
+const WAVE_CAP: u32 = 26;
 /// Seconds a launched wave holds before the next one may go (so reinforcements don't dribble in).
 const WAVE_COOLDOWN: f32 = 90.0;
 /// How far outside the base (toward the map centre) fresh troops muster.

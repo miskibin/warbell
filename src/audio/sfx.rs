@@ -222,10 +222,15 @@ pub(crate) fn play_cues(
     cfg: Res<AudioConfig>,
     bank: Res<SfxBank>,
     stings: Res<StingBank>,
+    mode: Res<crate::rts::GameMode>,
     mut seed: Local<u32>,
     mut throttle: Local<SfxThrottle>,
     mut cues: MessageReader<AudioCue>,
 ) {
+    // In skirmish the listener rides the far RTS camera eye (~90u up), so SPATIAL combat cues
+    // attenuate to near-silence. There the emitter already earshot-gates to on-screen, so play
+    // combat 2D (head-locked) and a touch louder; campaign keeps them spatial next to the hero.
+    let skirmish = *mode == crate::rts::GameMode::Skirmish;
     let now = time.elapsed_secs();
     // Base gains below are the old game's per-`playSfx` values; `sfx`/`voice` (≈ 0.6) is the
     // `audioMix.voice` master every sampled sting passed through. Keep them in sync with
@@ -349,8 +354,13 @@ pub(crate) fn play_cues(
                 if !throttle.allow(T_GUARD, now) {
                     continue;
                 }
-                spatial_shot(&mut commands, bank.swing.clone(), 0.16 * sfx, jitter(&mut seed, 0.14), at);
-                spatial_shot(&mut commands, pick(&bank.flesh, &mut seed), 0.26 * sfx, jitter(&mut seed, 0.10), at);
+                if skirmish {
+                    one_shot(&mut commands, bank.swing.clone(), 0.34 * sfx, jitter(&mut seed, 0.14));
+                    one_shot(&mut commands, pick(&bank.flesh, &mut seed), 0.5 * sfx, jitter(&mut seed, 0.10));
+                } else {
+                    spatial_shot(&mut commands, bank.swing.clone(), 0.16 * sfx, jitter(&mut seed, 0.14), at);
+                    spatial_shot(&mut commands, pick(&bank.flesh, &mut seed), 0.26 * sfx, jitter(&mut seed, 0.10), at);
+                }
             }
             // An archer's loose — the real sampled bowstring snap + shaft whip (`bow-shot.ogg`;
             // replaced the old pitched-up sword-swing stand-in). Shares the guard-skirmish
@@ -359,7 +369,11 @@ pub(crate) fn play_cues(
                 if !throttle.allow(T_GUARD, now) {
                     continue;
                 }
-                spatial_shot(&mut commands, bank.bow.clone(), 0.45 * sfx, jitter(&mut seed, 0.08), at);
+                if skirmish {
+                    one_shot(&mut commands, bank.bow.clone(), 0.6 * sfx, jitter(&mut seed, 0.08));
+                } else {
+                    spatial_shot(&mut commands, bank.bow.clone(), 0.45 * sfx, jitter(&mut seed, 0.08), at);
+                }
             }
             // Sampled herb-pick rustle — same 0.35 gain the synth blip used.
             AudioCue::Forage => {

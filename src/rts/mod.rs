@@ -15,8 +15,10 @@ pub mod build;
 pub mod camera;
 pub mod command;
 pub mod deposits;
+pub mod buildingbars;
 pub mod ecotest;
 pub mod minimap;
+pub mod ordermark;
 pub mod teamcolor;
 pub mod unitbars;
 pub mod hud;
@@ -154,11 +156,10 @@ impl RtsBanks {
     }
 }
 
-/// Starting stock per side. Above spec §2's threadbare (50/30/20/30) so the opening isn't a slow
-/// crawl, but modest — enough for a couple of economy buildings + a house to start the loop, not a
-/// whole town for free (the earlier 250/150/120/120 handed over too much up front).
+/// Starting stock per side. Tuned for the bigger-game economy (cheap buildings, low per-building
+/// output): enough to lay down 2-3 producers + a house + seed population growth, not a whole town.
 pub fn starting_bank() -> RtsBank {
-    RtsBank { wood: 100.0, stone: 60.0, gold: 40.0, food: 60.0 }
+    RtsBank { wood: 110.0, stone: 60.0, gold: 40.0, food: 90.0 }
 }
 
 // ---------------------------------------------------------------- population
@@ -174,9 +175,11 @@ pub struct PopSide {
     pub cap: u32,
 }
 
-pub const HALL_POP: u32 = 6;
-pub const HOUSE_POP: u32 = 4;
-pub const POP_HARD_CAP: u32 = 30;
+// Bigger-game scale (Stronghold-ish): large towns + armies. A hall alone seats a small crew; each
+// house adds a good chunk of pop; the hard ceiling is ~80/side.
+pub const HALL_POP: u32 = 12;
+pub const HOUSE_POP: u32 = 8;
+pub const POP_HARD_CAP: u32 = 80;
 
 impl Default for RtsPop {
     fn default() -> Self {
@@ -226,72 +229,72 @@ pub const BUILDINGS: [BuildingDef; 10] = [
         kind: BuildingKind::House,
         name: "House",
         footprint: 2,
-        cost: Cost::wood(20.0),
-        build_secs: 8.0,
+        cost: Cost::wood(12.0),
+        build_secs: 6.0,
         hp: 260.0,
     },
     BuildingDef {
         kind: BuildingKind::Sawmill,
         name: "Sawmill",
         footprint: 3,
-        cost: Cost::wood(25.0),
-        build_secs: 10.0,
+        cost: Cost::wood(15.0),
+        build_secs: 7.0,
         hp: 320.0,
     },
     BuildingDef {
         kind: BuildingKind::Quarry,
         name: "Quarry",
         footprint: 3,
-        cost: Cost::wood(30.0),
-        build_secs: 12.0,
+        cost: Cost::wood(18.0),
+        build_secs: 8.0,
         hp: 320.0,
     },
     BuildingDef {
         kind: BuildingKind::GoldMine,
         name: "Gold Mine",
         footprint: 3,
-        cost: Cost { wood: 30.0, stone: 10.0, gold: 0.0, food: 0.0 },
-        build_secs: 14.0,
+        cost: Cost { wood: 18.0, stone: 6.0, gold: 0.0, food: 0.0 },
+        build_secs: 10.0,
         hp: 320.0,
     },
     BuildingDef {
         kind: BuildingKind::Farm,
         name: "Farm",
         footprint: 3,
-        cost: Cost::wood(15.0),
-        build_secs: 8.0,
+        cost: Cost::wood(8.0),
+        build_secs: 6.0,
         hp: 280.0,
     },
     BuildingDef {
         kind: BuildingKind::Barracks,
         name: "Barracks",
         footprint: 4,
-        cost: Cost { wood: 40.0, stone: 20.0, gold: 0.0, food: 0.0 },
-        build_secs: 20.0,
+        cost: Cost { wood: 24.0, stone: 12.0, gold: 0.0, food: 0.0 },
+        build_secs: 14.0,
         hp: 520.0,
     },
     BuildingDef {
         kind: BuildingKind::Wall,
         name: "Wall",
         footprint: 2,
-        cost: Cost { wood: 0.0, stone: 12.0, gold: 0.0, food: 0.0 },
-        build_secs: 5.0,
+        cost: Cost { wood: 0.0, stone: 8.0, gold: 0.0, food: 0.0 },
+        build_secs: 4.0,
         hp: 600.0,
     },
     BuildingDef {
         kind: BuildingKind::Watchtower,
         name: "Watchtower",
         footprint: 2,
-        cost: Cost { wood: 25.0, stone: 25.0, gold: 0.0, food: 0.0 },
-        build_secs: 12.0,
+        cost: Cost { wood: 15.0, stone: 15.0, gold: 0.0, food: 0.0 },
+        build_secs: 9.0,
         hp: 420.0,
     },
     BuildingDef {
         kind: BuildingKind::Market,
         name: "Market",
         footprint: 3,
-        cost: Cost { wood: 40.0, stone: 10.0, gold: 0.0, food: 0.0 },
-        build_secs: 12.0,
+        cost: Cost { wood: 22.0, stone: 6.0, gold: 0.0, food: 0.0 },
+        build_secs: 9.0,
         hp: 300.0,
     },
 ];
@@ -452,6 +455,7 @@ impl Plugin for RtsPlugin {
             .add_message::<RtsOrder>()
             .add_message::<TrainOrder>()
             .init_resource::<Placing>()
+            // Two tuples — the `Plugins` trait maxes out at arity 15.
             .add_plugins((
                 camera::RtsCameraPlugin,
                 pick::RtsPickPlugin,
@@ -465,9 +469,13 @@ impl Plugin for RtsPlugin {
                 hud::RtsHudPlugin,
                 ecotest::RtsEcoTestPlugin,
                 audio::RtsAudioPlugin,
+            ))
+            .add_plugins((
                 minimap::RtsMinimapPlugin,
                 teamcolor::RtsTeamColorPlugin,
                 unitbars::RtsUnitBarsPlugin,
+                buildingbars::RtsBuildingBarsPlugin,
+                ordermark::RtsOrderMarkPlugin,
             ));
     }
 }

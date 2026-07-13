@@ -18,12 +18,14 @@ use crate::rts::{in_skirmish, Deposit, DepositKind};
 use crate::trees::{build_tree_mesh, TreeKind};
 
 /// How many units of resource a full site holds (contested-centre variant is richer).
-const WOOD_REMAIN: f64 = 400.0;
-const WOOD_REMAIN_MID: f64 = 800.0;
-const STONE_REMAIN: f64 = 300.0;
-const STONE_REMAIN_MID: f64 = 600.0;
-const GOLD_REMAIN: f64 = 200.0;
-const GOLD_REMAIN_MID: f64 = 400.0;
+// Richer sites than before — the bigger-game economy has many more workers drawing on them, so they
+// need to last a long match.
+const WOOD_REMAIN: f64 = 700.0;
+const WOOD_REMAIN_MID: f64 = 1300.0;
+const STONE_REMAIN: f64 = 520.0;
+const STONE_REMAIN_MID: f64 = 1000.0;
+const GOLD_REMAIN: f64 = 340.0;
+const GOLD_REMAIN_MID: f64 = 640.0;
 
 /// Tree count in a grove (contested-centre grove is denser).
 const GROVE_TREES: usize = 7;

@@ -113,6 +113,7 @@ fn rts_issue_orders(
     deposits: Query<(Entity, &GlobalTransform), With<Deposit>>,
     mut orders: MessageWriter<RtsOrder>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut marks: MessageWriter<super::ordermark::OrderMark>,
 ) {
     // Build placement owns the pointer; drop the latch and bail. Alt rotates the camera (Alt+drag),
     // so no orders fire while it's held.
@@ -141,6 +142,7 @@ fn rts_issue_orders(
                 if let Some(g) = pick::cursor_ray_ground(camera, cam_tf, cursor) {
                     orders.write(RtsOrder { units, order: Order::AttackMove(g) });
                     cues.write(crate::audio::AudioCue::UiSelect);
+                    marks.write(super::ordermark::OrderMark { at: g, attack: true });
                 }
             }
         }
@@ -176,17 +178,22 @@ fn rts_issue_orders(
             deposits.iter().map(|(e, gt)| (e, gt.translation())),
         );
 
-        let order = if let Some(e) = hit_unit.or(hit_bld) {
-            Order::Attack(e)
+        // The ground point under the cursor — the marker always lands where you clicked.
+        let ground = pick::cursor_ray_ground(camera, cam_tf, cursor);
+        let (order, attack) = if let Some(e) = hit_unit.or(hit_bld) {
+            (Order::Attack(e), true)
         } else if let Some(e) = hit_dep {
-            Order::Harvest(e)
-        } else if let Some(g) = pick::cursor_ray_ground(camera, cam_tf, cursor) {
-            Order::Move(g)
+            (Order::Harvest(e), false)
+        } else if let Some(g) = ground {
+            (Order::Move(g), false)
         } else {
             return;
         };
         orders.write(RtsOrder { units, order });
         cues.write(crate::audio::AudioCue::UiSelect);
+        if let Some(g) = ground {
+            marks.write(super::ordermark::OrderMark { at: g, attack });
+        }
     }
 }
 

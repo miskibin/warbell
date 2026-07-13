@@ -42,14 +42,16 @@ const ARRIVE: f32 = 1.8;
 const FLEE_R: f32 = 7.0;
 /// A fled worker waits this long clear of enemies before resuming work.
 const FLEE_CLEAR: f32 = 4.0;
-/// Population-growth cadence (seconds) — one worker may be born per side each tick.
-const GROWTH_TICK: f32 = 20.0;
+// Population growth — faster + cheaper for the bigger-game scale (towns of dozens), so the pop cap
+// actually fills. Two may be born per tick (see population_growth).
+/// Population-growth cadence (seconds).
+const GROWTH_TICK: f32 = 8.0;
 /// Food a side must exceed to grow a new worker.
-const FOOD_SPAWN_MIN: f64 = 15.0;
+const FOOD_SPAWN_MIN: f64 = 8.0;
 /// Food spent per new worker.
-const FOOD_SPAWN_COST: f64 = 10.0;
-/// Per-capita food burned per living unit per second.
-const FOOD_DRAIN: f64 = 0.02;
+const FOOD_SPAWN_COST: f64 = 5.0;
+/// Per-capita food burned per living unit per second (kept low — with an 80-pop town this adds up).
+const FOOD_DRAIN: f64 = 0.012;
 
 pub struct RtsWorkersPlugin;
 
@@ -61,6 +63,7 @@ impl Plugin for RtsWorkersPlugin {
                 spawn_starting_workers,
                 claim_workers,
                 worker_haul,
+                worker_defend,
                 worker_flee,
                 population_growth,
                 worker_death,
@@ -85,6 +88,21 @@ pub struct Assigned {
 pub struct Staffed {
     pub worker: Entity,
 }
+
+/// A cornered worker fighting back weakly instead of fleeing (Stronghold "always defends"): a struck
+/// / adjacent worker turns on the foe. `cd` = swing cooldown.
+#[derive(Component)]
+struct WorkerDefend {
+    target: Entity,
+    cd: f32,
+}
+/// A foe within this range makes a worker turn and fight instead of flee.
+const DEFEND_R: f32 = 2.4;
+/// A defending worker gives up if its foe gets further than this.
+const DEFEND_GIVE_UP: f32 = 6.5;
+/// A worker's feeble jab: weak damage, slow cadence — they're labourers, not soldiers.
+const WORKER_DEFEND_DMG: f32 = 4.0;
+const WORKER_DEFEND_CD: f32 = 1.2;
 
 /// A worker running for its own hall after sensing an armed enemy; cleared once safe + timed out.
 #[derive(Component)]
@@ -133,13 +151,15 @@ enum CarryKind {
     Food,
 }
 
-/// Amount banked (and drawn from a deposit) per completed trip, per resource.
+/// Amount banked (and drawn from a deposit) per completed trip, per resource. Roughly HALF the old
+/// yield — the bigger-game model wants many little producers each contributing modestly (Stronghold),
+/// not a few high-output ones.
 fn per_trip(kind: CarryKind) -> f64 {
     match kind {
-        CarryKind::Wood => 8.0,
-        CarryKind::Stone => 6.0,
-        CarryKind::Gold => 4.0,
-        CarryKind::Food => 7.0,
+        CarryKind::Wood => 4.0,
+        CarryKind::Stone => 3.0,
+        CarryKind::Gold => 2.0,
+        CarryKind::Food => 4.0,
     }
 }
 
@@ -258,8 +278,8 @@ fn spawn_starting_workers(
     let (Some(pp), Some(rp)) = (player, rival) else { return };
     *done = true;
     for (side, hall) in [(Side::Player, pp), (Side::Rival, rp)] {
-        for k in 0..3u32 {
-            let ang = k as f32 / 3.0 * TAU;
+        for k in 0..5u32 {
+            let ang = k as f32 / 5.0 * TAU;
             let pos = hall + Vec2::new(ang.cos(), ang.sin()) * 3.5;
             let seed = 0x51_0000 ^ (side.ix() as u32 * 97 + k * 13 + 1);
             spawn_worker_body(&mut commands, &mut meshes, &mut creature_mats, side, pos, seed);
@@ -343,7 +363,7 @@ fn worker_haul(
             Option<&HarvestAt>,
             Option<&mut Villager>,
         ),
-        (Without<Fleeing>, Without<crate::dying::Dying>),
+        (Without<Fleeing>, Without<WorkerDefend>, Without<crate::dying::Dying>),
     >,
 ) {
     let dt = time.delta_secs();
@@ -565,7 +585,7 @@ fn nearest(list: &[(Entity, DepositKind, Vec2)], kind: DepositKind, from: Vec2) 
 // ── Market: passive gold ──────────────────────────────────────────────────────────────
 
 /// Gold per second a completed Market trickles to its side (no worker needed — trade income).
-const MARKET_GOLD_PER_SEC: f64 = 0.9;
+const MARKET_GOLD_PER_SEC: f64 = 0.5;
 
 /// Every built Market drips gold into its side's bank each frame.
 fn market_income(
@@ -590,41 +610,136 @@ fn market_income(
 fn worker_flee(
     time: Res<Time>,
     mut commands: Commands,
-    units: Query<(&RtsUnit, &Side, &Transform), Without<crate::dying::Dying>>,
+    units: Query<(Entity, &RtsUnit, &Side, &Transform), Without<crate::dying::Dying>>,
     mut workers: Query<
-        (Entity, &RtsUnit, &Side, &Transform, Option<&mut Haul>, Option<&Fleeing>),
+        (Entity, &RtsUnit, &Side, &Transform, Option<&mut Haul>, Option<&Fleeing>, Has<WorkerDefend>),
         Without<crate::dying::Dying>,
     >,
 ) {
     let now = time.elapsed_secs();
-    // Positions of every armed unit, by side.
-    let armed: Vec<(Side, Vec2)> = units
+    // Every armed foe unit (id + side + pos).
+    let armed: Vec<(Entity, Side, Vec2)> = units
         .iter()
-        .filter(|(u, _, _)| matches!(u.kind, UnitKind::Swordsman | UnitKind::Archer))
-        .map(|(_, s, t)| (*s, Vec2::new(t.translation.x, t.translation.z)))
+        .filter(|(_, u, _, _)| matches!(u.kind, UnitKind::Swordsman | UnitKind::Archer))
+        .map(|(e, _, s, t)| (e, *s, Vec2::new(t.translation.x, t.translation.z)))
         .collect();
 
-    for (we, u, side, wtf, haul, fleeing) in &mut workers {
-        if u.kind != UnitKind::Worker {
-            continue;
+    for (we, u, side, wtf, haul, fleeing, defending) in &mut workers {
+        if u.kind != UnitKind::Worker || defending {
+            continue; // `worker_defend` owns a worker that's already fighting back
         }
         let wpos = Vec2::new(wtf.translation.x, wtf.translation.z);
         let foe = side.foe();
-        let threatened = armed.iter().any(|(s, p)| *s == foe && p.distance(wpos) < FLEE_R);
+        // Nearest hostile soldier + its distance.
+        let nearest = armed
+            .iter()
+            .filter(|(_, s, _)| *s == foe)
+            .map(|(e, _, p)| (*e, p.distance(wpos)))
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        if threatened {
-            // Enter / refresh the flight home.
-            commands.entity(we).try_insert(Fleeing { until: now + FLEE_CLEAR });
-            commands.entity(we).try_insert(MoveTo { goal: base_of(*side), fight: false });
-            if let Some(mut h) = haul {
-                if let Some(c) = h.carry.take() {
-                    commands.entity(c).try_despawn();
-                }
-                h.phase = Phase::Start; // re-plan on resume
-            }
-        } else if let Some(f) = fleeing {
-            if now >= f.until {
+        match nearest {
+            // Right on top of a worker → turn and fight (Stronghold "always defends").
+            Some((foe_e, d)) if d < DEFEND_R + 0.5 => {
+                commands.entity(we).try_insert(WorkerDefend { target: foe_e, cd: 0.0 });
                 commands.entity(we).try_remove::<Fleeing>();
+                commands.entity(we).try_remove::<MoveTo>();
+                if let Some(mut h) = haul {
+                    if let Some(c) = h.carry.take() {
+                        commands.entity(c).try_despawn();
+                    }
+                    h.phase = Phase::Start;
+                }
+            }
+            // A soldier is near but not yet on us → run home.
+            Some((_, d)) if d < FLEE_R => {
+                commands.entity(we).try_insert(Fleeing { until: now + FLEE_CLEAR });
+                commands.entity(we).try_insert(MoveTo { goal: base_of(*side), fight: false });
+                if let Some(mut h) = haul {
+                    if let Some(c) = h.carry.take() {
+                        commands.entity(c).try_despawn();
+                    }
+                    h.phase = Phase::Start;
+                }
+            }
+            _ => {
+                if let Some(f) = fleeing {
+                    if now >= f.until {
+                        commands.entity(we).try_remove::<Fleeing>();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A defending worker closes on its foe and lands feeble jabs (weak damage, slow cadence). Drops the
+/// defense when the foe dies or breaks off, resuming the haul loop. Emits the guard-strike thud.
+#[allow(clippy::type_complexity)]
+fn worker_defend(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
+    transforms: Query<&Transform, Without<WorkerDefend>>,
+    mut healths: Query<&mut crate::player::Health, Without<crate::dying::Dying>>,
+    mut workers: Query<
+        (Entity, &Transform, &mut WorkerDefend, Option<&mut Villager>, Option<&mut Haul>),
+        Without<crate::dying::Dying>,
+    >,
+) {
+    let dt = time.delta_secs();
+    let now = time.elapsed_secs();
+    for (we, wtf, mut def, mut vil, haul) in &mut workers {
+        // Foe gone → stand down (worker_haul/flee take over next frame).
+        let Ok(ttf) = transforms.get(def.target) else {
+            commands.entity(we).try_remove::<WorkerDefend>();
+            continue;
+        };
+        let wpos = Vec2::new(wtf.translation.x, wtf.translation.z);
+        let tpos = Vec2::new(ttf.translation.x, ttf.translation.z);
+        let d = wpos.distance(tpos);
+        if d > DEFEND_GIVE_UP {
+            commands.entity(we).try_remove::<WorkerDefend>();
+            continue;
+        }
+        // Close the last steps, or stop-and-swing in reach.
+        let mut swing = false;
+        if d > DEFEND_R {
+            commands.entity(we).try_insert(MoveTo { goal: tpos, fight: false });
+        } else {
+            commands.entity(we).try_remove::<MoveTo>();
+            def.cd -= dt;
+            if def.cd <= 0.0 {
+                def.cd = WORKER_DEFEND_CD;
+                swing = true;
+            }
+        }
+        // Keep the body facing the foe + play the tool swing.
+        if let Some(v) = vil.as_mut() {
+            let dd = tpos - wpos;
+            if dd.length_squared() > 1e-4 {
+                v.facing = dd.x.atan2(dd.y);
+            }
+            v.pos = wpos;
+            v.moving = d > DEFEND_R;
+            if swing {
+                v.atk_anim = now;
+            }
+        }
+        // Not hauling while fighting — drop any carried load once.
+        if let Some(mut h) = haul {
+            if let Some(c) = h.carry.take() {
+                commands.entity(c).try_despawn();
+            }
+        }
+        if swing {
+            if let Ok(mut hp) = healths.get_mut(def.target) {
+                if hp.hp > 0.0 {
+                    hp.hp -= WORKER_DEFEND_DMG;
+                }
+            }
+            if focus.in_earshot(wpos) {
+                cues.write(crate::audio::AudioCue::GuardStrike(wtf.translation));
             }
         }
     }
@@ -667,14 +782,18 @@ fn population_growth(
     }
     for side in [Side::Player, Side::Rival] {
         let Some(pos) = hall_pos[side.ix()] else { continue };
-        let ps = pop.0[side.ix()];
-        if banks.side(side).food > FOOD_SPAWN_MIN && ps.count < ps.cap {
-            let seed = 0x9e_0000 ^ (side.ix() as u32 * 131 + ps.count * 17 + 3);
-            let out = pos + Vec2::new(2.0, 2.0);
+        // Grow up to TWO per tick while there's spare food + housing — a big town fills quickly.
+        for i in 0..2u32 {
+            let ps = pop.0[side.ix()];
+            if banks.side(side).food <= FOOD_SPAWN_MIN || ps.count >= ps.cap {
+                break;
+            }
+            let seed = 0x9e_0000 ^ (side.ix() as u32 * 131 + ps.count * 17 + i * 7 + 3);
+            let out = pos + Vec2::new(2.0 + i as f32 * 0.9, 2.0 - i as f32 * 0.9);
             spawn_worker_body(&mut commands, &mut meshes, &mut creature_mats, side, out, seed);
             pop.0[side.ix()].count += 1;
             banks.side_mut(side).food -= FOOD_SPAWN_COST;
-            if side == Side::Player && focus.in_earshot(out) {
+            if side == Side::Player && i == 0 && focus.in_earshot(out) {
                 // "A new pair of hands!" — villager birth line at the hall (only if on-screen).
                 let at = Vec3::new(out.x, 1.0, out.y);
                 speak.write(crate::audio::Speak::at(crate::audio::Concept::VillagerBorn, at));
