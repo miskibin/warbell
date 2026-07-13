@@ -250,6 +250,19 @@ fn res_cell(
 }
 
 /// Bottom-right build strip: a column of one button per placeable building.
+/// Atlas icon id for a build entry (matches the campaign town palette's `BuildType::icon_id`).
+fn build_icon(kind: BuildingKind) -> &'static str {
+    match kind {
+        BuildingKind::House => "stat:pop",
+        BuildingKind::Sawmill => "stat:wood",
+        BuildingKind::Quarry => "stat:stone",
+        BuildingKind::GoldMine => "stat:gold",
+        BuildingKind::Farm => "stat:food",
+        BuildingKind::Barracks => "buff:power",
+        BuildingKind::TownHall => "stat:pop",
+    }
+}
+
 fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas) {
     commands
         .spawn((
@@ -277,12 +290,12 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas
                     Button,
                     Interaction::default(),
                     Node {
-                        width: Val::Px(196.0),
+                        width: Val::Px(232.0),
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
                         justify_content: JustifyContent::SpaceBetween,
                         column_gap: Val::Px(8.0),
-                        padding: UiRect::axes(Val::Px(9.0), Val::Px(6.0)),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
                         border: border(2.0),
                         border_radius: radius(R_CARD),
                         ..default()
@@ -292,7 +305,20 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas
                     BuildStripBtn(kind),
                 ))
                 .with_children(|b| {
-                    b.spawn(label(&fonts.semibold, def.name, 14.0, Color::WHITE));
+                    // Left: an icon medallion + the name (the campaign build-palette look).
+                    b.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(9.0),
+                        ..default()
+                    })
+                    .with_children(|l| {
+                        if let Some(e) = atlas.get_tintable(build_icon(kind)) {
+                            l.spawn(widgets::icon_tinted(e, 30.0, GOLD));
+                        }
+                        l.spawn(label(&fonts.semibold, def.name, 14.0, Color::WHITE));
+                    });
+                    // Right: the cost chips.
                     b.spawn(Node {
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
