@@ -17,6 +17,8 @@ pub mod command;
 pub mod deposits;
 pub mod ecotest;
 pub mod minimap;
+pub mod teamcolor;
+pub mod unitbars;
 pub mod hud;
 pub mod pick;
 pub mod select;
@@ -434,6 +436,8 @@ impl Plugin for RtsPlugin {
                 ecotest::RtsEcoTestPlugin,
                 audio::RtsAudioPlugin,
                 minimap::RtsMinimapPlugin,
+                teamcolor::RtsTeamColorPlugin,
+                unitbars::RtsUnitBarsPlugin,
             ));
     }
 }

@@ -1556,23 +1556,24 @@ fn ground_color_arena(x: f32, z: f32) -> [f32; 4] {
     let wx = x * MAP_SCALE - GX;
     let wz = z * MAP_SCALE - GZ;
     let mut col = lin3(p.grass);
-    // Meadow macro-patches (identical treatment to `ground_color`'s open grass).
+    // Meadow macro-patches — MUTED vs the campaign's open grass (arena legibility: a calmer, more
+    // uniform field lets the units + team rings read against it instead of blending into busy mottle).
     let p1 = omottle(x, z, 4.0, 31.0);
     let p2 = omottle(x, z, 9.0, 53.0);
     let p3 = omottle(x, z, 1.6, 71.0);
-    col = mix3(col, lin3(p.grass_dark), smoothstep(0.1, 1.3, p1) * 0.55);
-    col = mix3(col, lin3(p.grass_dry), smoothstep(0.4, 1.5, p2) * 0.18);
-    col = mix3(col, lin3(p.grass_gold), smoothstep(0.85, 1.6, p3) * 0.10);
+    col = mix3(col, lin3(p.grass_dark), smoothstep(0.1, 1.3, p1) * 0.28);
+    col = mix3(col, lin3(p.grass_dry), smoothstep(0.4, 1.5, p2) * 0.09);
+    col = mix3(col, lin3(p.grass_gold), smoothstep(0.85, 1.6, p3) * 0.05);
     // Sandy fade toward the arena coast (its own island shape — the shared `dist_from_coast` only
     // knows the home ellipse, so it can't drive this).
     let r = wx.hypot(wz);
     let sand_w = smoothstep(ARENA_LAND_R - ARENA_BEACH_W - 2.0, ARENA_LAND_R, r);
     col = mix3(col, lin3(p.sand), sand_w * 0.9);
-    // Universal mottle (same as `ground_color`).
+    // Universal mottle — softened (see the muted patches above; keep the ground quiet).
     let m1 = omottle(x, z, 2.2, 17.0);
     let m2 = omottle(x, z, 14.0, 91.0);
-    let v = 1.0 + 0.10 * m1 + 0.06 * m2;
-    let warm = 0.05 * omottle(x, z, 1.4, 23.0);
+    let v = 1.0 + 0.05 * m1 + 0.03 * m2;
+    let warm = 0.03 * omottle(x, z, 1.4, 23.0);
     col = [
         (col[0] * v * (1.0 + warm)).clamp(0.0, 1.0),
         (col[1] * v).clamp(0.0, 1.0),

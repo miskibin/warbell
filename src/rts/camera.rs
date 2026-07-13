@@ -153,13 +153,23 @@ fn rts_camera_boot(
             Has<GodRays>,
             Has<DistanceFog>,
             Has<crate::atmospherics::Atmospherics>,
+            Option<&mut crate::outline::Outline>,
         ),
         With<Camera3d>,
     >,
 ) {
-    let Ok((e, mut proj, has_dof, has_rays, has_fog, has_atmo)) = cam.single_mut() else {
+    let Ok((e, mut proj, has_dof, has_rays, has_fog, has_atmo, outline)) = cam.single_mut() else {
         return;
     };
+
+    // Bolder silhouette outlines than the campaign's subtle default — a top-down RTS needs its
+    // units/buildings clearly edged against the ground to read (legibility pass).
+    if let Some(mut o) = outline {
+        if o.strength < 0.34 {
+            o.strength = 0.38;
+            o.thickness = 1.6;
+        }
+    }
 
     if matches!(*proj, Projection::Perspective(_)) {
         *proj = Projection::Orthographic(OrthographicProjection {
