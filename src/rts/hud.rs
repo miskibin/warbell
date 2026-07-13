@@ -153,13 +153,16 @@ impl Plugin for RtsHudPlugin {
 }
 
 /// Buildings the player can raise from the strip (everything but the free starter Town Hall).
-const PLACEABLE: [BuildingKind; 6] = [
+const PLACEABLE: [BuildingKind; 9] = [
     BuildingKind::House,
+    BuildingKind::Farm,
     BuildingKind::Sawmill,
     BuildingKind::Quarry,
     BuildingKind::GoldMine,
-    BuildingKind::Farm,
+    BuildingKind::Market,
     BuildingKind::Barracks,
+    BuildingKind::Watchtower,
+    BuildingKind::Wall,
 ];
 
 // ── setup (spawn once, after the icon atlas has loaded) ───────────────────────────────────────
@@ -259,6 +262,9 @@ fn build_icon(kind: BuildingKind) -> &'static str {
         BuildingKind::GoldMine => "stat:gold",
         BuildingKind::Farm => "stat:food",
         BuildingKind::Barracks => "buff:power",
+        BuildingKind::Market => "stat:gold",
+        BuildingKind::Watchtower => "def_keep_archers",
+        BuildingKind::Wall => "stat:stone",
         BuildingKind::TownHall => "stat:pop",
     }
 }

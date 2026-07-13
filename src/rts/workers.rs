@@ -64,6 +64,7 @@ impl Plugin for RtsWorkersPlugin {
                 worker_flee,
                 population_growth,
                 worker_death,
+                market_income,
             )
                 .run_if(in_skirmish)
                 .run_if(in_state(crate::game_state::Modal::None)),
@@ -559,6 +560,25 @@ fn nearest(list: &[(Entity, DepositKind, Vec2)], kind: DepositKind, from: Vec2) 
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .map(|(e, _, p)| (*e, *p))
+}
+
+// ── Market: passive gold ──────────────────────────────────────────────────────────────
+
+/// Gold per second a completed Market trickles to its side (no worker needed — trade income).
+const MARKET_GOLD_PER_SEC: f64 = 0.9;
+
+/// Every built Market drips gold into its side's bank each frame.
+fn market_income(
+    time: Res<Time>,
+    mut banks: ResMut<RtsBanks>,
+    markets: Query<(&RtsBuilding, &Side), Without<crate::dying::Dying>>,
+) {
+    let dt = time.delta_secs() as f64;
+    for (b, side) in &markets {
+        if b.kind == BuildingKind::Market && b.built {
+            banks.side_mut(*side).gold += MARKET_GOLD_PER_SEC * dt;
+        }
+    }
 }
 
 // ── Flee ────────────────────────────────────────────────────────────────────────────

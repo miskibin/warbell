@@ -195,6 +195,12 @@ pub enum BuildingKind {
     GoldMine,
     Farm,
     Barracks,
+    /// A stone wall block — no function beyond its collision box; place a row to fence off a lane.
+    Wall,
+    /// A defensive tower that looses arrows at the nearest enemy in range (`units::watchtower_fire`).
+    Watchtower,
+    /// A market that trickles passive gold to its side, no worker needed (`workers::market_income`).
+    Market,
 }
 
 /// Static per-building data (spec §6). `footprint` is in whole tiles, square.
@@ -207,7 +213,7 @@ pub struct BuildingDef {
     pub hp: f32,
 }
 
-pub const BUILDINGS: [BuildingDef; 7] = [
+pub const BUILDINGS: [BuildingDef; 10] = [
     BuildingDef {
         kind: BuildingKind::TownHall,
         name: "Town Hall",
@@ -263,6 +269,30 @@ pub const BUILDINGS: [BuildingDef; 7] = [
         cost: Cost { wood: 40.0, stone: 20.0, gold: 0.0, food: 0.0 },
         build_secs: 20.0,
         hp: 520.0,
+    },
+    BuildingDef {
+        kind: BuildingKind::Wall,
+        name: "Wall",
+        footprint: 2,
+        cost: Cost { wood: 0.0, stone: 12.0, gold: 0.0, food: 0.0 },
+        build_secs: 5.0,
+        hp: 600.0,
+    },
+    BuildingDef {
+        kind: BuildingKind::Watchtower,
+        name: "Watchtower",
+        footprint: 2,
+        cost: Cost { wood: 25.0, stone: 25.0, gold: 0.0, food: 0.0 },
+        build_secs: 12.0,
+        hp: 420.0,
+    },
+    BuildingDef {
+        kind: BuildingKind::Market,
+        name: "Market",
+        footprint: 3,
+        cost: Cost { wood: 40.0, stone: 10.0, gold: 0.0, food: 0.0 },
+        build_secs: 12.0,
+        hp: 300.0,
     },
 ];
 

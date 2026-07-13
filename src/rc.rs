@@ -438,6 +438,9 @@ fn parse_building(s: &str) -> Option<crate::rts::BuildingKind> {
         "GoldMine" => GoldMine,
         "Farm" => Farm,
         "Barracks" => Barracks,
+        "Wall" => Wall,
+        "Watchtower" => Watchtower,
+        "Market" => Market,
         _ => return None,
     })
 }

@@ -77,6 +77,7 @@ impl Plugin for RtsUnitsPlugin {
                 acquire_targets,
                 melee_brain,
                 archer_brain,
+                watchtower_fire,
                 resolve_arrow_hits,
                 // presentation + death
                 sync_soldier_pose,
@@ -620,6 +621,84 @@ fn archer_brain(
             volley.draw_start = now;
             volley.loosed = false;
             vil.atk_anim = now; // villager_drive plays the draw-and-loose clip off this
+        }
+    }
+}
+
+// ── Watchtower defence ─────────────────────────────────────────────────────────────────
+
+/// Range a watchtower can loose at (world units) and its shot cadence + damage.
+const TOWER_RANGE: f32 = 13.0;
+const TOWER_CD: f32 = 1.5;
+const TOWER_DMG: f32 = 15.0;
+
+/// Per-tower shot cooldown.
+#[derive(Component)]
+struct TowerCd(f32);
+
+/// Every completed Watchtower looses at the nearest enemy UNIT in range on a cadence: direct damage
+/// (no ballistic sim needed for a tower) + a cosmetic arrow from the crown for feedback.
+#[allow(clippy::type_complexity)]
+fn watchtower_fire(
+    time: Res<Time>,
+    mut commands: Commands,
+    idx: Res<TargetIndex>,
+    mut arrows: ResMut<crate::projectile::ArrowSpawns>,
+    mut healths: Query<&mut crate::player::Health, Without<Dying>>,
+    mut towers: Query<(Entity, &RtsBuilding, &Side, &Transform, Option<&mut TowerCd>), Without<Dying>>,
+) {
+    let dt = time.delta_secs();
+    for (e, b, side, tf, cd) in &mut towers {
+        if b.kind != BuildingKind::Watchtower || !b.built {
+            continue;
+        }
+        // Tick / seed the cooldown; only fire on the tick it elapses.
+        let ready = match cd {
+            Some(mut c) => {
+                c.0 -= dt;
+                if c.0 <= 0.0 {
+                    c.0 = TOWER_CD;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => {
+                commands.entity(e).try_insert(TowerCd(TOWER_CD));
+                false
+            }
+        };
+        if !ready {
+            continue;
+        }
+        // Nearest enemy UNIT (half == 0) in range.
+        let from = Vec2::new(tf.translation.x, tf.translation.z);
+        let mut best: Option<(Entity, Vec3, f32)> = None;
+        for (&te, t) in idx.0.iter() {
+            if t.side == *side || t.half > 0.0 {
+                continue; // friendly, or a building
+            }
+            let d = from.distance(Vec2::new(t.pos.x, t.pos.z));
+            if d <= TOWER_RANGE && best.is_none_or(|bb| d < bb.2) {
+                best = Some((te, t.pos, d));
+            }
+        }
+        if let Some((te, tpos, _)) = best {
+            if let Ok(mut hp) = healths.get_mut(te) {
+                if hp.hp > 0.0 {
+                    hp.hp -= TOWER_DMG;
+                }
+            }
+            // Cosmetic shaft from the crown (~3.6u up); damage 0 so it doesn't double-hit.
+            let bow = Vec3::new(tf.translation.x, tf.translation.y + 3.6, tf.translation.z);
+            arrows.0.push(crate::projectile::ArrowSpawn {
+                from: bow,
+                aim: Vec3::new(tpos.x, tpos.y + 1.0, tpos.z),
+                target: te,
+                shooter: e,
+                damage: 0.0,
+                rival: false,
+            });
         }
     }
 }

@@ -35,7 +35,7 @@ use super::{
 };
 
 /// The seven placeable kinds — keyed by [`RtsBuildAssets`] and iterated at asset-bake time.
-const ALL_KINDS: [BuildingKind; 7] = [
+const ALL_KINDS: [BuildingKind; 10] = [
     BuildingKind::TownHall,
     BuildingKind::House,
     BuildingKind::Sawmill,
@@ -43,6 +43,9 @@ const ALL_KINDS: [BuildingKind; 7] = [
     BuildingKind::GoldMine,
     BuildingKind::Farm,
     BuildingKind::Barracks,
+    BuildingKind::Wall,
+    BuildingKind::Watchtower,
+    BuildingKind::Market,
 ];
 
 /// Scaffold Y-scale a building starts at (never 0 — a degenerate scale can NaN normals / dead AABB).
@@ -622,6 +625,9 @@ fn building_meshes(kind: BuildingKind) -> Vec<(Mesh, M)> {
         BuildingKind::TownHall => townhall_parts(),
         BuildingKind::Barracks => barracks_parts(),
         BuildingKind::House => house_parts(),
+        BuildingKind::Wall => wall_parts(),
+        BuildingKind::Watchtower => watchtower_parts(),
+        BuildingKind::Market => market_parts(),
         // Gold Mine reuses the quarry model but swaps its stone slots for the gold-vein metal so it
         // reads as a gold seam, not a grey quarry.
         BuildingKind::GoldMine => {
@@ -849,5 +855,63 @@ fn house_parts() -> Vec<(Mesh, M)> {
     // Cottage clutter (kept tight to the 2×2 footprint).
     v.extend(barrel(0.9, 0.9));
     v.extend(woodpile(-0.85, -0.1));
+    v
+}
+
+/// **Wall** (footprint 2×2): a battlemented stone segment. No function beyond its collision box —
+/// place a row of them to fence off a lane.
+fn wall_parts() -> Vec<(Mesh, M)> {
+    let mut v = vec![
+        (cuboid(1.9, 0.2, 0.95, 0.0, 0.1, 0.0), M::DarkStone), // footing
+        (cuboid(1.7, 1.6, 0.7, 0.0, 0.9, 0.0), M::Stone),      // wall body
+    ];
+    // Crenellations along the top.
+    for sx in [-0.6_f32, 0.0, 0.6] {
+        v.push((cuboid(0.34, 0.32, 0.7, sx, 1.86, 0.0), M::Stone));
+    }
+    v
+}
+
+/// **Watchtower** (footprint 2×2): a tall stone shaft with a battlemented timber crown + a conical
+/// roof and arrow slits. Looses arrows at nearby enemies (`units::watchtower_fire`).
+fn watchtower_parts() -> Vec<(Mesh, M)> {
+    let mut v = vec![
+        (cuboid(1.15, 0.25, 1.15, 0.0, 0.12, 0.0), M::DarkStone), // footing
+        (cuboid(0.95, 3.5, 0.95, 0.0, 1.75, 0.0), M::Stone),      // shaft
+        (cuboid(1.35, 0.4, 1.35, 0.0, 3.6, 0.0), M::Beam),        // overhanging timber platform
+    ];
+    // Timber crenellations around the platform.
+    for (sx, sz) in [(-0.58_f32, -0.58_f32), (0.58, -0.58), (-0.58, 0.58), (0.58, 0.58), (0.0, -0.62), (0.0, 0.62), (-0.62, 0.0), (0.62, 0.0)] {
+        v.push((cuboid(0.24, 0.36, 0.24, sx, 3.95, sz), M::Beam));
+    }
+    // Arrow slits on the four faces.
+    for (sx, sz, w, d) in [(0.0, 0.49, 0.14, 0.04), (0.0, -0.49, 0.14, 0.04), (0.49, 0.0, 0.04, 0.14), (-0.49, 0.0, 0.04, 0.14)] {
+        v.push((cuboid(w, 0.8, d, sx, 2.3, sz), M::Slit));
+    }
+    v.push((pyramid(0.75, 1.0, 4.1), M::Roof)); // conical cap
+    v.push((cuboid(0.06, 0.9, 0.06, 0.0, 5.1, 0.0), M::Beam)); // flag pole
+    v.push((cuboid(0.5, 0.32, 0.04, 0.28, 5.4, 0.0), M::Banner)); // flag
+    v
+}
+
+/// **Market** (footprint 3×3): a striped-awning stall over a goods counter, barrels + crates of
+/// wares around it. Trickles passive gold (`workers::market_income`).
+fn market_parts() -> Vec<(Mesh, M)> {
+    let mut v = Vec::new();
+    // Counter (a plank table) along the −Z front.
+    v.push((cuboid(2.6, 0.7, 0.8, 0.0, 0.35, -0.7), M::Wood));
+    v.push((cuboid(2.7, 0.08, 0.9, 0.0, 0.72, -0.7), M::Beam)); // counter top edge
+    // Four posts + a striped cloth awning.
+    for (sx, sz) in [(-1.25_f32, -1.15_f32), (1.25, -1.15), (-1.25, 1.05), (1.25, 1.05)] {
+        v.push((cuboid(0.12, 1.9, 0.12, sx, 0.95, sz), M::Beam));
+    }
+    v.push((cuboid(2.9, 0.1, 2.5, 0.0, 1.95, -0.05), M::Banner)); // awning cloth
+    // Wares on the counter: sacks + produce.
+    v.push((cuboid(0.4, 0.36, 0.36, -0.7, 0.9, -0.7), M::Straw));
+    v.push((cuboid(0.42, 0.3, 0.4, 0.1, 0.88, -0.7), M::Crop));
+    v.push((cuboid(0.3, 0.3, 0.3, 0.7, 0.86, -0.7), M::Hen));
+    // Goods stacked in the yard behind.
+    v.extend(crate_stack(-1.0, 0.7));
+    v.extend(barrel(1.0, 0.7));
     v
 }
