@@ -1,91 +1,80 @@
-//! Game-wide custom cursor — a gold reticle that replaces the OS pointer in EVERY state (menu,
-//! campaign panels, skirmish). Drawn as a top-most, click-through UI overlay that follows the mouse.
-//!
-//! It runs in `PostUpdate` so its `visible = false` write lands AFTER the campaign's own cursor
-//! systems (`controls.rs`, `player/camera.rs`) set visibility in `Update` — the reticle always wins
-//! over the OS pointer when the cursor is FREE. When the pointer is LOCKED (first-person camera
-//! grab), there's no free cursor, so we hide the reticle and leave the lock code's `visible=false`
-//! alone. Hidden too when the mouse leaves the window (so a capture never shows a stray reticle).
+//! Game-wide custom cursor — a gold reticle set as the **hardware** cursor via [`CursorIcon`], so
+//! the OS/compositor draws it at zero latency. (The earlier version was a UI-node software cursor
+//! that lagged the real mouse by a frame or two — "zamula".) The image is generated procedurally
+//! (no asset file) and set once on the primary window; the OS shows it whenever the cursor is
+//! visible and hides it under a first-person pointer-lock, so it works in every state (menu,
+//! campaign panels, skirmish) with no per-frame follow system.
 
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
-use bevy::ui::FocusPolicy;
-use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 
-/// Reticle diameter (px).
-const RING: f32 = 20.0;
-const GOLD: Color = Color::srgb(0.95, 0.82, 0.35);
-
-#[derive(Component)]
-struct CursorRing;
+/// Cursor image size (px). The hotspot (click point) is the centre.
+const SIZE: usize = 32;
 
 pub struct CursorPlugin;
 
 impl Plugin for CursorPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_cursor)
-            // PostUpdate so we override any Update-frame cursor-visibility writes.
-            .add_systems(PostUpdate, drive_cursor);
+        app.add_systems(Update, set_cursor);
     }
 }
 
-fn spawn_cursor(mut commands: Commands) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Px(RING),
-                height: Val::Px(RING),
-                border: UiRect::all(Val::Px(2.0)),
-                border_radius: BorderRadius::all(Val::Percent(50.0)),
-                ..default()
-            },
-            BackgroundColor(Color::NONE),
-            BorderColor::all(GOLD),
-            FocusPolicy::Pass,
-            GlobalZIndex(10_000),
-            Visibility::Hidden,
-            CursorRing,
-        ))
-        .with_children(|p| {
-            p.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(RING * 0.5 - 3.0),
-                    top: Val::Px(RING * 0.5 - 3.0),
-                    width: Val::Px(4.0),
-                    height: Val::Px(4.0),
-                    border_radius: BorderRadius::all(Val::Percent(50.0)),
-                    ..default()
-                },
-                BackgroundColor(GOLD),
-                FocusPolicy::Pass,
-            ));
-        });
-}
-
-fn drive_cursor(
-    mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut ring: Query<(&mut Node, &mut Visibility), With<CursorRing>>,
+/// Install the custom hardware cursor once the primary window exists (retried in Update until then;
+/// `done` latches it so we don't re-insert every frame).
+fn set_cursor(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    windows: Query<Entity, With<PrimaryWindow>>,
+    mut done: Local<bool>,
 ) {
-    let Ok((mut node, mut vis)) = ring.single_mut() else { return };
-    let Ok(mut cur) = cursor_q.single_mut() else { return };
-    let Ok(win) = windows.single() else { return };
-
-    // Pointer locked (FP camera grab) → no free cursor: hide the reticle, leave `visible` to the
-    // lock code.
-    if cur.grab_mode != CursorGrabMode::None {
-        *vis = Visibility::Hidden;
+    if *done {
         return;
     }
-    // Free cursor everywhere else (menu / panels / skirmish): the reticle replaces the OS pointer.
-    cur.visible = false;
-    match win.cursor_position() {
-        Some(c) => {
-            node.left = Val::Px(c.x - RING * 0.5);
-            node.top = Val::Px(c.y - RING * 0.5);
-            *vis = Visibility::Visible;
+    let Ok(win) = windows.single() else { return };
+    let handle = images.add(reticle());
+    commands.entity(win).insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
+        handle,
+        texture_atlas: None,
+        flip_x: false,
+        flip_y: false,
+        rect: None,
+        hotspot: ((SIZE / 2) as u16, (SIZE / 2) as u16),
+    })));
+    *done = true;
+}
+
+/// A gold ring + centre dot with a dark contrast halo, on transparent — the reticle bitmap.
+fn reticle() -> Image {
+    let mut data = vec![0u8; SIZE * SIZE * 4];
+    let c = (SIZE as f32 - 1.0) * 0.5;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let d = (dx * dx + dy * dy).sqrt();
+            let i = (y * SIZE + x) * 4;
+            let gold = (11.0..=13.5).contains(&d) || d < 2.3;
+            let halo = !gold && (9.6..=15.0).contains(&d);
+            if gold {
+                data[i] = 242;
+                data[i + 1] = 209;
+                data[i + 2] = 89;
+                data[i + 3] = 255;
+            } else if halo {
+                data[i] = 18;
+                data[i + 1] = 14;
+                data[i + 2] = 6;
+                data[i + 3] = 150;
+            }
         }
-        None => *vis = Visibility::Hidden, // mouse left the window
     }
+    Image::new(
+        Extent3d { width: SIZE as u32, height: SIZE as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
 }
