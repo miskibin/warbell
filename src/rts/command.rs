@@ -114,8 +114,9 @@ fn rts_issue_orders(
     mut orders: MessageWriter<RtsOrder>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
 ) {
-    // Build placement owns the pointer; drop the latch and bail.
-    if placing.0.is_some() {
+    // Build placement owns the pointer; drop the latch and bail. Alt rotates the camera (Alt+drag),
+    // so no orders fire while it's held.
+    if placing.0.is_some() || keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight) {
         attack.0 = false;
         return;
     }

@@ -81,8 +81,10 @@ fn selection_input(
     sel_all: Query<Entity, With<Selected>>,
     sel_buildings: Query<Entity, (With<Selected>, With<RtsBuilding>)>,
 ) {
-    // Build placement / attack-move own the pointer — no selection while either is active.
-    if placing.0.is_some() || attack.0 {
+    // Build placement / attack-move own the pointer — no selection while either is active. Alt
+    // rotates the camera (Alt+drag), so suppress selection while it's held.
+    let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
+    if placing.0.is_some() || attack.0 || alt {
         drag.start = None;
         drag.box_active = false;
         return;

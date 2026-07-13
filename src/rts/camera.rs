@@ -59,6 +59,10 @@ const ZOOM_STEP: f32 = 3.0;
 const PAN_SPEED: f32 = 22.0;
 /// Cursor within this many pixels of a window edge triggers an edge-pan that way.
 const EDGE_PAN_PX: f32 = 24.0;
+/// Keyboard rotate speed (rad/s) while Q / E held.
+const ROT_KEY_SPEED: f32 = 1.6;
+/// Mouse rotate sensitivity (rad per pixel of horizontal drag) while Alt held.
+const ROT_MOUSE: f32 = 0.006;
 /// Slack past the arena radius the focus may roam, so the far (rival) base still frames.
 const FOCUS_MARGIN: f32 = 8.0;
 /// Camera glide rate (1/s) toward the target pose — a subtle ease so pans/zoom feel smooth, not
@@ -77,6 +81,9 @@ pub struct RtsCamFocus {
     /// Vertical extent of the view in world units (ortho `FixedVertical`); clamped to
     /// `[ZOOM_MIN, ZOOM_MAX]`.
     pub zoom: f32,
+    /// View yaw (radians) — the compass the iso camera orbits at. Starts at [`ISO_YAW`] (45° diamond);
+    /// Q/E or Alt-drag spin it, and WASD pan stays screen-relative to it.
+    pub yaw: f32,
 }
 
 impl RtsCamFocus {
@@ -97,10 +104,16 @@ impl Default for RtsCamFocus {
             let p: Vec<f32> = s.split(',').filter_map(|v| v.trim().parse().ok()).collect();
             if p.len() >= 2 {
                 let zoom = p.get(2).copied().unwrap_or(ZOOM_DEFAULT).clamp(ZOOM_MIN, ZOOM_MAX);
-                return RtsCamFocus { pos: Vec2::new(p[0], p[1]), zoom };
+                return RtsCamFocus { pos: Vec2::new(p[0], p[1]), zoom, yaw: ISO_YAW };
             }
         }
-        RtsCamFocus { pos: super::PLAYER_BASE, zoom: ZOOM_DEFAULT }
+        // `FOREST_RTS_YAW=<degrees>` opens at a rotated compass (tuning / capture aid).
+        let yaw = std::env::var("FOREST_RTS_YAW")
+            .ok()
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .map(|d| d.to_radians())
+            .unwrap_or(ISO_YAW);
+        RtsCamFocus { pos: super::PLAYER_BASE, zoom: ZOOM_DEFAULT, yaw }
     }
 }
 
@@ -184,6 +197,7 @@ fn rts_drive_camera(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     scroll: Res<AccumulatedMouseScroll>,
+    motion: Res<bevy::input::mouse::AccumulatedMouseMotion>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut focus: ResMut<RtsCamFocus>,
     mut cam: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
@@ -201,10 +215,23 @@ fn rts_drive_camera(
         focus.zoom = (focus.zoom - scroll.delta.y * ZOOM_STEP).clamp(ZOOM_MIN, ZOOM_MAX);
     }
 
-    // Ground-plane pan basis, derived from the fixed iso yaw. The eye sits at
+    // ── rotate: Q/E spin the view; Alt + horizontal mouse drag does too (select/command bail while
+    // Alt is held so the drag isn't also a box-select). Yaw wraps, so it spins freely both ways.
+    let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
+    if keys.pressed(KeyCode::KeyQ) {
+        focus.yaw += ROT_KEY_SPEED * dt;
+    }
+    if keys.pressed(KeyCode::KeyE) {
+        focus.yaw -= ROT_KEY_SPEED * dt;
+    }
+    if alt && motion.delta.x != 0.0 {
+        focus.yaw -= motion.delta.x * ROT_MOUSE;
+    }
+
+    // Ground-plane pan basis, derived from the current view yaw. The eye sits at
     // `focus + ISO_DIST·(sin y·cos p, sin p, cos y·cos p)`, so the horizontal eye→focus direction
     // ("into the screen") is `-(sin y, cos y)`; `right` is its ground perpendicular.
-    let (sy, cy) = ISO_YAW.sin_cos();
+    let (sy, cy) = focus.yaw.sin_cos();
     let forward = Vec2::new(-sy, -cy);
     let right = Vec2::new(cy, -sy);
 
