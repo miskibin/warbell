@@ -281,6 +281,7 @@ pub(crate) fn biome_ambience(
     time: Res<Time>,
     cfg: Res<AudioConfig>,
     siege: Option<Res<crate::siege::Siege>>,
+    mode: Res<crate::rts::GameMode>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     mut q: Query<(&mut Ambience, &mut AudioSink)>,
 ) {
@@ -294,7 +295,14 @@ pub(crate) fn biome_ambience(
     // Town-square bustle plays near the castle by day; the night curfew empties the streets, so
     // it falls silent during a wave.
     let day = siege.map(|s| s.phase != crate::siege::GamePhase::Wave).unwrap_or(true);
-    let near_castle = cam_xz.is_some_and(|p| p.length() < CASTLE_AMBIENCE_R);
+    // Town-bustle radius: around the origin castle in campaign, and around the player's base in
+    // skirmish (the RTS town sits at PLAYER_BASE, not the origin — otherwise the city ambience never
+    // plays). Generous radius so the bustle carries across the whole home town.
+    let near_castle = cam_xz.is_some_and(|p| {
+        p.length() < CASTLE_AMBIENCE_R
+            || (*mode == crate::rts::GameMode::Skirmish
+                && p.distance(crate::rts::PLAYER_BASE) < CASTLE_AMBIENCE_R + 10.0)
+    });
     // The grass ring ("łąka"): standing on dry land that belongs to no biome blob, beyond the
     // town-square radius, and not over water. `cur` is None over grass AND over open sea, so the
     // explicit ground check rules out the sea.
@@ -306,7 +314,7 @@ pub(crate) fn biome_ambience(
         let (on, mult) = match amb.kind {
             AmbienceKind::Biome(b) => (Some(b) == cur, BIOME_AMBIENCE_MULT),
             AmbienceKind::Water => (water, WATER_AMBIENCE_MULT),
-            AmbienceKind::Castle => (near_castle && day, 1.0),
+            AmbienceKind::Castle => (near_castle && day, 2.2), // town bustle — carry it over the din
             AmbienceKind::Meadow => (meadow, MEADOW_AMBIENCE_MULT),
         };
         let target = if on { cfg.ambience_vol * mult } else { 0.0 };

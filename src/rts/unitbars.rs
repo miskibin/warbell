@@ -1,6 +1,7 @@
-//! Always-on unit bars — a slim health bar + a type pip floating over every RTS unit, so the player
-//! reads a unit's **state** (HP) and **role** (worker / swordsman / archer) at a glance without
-//! hovering. Team (friend/foe) is already carried by the ground ring ([`super::teamcolor`]).
+//! Unit bars — a slim health bar + a type pip floating over each **selected** unit, so the player
+//! reads a unit's **state** (HP) and **role** (worker / swordsman / archer). Only selected units get
+//! a bar (box- or click-select), so an idle town isn't cluttered with floating bars. Team (friend/
+//! foe) is carried by the ground ring ([`super::teamcolor`]).
 //!
 //! Each bar is a billboarded root (pooled, reposition-a-pool like the team/selection rings) with
 //! three child quads: a dark backing, a coloured fill (green→amber→red by HP, from a small shared
@@ -65,7 +66,7 @@ fn sync_unit_bars(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut assets: Local<Option<BarAssets>>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
-    units: Query<(&GlobalTransform, &RtsUnit, &Health), Without<Dying>>,
+    units: Query<(&GlobalTransform, &RtsUnit, &Health), (With<crate::rts::Selected>, Without<Dying>)>,
     mut bars: Query<(&mut Transform, &mut Visibility, &Children), With<UnitBar>>,
     mut fills: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), (With<BarFill>, Without<UnitBar>, Without<BarPip>)>,
     mut pips: Query<&mut MeshMaterial3d<StandardMaterial>, (With<BarPip>, Without<UnitBar>, Without<BarFill>)>,

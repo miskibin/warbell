@@ -1,7 +1,8 @@
 //! Team colours — the friend/foe read the RTS was missing. A pooled flat ground ring sits under
-//! every unit and building, tinted by [`Side`] (player = blue, rival = red), so at a glance you can
-//! tell your army/town from the enemy's without reading a single label. Buildings get a bigger ring
-//! sized to their footprint. The bright green **selection** ring (`select.rs`) still draws on top.
+//! every **unit**, tinted by [`Side`] (player = blue, rival = red), so at a glance you can tell your
+//! army from the enemy's. Buildings are NOT ringed (a big ring around a building read as clutter — a
+//! building's ownership is clear from its place + the minimap). The green **selection** ring
+//! (`select.rs`) still draws on top.
 //!
 //! Same reposition-a-pool approach as the selection rings (no per-entity child management, so a ring
 //! can't orphan when a unit dies mid-frame); one shared ring mesh scaled per entity, two shared
@@ -11,7 +12,7 @@ use bevy::prelude::*;
 
 use crate::dying::Dying;
 use crate::game_state::AppState;
-use crate::rts::{building_def, in_skirmish, RtsBuilding, RtsUnit, Side};
+use crate::rts::{in_skirmish, RtsUnit, Side};
 
 /// Player ring colour (cool blue) and rival ring colour (warm red).
 const PLAYER: Color = Color::srgb(0.25, 0.55, 1.0);
@@ -47,7 +48,6 @@ fn sync_team_rings(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     units: Query<(&GlobalTransform, &Side), (With<RtsUnit>, Without<Dying>)>,
-    buildings: Query<(&GlobalTransform, &Side, &RtsBuilding), Without<Dying>>,
     mut rings: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<TeamRing>>,
     mut assets_l: Local<Option<TeamRingAssets>>,
 ) {
@@ -68,14 +68,10 @@ fn sync_team_rings(
         }
     });
 
-    // Desired rings: (world pos, radius, side).
+    // Desired rings: (world pos, radius, side) — units only.
     let mut want: Vec<(Vec3, f32, Side)> = Vec::new();
     for (gt, side) in &units {
         want.push((gt.translation(), 0.62, *side));
-    }
-    for (gt, side, b) in &buildings {
-        let r = building_def(b.kind).footprint as f32 * 0.5 + 0.5;
-        want.push((gt.translation(), r, *side));
     }
 
     // Grow the pool.

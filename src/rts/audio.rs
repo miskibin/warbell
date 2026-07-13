@@ -24,8 +24,8 @@ const LOW_STONE: f64 = 15.0;
 /// Don't repeat the same advice within this many seconds (so a lingering shortage doesn't nag).
 const ADVICE_COOLDOWN: f32 = 40.0;
 /// Seconds between one townsperson's ambient chatter line (`Greeting` pool — worker/villager idle
-/// remarks) so the settlement feels lived-in without becoming a chatterbox.
-const CHATTER_EVERY: f32 = 22.0;
+/// remarks) so the settlement feels lived-in. Fairly frequent (the town SHOULD chatter).
+const CHATTER_EVERY: f32 = 11.0;
 
 /// Per-concept "last spoken at" clock for the throttle (sim seconds; 0 = never).
 #[derive(Resource, Default)]

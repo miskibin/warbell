@@ -329,6 +329,8 @@ fn worker_haul(
     part_tf: Query<&Transform>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     focus: Res<crate::rts::camera::RtsCamFocus>,
+    // Global cooldown so many workers chopping at once don't stack into a wall of noise.
+    mut tool_cd: Local<f32>,
     mut workers: Query<
         (
             Entity,
@@ -458,9 +460,11 @@ fn worker_haul(
                     let prev = haul.timer;
                     if (prev / SWING_EVERY).ceil() != ((prev - dt) / SWING_EVERY).ceil() {
                         v.atk_anim = now;
-                        // Tool sound per swing (only if this worker is roughly on-screen — these 2D
-                        // cues don't attenuate, so off-screen chopping must stay silent).
-                        if focus.in_earshot(wpos) {
+                        // Tool sound per swing — but only if on-screen AND at most one every ~0.55s
+                        // globally (these 2D cues don't attenuate, so a whole work crew otherwise
+                        // hammers at full volume; the throttle keeps it a texture, not a din).
+                        if focus.in_earshot(wpos) && now - *tool_cd > 0.55 {
+                            *tool_cd = now;
                             match dk {
                                 Some(DepositKind::Wood) => {
                                     cues.write(crate::audio::AudioCue::WoodChop);

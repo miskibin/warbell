@@ -610,9 +610,9 @@ fn pal(player: u32, rival: u32, side: Side) -> [f32; 4] {
 /// single faceted mesh.
 fn building_meshes(kind: BuildingKind, side: Side) -> Vec<Mesh> {
     match kind {
-        BuildingKind::TownHall => vec![merged_flat(townhall_parts(side))],
-        BuildingKind::Barracks => vec![merged_flat(barracks_parts(side))],
-        BuildingKind::House => vec![merged_flat(house_parts(side))],
+        BuildingKind::TownHall => vec![weathered(merged_flat(townhall_parts(side)))],
+        BuildingKind::Barracks => vec![weathered(merged_flat(barracks_parts(side)))],
+        BuildingKind::House => vec![weathered(merged_flat(house_parts(side)))],
         _ => producer_parts(kind)
             .into_iter()
             .map(|(mesh, m)| {
@@ -625,6 +625,34 @@ fn building_meshes(kind: BuildingKind, side: Side) -> Vec<Mesh> {
             })
             .collect(),
     }
+}
+
+/// Fake weathering on a finished, flat-shaded building mesh — since the game has no image textures,
+/// this hand-shades the flat vertex colours to read like aged stone/timber: an ambient-occlusion
+/// darkening toward the ground (recesses + the base sit in shadow) plus a fine per-vertex mottle. It
+/// modulates the existing `ATTRIBUTE_COLOR` in place, so it costs nothing at render time.
+fn weathered(mut m: Mesh) -> Mesh {
+    let Some(pos) = m.attribute(Mesh::ATTRIBUTE_POSITION).and_then(|a| a.as_float3()).map(|v| v.to_vec())
+    else {
+        return m;
+    };
+    if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(cols)) =
+        m.attribute_mut(Mesh::ATTRIBUTE_COLOR)
+    {
+        for (i, c) in cols.iter_mut().enumerate() {
+            let p = pos[i];
+            // AO-ish: 0.62 at the ground, easing to 1.0 by ~2.6u up.
+            let ao = 0.62 + 0.38 * (p[1] / 2.6).clamp(0.0, 1.0);
+            // Deterministic surface mottle from a position hash (±6%).
+            let h = ((p[0] * 12.99 + p[1] * 78.23 + p[2] * 37.71).sin() * 43758.55).fract();
+            let mottle = 0.94 + 0.12 * h;
+            let f = ao * mottle;
+            c[0] *= f;
+            c[1] *= f;
+            c[2] *= f;
+        }
+    }
+    m
 }
 
 fn producer_parts(kind: BuildingKind) -> Vec<(Mesh, M)> {
