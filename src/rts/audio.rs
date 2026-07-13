@@ -15,7 +15,7 @@ use bevy::prelude::*;
 
 use crate::audio::{Concept, Speak};
 use crate::game_state::{AppState, Modal};
-use crate::rts::{in_skirmish, RtsBanks, RtsOutcome, Side};
+use crate::rts::{in_skirmish, RtsBanks, RtsOutcome, RtsUnit, Side, UnitKind};
 
 /// Below this stock (units) a resource is "short" and worth a spoken nudge.
 const LOW_WOOD: f64 = 20.0;
@@ -23,6 +23,9 @@ const LOW_FOOD: f64 = 15.0;
 const LOW_STONE: f64 = 15.0;
 /// Don't repeat the same advice within this many seconds (so a lingering shortage doesn't nag).
 const ADVICE_COOLDOWN: f32 = 40.0;
+/// Seconds between one townsperson's ambient chatter line (`Greeting` pool — worker/villager idle
+/// remarks) so the settlement feels lived-in without becoming a chatterbox.
+const CHATTER_EVERY: f32 = 22.0;
 
 /// Per-concept "last spoken at" clock for the throttle (sim seconds; 0 = never).
 #[derive(Resource, Default)]
@@ -40,6 +43,7 @@ impl Plugin for RtsAudioPlugin {
             Update,
             (
                 low_resource_advice.run_if(in_state(Modal::None)),
+                villager_chatter.run_if(in_state(Modal::None)),
                 match_end_voice,
             )
                 .run_if(in_skirmish)
@@ -71,6 +75,34 @@ fn low_resource_advice(
         clock.stone = now;
         speak.write(Speak::new(Concept::AdviseStone));
     }
+}
+
+/// Every so often, one working townsperson pipes up with an idle remark (the `Greeting` pool —
+/// worker/villager ambient lines). Positional, so it comes from that worker in the world. Keeps the
+/// settlement sounding lived-in. Picks a deterministic worker from the sim clock (no RNG in
+/// systems). Only PLAYER townsfolk chatter; the rival has its own `RivalIdle` pool elsewhere.
+fn villager_chatter(
+    time: Res<Time>,
+    mut speak: MessageWriter<Speak>,
+    mut acc: Local<f32>,
+    workers: Query<(&GlobalTransform, &Side, &RtsUnit), Without<crate::dying::Dying>>,
+) {
+    *acc += time.delta_secs();
+    if *acc < CHATTER_EVERY {
+        return;
+    }
+    *acc -= CHATTER_EVERY;
+    let mine: Vec<Vec3> = workers
+        .iter()
+        .filter(|(_, s, u)| **s == Side::Player && u.kind == UnitKind::Worker)
+        .map(|(gt, _, _)| gt.translation())
+        .collect();
+    if mine.is_empty() {
+        return;
+    }
+    // Pick one by the sim clock (stable within the tick, varies across ticks).
+    let idx = (time.elapsed_secs() as usize) % mine.len();
+    speak.write(Speak::at(Concept::Greeting, mine[idx]));
 }
 
 /// Voice the match verdict once when it lands (victory cheer / defeat lament).

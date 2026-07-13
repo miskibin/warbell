@@ -368,6 +368,7 @@ fn spawn_soldier(
 fn acquire_targets(
     mut commands: Commands,
     idx: Res<TargetIndex>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     seekers: Query<
         (Entity, &Side, &RtsUnit, &Transform, Option<&MoveTo>),
         (Without<AttackTarget>, Without<Converting>, Without<Dying>),
@@ -415,6 +416,11 @@ fn acquire_targets(
             if m.fight {
                 commands.entity(e).try_insert(ResumeMove { goal: m.goal });
             }
+        }
+        // Enemy war-bark as a rival soldier locks on (fires once per engagement — Without<AttackTarget>
+        // gates re-barks; the director spaces overlapping ones). Gives the enemy a voice in a fight.
+        if *side == Side::Rival {
+            speak.write(crate::audio::Speak::at(crate::audio::Concept::RivalSpot, tf.translation));
         }
         commands.entity(e).try_insert(AttackTarget(target));
         commands.entity(e).try_remove::<MoveTo>();
@@ -666,11 +672,13 @@ fn sync_soldier_pose(
 fn reap_units(
     mut commands: Commands,
     time: Res<Time>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     q: Query<(Entity, &crate::player::Health), (With<RtsUnit>, Without<Dying>)>,
 ) {
     let now = time.elapsed_secs();
     for (e, hp) in &q {
         if hp.hp <= 0.0 {
+            cues.write(crate::audio::AudioCue::Impact { kill: true, crit: false }); // kill thud
             begin_dying(&mut commands, e, now);
         }
     }
@@ -678,13 +686,21 @@ fn reap_units(
 
 /// A soldier's death drops its side's population (workers are handled by `workers::worker_death`, so
 /// the `!= Worker` guard keeps the count from being double-decremented).
-fn soldier_death(mut pop: ResMut<RtsPop>, dead: Query<(&RtsUnit, &Side), Added<Dying>>) {
-    for (unit, side) in &dead {
+fn soldier_death(
+    mut pop: ResMut<RtsPop>,
+    mut speak: MessageWriter<crate::audio::Speak>,
+    dead: Query<(&RtsUnit, &Side, &Transform), Added<Dying>>,
+) {
+    for (unit, side, tf) in &dead {
         if unit.kind == UnitKind::Worker {
             continue;
         }
         let ps = &mut pop.0[side.ix()];
         ps.count = ps.count.saturating_sub(1);
+        // A rival soldier's death cry (player militia has no voiced death line).
+        if *side == Side::Rival {
+            speak.write(crate::audio::Speak::at(crate::audio::Concept::RivalDeath, tf.translation));
+        }
     }
 }
 

@@ -327,6 +327,7 @@ fn worker_haul(
     mut deposits: Query<(Entity, &mut Deposit, &Transform)>,
     dep_vis: Query<&crate::rts::deposits::DepositVisuals>,
     part_tf: Query<&Transform>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut workers: Query<
         (
             Entity,
@@ -456,6 +457,16 @@ fn worker_haul(
                     let prev = haul.timer;
                     if (prev / SWING_EVERY).ceil() != ((prev - dt) / SWING_EVERY).ceil() {
                         v.atk_anim = now;
+                        // Tool sound per swing: axe on wood, pick-chip on stone/gold.
+                        match dk {
+                            Some(DepositKind::Wood) => {
+                                cues.write(crate::audio::AudioCue::WoodChop);
+                            }
+                            Some(DepositKind::Stone | DepositKind::Gold) => {
+                                cues.write(crate::audio::AudioCue::OreChip);
+                            }
+                            None => {}
+                        }
                     }
                 }
                 haul.timer -= dt;
@@ -489,6 +500,7 @@ fn worker_haul(
                 if haul.timer <= 0.0 {
                     let child = spawn_carry(&mut commands, &assets, CarryKind::Food, we);
                     haul.carry = Some(child);
+                    cues.write(crate::audio::AudioCue::Forage); // gathered a food sack
                     commands.entity(we).try_insert(MoveTo { goal: dropoff, fight: false });
                     haul.phase = Phase::Carry(CarryKind::Food);
                 }
@@ -599,6 +611,7 @@ fn population_growth(
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     mut banks: ResMut<RtsBanks>,
     mut pop: ResMut<RtsPop>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     halls: Query<(&RtsBuilding, &Side, &Transform)>,
     mut acc: Local<f32>,
 ) {
@@ -630,6 +643,11 @@ fn population_growth(
             spawn_worker_body(&mut commands, &mut meshes, &mut creature_mats, side, out, seed);
             pop.0[side.ix()].count += 1;
             banks.side_mut(side).food -= FOOD_SPAWN_COST;
+            if side == Side::Player {
+                // "A new pair of hands!" — villager birth line at the hall.
+                let at = Vec3::new(out.x, 1.0, out.y);
+                speak.write(crate::audio::Speak::at(crate::audio::Concept::VillagerBorn, at));
+            }
         }
     }
 }

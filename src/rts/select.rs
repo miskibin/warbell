@@ -95,7 +95,9 @@ fn selection_input(
     // Press: begin a potential drag (unless over the HUD bands).
     if mouse.just_pressed(MouseButton::Left) {
         if let Some(c) = cursor {
-            if !pick::over_hud(c, win.height()) {
+            // Skip clicks over the HUD bands or the minimap panel (the minimap owns those — it
+            // click-moves the camera).
+            if !pick::over_hud(c, win.height()) && !super::minimap::over_minimap(c, win.height()) {
                 drag.start = Some(c);
                 drag.cur = c;
                 drag.box_active = false;

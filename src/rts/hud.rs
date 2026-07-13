@@ -203,10 +203,10 @@ fn spawn_top_bar(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas) {
             ))
             .with_children(|row| {
                 row.spawn(label(&fonts.display, "Skirmish", 13.0, rgba(224, 168, 74, 0.9)));
-                res_cell(row, fonts, atlas, "stat:wood", WOOD_COL, "250", ResKind::Wood);
-                res_cell(row, fonts, atlas, "stat:stone", STONE, "150", ResKind::Stone);
-                res_cell(row, fonts, atlas, "stat:gold", GOLD, "120", ResKind::Gold);
-                res_cell(row, fonts, atlas, "stat:food", FOOD_COL, "120", ResKind::Food);
+                res_cell(row, fonts, atlas, "stat:wood", WOOD_COL, "100", ResKind::Wood);
+                res_cell(row, fonts, atlas, "stat:stone", STONE, "60", ResKind::Stone);
+                res_cell(row, fonts, atlas, "stat:gold", GOLD, "40", ResKind::Gold);
+                res_cell(row, fonts, atlas, "stat:food", FOOD_COL, "60", ResKind::Food);
                 res_cell(row, fonts, atlas, "stat:pop", POP_COL, "0/6", ResKind::Pop);
             });
         });

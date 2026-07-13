@@ -126,8 +126,8 @@ fn rts_issue_orders(
     let Ok(win) = windows.single() else { return };
     let Ok((camera, cam_tf)) = camera.single() else { return };
     let Some(cursor) = win.cursor_position() else { return };
-    if pick::over_hud(cursor, win.height()) {
-        return; // click belongs to the HUD
+    if pick::over_hud(cursor, win.height()) || super::minimap::over_minimap(cursor, win.height()) {
+        return; // click belongs to the HUD / minimap
     }
 
     let units: Vec<Entity> = selected.iter().collect();

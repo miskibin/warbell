@@ -8,6 +8,7 @@
 //! and blips carry no text (so no font-atlas thrash — see the siege-perf note).
 
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 use crate::dying::Dying;
 use crate::game_state::AppState;
@@ -20,6 +21,16 @@ const SIZE: f32 = 172.0;
 const HALF: f32 = 52.0;
 /// Inset of the blip field from the panel border.
 const PAD: f32 = 4.0;
+/// Panel anchor (px from the window's left / bottom) — must match the spawned node.
+const PANEL_LEFT: f32 = 12.0;
+const PANEL_BOTTOM: f32 = 12.0;
+
+/// True if `cursor` (screen px) is over the minimap panel — so `select`/`command` ignore the click
+/// and let the minimap own it (click-to-move the camera).
+pub fn over_minimap(cursor: Vec2, window_h: f32) -> bool {
+    let top = window_h - PANEL_BOTTOM - SIZE;
+    cursor.x >= PANEL_LEFT && cursor.x <= PANEL_LEFT + SIZE && cursor.y >= top && cursor.y <= top + SIZE
+}
 
 /// Marker on the minimap panel node.
 #[derive(Component)]
@@ -37,7 +48,7 @@ impl Plugin for RtsMinimapPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (spawn_panel, sync_minimap)
+            (spawn_panel, sync_minimap, minimap_click)
                 .chain()
                 .run_if(in_skirmish)
                 .run_if(in_state(AppState::Playing)),
@@ -168,6 +179,28 @@ fn sync_minimap(
         vn.width = Val::Px(w);
         vn.height = Val::Px(h);
     }
+}
+
+/// Click (or drag) on the minimap → jump the camera focus to that world point. `pressed` (not just-
+/// pressed) so holding + dragging scrubs the view around. `select`/`command` skip clicks over the
+/// panel (via [`over_minimap`]) so this owns them.
+fn minimap_click(
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut focus: ResMut<RtsCamFocus>,
+) {
+    if !mouse.pressed(MouseButton::Left) {
+        return;
+    }
+    let Ok(win) = windows.single() else { return };
+    let Some(c) = win.cursor_position() else { return };
+    if !over_minimap(c, win.height()) {
+        return;
+    }
+    let top = win.height() - PANEL_BOTTOM - SIZE;
+    let local = Vec2::new(c.x - PANEL_LEFT, c.y - top);
+    let f = (SIZE - 2.0 * PAD) / (2.0 * HALF);
+    focus.pos = Vec2::new((local.x - PAD) / f - HALF, (local.y - PAD) / f - HALF);
 }
 
 fn side_color(side: Side, building: bool) -> Color {

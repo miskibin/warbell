@@ -295,6 +295,7 @@ fn spawn_cluster(
 fn deplete_deposit_visuals(
     time: Res<Time>,
     mut commands: Commands,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut q: Query<(Entity, &Deposit, &mut DepositVisuals)>,
 ) {
     let now = time.elapsed_secs();
@@ -306,6 +307,13 @@ fn deplete_deposit_visuals(
         let desired_felled = max.saturating_sub(standing.min(max));
         while vis.felled < desired_felled && vis.felled < max {
             let (e, blocker) = vis.parts[vis.felled];
+            // Fell sound: a tree crashing / a boulder shattering.
+            match dep.kind {
+                DepositKind::Wood => cues.write(crate::audio::AudioCue::TreeFall { cactus: false }),
+                DepositKind::Stone | DepositKind::Gold => {
+                    cues.write(crate::audio::AudioCue::OreShatter)
+                }
+            };
             crate::dying::begin_dying(&mut commands, e, now); // topple + reap (~1.4s)
             if let Some(p) = blocker {
                 crate::blockers::remove_at(p.x, p.y);

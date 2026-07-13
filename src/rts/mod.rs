@@ -14,6 +14,7 @@ pub mod audio;
 pub mod build;
 pub mod camera;
 pub mod command;
+pub mod cursor;
 pub mod deposits;
 pub mod ecotest;
 pub mod minimap;
@@ -152,11 +153,11 @@ impl RtsBanks {
     }
 }
 
-/// Starting stock per side. Bumped well above spec §2's (50/30/20/30) so the player can lay down a
-/// handful of buildings immediately instead of waiting on the economy — enough for ~two houses, a
-/// sawmill, a farm, a barracks and a mine off the bat.
+/// Starting stock per side. Above spec §2's threadbare (50/30/20/30) so the opening isn't a slow
+/// crawl, but modest — enough for a couple of economy buildings + a house to start the loop, not a
+/// whole town for free (the earlier 250/150/120/120 handed over too much up front).
 pub fn starting_bank() -> RtsBank {
-    RtsBank { wood: 250.0, stone: 150.0, gold: 120.0, food: 120.0 }
+    RtsBank { wood: 100.0, stone: 60.0, gold: 40.0, food: 60.0 }
 }
 
 // ---------------------------------------------------------------- population
@@ -434,6 +435,7 @@ impl Plugin for RtsPlugin {
                 ecotest::RtsEcoTestPlugin,
                 audio::RtsAudioPlugin,
                 minimap::RtsMinimapPlugin,
+                cursor::RtsCursorPlugin,
             ));
     }
 }
