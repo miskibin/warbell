@@ -1398,15 +1398,34 @@ const ARENA_GOLD: [Vec2; 3] = [Vec2::new(-8.0, 27.0), Vec2::new(8.0, -27.0), Vec
 /// through as shallow water); shore foam bakes automatically from the water mask.
 const ARENA_LAKE_C: Vec2 = Vec2::new(-30.0, -6.0);
 const ARENA_LAKE_R: f32 = 8.0;
-/// Small rocky hills on the other three flanks (N / S / E). Terraced cones — walkable, no nav
-/// blockers — that read as rocky rises; `ground_color_arena` tints their tiles rock-grey.
-const ARENA_HILLS: [Vec2; 3] = [Vec2::new(4.0, 38.0), Vec2::new(-4.0, -38.0), Vec2::new(38.0, 7.0)];
+/// Plain rocky hill on the east flank — a walkable terraced cone (no nav blockers, no deposit)
+/// that balances the west lake; `ground_color_arena` tints its tiles rock-grey. The former N/S
+/// hill pair was promoted to the iron-ore MOUNTAINS below.
+const ARENA_HILLS: [Vec2; 1] = [Vec2::new(38.0, 7.0)];
 const ARENA_HILL_R: f32 = 7.0;
+
+/// Iron-ore MOUNTAINS: a mirrored pair (player N / rival S — negated through the origin, so it
+/// plays fair). Each is a broad rocky massif (wider + darker than the plain hills) with a rich
+/// **iron-ore** vein — mechanically an ordinary Stone [`crate::rts::Deposit`], but rendered with
+/// rust-veined ore boulders in a dark-grey rockscape — flattened into a level bowl at its foot.
+const ARENA_MOUNTS: [Vec2; 2] = [Vec2::new(4.0, 38.0), Vec2::new(-4.0, -38.0)];
+const ARENA_MOUNT_R: f32 = 10.0;
+
+/// FOREST patches: a mirrored pair (player west / rival east) on the outer field, off the open
+/// battle centre. Each is a dense wood grove in a greener, shadier clearing — extra timber, one
+/// stand per side, so the woodland is fair.
+const ARENA_FOREST: [Vec2; 2] = [Vec2::new(-40.0, 4.0), Vec2::new(40.0, -4.0)];
 
 /// The arena rocky-hill centres (world XZ) + their radius — exposed so the `rts` deposits module can
 /// crown each terrain hill with a cosmetic boulder mound (the terrain tint alone read too flat).
 pub fn arena_hills() -> (Vec<Vec2>, f32) {
     (ARENA_HILLS.to_vec(), ARENA_HILL_R)
+}
+
+/// The arena iron-ore mountain centres (world XZ) + their radius — exposed so the `rts` deposits
+/// module can crown each massif with grey crags on its slopes (leaving the central ore bowl clear).
+pub fn arena_mountains() -> (Vec<Vec2>, f32) {
+    (ARENA_MOUNTS.to_vec(), ARENA_MOUNT_R)
 }
 
 /// Raised height class of the arena rocky hills at world `(wx,wz)` — a terraced cone peaking ~2
@@ -1425,6 +1444,22 @@ fn arena_hill_class(wx: f32, wz: f32) -> Option<i32> {
     best.map(|t| ARENA_FLAT_CLASS + (t * 2.0).round() as i32)
 }
 
+/// Raised height class of the arena iron-ore mountains at world `(wx,wz)` — a broad terraced
+/// massif (wider than the hills, same ≤1-step-per-tile walkable slope) — or `None` if outside every
+/// mountain. Shared by [`classify_arena`] (terrain) and [`ground_color_arena`] (dark-grey tint).
+fn arena_mount_class(wx: f32, wz: f32) -> Option<i32> {
+    let p = Vec2::new(wx, wz);
+    let mut best: Option<f32> = None;
+    for c in ARENA_MOUNTS {
+        let d = (p - c).length();
+        if d < ARENA_MOUNT_R {
+            let t = 1.0 - d / ARENA_MOUNT_R;
+            best = Some(best.map_or(t, |b: f32| b.max(t)));
+        }
+    }
+    best.map(|t| ARENA_FLAT_CLASS + (t * 2.0).round() as i32)
+}
+
 /// The arena's mirrored deposit sites, in world XZ. Consumed by the wave-2 `rts` deposit module,
 /// which spawns the real tree groves (wood), stone outcrops and gold veins on these spots — the
 /// generator keeps each one flat + free of decorative trees (see [`classify_arena`]).
@@ -1435,12 +1470,23 @@ pub struct ArenaSites {
     pub stone: [Vec2; 3],
     /// Gold-vein sites `[player, rival, contested]`.
     pub gold: [Vec2; 3],
+    /// Rich iron-ore sites (mechanically Stone) — one at each mountain foot `[player, rival]`.
+    pub iron: [Vec2; 2],
+    /// Dense forest-grove wood sites `[player, rival]`.
+    pub forest: [Vec2; 2],
 }
 
 /// The arena deposit layout (world XZ). Per side one wood/stone/gold just outside the base plateau,
-/// mirrored through the origin, plus a richer contested trio near the centre off the road.
+/// mirrored through the origin, plus a richer contested trio near the centre off the road, a rich
+/// iron-ore vein at each mountain foot, and a dense forest grove on each outer flank.
 pub fn arena_sites() -> ArenaSites {
-    ArenaSites { wood: ARENA_WOOD, stone: ARENA_STONE, gold: ARENA_GOLD }
+    ArenaSites {
+        wood: ARENA_WOOD,
+        stone: ARENA_STONE,
+        gold: ARENA_GOLD,
+        iron: ARENA_MOUNTS,
+        forest: ARENA_FOREST,
+    }
 }
 
 /// Distance (world units) from `(wx, wz)` to the base-to-base dirt-road segment (player → origin →
@@ -1473,6 +1519,8 @@ fn arena_deposit_dist(wx: f32, wz: f32) -> f32 {
         .iter()
         .chain(ARENA_STONE.iter())
         .chain(ARENA_GOLD.iter())
+        .chain(ARENA_MOUNTS.iter())
+        .chain(ARENA_FOREST.iter())
         .map(|s| p.distance(*s))
         .fold(f32::INFINITY, f32::min)
 }
@@ -1507,6 +1555,12 @@ fn classify_arena(x: f32, z: f32) -> Option<(TB, i32)> {
     let dep_d = arena_deposit_dist(wx, wz);
     if dep_d < ARENA_DEPOSIT_FLAT {
         return Some((TB::Grass, ARENA_FLAT_CLASS));
+    }
+    // Iron-ore mountains: broad rocky massifs ringing each flattened ore bowl (the bowl centre was
+    // returned Grass just above — the mountain centres are deposit spots). Raised `TB::Rock` on a
+    // gentle terraced slope: walkable like the hills, just wider and (via the tint) darker.
+    if let Some(mc) = arena_mount_class(wx, wz) {
+        return Some((TB::Rock, mc));
     }
     // Ornamental lake (west flank): carve a hole so the sea plane reads through as shallow water.
     // After the base/road/deposit returns above, so it can never eat a build plot or the lane.
@@ -1584,6 +1638,38 @@ fn ground_color_arena(x: f32, z: f32) -> [f32; 4] {
     if let Some(hc) = arena_hill_class(wx, wz) {
         let t = ((hc - ARENA_FLAT_CLASS) as f32 / 2.0).clamp(0.25, 1.0);
         col = mix3(col, [0.30, 0.29, 0.27], t * 0.72);
+    }
+    // Iron-ore mountains: a DARK grey rockscape with a rust-red ore stain, radiating from each
+    // centre (so even the flattened ore bowl reads rocky, not meadow). Darker + redder than the
+    // plain hills so the mountain biome reads as its own place.
+    {
+        let mut mt = 0.0f32;
+        for c in ARENA_MOUNTS {
+            let d = (Vec2::new(wx, wz) - c).length();
+            if d < ARENA_MOUNT_R {
+                mt = mt.max(1.0 - d / ARENA_MOUNT_R);
+            }
+        }
+        if mt > 0.0 {
+            // Ramp up fast so the whole massif footprint (not just its core) reads as a grey
+            // rockscape against the meadow.
+            col = mix3(col, [0.24, 0.23, 0.21], smoothstep(0.05, 0.55, mt) * 0.82);
+            col = mix3(col, [0.35, 0.16, 0.10], smoothstep(0.45, 1.0, mt) * 0.42); // rust ore stain toward the core
+        }
+    }
+    // Forest patches: a greener, shadier clearing so the grove reads as woodland, not open meadow.
+    {
+        let mut ft = 0.0f32;
+        for c in ARENA_FOREST {
+            let d = (Vec2::new(wx, wz) - c).length();
+            if d < 9.0 {
+                ft = ft.max(1.0 - d / 9.0);
+            }
+        }
+        if ft > 0.0 {
+            col = mix3(col, lin3(p.grass_dark), smoothstep(0.05, 0.6, ft) * 0.55);
+            col = mix3(col, [0.09, 0.19, 0.08], smoothstep(0.1, 0.8, ft) * 0.34); // deep, shady forest floor
+        }
     }
     // Worn dirt road, baked into the ground (same core/verge styling as `ground_color`).
     let road_s = arena_road_strength(wx, wz);

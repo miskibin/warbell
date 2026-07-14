@@ -26,10 +26,16 @@ const STONE_REMAIN: f64 = 520.0;
 const STONE_REMAIN_MID: f64 = 1000.0;
 const GOLD_REMAIN: f64 = 340.0;
 const GOLD_REMAIN_MID: f64 = 640.0;
+/// Iron-ore vein — a RICH Stone site (mechanically Stone), worth well more than an ordinary
+/// outcrop; one at each mountain foot (mirrored → fair).
+const IRON_REMAIN: f64 = 1400.0;
+/// Forest-grove stand — a dense stand of extra timber; one per side (mirrored → fair).
+const FOREST_REMAIN: f64 = 1500.0;
 
-/// Tree count in a grove (contested-centre grove is denser).
+/// Tree count in a grove (contested-centre grove is denser; the forest patch denser still).
 const GROVE_TREES: usize = 7;
 const GROVE_TREES_MID: usize = 12;
+const FOREST_TREES: usize = 15;
 /// Boulders in a stone/gold cluster.
 const CLUSTER_ROCKS: usize = 5;
 const CLUSTER_ROCKS_MID: usize = 8;
@@ -126,8 +132,9 @@ fn spawn_arena_deposits(
         reflectance: 0.5,
         ..default()
     });
-    let stone_mesh = meshes.add(boulder_mesh(false));
-    let gold_mesh = meshes.add(boulder_mesh(true));
+    let stone_mesh = meshes.add(boulder_mesh(RockStyle::Stone));
+    let gold_mesh = meshes.add(boulder_mesh(RockStyle::Gold));
+    let iron_mesh = meshes.add(boulder_mesh(RockStyle::Iron));
 
     let mut seed: u32 = 0x5115_bee5;
     for (i, site) in sites.wood.iter().enumerate() {
@@ -148,13 +155,25 @@ fn spawn_arena_deposits(
         let rocks = if mid { CLUSTER_ROCKS_MID } else { CLUSTER_ROCKS };
         spawn_cluster(&mut commands, DepositKind::Gold, &gold_mesh, &rock_mat, *site, remaining, rocks, &mut seed);
     }
+    // Iron-ore veins — a rich Stone deposit at each mountain foot (mirrored → fair). Rendered with
+    // the rust-veined iron boulder so the ore reads distinct from ordinary grey stone.
+    for site in sites.iron.iter() {
+        spawn_cluster(&mut commands, DepositKind::Stone, &iron_mesh, &rock_mat, *site, IRON_REMAIN, CLUSTER_ROCKS_MID, &mut seed);
+    }
+    // Forest groves — a dense stand of extra timber per side (mirrored → fair).
+    for site in sites.forest.iter() {
+        spawn_grove(&mut commands, &mut meshes, &tree_mat, *site, FOREST_REMAIN, FOREST_TREES, &mut seed);
+    }
 }
 
 /// Crown each arena terrain hill (from [`crate::worldmap::arena_hills`]) with a cosmetic boulder
-/// mound — big grey rocks stacked toward the centre so the rise reads as a small rocky mountain,
-/// not just grey ground. Purely scenery (no `Deposit`); the boulders register modest nav blockers
-/// like the deposit clusters, and they sit on the flanks well off the base-to-base lane. One-shot on
-/// [`crate::biome::WorldReady`].
+/// mound — big grey rocks stacked toward the centre so the rise reads as a small rocky hill, not
+/// just grey ground — and each iron-ore MOUNTAIN (from [`crate::worldmap::arena_mountains`]) with a
+/// bigger, denser crag field on its slopes. Purely scenery (no `Deposit`). The HILL boulders
+/// register modest nav blockers like the deposit clusters; the MOUNTAIN crags deliberately DON'T
+/// (they ring the central ore bowl, so a blocker there could fence workers out of the vein — the
+/// walkable terraced slope keeps units off them anyway). All sit on the flanks well off the
+/// base-to-base lane. One-shot on [`crate::biome::WorldReady`].
 fn spawn_arena_hills(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -172,7 +191,7 @@ fn spawn_arena_hills(
         metallic: 0.05,
         ..default()
     });
-    let mesh = meshes.add(boulder_mesh(false));
+    let mesh = meshes.add(boulder_mesh(RockStyle::Stone));
     let (hills, hill_r) = crate::worldmap::arena_hills();
     let mut seed: u32 = 0x40C_5EED;
     for c in hills {
@@ -190,6 +209,37 @@ fn spawn_arena_hills(
             let ry = crate::worldmap::ground_at_world(rx, rz).unwrap_or(0.0);
             let yaw = crate::wildlife::rng_range(&mut seed, 0.0, TAU);
             crate::blockers::add(rx, rz, ROCK_BLOCK_R * sc * 0.8);
+            commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(rock_mat.clone()),
+                Transform::from_xyz(rx, ry, rz)
+                    .with_rotation(Quat::from_rotation_y(yaw))
+                    .with_scale(Vec3::splat(sc)),
+            ));
+        }
+    }
+
+    // Iron-ore mountains: a bigger, denser crag field on the SLOPES only (r ≥ 5.5, so the central
+    // ore bowl + its rust boulders stay clear for harvesters). Bigger scale than the hills so the
+    // massif reads as a mountain, not a mound. No nav blockers (see the doc comment) — the ore
+    // cluster's own boulders are the only obstacles near the vein.
+    let (mounts, mount_r) = crate::worldmap::arena_mountains();
+    for c in mounts {
+        let n = 16;
+        for k in 0..n {
+            let ang = crate::wildlife::rng_range(&mut seed, 0.0, TAU);
+            let rr = crate::wildlife::rng_range(&mut seed, 5.5, mount_r * 0.95);
+            // First few are tall crags; the rest a scree skirt fading out to the rim.
+            let base_sc = if k < 3 {
+                crate::wildlife::rng_range(&mut seed, 2.2, 3.2)
+            } else {
+                crate::wildlife::rng_range(&mut seed, 1.0, 2.0)
+            };
+            let sc = (base_sc * (1.0 - rr / (mount_r * 2.0))).max(0.8);
+            let rx = c.x + ang.cos() * rr;
+            let rz = c.y + ang.sin() * rr;
+            let ry = crate::worldmap::ground_at_world(rx, rz).unwrap_or(0.0);
+            let yaw = crate::wildlife::rng_range(&mut seed, 0.0, TAU);
             commands.spawn((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(rock_mat.clone()),
@@ -339,13 +389,27 @@ fn deplete_deposit_visuals(
     }
 }
 
+/// Which ore a boulder is cut from — same faceted shape, different vertex palette.
+#[derive(Clone, Copy)]
+enum RockStyle {
+    /// Ordinary grey stone.
+    Stone,
+    /// Warm gold vein.
+    Gold,
+    /// Iron ore — a dark rock shot through with rust-red ore veins (reads distinct from grey stone).
+    Iron,
+}
+
 /// A low-poly faceted boulder built to the mesh contract (vertex COLOR, flat-shaded, base ≈ y=0
-/// so it reads embedded in the ground). `gold` swaps the grey stone palette for a warm gold-vein
-/// palette (the same shape recoloured).
-fn boulder_mesh(gold: bool) -> Mesh {
+/// so it reads embedded in the ground). `style` picks the palette (grey stone / warm gold /
+/// rust-veined iron) — the same shape recoloured.
+fn boulder_mesh(style: RockStyle) -> Mesh {
     // (base, mid, highlight) linear-RGB source hexes.
-    let (base, mid, hi) =
-        if gold { (0x7a6326u32, 0xb5912fu32, 0xd9b13cu32) } else { (0x565961u32, 0x6b6d73u32, 0x9aa0aau32) };
+    let (base, mid, hi) = match style {
+        RockStyle::Gold => (0x7a6326u32, 0xb5912fu32, 0xd9b13cu32),
+        RockStyle::Iron => (0x413d3bu32, 0x6e4436u32, 0x9c4a2cu32),
+        RockStyle::Stone => (0x565961u32, 0x6b6d73u32, 0x9aa0aau32),
+    };
     merged_flat(vec![
         facet(0.80, Vec3::new(0.0, 0.55, 0.0), 0.85, base),
         facet(0.50, Vec3::new(0.45, 0.40, -0.20), 0.90, hi),
