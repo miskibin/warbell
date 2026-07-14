@@ -68,8 +68,11 @@ pub fn unit_speed(kind: UnitKind) -> f32 {
 const BODY_R: f32 = 0.35;
 /// Within this distance of the goal a unit has arrived — `MoveTo` is removed.
 const ARRIVE: f32 = 0.6;
-/// Beyond this range, follow the cached A* `NavPath`; within it, cheap direct steer (no path churn).
-const PATH_RANGE: f32 = 4.0;
+/// Beyond this range, follow the cached A* `NavPath` (which threads building blockers); within it,
+/// cheap direct steer. Kept small so a unit routes *around* a building when its goal is close but
+/// behind one — a bigger range let workers wedge against their own sawmill trying to reach a tree
+/// just past it (direct steer can't go around; A* can).
+const PATH_RANGE: f32 = 1.5;
 /// A* node budget for the RTS mover. The default `NAV_MAX_NODES` (8400) is sized for the ~40-tile
 /// keep march and **exhausts → empty on cross-arena trips** (its own doc says so) — the two bases sit
 /// ~80 tiles apart diagonally, so an "attack the enemy base" order drained the budget, got an empty

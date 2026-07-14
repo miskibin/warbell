@@ -123,13 +123,27 @@ pub(crate) struct Haul {
     carry: Option<Entity>,
     /// Last position — used to derive a facing for the animation sync.
     last: Vec2,
+    /// Anchor for the stuck watchdog: the position at the last real *net* displacement. Measuring
+    /// against this (not per-frame movement) catches a worker oscillating in place against a wall.
+    anchor: Vec2,
+    /// Seconds the worker has held a `MoveTo` without escaping [`STUCK_MOVE`] of `anchor`. When it
+    /// crosses [`STUCK_LIMIT`] the approach is abandoned (see `worker_haul`).
+    stuck: f32,
 }
 
 impl Haul {
     fn new() -> Self {
-        Haul { phase: Phase::Start, timer: 0.0, carry: None, last: Vec2::ZERO }
+        Haul { phase: Phase::Start, timer: 0.0, carry: None, last: Vec2::ZERO, anchor: Vec2::ZERO, stuck: 0.0 }
     }
 }
+
+/// Net displacement (world units) a worker must escape to count as "making progress" for the stuck
+/// watchdog — bigger than the ecotest's 0.25 move-epsilon so we unstick BEFORE it flags a freeze.
+const STUCK_MOVE: f32 = 0.6;
+/// Hold a `MoveTo` this long without escaping [`STUCK_MOVE`] → the goal is unreachable (boxed against
+/// a building the mover can't thread to within its 0.6u arrival); drop the approach so the phase
+/// advances (chop / bank from where the worker stands) instead of freezing for good.
+const STUCK_LIMIT: f32 = 3.0;
 
 #[derive(Clone, Copy)]
 enum Phase {
@@ -398,6 +412,29 @@ fn worker_haul(
             v.moving = has_moveto;
         }
         haul.last = wpos;
+        // Stuck watchdog: a MoveTo held while the worker never escapes STUCK_MOVE of its anchor is
+        // wedged (the mover only clears a MoveTo within 0.6u of the goal, but a goal behind a
+        // building can be unreachable, and the worker oscillates against the wall going nowhere).
+        // Measured as NET displacement so that oscillation counts as stuck.
+        if has_moveto {
+            if wpos.distance(haul.anchor) > STUCK_MOVE {
+                haul.anchor = wpos; // real progress — reset
+                haul.stuck = 0.0;
+            } else {
+                haul.stuck += dt;
+            }
+        } else {
+            haul.anchor = wpos;
+            haul.stuck = 0.0;
+        }
+        // Only the goal-gated travel phases can jam; when stuck there, drop the MoveTo so next
+        // frame's `!has_moveto` branch advances the phase (gather / bank in place).
+        if haul.stuck > STUCK_LIMIT && matches!(haul.phase, Phase::ToDeposit { .. } | Phase::Carry(_))
+        {
+            commands.entity(we).try_remove::<MoveTo>();
+            haul.stuck = 0.0;
+            haul.anchor = wpos;
+        }
 
         // Building gone or dying → return to the idle pool.
         let Ok((b, _bside, btf, dying)) = buildings.get(assigned.building) else {
@@ -447,7 +484,18 @@ fn worker_haul(
                             .ok()
                             .and_then(|v| crate::rts::deposits::nearest_standing_part(v, &part_tf, wpos))
                             .unwrap_or(dpos);
-                        let stand = spot + (wpos - spot).normalize_or_zero() * WORK_STANDOFF;
+                        let mut stand = spot + (wpos - spot).normalize_or_zero() * WORK_STANDOFF;
+                        // Guarantee the stand-off is reachable: if it dips into a blocker, slide it
+                        // back toward the worker (which is, by definition, standing on clear ground).
+                        if crate::blockers::is_blocked(stand.x, stand.y) {
+                            for t in [0.35f32, 0.55, 0.75, 1.0] {
+                                let cand = stand.lerp(wpos, t);
+                                if !crate::blockers::is_blocked(cand.x, cand.y) {
+                                    stand = cand;
+                                    break;
+                                }
+                            }
+                        }
                         commands.entity(we).try_insert(MoveTo { goal: stand, fight: false });
                         haul.phase = Phase::ToDeposit { de, spot };
                     } else {

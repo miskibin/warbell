@@ -73,10 +73,15 @@ pub(super) fn nearest_standing_part(
     transforms: &Query<&Transform>,
     from: Vec2,
 ) -> Option<Vec2> {
+    // Skip any part buried inside a building's collision box — a grove tree can end up under the
+    // producer that harvests it (the sawmill is only placed clear of the grove *anchor*, not each
+    // trunk), and aiming a worker at an unreachable trunk wedges it against the wall forever. If
+    // every standing part is blocked the caller falls back to the (clear) anchor.
     vis.parts[vis.felled.min(vis.parts.len())..]
         .iter()
         .filter_map(|(e, _)| transforms.get(*e).ok())
         .map(|t| Vec2::new(t.translation.x, t.translation.z))
+        .filter(|p| !crate::blockers::is_blocked(p.x, p.y))
         .min_by(|a, b| {
             a.distance_squared(from)
                 .partial_cmp(&b.distance_squared(from))
