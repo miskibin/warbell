@@ -127,7 +127,9 @@ fn build_kind(ix: usize) -> BuildingKind {
 /// it never brute-force searches. Mirrors the plausible fan of a player's town around its hall.
 fn candidate_offsets() -> Vec<Vec2> {
     let mut out = Vec::with_capacity(18);
-    for (r, phase) in [(6.0f32, 0.0f32), (8.5, 0.5), (11.0, 1.0)] {
+    // Rings widened for the bigger (BUILD_SCALE) building models, so the rival town doesn't pack its
+    // structures into an overlapping clump.
+    for (r, phase) in [(7.5f32, 0.0f32), (10.5, 0.5), (13.5, 1.0)] {
         for k in 0..6u32 {
             let a = (k as f32 + phase) / 6.0 * std::f32::consts::TAU;
             out.push(Vec2::new(r * a.cos(), r * a.sin()));

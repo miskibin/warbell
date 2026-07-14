@@ -52,11 +52,13 @@ fn mat(m: &mut Assets<StandardMaterial>, c: Color) -> Handle<StandardMaterial> {
 /// Bar height (world units above the building base) — scales with footprint, with the two tall
 /// towers lifted so the bar clears their roofs.
 fn bar_y(kind: BuildingKind) -> f32 {
-    match kind {
+    // Buildings render at BUILD_SCALE, so lift the bar the same so it still clears the roof.
+    let base = match kind {
         BuildingKind::TownHall => 5.1,
         BuildingKind::Watchtower => 5.9,
         other => fp_half(other) * 1.1 + 2.3,
-    }
+    };
+    base * crate::rts::build::BUILD_SCALE
 }
 
 #[allow(clippy::type_complexity)]

@@ -58,7 +58,7 @@ const ZOOM_STEP: f32 = 3.0;
 /// zoomed-out view slides proportionally faster (covers more map per second).
 const PAN_SPEED: f32 = 46.0;
 /// Hold Shift to fast-pan (whip across the map) — standard RTS convenience.
-const PAN_BOOST: f32 = 1.9;
+const PAN_BOOST: f32 = 2.7;
 /// Cursor within this many pixels of a window edge triggers an edge-pan that way.
 const EDGE_PAN_PX: f32 = 24.0;
 /// Keyboard rotate speed (rad/s) while Q / E held.
@@ -208,6 +208,7 @@ fn rts_camera_boot(
 fn rts_drive_camera(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     scroll: Res<AccumulatedMouseScroll>,
     motion: Res<bevy::input::mouse::AccumulatedMouseMotion>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -237,6 +238,11 @@ fn rts_drive_camera(
         focus.yaw -= ROT_KEY_SPEED * dt;
     }
     if alt && motion.delta.x != 0.0 {
+        focus.yaw -= motion.delta.x * ROT_MOUSE;
+    }
+    // Middle-mouse (wheel-button) drag rotates the view too — the Stronghold convention. No Alt
+    // needed; select/command don't use the middle button, so there's nothing to bail out of.
+    if mouse.pressed(MouseButton::Middle) && motion.delta.x != 0.0 {
         focus.yaw -= motion.delta.x * ROT_MOUSE;
     }
 

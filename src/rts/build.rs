@@ -50,6 +50,17 @@ const ALL_KINDS: [BuildingKind; 10] = [
 
 /// Scaffold Y-scale a building starts at (never 0 — a degenerate scale can NaN normals / dead AABB).
 const START_SCALE_Y: f32 = 0.12;
+/// Uniform visual scale applied to every building body — chunkier, more imposing structures (the
+/// meshes were authored small). Collision/footprint logic is unchanged; this is purely the model.
+pub(crate) const BUILD_SCALE: f32 = 1.35;
+/// Placement snaps to this world-unit grid so a built-up town reads tidy instead of chaotic (every
+/// building lands on an aligned cell, not a fractional offset).
+const PLACE_GRID: f32 = 2.0;
+
+/// Snap a world point to the placement grid.
+fn snap(p: Vec2) -> Vec2 {
+    (p / PLACE_GRID).round() * PLACE_GRID
+}
 /// Max terrain height spread (world units) allowed under a footprint before placement is refused.
 const FLAT_TOLERANCE: f32 = 0.35;
 /// No building may be raised within this radius of the ENEMY base plateau centre (spec §6).
@@ -189,7 +200,7 @@ fn spawn_hall(commands: &mut Commands, assets: &RtsBuildAssets, side: Side, pos:
     let handles = assets.building.get(&BuildingKind::TownHall).cloned().unwrap_or_default();
     let root = commands
         .spawn((
-            Transform::from_xyz(pos.x, y, pos.y),
+            Transform::from_xyz(pos.x, y, pos.y).with_scale(Vec3::splat(BUILD_SCALE)),
             Visibility::Visible,
             RtsBuilding { kind: BuildingKind::TownHall, built: true },
             side,
@@ -295,7 +306,7 @@ fn ghost_placement(
     let Some(gp) = super::pick::cursor_ray_ground(cam, cam_tf, cursor) else {
         return;
     };
-    let snapped = Vec2::new(gp.x.round(), gp.y.round());
+    let snapped = snap(gp);
 
     // `just_armed` = the very frame the build-strip button armed `Placing`. The button click and a
     // ghost confirm-click share the SAME `just_pressed(Left)`; without this guard the arming click
@@ -333,9 +344,10 @@ fn ghost_placement(
         for (i, e) in seg_ents.iter().enumerate() {
             if let Some(tile) = line.get(i) {
                 let y = crate::worldmap::ground_at_world(tile.x, tile.y).unwrap_or(0.0);
-                commands
-                    .entity(*e)
-                    .try_insert((Transform::from_xyz(tile.x, y, tile.y), Visibility::Visible));
+                commands.entity(*e).try_insert((
+                    Transform::from_xyz(tile.x, y, tile.y).with_scale(Vec3::splat(BUILD_SCALE)),
+                    Visibility::Visible,
+                ));
             } else {
                 commands.entity(*e).try_insert(Visibility::Hidden);
             }
@@ -373,7 +385,8 @@ fn ghost_placement(
         if let Some(e) = ghost.root {
             commands.entity(e).try_insert(
                 Transform::from_xyz(snapped.x, y, snapped.y)
-                    .with_rotation(Quat::from_rotation_y(ghost.rot_steps as f32 * FRAC_PI_2)),
+                    .with_rotation(Quat::from_rotation_y(ghost.rot_steps as f32 * FRAC_PI_2))
+                    .with_scale(Vec3::splat(BUILD_SCALE)),
             );
         }
         if !just_armed
@@ -564,13 +577,15 @@ fn spawn_scaffold(
     let yaw = rot_steps as f32 * FRAC_PI_2;
     let handles = assets.building.get(&kind).cloned().unwrap_or_default();
 
-    // The growing building: its parent Y-scale animates 0.12 → 1.0 (bases sit at y=0, so it rises
-    // out of the ground). Health is present from spawn — attackable mid-build.
+    // Instant build (player request): the building stands at full size the moment it's paid for — no
+    // scaffold, no grow timer. It's spawned complete; a 1-frame `UnderConstruction` (total ~0) still
+    // runs so `grow_buildings` does the one-time completion bookkeeping (collision box, housing /
+    // train queue, `built`). Health is present from spawn.
     let root = commands
         .spawn((
             Transform::from_xyz(pos.x, y, pos.y)
                 .with_rotation(Quat::from_rotation_y(yaw))
-                .with_scale(Vec3::new(1.0, START_SCALE_Y, 1.0)),
+                .with_scale(Vec3::splat(BUILD_SCALE)),
             Visibility::Visible,
             RtsBuilding { kind, built: false },
             side,
@@ -583,21 +598,9 @@ fn spawn_scaffold(
         }
     });
 
-    // A static full-height timber frame (a SEPARATE entity so it doesn't scale with the growth).
-    let frame = assets.scaffold.get(&def.footprint).map(|fm| {
-        commands
-            .spawn((
-                Mesh3d(fm.clone()),
-                MeshMaterial3d(assets.solid.clone()),
-                Transform::from_xyz(pos.x, y, pos.y).with_rotation(Quat::from_rotation_y(yaw)),
-                Visibility::Visible,
-            ))
-            .id()
-    });
-
     commands
         .entity(root)
-        .try_insert(UnderConstruction { elapsed: 0.0, total: def.build_secs.max(0.01), frame });
+        .try_insert(UnderConstruction { elapsed: 0.0, total: 0.001, frame: None });
     commands.spawn(crate::build_fx::DustBurst::building(Vec3::new(pos.x, y, pos.y)));
 }
 
@@ -618,11 +621,12 @@ fn grow_buildings(
     for (e, mut uc, mut tf, mut b, side) in &mut q {
         uc.elapsed += dt;
         let t = (uc.elapsed / uc.total).clamp(0.0, 1.0);
-        tf.scale.y = START_SCALE_Y + (1.0 - START_SCALE_Y) * t;
+        // Scale relative to BUILD_SCALE so x/y/z stay uniform (x,z are set to BUILD_SCALE at spawn).
+        tf.scale.y = BUILD_SCALE * (START_SCALE_Y + (1.0 - START_SCALE_Y) * t);
         if t < 1.0 {
             continue;
         }
-        tf.scale.y = 1.0;
+        tf.scale.y = BUILD_SCALE;
         b.built = true;
 
         let pos = Vec2::new(tf.translation.x, tf.translation.z);

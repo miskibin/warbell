@@ -1,9 +1,9 @@
-//! Game-wide custom cursor — a gold reticle set as the **hardware** cursor via [`CursorIcon`], so
-//! the OS/compositor draws it at zero latency. (The earlier version was a UI-node software cursor
-//! that lagged the real mouse by a frame or two — "zamula".) The image is generated procedurally
-//! (no asset file) and set once on the primary window; the OS shows it whenever the cursor is
-//! visible and hides it under a first-person pointer-lock, so it works in every state (menu,
-//! campaign panels, skirmish) with no per-frame follow system.
+//! Game-wide custom cursor — a gold **arrow pointer** set as the **hardware** cursor via
+//! [`CursorIcon`], so the OS/compositor draws it at zero latency. (The earlier version was a UI-node
+//! software cursor that lagged the real mouse by a frame or two — "zamula"; before that a ring
+//! reticle, swapped to a proper pointer arrow.) The image is generated procedurally (no asset file)
+//! and set once on the primary window; the OS shows it whenever the cursor is visible and hides it
+//! under a first-person pointer-lock, so it works in every state (menu, campaign panels, skirmish).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -33,40 +33,74 @@ fn set_cursor(
         return;
     }
     let Ok(win) = windows.single() else { return };
-    let handle = images.add(reticle());
+    let handle = images.add(arrow());
     commands.entity(win).insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
         handle,
         texture_atlas: None,
         flip_x: false,
         flip_y: false,
         rect: None,
-        hotspot: ((SIZE / 2) as u16, (SIZE / 2) as u16),
+        // Hotspot = the arrow's tip (top-left), like a normal pointer.
+        hotspot: (1, 1),
     })));
     *done = true;
 }
 
-/// A gold ring + centre dot with a dark contrast halo, on transparent — the reticle bitmap.
-fn reticle() -> Image {
+/// The classic pointer polygon (tip at top-left), in image pixels. Point-in-polygon fills it gold;
+/// a 1px dark dilation gives the contrast outline so it reads over any terrain.
+const ARROW: [(f32, f32); 7] = [
+    (1.5, 1.5),   // tip
+    (1.5, 19.0),  // down the left edge
+    (5.7, 15.2),  // inner notch (left of the tail)
+    (8.7, 21.8),  // tail bottom-left
+    (11.2, 20.6), // tail bottom-right
+    (8.2, 13.8),  // inner notch (right of the tail)
+    (13.4, 13.4), // right wing
+];
+
+fn in_arrow(px: f32, py: f32) -> bool {
+    let mut inside = false;
+    let n = ARROW.len();
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = ARROW[i];
+        let (xj, yj) = ARROW[j];
+        if ((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// A gold arrow pointer with a dark outline, on transparent — the cursor bitmap.
+fn arrow() -> Image {
     let mut data = vec![0u8; SIZE * SIZE * 4];
-    let c = (SIZE as f32 - 1.0) * 0.5;
     for y in 0..SIZE {
         for x in 0..SIZE {
-            let dx = x as f32 - c;
-            let dy = y as f32 - c;
-            let d = (dx * dx + dy * dy).sqrt();
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let fill = in_arrow(px, py);
+            // Outline: a pixel just outside the fill (sample the fill at a small ring around it).
+            let outline = !fill
+                && (in_arrow(px - 1.3, py)
+                    || in_arrow(px + 1.3, py)
+                    || in_arrow(px, py - 1.3)
+                    || in_arrow(px, py + 1.3)
+                    || in_arrow(px - 1.0, py - 1.0)
+                    || in_arrow(px + 1.0, py - 1.0)
+                    || in_arrow(px - 1.0, py + 1.0)
+                    || in_arrow(px + 1.0, py + 1.0));
             let i = (y * SIZE + x) * 4;
-            let gold = (11.0..=13.5).contains(&d) || d < 2.3;
-            let halo = !gold && (9.6..=15.0).contains(&d);
-            if gold {
+            if fill {
                 data[i] = 242;
                 data[i + 1] = 209;
                 data[i + 2] = 89;
                 data[i + 3] = 255;
-            } else if halo {
+            } else if outline {
                 data[i] = 18;
                 data[i + 1] = 14;
                 data[i + 2] = 6;
-                data[i + 3] = 150;
+                data[i + 3] = 220;
             }
         }
     }
