@@ -595,6 +595,9 @@ fn is_land_shape(x: f32, z: f32) -> bool {
 /// comparable to `blight_edge_base`; the crossing interpolation is scale-invariant, so the shore
 /// position is unaffected by the exact factor.
 fn sea_field(x: f32, z: f32) -> f32 {
+    if is_arena() {
+        return arena_sea_field(x, z); // the arena is its own island (this uses home-island coords)
+    }
     let dx = (x - CX).abs() / ISLAND_RX;
     let dz = (z - CZ).abs() / ISLAND_RZ;
     let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
@@ -1351,70 +1354,113 @@ pub fn cliff_shelf_world(wx: f32, wz: f32) -> bool {
 // between them and mirrored, finite deposit spots. The layout mirrors through the origin (a 180°
 // rotation swaps the two sides), so it plays fair.
 
-/// Land radius (world units) of the arena island — a hair over the base plateaus' far reach
-/// (base centre ≈40u out + plateau radius 13 = ~53) plus a beach ring, so both bases sit on solid
-/// ground with ocean beyond. `rts::ARENA_RADIUS` (46) is the open *play* core; the land extends a
-/// little past it to hold the diagonally-placed bases.
-const ARENA_LAND_R: f32 = 52.0;
-/// Sandy beach ring width (world units) just inside the waterline.
-const ARENA_BEACH_W: f32 = 6.0;
+/// Land radius (world units) of the arena island — comfortably over the base plateaus' far reach
+/// (base centre ≈62u out + plateau radius 20 = ~82) plus a wide beach ring, so both bases sit on
+/// solid ground with ocean beyond. `rts::ARENA_RADIUS` (72) is the open *play* core; the land
+/// extends past it to hold the diagonally-placed bases and the outer biome regions.
+/// `pub` so `rts::minimap` frames the real island instead of duplicating the number.
+pub const ARENA_LAND_R: f32 = 104.0;
+/// Sandy beach ring width (world units) just inside the waterline — the foreshore, a full height
+/// class BELOW the inland field (see [`ARENA_FLAT_CLASS`]) so the island ramps down into the sea.
+const ARENA_BEACH_W: f32 = 12.0;
+/// How far (world units) the organic coast noise swings the waterline in/out of the base circle.
+/// Big enough to read as real capes and coves rather than a wobble on a compass circle.
+const ARENA_COAST_FRAY: f32 = 7.0;
 /// Force-flat base-plateau radius (world units) around each `rts` base centre — level grass
 /// building ground, the same "flatten to a comfortable class" trick the castle safe-zone / town
-/// build-plots use.
-const ARENA_BASE_R: f32 = 13.0;
-/// The height class every force-flat arena spot (plateaus, road, deposits) is pinned to — sea
-/// level, exactly like the castle safe-zone / town plots. Rolling knolls rise one class above it.
-const ARENA_FLAT_CLASS: i32 = 1;
+/// build-plots use. Sized to seat a full `POP_HARD_CAP` town.
+const ARENA_BASE_R: f32 = 20.0;
+/// The height class every force-flat arena spot (plateaus, road, deposits) is pinned to. It sits
+/// **one class above the beach** (which is class 1, ≈ sea level) — that step is what gives the
+/// island a sloped foreshore instead of the vertical wall an all-class-1 island ended in. The
+/// terrain mesh smooths corner heights across the step, so it renders as a continuous ramp up
+/// from the waterline, not a stair. Rolling knolls rise one class above this.
+const ARENA_FLAT_CLASS: i32 = 2;
 /// Visible dirt-road half-width and full-strength packed core (world units) — mirrors an artery's
-/// `roads::HALF_W`/core so the arena road reads like a campaign road.
-const ARENA_ROAD_HALF: f32 = 2.6;
-const ARENA_ROAD_CORE: f32 = 1.1;
+/// `roads::HALF_W`/core so the arena road reads like a campaign road. Widened with the map so the
+/// lane still reads as a highway between two distant bases.
+const ARENA_ROAD_HALF: f32 = 4.0;
+const ARENA_ROAD_CORE: f32 = 1.8;
 /// Force-flat corridor half-width along the road (a touch wider than the visible road, so the
 /// packed dirt always sits on level ground and units cross it cleanly).
-const ARENA_ROAD_FLAT: f32 = 3.6;
+const ARENA_ROAD_FLAT: f32 = 5.2;
 /// Inner radius (world units) of the decorative wooded fringe: trees ring the outer field so the
 /// centre stays an open battlefield.
-const ARENA_FOREST_R0: f32 = 24.0;
-/// Keep trees this far (world units) from a base centre — the plateau (13) plus a clear apron.
-const ARENA_BASE_CLEAR: f32 = 17.0;
-/// Force-flat disc radius around each deposit spot (kept level + tree-free for wave-2 props).
-const ARENA_DEPOSIT_FLAT: f32 = 4.5;
+const ARENA_FOREST_R0: f32 = 48.0;
+/// Keep trees this far (world units) from a base centre — the plateau (20) plus a clear apron.
+const ARENA_BASE_CLEAR: f32 = 25.0;
+/// Force-flat disc radius around each deposit spot (kept level + tree-free for the props).
+const ARENA_DEPOSIT_FLAT: f32 = 6.0;
 /// Keep decorative trees this far from a deposit spot so the grove/outcrop reads cleanly.
-const ARENA_DEPOSIT_CLEAR: f32 = 7.0;
+const ARENA_DEPOSIT_CLEAR: f32 = 9.0;
 /// Keep decorative trees this far from the road centreline so the lane between the bases stays
 /// clear end-to-end (comfortably wider than the visible road so nothing crowds it).
-const ARENA_ROAD_CLEAR: f32 = 6.0;
+const ARENA_ROAD_CLEAR: f32 = 8.0;
 
 /// Mirrored deposit spots (world XZ). Per kind: `[0]` = player-side (just outside the SW base),
-/// `[1]` = rival-side (the negation through the origin), `[2]` = the contested centre spot. The
-/// three contested spots sit on the fair bisector (`z = x`, perpendicular to the road), so each is
-/// equidistant from both bases. Wave-2's `rts` modules spawn the actual groves / outcrops / veins.
-const ARENA_WOOD: [Vec2; 3] = [Vec2::new(-11.0, 32.0), Vec2::new(11.0, -32.0), Vec2::new(-13.0, -13.0)];
-const ARENA_STONE: [Vec2; 3] = [Vec2::new(-32.0, 11.0), Vec2::new(32.0, -11.0), Vec2::new(18.0, 18.0)];
-const ARENA_GOLD: [Vec2; 3] = [Vec2::new(-8.0, 27.0), Vec2::new(8.0, -27.0), Vec2::new(6.0, 6.0)];
+/// `[1]` = rival-side (the negation through the origin), `[2]` = the contested centre spot, and
+/// (wood/stone) `[3]`/`[4]` = a mirrored SECOND pair further in — the enlarged island has the room
+/// and the per-site stock is small enough that one grove no longer feeds a whole town. The
+/// contested spots sit on the fair bisector (`z = x`, perpendicular to the road), so each is
+/// equidistant from both bases. `rts::deposits` spawns the actual groves / outcrops / veins and
+/// treats index `2` as the richer contested site.
+const ARENA_WOOD: [Vec2; 5] = [
+    Vec2::new(-22.0, 64.0),
+    Vec2::new(22.0, -64.0),
+    Vec2::new(-26.0, -26.0), // contested
+    Vec2::new(-6.0, 44.0),
+    Vec2::new(6.0, -44.0),
+];
+const ARENA_STONE: [Vec2; 5] = [
+    Vec2::new(-64.0, 22.0),
+    Vec2::new(64.0, -22.0),
+    Vec2::new(36.0, 36.0), // contested
+    Vec2::new(-40.0, 10.0),
+    Vec2::new(40.0, -10.0),
+];
+/// Gold stays deliberately SCARCE — only one vein per side plus the contested one. Gold is the
+/// soldier resource, so keeping it rare is what makes the contested vein (and the Market) worth
+/// fighting for.
+const ARENA_GOLD: [Vec2; 3] = [Vec2::new(-16.0, 51.0), Vec2::new(16.0, -51.0), Vec2::new(12.0, 12.0)];
 
-/// Ornamental lake on the west flank (world XZ centre + radius) — off the base-to-base lane and
-/// clear of every deposit. `classify_arena` carves it (returns `None`, so the sea plane shows
-/// through as shallow water); shore foam bakes automatically from the water mask.
-const ARENA_LAKE_C: Vec2 = Vec2::new(-30.0, -6.0);
-const ARENA_LAKE_R: f32 = 8.0;
-/// Plain rocky hill on the east flank — a walkable terraced cone (no nav blockers, no deposit)
-/// that balances the west lake; `ground_color_arena` tints its tiles rock-grey. The former N/S
-/// hill pair was promoted to the iron-ore MOUNTAINS below.
-const ARENA_HILLS: [Vec2; 1] = [Vec2::new(38.0, 7.0)];
-const ARENA_HILL_R: f32 = 7.0;
+/// Ornamental LAKES (world XZ centres + radius) — a mirrored pair, one per side, off the
+/// base-to-base lane and clear of every deposit. (It was a single west lake balanced by an east
+/// hill; mirroring it makes the water fair to both sides.) `classify_arena` carves them (returns
+/// `None`, so the sea plane shows through as shallow water); the shore is cut smooth by the same
+/// marching-squares contour the coast uses, and shore foam bakes automatically from the water mask.
+const ARENA_LAKES: [Vec2; 2] = [Vec2::new(-44.0, -12.0), Vec2::new(44.0, 12.0)];
+const ARENA_LAKE_R: f32 = 14.0;
+/// Plain rocky hills — a mirrored pair of coastal bluffs. Walkable terraced cones (no nav
+/// blockers, no deposit); `ground_color_arena` tints their tiles rock-grey and `rts::deposits`
+/// crowns each with a boulder mound.
+const ARENA_HILLS: [Vec2; 2] = [Vec2::new(-22.0, 76.0), Vec2::new(22.0, -76.0)];
+const ARENA_HILL_R: f32 = 12.0;
 
 /// Iron-ore MOUNTAINS: a mirrored pair (player N / rival S — negated through the origin, so it
 /// plays fair). Each is a broad rocky massif (wider + darker than the plain hills) with a rich
 /// **iron-ore** vein — mechanically an ordinary Stone [`crate::rts::Deposit`], but rendered with
 /// rust-veined ore boulders in a dark-grey rockscape — flattened into a level bowl at its foot.
-const ARENA_MOUNTS: [Vec2; 2] = [Vec2::new(4.0, 38.0), Vec2::new(-4.0, -38.0)];
-const ARENA_MOUNT_R: f32 = 10.0;
+const ARENA_MOUNTS: [Vec2; 2] = [Vec2::new(8.0, 70.0), Vec2::new(-8.0, -70.0)];
+const ARENA_MOUNT_R: f32 = 20.0;
 
-/// FOREST patches: a mirrored pair (player west / rival east) on the outer field, off the open
-/// battle centre. Each is a dense wood grove in a greener, shadier clearing — extra timber, one
-/// stand per side, so the woodland is fair.
-const ARENA_FOREST: [Vec2; 2] = [Vec2::new(-40.0, 4.0), Vec2::new(40.0, -4.0)];
+/// FOREST patches: a mirrored pair on the outer field, off the open battle centre. Each is a dense
+/// wood grove in a greener, shadier clearing — extra timber, one stand per side, so the woodland
+/// is fair.
+const ARENA_FOREST: [Vec2; 2] = [Vec2::new(-72.0, 8.0), Vec2::new(72.0, -8.0)];
+const ARENA_FOREST_R: f32 = 18.0;
+
+/// SNOW highlands: a mirrored pair straddling the fair bisector (`z = x`) — each sits exactly
+/// equidistant from both bases, so neither side owns one. A cold, terraced massif: raised
+/// [`TB::Snow`] on a walkable slope, tinted to a bright frost-white cap in `ground_color_arena`.
+/// Gives the two far lobes of the enlarged island a place of their own instead of more lawn.
+const ARENA_SNOW: [Vec2; 2] = [Vec2::new(51.0, 51.0), Vec2::new(-51.0, -51.0)];
+const ARENA_SNOW_R: f32 = 17.0;
+
+/// DUNE scrub: a mirrored pair of dry, sandy flats on the outer field — [`TB::Desert`] at the
+/// normal field height (no rise), tinted sand-gold, carrying the desert scatter (cacti, dry rocks).
+/// A warm counterweight to the snow lobes.
+const ARENA_DUNES: [Vec2; 2] = [Vec2::new(72.0, 26.0), Vec2::new(-72.0, -26.0)];
+const ARENA_DUNE_R: f32 = 13.0;
 
 /// The arena rocky-hill centres (world XZ) + their radius — exposed so the `rts` deposits module can
 /// crown each terrain hill with a cosmetic boulder mound (the terrain tint alone read too flat).
@@ -1432,43 +1478,111 @@ pub fn arena_mountains() -> (Vec<Vec2>, f32) {
 /// classes above the flat field — or `None` if outside every hill. Shared by [`classify_arena`]
 /// (terrain) and [`ground_color_arena`] (grey tint) so the colour matches the raised tiles.
 fn arena_hill_class(wx: f32, wz: f32) -> Option<i32> {
-    let p = Vec2::new(wx, wz);
-    let mut best: Option<f32> = None;
-    for c in ARENA_HILLS {
-        let d = (p - c).length();
-        if d < ARENA_HILL_R {
-            let t = 1.0 - d / ARENA_HILL_R;
-            best = Some(best.map_or(t, |b: f32| b.max(t)));
-        }
-    }
-    best.map(|t| ARENA_FLAT_CLASS + (t * 2.0).round() as i32)
+    arena_cone_class(wx, wz, &ARENA_HILLS, ARENA_HILL_R, 2.0)
 }
 
 /// Raised height class of the arena iron-ore mountains at world `(wx,wz)` — a broad terraced
 /// massif (wider than the hills, same ≤1-step-per-tile walkable slope) — or `None` if outside every
 /// mountain. Shared by [`classify_arena`] (terrain) and [`ground_color_arena`] (dark-grey tint).
 fn arena_mount_class(wx: f32, wz: f32) -> Option<i32> {
+    arena_cone_class(wx, wz, &ARENA_MOUNTS, ARENA_MOUNT_R, 2.0)
+}
+
+/// Raised height class of the arena SNOW highlands at world `(wx,wz)` — a terraced cold massif,
+/// same walkable ≤1-step slope — or `None` if outside every highland. Shared by [`classify_arena`]
+/// (terrain) and [`ground_color_arena`] (frost tint).
+fn arena_snow_class(wx: f32, wz: f32) -> Option<i32> {
+    arena_cone_class(wx, wz, &ARENA_SNOW, ARENA_SNOW_R, 3.0)
+}
+
+/// Shared terraced-cone height for the arena's raised regions: a linear cone from `ARENA_FLAT_CLASS`
+/// at the rim to `ARENA_FLAT_CLASS + peak` at the centre, rounded to whole classes. The rounding
+/// step is always ≤1 class per tile at these radii, so every cone stays walkable (no nav blockers,
+/// no cliff) — the terrain mesh's corner smoothing then renders it as a continuous slope.
+fn arena_cone_class(wx: f32, wz: f32, centres: &[Vec2], radius: f32, peak: f32) -> Option<i32> {
     let p = Vec2::new(wx, wz);
     let mut best: Option<f32> = None;
-    for c in ARENA_MOUNTS {
-        let d = (p - c).length();
-        if d < ARENA_MOUNT_R {
-            let t = 1.0 - d / ARENA_MOUNT_R;
+    for c in centres {
+        let d = (p - *c).length();
+        if d < radius {
+            let t = 1.0 - d / radius;
             best = Some(best.map_or(t, |b: f32| b.max(t)));
         }
     }
-    best.map(|t| ARENA_FLAT_CLASS + (t * 2.0).round() as i32)
+    best.map(|t| ARENA_FLAT_CLASS + (t * peak * arena_shore_damp(wx, wz)).round() as i32)
+}
+
+/// Fade any RAISED arena region flat as it nears the foreshore (`1` inland → `0` at the sand).
+/// Without it a massif whose rim reaches the beach ring — which the coast fray can pull up to
+/// [`ARENA_COAST_FRAY`] units inland at a cove — would present a 2-3 class wall to the class-1
+/// sand: a cliff at the waterline, exactly the thing this pass is removing. The fade is gentle
+/// enough (≤0.4 class/unit) to keep every cone's ≤1-step-per-tile walkable slope intact.
+fn arena_shore_damp(wx: f32, wz: f32) -> f32 {
+    // The earliest radius the sand can start once the coast noise swings fully inward.
+    let inner = ARENA_LAND_R - ARENA_BEACH_W - ARENA_COAST_FRAY;
+    1.0 - smoothstep(inner - 8.0, inner, wx.hypot(wz))
+}
+
+/// `t ∈ [0,1]` falloff of the strongest arena region containing world `(wx,wz)` — 0 at the rim,
+/// 1 at a centre; `0.0` outside every one. The tint driver for the flat (unraised) regions and the
+/// colour companion to [`arena_cone_class`].
+fn arena_region_t(wx: f32, wz: f32, centres: &[Vec2], radius: f32) -> f32 {
+    let p = Vec2::new(wx, wz);
+    let mut t = 0.0f32;
+    for c in centres {
+        let d = (p - *c).length();
+        if d < radius {
+            t = t.max(1.0 - d / radius);
+        }
+    }
+    t
+}
+
+/// Organic in/out swing (world units) of the arena coastline at base `(x,z)` — added to
+/// [`ARENA_LAND_R`] to give the island capes and coves. Hash value-noise octaves, deliberately NOT
+/// `noise_a`: that's an axis-separable sine product, so using it here frayed the coast into a
+/// REGULAR standing-wave scallop (the same lattice artefact the ground colour hit). Both
+/// [`classify_arena`]'s land test and [`arena_sea_field`] route through this one function, so the
+/// per-tile shoreline and the smooth marching-squares shore contour can never disagree.
+fn arena_coast_offset(x: f32, z: f32) -> f32 {
+    let n = 0.60 * vnoise(x * 0.085 + 5.3, z * 0.085 - 1.9)
+        + 0.28 * vnoise(x * 0.19 - 2.1, z * 0.19 + 3.7)
+        + 0.12 * vnoise(x * 0.44 + 1.1, z * 0.44 - 4.4);
+    (n * 2.0 - 1.0) * ARENA_COAST_FRAY
+}
+
+/// Smooth signed field for the arena's SEA, in rough base-tile units (`>0` inland, `<0` offshore,
+/// `~0` on the waterline) — the arena's answer to [`sea_field`], which only knows the campaign
+/// island's ellipse. The mesh marching-squares this to cut a smooth sub-tile shoreline instead of
+/// snapping the coast to the tile grid (which is what stepped the arena's edge into a sawtooth).
+fn arena_sea_field(x: f32, z: f32) -> f32 {
+    let wx = x * MAP_SCALE - GX;
+    let wz = z * MAP_SCALE - GZ;
+    (ARENA_LAND_R + arena_coast_offset(x, z) - wx.hypot(wz)) / MAP_SCALE
+}
+
+/// Signed distance (base-tile units, `<0` = water) to the nearest arena LAKE. Mirrors the campaign
+/// [`lake_sd`]: a clean circle with no fray, because marching-squares draws the exact `= 0` contour
+/// smooth — the same shape [`classify_arena`] carves per-tile, just without the staircase.
+fn arena_lake_sd(x: f32, z: f32) -> f32 {
+    let wx = x * MAP_SCALE - GX;
+    let wz = z * MAP_SCALE - GZ;
+    let p = Vec2::new(wx, wz);
+    ARENA_LAKES
+        .iter()
+        .map(|c| ((p - *c).length() - ARENA_LAKE_R) / MAP_SCALE)
+        .fold(f32::INFINITY, f32::min)
 }
 
 /// The arena's mirrored deposit sites, in world XZ. Consumed by the wave-2 `rts` deposit module,
 /// which spawns the real tree groves (wood), stone outcrops and gold veins on these spots — the
 /// generator keeps each one flat + free of decorative trees (see [`classify_arena`]).
 pub struct ArenaSites {
-    /// Wood-grove sites `[player, rival, contested]`.
-    pub wood: [Vec2; 3],
-    /// Stone-outcrop sites `[player, rival, contested]`.
-    pub stone: [Vec2; 3],
-    /// Gold-vein sites `[player, rival, contested]`.
+    /// Wood-grove sites `[player, rival, contested, player2, rival2]`.
+    pub wood: [Vec2; 5],
+    /// Stone-outcrop sites `[player, rival, contested, player2, rival2]`.
+    pub stone: [Vec2; 5],
+    /// Gold-vein sites `[player, rival, contested]` — deliberately the scarcest kind.
     pub gold: [Vec2; 3],
     /// Rich iron-ore sites (mechanically Stone) — one at each mountain foot `[player, rival]`.
     pub iron: [Vec2; 2],
@@ -1536,8 +1650,9 @@ fn classify_arena(x: f32, z: f32) -> Option<(TB, i32)> {
     let wz = z * MAP_SCALE - GZ;
     let p = Vec2::new(wx, wz);
     let r = p.length();
-    // Island ellipse (near-circular) with a lightly-frayed coast; ocean beyond.
-    let coast = noise_a(x, z) * 3.0;
+    // Island disc with an organically-frayed coast; ocean beyond. The SAME expression backs
+    // `arena_sea_field`, which the mesh marching-squares into a smooth sub-tile shoreline.
+    let coast = arena_coast_offset(x, z);
     if r > ARENA_LAND_R + coast {
         return None;
     }
@@ -1562,14 +1677,24 @@ fn classify_arena(x: f32, z: f32) -> Option<(TB, i32)> {
     if let Some(mc) = arena_mount_class(wx, wz) {
         return Some((TB::Rock, mc));
     }
-    // Ornamental lake (west flank): carve a hole so the sea plane reads through as shallow water.
-    // After the base/road/deposit returns above, so it can never eat a build plot or the lane.
-    if (p - ARENA_LAKE_C).length() < ARENA_LAKE_R {
+    // Snow highlands on the two fair-bisector lobes — a raised, terraced cold massif.
+    if let Some(sc) = arena_snow_class(wx, wz) {
+        return Some((TB::Snow, sc));
+    }
+    // Ornamental lakes (mirrored pair): carve a hole so the sea plane reads through as shallow
+    // water. After the base/road/deposit returns above, so a lake can never eat a build plot or
+    // the lane. `arena_lake_sd` marching-squares this same circle into a smooth shore.
+    if arena_lake_sd(x, z) < 0.0 {
         return None;
     }
-    // Sandy beach ring at the waterline.
+    // Sandy FORESHORE ring at the waterline, a full class BELOW the inland field
+    // (`ARENA_FLAT_CLASS` = 2) — the island ramps down to the sea instead of ending in a wall.
     if r > ARENA_LAND_R - ARENA_BEACH_W + coast {
         return Some((TB::Sand, 1));
+    }
+    // Dune scrub: dry sandy flats at field height (no rise) — a warm biome on the outer field.
+    if arena_region_t(wx, wz, &ARENA_DUNES, ARENA_DUNE_R) > 0.0 {
+        return Some((TB::Desert, ARENA_FLAT_CLASS));
     }
     // Gentle rolling grass: mostly flat, an occasional one-class knoll (kept ≤1 step, walkable;
     // `terrace_inland` enforces it globally anyway).
@@ -1578,21 +1703,30 @@ fn classify_arena(x: f32, z: f32) -> Option<(TB, i32)> {
     // clear of the bases and deposit spots. The road / base / deposit force-flat checks above have
     // already returned, so a Forest tile can never land on them.
     let base_clear = (p - crate::rts::PLAYER_BASE).length().min((p - crate::rts::RIVAL_BASE).length());
-    // Rocky hills on the free flanks — terraced (walkable, no blockers), clear of bases, deposits,
-    // the lake and the road. Take priority over the tree fringe so a hill reads as rock, not woods.
-    if base_clear > ARENA_BASE_CLEAR
+    // Off the bases, the deposit spots and the base-to-base lane — the gate every decorative
+    // region shares, so nothing can crowd a build plot or wall off the road.
+    let off_lane = base_clear > ARENA_BASE_CLEAR
         && dep_d > ARENA_DEPOSIT_CLEAR
-        && arena_road_dist(wx, wz) > ARENA_ROAD_CLEAR
-    {
+        && arena_road_dist(wx, wz) > ARENA_ROAD_CLEAR;
+    // Rocky hills on the free flanks — terraced (walkable, no blockers). Take priority over the
+    // tree fringe so a hill reads as rock, not woods.
+    if off_lane {
         if let Some(hc) = arena_hill_class(wx, wz) {
             return Some((TB::Rock, hc));
         }
     }
+    // Forest PATCHES — a dense stand, near-solid `Forest` tiles (vs the fringe's sparse clumps
+    // below), so each side's wood really reads as a wood. Density falls off toward the rim, so the
+    // stand fades into the meadow instead of ending on a circle.
+    if off_lane {
+        let ft = arena_region_t(wx, wz, &ARENA_FOREST, ARENA_FOREST_R);
+        if ft > 0.0 && ft * 2.6 + noise_a(x * 0.7 + 13.0, z * 0.7 - 5.0) * 0.5 > 1.0 {
+            return Some((TB::Forest, h));
+        }
+    }
     let forested = r > ARENA_FOREST_R0
         && r < ARENA_LAND_R - ARENA_BEACH_W - 2.0
-        && base_clear > ARENA_BASE_CLEAR
-        && dep_d > ARENA_DEPOSIT_CLEAR
-        && arena_road_dist(wx, wz) > ARENA_ROAD_CLEAR
+        && off_lane
         && noise_a(x * 0.6 + 40.0, z * 0.6 - 20.0) * noise_b(x * 0.6 + 7.0, z * 0.6 - 3.0) > 0.55;
     if forested {
         return Some((TB::Forest, h));
@@ -1643,13 +1777,7 @@ fn ground_color_arena(x: f32, z: f32) -> [f32; 4] {
     // centre (so even the flattened ore bowl reads rocky, not meadow). Darker + redder than the
     // plain hills so the mountain biome reads as its own place.
     {
-        let mut mt = 0.0f32;
-        for c in ARENA_MOUNTS {
-            let d = (Vec2::new(wx, wz) - c).length();
-            if d < ARENA_MOUNT_R {
-                mt = mt.max(1.0 - d / ARENA_MOUNT_R);
-            }
-        }
+        let mt = arena_region_t(wx, wz, &ARENA_MOUNTS, ARENA_MOUNT_R);
         if mt > 0.0 {
             // Ramp up fast so the whole massif footprint (not just its core) reads as a grey
             // rockscape against the meadow.
@@ -1657,15 +1785,26 @@ fn ground_color_arena(x: f32, z: f32) -> [f32; 4] {
             col = mix3(col, [0.35, 0.16, 0.10], smoothstep(0.45, 1.0, mt) * 0.42); // rust ore stain toward the core
         }
     }
-    // Forest patches: a greener, shadier clearing so the grove reads as woodland, not open meadow.
+    // Snow highlands: a cold massif — pale blue-grey scree at the rim climbing to a bright frost
+    // cap at the peak, so the lobe reads as its own (cold) place from across the map.
     {
-        let mut ft = 0.0f32;
-        for c in ARENA_FOREST {
-            let d = (Vec2::new(wx, wz) - c).length();
-            if d < 9.0 {
-                ft = ft.max(1.0 - d / 9.0);
-            }
+        let st = arena_region_t(wx, wz, &ARENA_SNOW, ARENA_SNOW_R);
+        if st > 0.0 {
+            col = mix3(col, [0.42, 0.46, 0.52], smoothstep(0.04, 0.42, st) * 0.80); // frosted scree
+            col = mix3(col, lin3(p.snow), smoothstep(0.30, 0.90, st) * 0.92); // the snow cap
         }
+    }
+    // Dune scrub: dry sand-gold flats fading into the meadow at the rim.
+    {
+        let dt = arena_region_t(wx, wz, &ARENA_DUNES, ARENA_DUNE_R);
+        if dt > 0.0 {
+            col = mix3(col, lin3(p.grass_dry), smoothstep(0.02, 0.35, dt) * 0.70);
+            col = mix3(col, lin3(p.sand), smoothstep(0.20, 0.85, dt) * 0.78);
+        }
+    }
+    // Forest patches: a greener, shadier floor so the stand reads as woodland, not open meadow.
+    {
+        let ft = arena_region_t(wx, wz, &ARENA_FOREST, ARENA_FOREST_R);
         if ft > 0.0 {
             col = mix3(col, lin3(p.grass_dark), smoothstep(0.05, 0.6, ft) * 0.55);
             col = mix3(col, [0.09, 0.19, 0.08], smoothstep(0.1, 0.8, ft) * 0.34); // deep, shady forest floor
@@ -2024,6 +2163,19 @@ fn corner_top_y_for(cx: i32, cz: i32, h_ref: i32) -> Option<f32> {
 /// clean there.
 fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
     let bx = cx as f32 / MAP_SCALE;
+    // The arena is a different island on a different set of water: its own coast + its own lakes.
+    // (Every field below is authored in home-island coords, so none of it applies.) Same shape as
+    // the campaign branch — sea reads a moderate negative, otherwise the still-water SDF — so the
+    // mesh's marching-squares cut treats the arena's shore and lakeshores exactly like the
+    // campaign's, i.e. as a smooth sub-tile curve instead of a tile-grid staircase.
+    if is_arena() {
+        let bz = cz as f32 / MAP_SCALE;
+        if arena_sea_field(bx, bz) < 0.0 {
+            return (-0.6, false); // ocean
+        }
+        let sd = arena_lake_sd(bx, bz);
+        return (sd, sd < 0.0);
+    }
     let bz = cz as f32 / MAP_SCALE;
     // `is_land_shape` is the OLD island ellipse, which does NOT include the Blight (it extends
     // south past the old coast). Without the Blight exception every fortress-interior corner read
@@ -2525,12 +2677,20 @@ pub fn build_step(
             0 => bs_grass_sheet(commands, meshes, images, terrain_mats),
             // Sea plane + shore-distance bake (boats + camp planning are skipped inside).
             1 => bs_sea_and_boats(commands, meshes, images, std_mats, water_mats),
-            // Decorative light-forest trees on the sprinkled `Forest` tiles (the outer fringe).
+            // Decorative light-forest trees on the `Forest` tiles (the outer fringe + the two
+            // dense stands).
             2 => bs_scatter_biome(Biome::Forest, commands, meshes, std_mats, state),
+            // The arena's own biome regions get their native props, so each place reads as a place:
+            // crags on the iron mountains + rocky bluffs, firs/rime on the snow highlands, cacti and
+            // dry rocks on the dune scrub. (`classify_arena` only emits these tiles inside the
+            // authored mirrored regions, so the scatter can't stray onto the meadow or the lane.)
+            3 => bs_scatter_biome(Biome::Rocky, commands, meshes, std_mats, state),
+            4 => bs_scatter_biome(Biome::Snow, commands, meshes, std_mats, state),
+            5 => bs_scatter_biome(Biome::Desert, commands, meshes, std_mats, state),
             // BiomeAmbiences resource (atmosphere/particles) — ungated render systems read it.
-            3 => bs_insert_ambiences(commands, state),
+            6 => bs_insert_ambiences(commands, state),
             // Meadow ground cover (tufts / clover / flowers) on the open grass.
-            4 => bs_grass_cover(commands, meshes, std_mats),
+            7 => bs_grass_cover(commands, meshes, std_mats),
             _ => {}
         }
         return;
@@ -3111,6 +3271,22 @@ const LOD_STRIDE: i32 = 2;
 /// Whether terrain LOD is on. Shares the scatter culling's `FOREST_NOCULL=1` escape hatch —
 /// the whole-island map-shot recipe and perf A/B runs want EVERYTHING at full res.
 fn terrain_lod_enabled() -> bool {
+    // The ARENA is always full-res — no coarse drape at all.
+    //
+    // The drape deliberately skips the marching-squares shore cut (see `build_terrain_chunk_coarse`),
+    // which is exactly what draws the arena's smooth coastline; past the hand-off distance the
+    // island's edge therefore snapped back to the tile-grid sawtooth this pass exists to remove.
+    // On the campaign island that trade is invisible (its far coast is haze-fogged and you never
+    // orbit it), but the RTS camera strips the fog and lives zoomed OUT, so the toothed rim was the
+    // first thing you saw. Affordable: the arena's whole land disc (r = `ARENA_LAND_R`) is ~34k
+    // tiles — roughly HALF the ~70k the campaign already keeps full-res inside its 150u LOD radius —
+    // and the skirmish map carries none of the campaign's scatter load on top.
+    //
+    // Checked BEFORE the `OnceLock`: the cache must not freeze a campaign answer onto the arena
+    // (or vice versa) if the active map ever changes within a process.
+    if is_arena() {
+        return false;
+    }
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("FOREST_NOCULL").is_err())
@@ -3442,9 +3618,15 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             //     only the lowest lip is smoothed here.
             // Gated to h≤1 so deliberate sheer seaward MOUNTAIN cliffs (coast_hill / mesa, h≥2)
             // keep their per-tile face, and skipped at river mouths (already cut clean).
+            //   • the whole ARENA coast — the skirmish island is ringed by a class-1 sand
+            //     foreshore, and with no smooth cut its waterline was a pure tile-grid sawtooth
+            //     (player report: the arena coast read as blocky teeth). It has no tall seaward
+            //     cliffs anywhere (`arena_shore_damp` fades every massif flat before the sand), so
+            //     the whole coast qualifies and there's nothing here for the h≤1 gate to protect.
             let low_coast = matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
                 || matches!(coast_biome, Some((_, h)) if h <= 1
-                    && nw_headland((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE) > 0.0);
+                    && (is_arena()
+                        || nw_headland((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE) > 0.0));
             let low_wet_coast = !has_river && low_coast && cwat.iter().any(|c| c.0 < 0.0); // touches sea
             // Corner water field: the real river/lake SDF, OR — on a low wetland coast — a smooth SEA
             // SDF so the contour follows the true shoreline instead of snapping to the tile grid

@@ -17,22 +17,47 @@ use crate::palette::lin;
 use crate::rts::{in_skirmish, Deposit, DepositKind};
 use crate::trees::{build_tree_mesh, TreeKind};
 
-/// How many units of resource a full site holds (contested-centre variant is richer).
-// Richer sites than before — the bigger-game economy has many more workers drawing on them, so they
-// need to last a long match.
-const WOOD_REMAIN: f64 = 700.0;
-const WOOD_REMAIN_MID: f64 = 1300.0;
-const STONE_REMAIN: f64 = 520.0;
-const STONE_REMAIN_MID: f64 = 1000.0;
-const GOLD_REMAIN: f64 = 340.0;
-const GOLD_REMAIN_MID: f64 = 640.0;
+// ── Site stock: how many units of resource a full site holds (contested-centre variant is richer).
+//
+// **The island's resources are FINITE and are meant to RUN OUT** — that scarcity is the pressure the
+// whole skirmish is built on. The previous numbers (wood 700 / iron 1400 / forest 1500) were set
+// "so they last a long match" and overshot badly: a worker banks only ~4 wood / 3 stone / 2 gold per
+// trip (`workers::per_trip`), so one 700-wood grove was ~175 round trips — nothing ever visibly
+// depleted, let alone exhausted, and the map played as infinite.
+//
+// Sized instead from the MATCH budget. A full side over a ~15-25 min game spends roughly:
+//   • ~340 wood on buildings (hall + houses + producers + barracks + market + towers) and ~10/soldier;
+//   • ~300 stone on walls, towers, barracks, gold mines;
+//   • 15 gold/soldier — by far the tightest line.
+// Per side that works out to ~900-1000 wood, and the island's mirrored halves hold about that much
+// each (see the per-kind sums below), so a side that over-expands genuinely runs dry and has to
+// contest the centre. Each ordinary site is now ~45-60 trips: with 7-ish visual parts, a tree falls
+// / a boulder shatters every ~6-10 trips, so depletion READS on screen long before exhaustion.
+//
+// Wood per side ≈ 180 (own) + 180 (own 2nd) + 400 (forest stand) = 760, plus a share of the 360
+// contested grove → ~940. Right at the budget: enough for a full town + army, with nothing spare.
+const WOOD_REMAIN: f64 = 180.0; // 45 trips
+const WOOD_REMAIN_MID: f64 = 360.0; // 90 trips — the contested prize
+// Stone per side ≈ 150 + 150 + 320 (iron vein) = 620, plus a share of the 300 contested outcrop.
+// Roomier than wood on purpose: stone is the wall/tower resource and a turtling player burns it fast.
+const STONE_REMAIN: f64 = 150.0; // 50 trips
+const STONE_REMAIN_MID: f64 = 300.0; // 100 trips
+// Gold is the deliberate SQUEEZE — it buys soldiers and nothing else. Per side ≈ 120 (own) + a share
+// of the 240 contested vein ≈ 240 mined = only ~16 soldiers. Everything past that must come from the
+// Market's passive trickle (`workers::MARKET_GOLD_PER_SEC`) or from taking the contested vein, which
+// is exactly the fight the arena wants.
+const GOLD_REMAIN: f64 = 120.0; // 60 trips
+const GOLD_REMAIN_MID: f64 = 240.0; // 120 trips
 /// Iron-ore vein — a RICH Stone site (mechanically Stone), worth well more than an ordinary
-/// outcrop; one at each mountain foot (mirrored → fair).
-const IRON_REMAIN: f64 = 1400.0;
-/// Forest-grove stand — a dense stand of extra timber; one per side (mirrored → fair).
-const FOREST_REMAIN: f64 = 1500.0;
+/// outcrop; one at each mountain foot (mirrored → fair). The reward for working the far massif.
+const IRON_REMAIN: f64 = 320.0;
+/// Forest-grove stand — a dense stand of extra timber; one per side (mirrored → fair). A side's
+/// single biggest timber source, and still finite: ~100 trips and the stand is stumps.
+const FOREST_REMAIN: f64 = 400.0;
 
-/// Tree count in a grove (contested-centre grove is denser; the forest patch denser still).
+/// Tree count in a grove (contested-centre grove is denser; the forest patch denser still). Read
+/// against the stock above these set the fell CADENCE — e.g. an ordinary grove drops a tree every
+/// ~26 wood (~6 trips), so a working sawmill visibly eats its grove.
 const GROVE_TREES: usize = 7;
 const GROVE_TREES_MID: usize = 12;
 const FOREST_TREES: usize = 15;
@@ -195,8 +220,9 @@ fn spawn_arena_hills(
     let (hills, hill_r) = crate::worldmap::arena_hills();
     let mut seed: u32 = 0x40C_5EED;
     for c in hills {
-        // A dozen boulders: one big centre crag + a scree skirt fading out to `hill_r`.
-        let n = 12;
+        // One big centre crag + a scree skirt fading out to `hill_r`. Count scales with the hill's
+        // footprint so the enlarged arena's bluffs don't read as a few pebbles on a bare mound.
+        let n = (hill_r * 1.6) as usize;
         for k in 0..n {
             let (rx, rz, sc) = if k == 0 {
                 (c.x, c.y, 2.4) // the summit crag
@@ -225,10 +251,13 @@ fn spawn_arena_hills(
     // cluster's own boulders are the only obstacles near the vein.
     let (mounts, mount_r) = crate::worldmap::arena_mountains();
     for c in mounts {
-        let n = 16;
+        // Crag count scales with the massif's footprint (see the hills above).
+        let n = (mount_r * 1.6) as usize;
         for k in 0..n {
             let ang = crate::wildlife::rng_range(&mut seed, 0.0, TAU);
-            let rr = crate::wildlife::rng_range(&mut seed, 5.5, mount_r * 0.95);
+            // Inner keep-out ≥ the generator's force-flat ore-bowl disc
+            // (`worldmap::ARENA_DEPOSIT_FLAT`), so no crag lands on the vein the workers harvest.
+            let rr = crate::wildlife::rng_range(&mut seed, 8.0, mount_r * 0.95);
             // First few are tall crags; the rest a scree skirt fading out to the rim.
             let base_sc = if k < 3 {
                 crate::wildlife::rng_range(&mut seed, 2.2, 3.2)

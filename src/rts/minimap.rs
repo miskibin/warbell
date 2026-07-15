@@ -15,10 +15,11 @@ use crate::game_state::AppState;
 use crate::rts::camera::RtsCamFocus;
 use crate::rts::{in_skirmish, Deposit, DepositKind, RtsBuilding, RtsUnit, Side, UnitKind};
 
-/// Panel size (px) and the world half-extent it shows (a touch past the land radius so the whole
-/// island frames). World XZ in `[-HALF, HALF]` maps to panel `[0, SIZE]`.
+/// Panel size (px) and the world half-extent it shows. World XZ in `[-HALF, HALF]` maps to panel
+/// `[0, SIZE]`. Read straight off the arena's land radius so the whole island always frames — a
+/// hand-copied number here silently cropped the map the moment the arena was resized.
 const SIZE: f32 = 172.0;
-const HALF: f32 = 52.0;
+const HALF: f32 = crate::worldmap::ARENA_LAND_R;
 /// Inset of the blip field from the panel border.
 const PAD: f32 = 4.0;
 /// Panel anchor (px from the window's left / bottom) — must match the spawned node.

@@ -74,10 +74,13 @@ const ARRIVE: f32 = 0.6;
 /// just past it (direct steer can't go around; A* can).
 const PATH_RANGE: f32 = 1.5;
 /// A* node budget for the RTS mover. The default `NAV_MAX_NODES` (8400) is sized for the ~40-tile
-/// keep march and **exhausts → empty on cross-arena trips** (its own doc says so) — the two bases sit
-/// ~80 tiles apart diagonally, so an "attack the enemy base" order drained the budget, got an empty
-/// path, and the army stalled boxed in by its own buildings. This budget covers a full arena crossing.
-const RTS_NAV_BUDGET: u32 = 60_000;
+/// keep march and **exhausts → empty on cross-arena trips** (its own doc says so) — an exhausted
+/// search returns an EMPTY path, so an "attack the enemy base" order silently stalls the army boxed
+/// in by its own buildings. The two bases now sit ~124 tiles apart diagonally (the arena doubled),
+/// and A*'s explored set grows ~O(d²), so this is raised ~4× over the 60k that covered the old
+/// ~62u crossing. It's a CAP, not a cost: a clear run expands far fewer nodes, so the headroom is
+/// free and only spends when a path is genuinely tortuous.
+const RTS_NAV_BUDGET: u32 = 240_000;
 /// Max facing slew (rad/s) — snappier than villagers (RTS units pivot briskly).
 const MAX_TURN: f32 = 6.0;
 /// Phyllotaxis group fan-out: slot `n` sits at radius `SPREAD·√n`, angle `n·GOLDEN` around the goal

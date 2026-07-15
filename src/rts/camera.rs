@@ -43,15 +43,21 @@ fn iso_pitch() -> f32 {
 /// Eye distance from the focus along the view axis. In an ORTHO projection this does **not** change
 /// apparent size (only what falls inside near/far), so it's simply "far enough above the arena that
 /// no geometry clips the eye plane" — the zoom is driven by the ortho viewport height instead.
-const ISO_DIST: f32 = 90.0;
+/// Raised with the map: at a wide `ZOOM_MAX` the ortho slab has to clear the far side of a
+/// 208u-wide island, or the near geometry falls outside the eye plane.
+const ISO_DIST: f32 = 150.0;
 
 // ── zoom = vertical world-units of view (ortho `FixedVertical`) ──
 const ZOOM_MIN: f32 = 10.0;
-const ZOOM_MAX: f32 = 60.0;
-/// Mid-range opening zoom (spec §3: "zoom mid-range").
-const ZOOM_DEFAULT: f32 = 34.0;
-/// World-units of vertical view added/removed per wheel notch.
-const ZOOM_STEP: f32 = 3.0;
+/// Widest view. Sized for the enlarged arena: ≈124u frames both bases (they sit ≈124u apart) with
+/// their towns, so a player can survey the whole engagement from one pose.
+const ZOOM_MAX: f32 = 130.0;
+/// Mid-range opening zoom (spec §3: "zoom mid-range"). Opened up with the map — the old 34 was a
+/// tactical squint that showed almost nothing of the doubled arena.
+const ZOOM_DEFAULT: f32 = 48.0;
+/// World-units of vertical view added/removed per wheel notch. Scaled up so crossing the (much
+/// wider) zoom range still takes a sane number of notches.
+const ZOOM_STEP: f32 = 5.0;
 
 // ── panning ──
 /// Ground pan speed (world-units/sec) at the default zoom; scaled by `zoom / ZOOM_DEFAULT` so a

@@ -63,12 +63,20 @@ fn snap(p: Vec2) -> Vec2 {
 }
 /// Max terrain height spread (world units) allowed under a footprint before placement is refused.
 const FLAT_TOLERANCE: f32 = 0.35;
-/// No building may be raised within this radius of the ENEMY base plateau centre (spec §6).
-const ENEMY_BASE_KEEPOUT: f32 = 13.0;
-/// Your castle's territory: you may only build within this radius of your OWN base centre. Covers
-/// your half of the arena + the contested centre (origin is ~31u from each base), but stops well
-/// short of the enemy's base (~62u away) — so you can't wall in / cheese the opponent's plateau.
-pub(crate) const BUILD_TERRITORY_R: f32 = 34.0;
+/// No building may be raised within this radius of the ENEMY base plateau centre (spec §6). Matches
+/// the arena's force-flat base plateau (`worldmap::ARENA_BASE_R`), so the keep-out is exactly "their
+/// bailey".
+const ENEMY_BASE_KEEPOUT: f32 = 20.0;
+/// Your castle's territory: you may only build within this radius of your OWN base centre.
+///
+/// Derived from the base separation, NOT picked by eye. Each base sits |base| ≈ 62u from the origin
+/// and the two are ≈124u apart, so this must be:
+///   • **> 62** — or you couldn't build at the contested centre, where the richest deposits are;
+///   • **< 124 − 20 = 104** — or your territory would reach into the enemy's keep-out and you could
+///     wall them in.
+/// 72 sits comfortably in that window: it covers your own half plus ~10u past the centre line
+/// (enough to fortify the contested deposits) while still stopping ~52u short of the enemy plateau.
+pub(crate) const BUILD_TERRITORY_R: f32 = 72.0;
 
 // ────────────────────────────────────────────────────────────── plugin
 

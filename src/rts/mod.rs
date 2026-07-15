@@ -77,12 +77,15 @@ impl Side {
 }
 
 /// Arena base centres (world XZ; castle-at-origin frame). The arena generator flattens a
-/// plateau at each and the deposits mirror through the origin.
-pub const PLAYER_BASE: Vec2 = Vec2::new(-22.0, 22.0);
-pub const RIVAL_BASE: Vec2 = Vec2::new(22.0, -22.0);
-/// Usable land radius of the arena ellipse (tiles = world units); ocean beyond. Kept ≥ the base
-/// centre distance (~31) so the camera can still frame both bases after the map shrank.
-pub const ARENA_RADIUS: f32 = 36.0;
+/// plateau at each and the deposits mirror through the origin. Each base sits ≈62u from the
+/// origin, so the two are ≈124u apart along the road.
+pub const PLAYER_BASE: Vec2 = Vec2::new(-44.0, 44.0);
+pub const RIVAL_BASE: Vec2 = Vec2::new(44.0, -44.0);
+/// Radius of the arena's open **play core** (world units) — the field the camera focus is clamped
+/// to and the AI fights over. Kept ≥ the base centre distance (≈62) so the camera can still frame
+/// both bases. The island's LAND extends further (`worldmap::ARENA_LAND_R`, 104) to hold the
+/// diagonally-placed bases, the outer biome regions and the beach.
+pub const ARENA_RADIUS: f32 = 72.0;
 
 pub fn base_of(side: Side) -> Vec2 {
     match side {
