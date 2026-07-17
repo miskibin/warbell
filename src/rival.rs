@@ -494,9 +494,7 @@ const WALL_AT: usize = 8;
 
 // ── Build (a worldmap build phase) ──────────────────────────────────────────────────
 
-/// Raise the rival stronghold at [`RIVAL_CENTRE`]. Called once from `worldmap::build_step`. Home map
-/// only — the desert sits elsewhere on the Ashlands layout, so the fort would land in the wrong
-/// biome there; a future step can place an Ashlands variant.
+/// Raise the rival stronghold at [`RIVAL_CENTRE`]. Called once from `worldmap::build_step`.
 ///
 /// Only the KEEP is raised here (permanent world geometry). The bailey starts bare AND wall-less —
 /// just like the player's own castle starts unwalled — and the rival's economy raises buildings and

@@ -382,7 +382,6 @@ impl Plugin for BiomePlugin {
             .init_resource::<BuildJob>()
             .init_resource::<BuildProgress>()
             .init_resource::<crate::worldmap::ActiveMap>()
-            .add_systems(Startup, init_active_map_from_env)
             .add_systems(
                 Update,
                 (
@@ -405,15 +404,6 @@ fn build_active(pending: Res<PendingBuild>, job: Res<BuildJob>) -> bool {
 /// Atmosphere tuple: (sky, fog_density, sun_color, sun_illuminance, ambient_color,
 /// ambient_brightness, sun_pos).
 type Atmo = (u32, f32, u32, f32, u32, f32, Vec3);
-
-/// Debug boot hook: `FOREST_MAP=2` starts the run on the Volcanic Ashlands map (the start-screen
-/// toggle is the normal path; this is for the screenshot harness + quick testing).
-fn init_active_map_from_env(mut active: ResMut<crate::worldmap::ActiveMap>) {
-    if std::env::var("FOREST_MAP").ok().as_deref() == Some("2") {
-        active.0 = crate::worldmap::MapId::Ashlands;
-        info!("FOREST_MAP=2 → booting Volcanic Ashlands");
-    }
-}
 
 /// The world-build driver. When [`PendingBuild`] is raised it arms a [`BuildJob`], waits
 /// [`BUILD_WARMUP`] so the veil presents, wipes the prior world ONCE, then runs one

@@ -144,7 +144,7 @@ impl Plugin for GameStatePlugin {
             .add_systems(OnEnter(AppState::GameOver), clear_run_active)
             .add_systems(
                 Update,
-                (start_screen_input, cycle_difficulty, start_click, update_diff_seg, cycle_map, update_map_seg)
+                (start_screen_input, cycle_difficulty, start_click, update_diff_seg)
                     .run_if(in_state(AppState::StartScreen)),
             )
             .add_systems(
@@ -572,9 +572,6 @@ struct GameOverMenuBtn;
 /// A difficulty segment (click to select).
 #[derive(Component)]
 struct SegButton(crate::siege::Difficulty);
-/// A map segment on the start screen (click to choose which world a New Game generates).
-#[derive(Component)]
-struct MapSeg(crate::worldmap::MapId);
 // ── Pause-menu buttons ──
 #[derive(Component)]
 struct PauseResumeBtn;
@@ -627,10 +624,8 @@ fn spawn_start_screen(
     siege: Option<Res<crate::siege::Siege>>,
     mut save: ResMut<crate::savegame::SaveExists>,
     run: Res<RunInProgress>,
-    active_map: Res<crate::worldmap::ActiveMap>,
 ) {
     let cur = current_difficulty(siege.as_deref());
-    let cur_map = active_map.0;
     // Re-check the file here: Bevy runs the initial `OnEnter(StartScreen)` *before* `Startup`
     // (where `detect_existing_save` sets the flag), so reading `save.0` directly would miss an
     // existing save on a fresh launch. Recompute + write it back so the flag is right from frame 0.
@@ -824,53 +819,6 @@ fn spawn_start_screen(
                             ))
                             .with_children(|b| {
                                 b.spawn(label(&fonts.semibold, diff_name(d), 13.0, if on { INK } else { TEXT_FAINT }));
-                            });
-                        }
-                    });
-                });
-                // Map selector — which world a New Game builds (Green Isle / Ashlands). Mirrors the
-                // difficulty segmented control; the live choice lives in the `ActiveMap` resource.
-                m.spawn((
-                    Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(7.0), ..default() },
-                    anim(AnimKind::Rise, 0.35, 0.7),
-                ))
-                .with_children(|d| {
-                    d.spawn(label(&fonts.semibold, "MAP", 11.0, KICKER));
-                    d.spawn((
-                        Node {
-                            flex_direction: FlexDirection::Row,
-                            padding: UiRect::all(Val::Px(3.0)),
-                            border: widgets::border(1.0),
-                            border_radius: radius(10.0),
-                            ..default()
-                        },
-                        BackgroundColor(rgba(24, 19, 13, 0.72)),
-                        BorderColor::all(BORDER_SOFT),
-                    ))
-                    .with_children(|seg| {
-                        for mp in MAPS {
-                            let on = mp == cur_map;
-                            seg.spawn((
-                                Button,
-                                Interaction::default(),
-                                Node {
-                                    padding: UiRect::axes(Val::Px(20.0), Val::Px(7.0)),
-                                    border_radius: radius(7.0),
-                                    flex_direction: FlexDirection::Row,
-                                    align_items: AlignItems::Center,
-                                    column_gap: Val::Px(6.0),
-                                    ..default()
-                                },
-                                BackgroundColor(if on { GOLD_DEEP } else { Color::NONE }),
-                                BorderColor::all(Color::NONE),
-                                MapSeg(mp),
-                            ))
-                            .with_children(|b| {
-                                b.spawn(label(&fonts.semibold, map_name(mp), 13.0, if on { INK } else { TEXT_FAINT }));
-                                // Flag a not-yet-finished map so players know what they're picking.
-                                if !map_ready(mp) {
-                                    b.spawn(label(&fonts.semibold, "(not ready)", 10.0, if on { INK } else { TEXT_FAINT }));
-                                }
                             });
                         }
                     });
@@ -1382,7 +1330,6 @@ fn start_click(
             Option<&StartResumeButton>,
             Option<&CreditsButton>,
             Option<&SegButton>,
-            Option<&MapSeg>,
             Option<&QuitButton>,
             Option<&StartSettingsButton>,
             Option<&SkirmishButton>,
@@ -1397,7 +1344,7 @@ fn start_click(
     run: Res<RunInProgress>,
     mut fresh: ResMut<FreshRunPending>,
     mut credits: ResMut<crate::mainmenu::CreditsOpen>,
-    mut active_map: ResMut<crate::worldmap::ActiveMap>,
+    active_map: Res<crate::worldmap::ActiveMap>,
     mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -1406,7 +1353,7 @@ fn start_click(
     }
     let mut siege = siege;
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, play, cont, resume, cred, seg, mapseg, quit, settings_b, skirmish_b) in &q {
+    for (interaction, play, cont, resume, cred, seg, quit, settings_b, skirmish_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -1418,10 +1365,6 @@ fn start_click(
         }
         if settings_b.is_some() {
             gfx_menu.0 = true; // open the graphics Settings page over the start screen
-        }
-        // Pick a map segment first, so a New Game in the same click batch sees the new choice.
-        if let Some(ms) = mapseg {
-            active_map.0 = ms.0;
         }
         if play.is_some() {
             if save.0 {
@@ -1457,54 +1400,6 @@ fn update_diff_seg(
     let cur = current_difficulty(siege.as_deref());
     for (seg, mut bg, children) in &mut q {
         let on = seg.0 == cur;
-        bg.0 = if on { GOLD_DEEP } else { Color::NONE };
-        for child in children.iter() {
-            if let Ok(mut tc) = text_q.get_mut(child) {
-                tc.0 = if on { Color::WHITE } else { TEXT_FAINT };
-            }
-        }
-    }
-}
-
-/// The maps offered on the start screen (order = segment order).
-const MAPS: [crate::worldmap::MapId; 2] =
-    [crate::worldmap::MapId::Home, crate::worldmap::MapId::Ashlands];
-fn map_name(m: crate::worldmap::MapId) -> &'static str {
-    match m {
-        crate::worldmap::MapId::Home => "Green Isle",
-        crate::worldmap::MapId::Ashlands => "Ashlands",
-        // Entered via the Potyczka relaunch, never the M-cycle — named here for completeness.
-        crate::worldmap::MapId::Arena => "Arena",
-    }
-}
-/// Whether a map is finished enough to ship without a caveat. Ashlands is a playable prototype
-/// (ground/atmosphere reskinned, but tree foliage etc. not yet charred), so the menu flags it.
-fn map_ready(m: crate::worldmap::MapId) -> bool {
-    !matches!(m, crate::worldmap::MapId::Ashlands)
-}
-
-/// On the start screen, **M** cycles which map a New Game builds. The segmented control reflects it.
-fn cycle_map(keys: Res<ButtonInput<KeyCode>>, mut active: ResMut<crate::worldmap::ActiveMap>) {
-    if !keys.just_pressed(KeyCode::KeyM) {
-        return;
-    }
-    active.0 = match active.0 {
-        crate::worldmap::MapId::Home => crate::worldmap::MapId::Ashlands,
-        // Arena is skirmish-only (relaunch flag), not part of the campaign M-cycle.
-        crate::worldmap::MapId::Ashlands | crate::worldmap::MapId::Arena => {
-            crate::worldmap::MapId::Home
-        }
-    };
-}
-
-/// Recolour the map segments to match the live [`crate::worldmap::ActiveMap`] (M key or click).
-fn update_map_seg(
-    active: Res<crate::worldmap::ActiveMap>,
-    mut q: Query<(&MapSeg, &mut BackgroundColor, &Children)>,
-    mut text_q: Query<&mut TextColor>,
-) {
-    for (seg, mut bg, children) in &mut q {
-        let on = seg.0 == active.0;
         bg.0 = if on { GOLD_DEEP } else { Color::NONE };
         for child in children.iter() {
             if let Ok(mut tc) = text_q.get_mut(child) {

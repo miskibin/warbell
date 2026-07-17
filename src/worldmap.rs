@@ -114,7 +114,7 @@ pub const ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
 // are the grass meadow macro-patch tones; `swamp_*` the wet marsh mottle; `blight_*` the
 // trampled-ork-mud mottle; `snow_shade/_bright` the wind-drift sastrugi; `forest_dark/_dry`
 // the canopy loam/litter; `dirt` grass-cliff soil; `snow_cliff_*` the snow lip over rock;
-// `road_dirt` the baked approach-road tint; `lava_*` the volcanic-map magma field (map 2).
+// `road_dirt` the baked approach-road tint.
 #[derive(Clone, Copy)]
 struct Palette {
     grass: u32,
@@ -143,10 +143,6 @@ struct Palette {
     snow_cliff_lip: u32,
     snow_cliff_rock: u32,
     road_dirt: u32,
-    // ── Lava field (map 2 only — see `TB::Lava`) ──
-    lava_basalt: u32,
-    lava_seam: u32,
-    lava_seam_hot: u32,
 }
 
 /// The home island's original palette — values unchanged from the pre-second-map era.
@@ -177,47 +173,6 @@ const PAL_HOME: Palette = Palette {
     snow_cliff_lip: 0xe9f0f9,
     snow_cliff_rock: 0x7b8597,
     road_dirt: 0x8a6d44,
-    lava_basalt: 0x2a2421,
-    lava_seam: 0xc8521a,
-    lava_seam_hot: 0xffb347,
-};
-
-/// **Volcanic Ashlands** (map 2) — the 5 biomes reskinned for a charred volcanic world, but each
-/// kept VISUALLY DISTINCT so a biome still reads as itself under the ember sun (an earlier muddy
-/// pass made snow read tan + forest read flat-brown). Snow stays COOL (blue-grey ash) so it never
-/// warms to desert; forest keeps a sooty GREEN (g>r) so the terrain shader's foliage layer fires
-/// and it reads as scorched woodland, not mud; desert is clearly warm sand; rock is near-black
-/// basalt; swamp a sulfur olive.
-const PAL_ASH: Palette = Palette {
-    grass: 0x575249,       // cinder flats (the neutral "safe" ground)
-    grass_dark: 0x3c3931,  // shaded ash hollows
-    grass_dry: 0x6f6453,   // dry warm cinder
-    grass_gold: 0x8c6838,  // scorched sun-baked sweeps
-    sand: 0x837458,        // grey-tan volcanic grit beaches
-    forest: 0x424e36,      // sooty GREEN grove floor (g>r → reads as woodland)
-    rock: 0x312c27,        // near-black basalt range
-    snow: 0xe2e7f0,        // BRIGHT cool ashfall — value (not hue) is what reads as snow vs tan
-    desert: 0x9c8a63,      // warm tan dunes (clearly sandy)
-    swamp: 0x4a4226,       // sulfur-tainted muck
-    swamp_dark: 0x2a2615,  // tar pools
-    swamp_moss: 0x726232,  // sulfur crust
-    swamp_algae: 0x5c4c22, // brimstone seep
-    blight: 0x3a2e1f,      // trampled ash mud
-    blight_dark: 0x1f1810,
-    blight_ash: 0x6a6258,
-    blight_green: 0x55502f,
-    blight_rust: 0x6a3318,
-    snow_shade: 0xa2aab8,  // cool drift shadow
-    snow_bright: 0xdfe6ee, // wind-polished cool ash crest
-    forest_dark: 0x313b27, // charred green loam
-    forest_dry: 0x586338,  // ash-dusted leaf litter (greenish)
-    dirt: 0x3a2c1d,        // cliff soil
-    snow_cliff_lip: 0xd0d8e2,
-    snow_cliff_rock: 0x565b64,
-    road_dirt: 0x4a3a26,
-    lava_basalt: 0x2a2421, // cooled crust between the seams
-    lava_seam: 0xc8521a,   // glowing crack
-    lava_seam_hot: 0xffb347, // white-hot core
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -232,10 +187,6 @@ enum TB {
     /// The ork-blighted mire around Gnashfang Hold (south extension). Maps to
     /// [`Biome::Swamp`] for gameplay (poison, slow, ambience) but draws its own ground.
     Blight,
-    /// **Lava field** — the Volcanic Ashlands signature biome (map 2 only). Like the Blight it
-    /// draws its own ground (basalt + glowing magma seams) but maps to [`Biome::Swamp`] for
-    /// gameplay, so standing in it burns (the swamp poison-and-slow floor, reskinned).
-    Lava,
 }
 
 struct Region {
@@ -342,30 +293,6 @@ const PLATEAUS: [Plateau; 4] = [
 const DELIBERATE_LAKE: (f32, f32, f32, f32) = (92.0, 80.0, 5.0, 3.0); // x,z,rx,rz
 
 // ── Map selection (which world to generate) ──────────────────────────────────────
-/// **Volcanic Ashlands** atmosphere (map 2): a dim red-brown sky + orange fog carry the hellish
-/// mood, while the sun is only *warm* (not pure-orange) so biome hues still read — a fully
-/// saturated ember sun washed snow to tan and erased every biome's colour. Low sun = long hostile
-/// shadows. Same tuple shape as [`ATMOSPHERE`]; fog stays moderate (heavy volumetric fog blacks
-/// the Atmosphere sky — see the ultra-graphics note).
-const ASH_ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
-    (0x5a3b32, 0.0075, 0xffdca8, 10_500.0, 0x6a5e54, 145.0, Vec3::new(90.0, 64.0, 30.0));
-
-/// Ashlands biome layout — the same five biome kinds (reskinned by [`PAL_ASH`]) placed in a
-/// deliberately DIFFERENT arrangement from the home island, so the world reads as a new place
-/// even before the palette/atmosphere land. Mirror was dropped (it desyncs colour-vs-class +
-/// bridges/town-plots); bespoke positions + the noise reseed do the layout work instead.
-// Ashlands stays on the legacy smooth-terraced mountains (cliffy: false) for now — the mesa
-// treatment is tuned for the home island first; give the charcoal massif its own pass set when
-// the Ashlands gets its character pass.
-const ASH_REGIONS: [Region; 6] = [
-    Region { x: 24.0, z: 54.0, r: 32.0, biome: TB::Rock, peak: 18, cliffy: false, passes: &[] }, // W charcoal massif (home put it E)
-    Region { x: 112.0, z: 26.0, r: 28.0, biome: TB::Snow, peak: 9, cliffy: false, passes: &[] }, // NE ashfall drifts
-    Region { x: 110.0, z: 82.0, r: 30.0, biome: TB::Desert, peak: 0, cliffy: false, passes: &[] }, // SE bleached dunes
-    Region { x: 58.0, z: 92.0, r: 26.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // S burnt grove
-    Region { x: 96.0, z: 48.0, r: 18.0, biome: TB::Lava, peak: 0, cliffy: false, passes: &[] }, // E lava field (the signature biome)
-    Region { x: 70.0, z: 14.0, r: 20.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // N sulfur seep
-];
-
 /// Which world a run generates. `u8` on the wire (0 = Home, default) so it rides the save +
 /// the boot global trivially. Add a variant + a [`MapDef`] to ship a third map.
 #[repr(u8)]
@@ -373,7 +300,6 @@ const ASH_REGIONS: [Region; 6] = [
 pub enum MapId {
     #[default]
     Home = 0,
-    Ashlands = 1,
     /// The RTS-skirmish **arena** (`FOREST_RTS=1`): a small symmetric grass island, no biome blobs
     /// / rivers / mountains — just two base plateaus, a dirt road between them and mirrored deposit
     /// sites. Generated by [`classify_arena`] / the arena arm of [`build_step`].
@@ -409,7 +335,6 @@ struct MapDef {
     /// Added inside `noise_a`/`noise_b` → reseeds the coastline fray, river winding and inland
     /// hills. Home is `0.0` (identical output — the regression anchor).
     noise_phase: f32,
-    has_lava: bool,
 }
 
 const MAP_HOME: MapDef = MapDef {
@@ -417,14 +342,6 @@ const MAP_HOME: MapDef = MapDef {
     palette: PAL_HOME,
     atmosphere: ATMOSPHERE,
     noise_phase: 0.0,
-    has_lava: false,
-};
-const MAP_ASH: MapDef = MapDef {
-    regions: &ASH_REGIONS,
-    palette: PAL_ASH,
-    atmosphere: ASH_ATMOSPHERE,
-    noise_phase: 13.37,
-    has_lava: true,
 };
 
 /// **Arena** atmosphere (RTS skirmish): bright, clear high-noon daylight so the top-down battle
@@ -440,15 +357,14 @@ const ARENA_ATMOSPHERE: (u32, f32, u32, f32, u32, f32, Vec3) =
 const PAL_ARENA: Palette = PAL_HOME;
 
 /// The arena map def: **no regions** (uniform grass/light-forest, no biome blobs / mountains), the
-/// home green palette, bright clear daylight, its own noise phase so the coast fray + rolling
-/// knolls don't echo the home island, and no lava. All the arena's structure (island ellipse, base
+/// home green palette, bright clear daylight, and its own noise phase so the coast fray + rolling
+/// knolls don't echo the home island. All the arena's structure (island ellipse, base
 /// plateaus, road, deposit spots) lives in [`classify_arena`], not in shared region/river data.
 const MAP_ARENA: MapDef = MapDef {
     regions: &[],
     palette: PAL_ARENA,
     atmosphere: ARENA_ATMOSPHERE,
     noise_phase: 5.0,
-    has_lava: false,
 };
 
 /// Process-global active map id, set once per build by [`set_active_map`] (from
@@ -474,7 +390,6 @@ impl MapId {
     /// Decode the `u8` stored in a save (unknown ids fall back to Home).
     pub fn from_u8(v: u8) -> Self {
         match v {
-            1 => MapId::Ashlands,
             2 => MapId::Arena,
             _ => MapId::Home,
         }
@@ -482,7 +397,6 @@ impl MapId {
 }
 fn active_map() -> &'static MapDef {
     match active_id() {
-        1 => &MAP_ASH,
         2 => &MAP_ARENA,
         _ => &MAP_HOME,
     }
@@ -654,20 +568,8 @@ const HOME_RIVERS: &[RiverDef] = &[
     RiverDef { pts: &[(78.0, 33.0), (76.0, 24.0), (74.0, 14.0), (72.0, 5.0), (70.0, -3.0)], w_src: 0.4, w_mouth: 0.64 },
 ];
 
-// Ashlands — its own three courses off ITS highlands (rock massif W, snow drifts NE): a west
-// torrent off the charcoal massif to the west coast, a north seep, and an eastern drain.
-const ASH_RIVERS: &[RiverDef] = &[
-    // Clear of the W charcoal massif — drains south.
-    RiverDef { pts: &[(66.0, 72.0), (68.0, 82.0), (70.0, 92.0), (72.0, 101.0)], w_src: 0.35, w_mouth: 0.7 },
-    // Clear of the NE snow drifts — north to the coast.
-    RiverDef { pts: &[(80.0, 44.0), (78.0, 32.0), (76.0, 20.0), (74.0, 8.0), (72.0, -2.0)], w_src: 0.35, w_mouth: 0.66 },
-    // East drain.
-    RiverDef { pts: &[(78.0, 66.0), (84.0, 76.0), (90.0, 86.0), (96.0, 96.0)], w_src: 0.35, w_mouth: 0.62 },
-];
-
 fn active_rivers() -> &'static [RiverDef] {
     match active_id() {
-        1 => ASH_RIVERS,
         2 => &[], // the arena carries no rivers
         _ => HOME_RIVERS,
     }
@@ -1927,10 +1829,9 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
             let h = if sd > 2.5 && fine > 0.7 { 2 } else { 1 };
             return Some((TB::Swamp, h));
         }
-        // Flat biomes get the inland-hills field: dunes in the desert, wooded rises in the forest;
-        // lava stays perfectly flat. Next to a mesa rim the hills flatten to a contrast APRON —
-        // tall reads tall beside flat.
-        let max = if near_cliffy_rim(x, z, 8.0) || reg.biome == TB::Lava { 1 } else { 4 };
+        // Flat biomes get the inland-hills field: dunes in the desert, wooded rises in the forest.
+        // Next to a mesa rim the hills flatten to a contrast APRON — tall reads tall beside flat.
+        let max = if near_cliffy_rim(x, z, 8.0) { 1 } else { 4 };
         return Some((reg.biome, inland_hills(x, z, dc, max)));
     }
     let h = if near_cliffy_rim(x, z, 8.0) { 1 } else { inland_hills(x, z, dc, 5) };
@@ -2094,20 +1995,14 @@ pub fn tile_biome_world(wx: f32, wz: f32) -> Option<Biome> {
         TB::Snow => Some(Biome::Snow),
         TB::Rock => Some(Biome::Rocky),
         TB::Desert => Some(Biome::Desert),
-        // The Blight + Lava field both ARE swamp to gameplay: poison + slow (`player::movement`),
-        // swamp ambience/weather, swamp wildlife/forage. Only the ground + scatter differ. (For
-        // the Lava field the swamp DoT reads as a lava burn.)
-        TB::Swamp | TB::Blight | TB::Lava => Some(Biome::Swamp),
+        // The Blight ARE swamp to gameplay: poison + slow (`player::movement`), swamp
+        // ambience/weather, swamp wildlife/forage. Only the ground + scatter differ.
+        TB::Swamp | TB::Blight => Some(Biome::Swamp),
         _ => None,
     }
 }
 pub fn is_grass_world(wx: f32, wz: f32) -> bool {
     matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Grass))
-}
-/// Is world `(x, z)` a Lava-field tile? Lava maps to gameplay [`Biome::Swamp`], so scatter keys
-/// off the underlying `TB` directly (swamp props are kept off it; basalt boulders go on it).
-fn is_lava_world(wx: f32, wz: f32) -> bool {
-    matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Lava))
 }
 /// Smoothed terrain height at integer grid CORNER `(cx, cz)` **as seen from a tile of class
 /// `h_ref`**: the mean flat-top Y of the corner's land tiles that are CLUSTER-CONNECTED to
@@ -2332,7 +2227,6 @@ fn biome_col(b: TB) -> [f32; 3] {
         TB::Desert => p.desert,
         TB::Swamp => p.swamp,
         TB::Blight => p.blight,
-        TB::Lava => p.lava_basalt,
     })
 }
 
@@ -2398,16 +2292,6 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
             let col = mix3(col, lin3(p.blight_dark), crack * 0.22);
             mix3(col, lin3(p.blight_ash), crust * 0.18)
         }
-        TB::Lava => {
-            // Cooled black basalt veined with a network of glowing magma seams. Seams sit at the
-            // noise zero-crossings (`1 - smoothstep(|n|)` → a thin bright line), with white-hot
-            // cores where two seam systems cross.
-            let seam = 1.0 - smoothstep(0.0, 0.13, noise_a(x * 2.4 + 9.0, z * 2.4 - 4.0).abs());
-            let fine = 1.0 - smoothstep(0.0, 0.09, noise_b(x * 5.5 - 13.0, z * 5.5 + 8.0).abs());
-            let col = mix3(base, lin3(p.lava_seam), seam * 0.85);
-            let col = mix3(col, lin3(p.lava_seam), fine * 0.40);
-            mix3(col, lin3(p.lava_seam_hot), seam * fine * 0.95)
-        }
         _ => base,
     }
 }
@@ -2439,7 +2323,7 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // swamp↔grass edge over the SAME `BLEND` band the colour already blends over — instead of the
     // sheen switching hard per material sheet (grass sheet 1.0 vs the old swamp sheet 0.40), which
     // staircased the boundary into the visible tile "kwadraty" a player reported. Only the Swamp
-    // biome is wet; Blight/Lava stay matte (their sheets sit near grass roughness).
+    // biome is wet; the Blight stays matte (its sheet sits near grass roughness).
     let mut wet = 0.0f32;
     for reg in active_map().regions {
         let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
@@ -2699,7 +2583,7 @@ pub fn build_step(
         0 => bs_grass_sheet(commands, meshes, images, terrain_mats),
         1 => bs_swamp_sheet(commands, meshes, images, terrain_mats),
         2 => bs_blight_sheet(commands, meshes, images, terrain_mats),
-        3 => bs_lava_sheet(commands, meshes, images, terrain_mats),
+        // (3 was bs_lava_sheet — dropped with the Ashlands map; Home/Arena grow no lava tiles.)
         4 => bs_sea_and_boats(commands, meshes, images, std_mats, water_mats),
         5 => bs_scatter_biome(Biome::Forest, commands, meshes, std_mats, state),
         6 => bs_scatter_biome(Biome::Snow, commands, meshes, std_mats, state),
@@ -2756,7 +2640,7 @@ pub fn build_step(
 
 // ── Build phases (each one [`build_step`] arm; see the old `build` doc for the why of each) ──
 
-/// The island proper: grass blade-grain detail, all tiles that aren't Blight/Swamp/Lava.
+/// The island proper: grass blade-grain detail, all tiles that aren't Blight/Swamp.
 fn bs_grass_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
     let grass_detail = GroundDetail {
         scale: 0.18,
@@ -2770,7 +2654,7 @@ fn bs_grass_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
         streak: 0.5,
     };
     let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, Some(rut_mask_image(images)), images, terrain_mats);
-    spawn_terrain_sheet(commands, meshes, ground_mat, |tb| tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava);
+    spawn_terrain_sheet(commands, meshes, ground_mat, |tb| tb != TB::Blight && tb != TB::Swamp);
 }
 
 /// The swamp: bespoke wet blotchy mottle (not the grass blades), lower roughness for a bog sheen.
@@ -2812,27 +2696,6 @@ fn bs_blight_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &
     };
     let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, Some(rut_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, blight_mat, |tb| tb == TB::Blight);
-}
-
-/// Lava field (map 2 only): basalt crust sheet; magma seams ride the vertex colour. No-op on maps
-/// without lava so the home island never builds an empty sheet.
-fn bs_lava_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, terrain_mats: &mut Assets<TerrainMaterial>) {
-    if !active_map().has_lava {
-        return;
-    }
-    let lava_detail = GroundDetail {
-        scale: 0.30,
-        strength: 0.55,
-        variation: 0.70,
-        seed: 13.0,
-        dark: 0x16110d,
-        base: 0x2a2421,
-        light: 0x4a3a2a,
-        grain: 0.80,
-        streak: 0.40,
-    };
-    let lava_mat = crate::terrain::make_material(&lava_detail, 0.90, Some(rut_mask_image(images)), images, terrain_mats);
-    spawn_terrain_sheet(commands, meshes, lava_mat, |tb| tb == TB::Lava);
 }
 
 /// The cart-wheel-rut mask (fragment-resolution road grooves, `roads::bake_rut_mask`) as a GPU
@@ -2925,14 +2788,8 @@ fn desert_near_rock(x: f32, z: f32) -> bool {
 fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>, state: &mut BuildState) {
     let lo = -GX;
     let hi = GX; // square covers the whole grid; off-map tiles mask out
-    let mut cfg = config_for(biome);
-    // On the Ashlands reskin swap every biome's lush green cover for the dead-litter family so the
-    // scorched ground doesn't read as blooming meadow. (Trees/rocks left alone.) The arena (a green
-    // meadow like Home) keeps the biome's native cover.
-    if active_id() == MapId::Ashlands as u8 {
-        cfg.cover = frontier_cover();
-    }
-    // On a reskinned map override the per-biome HOME atmosphere with the map's own.
+    let cfg = config_for(biome);
+    // On a non-Home map override the per-biome HOME atmosphere with the map's own.
     let atmo = if active_id() == 0 {
         AtmoSample::from_config(&cfg)
     } else {
@@ -2950,14 +2807,7 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
         false,
         &move |x, z| {
             let here = tile_biome_world(x, z);
-            // Lava tiles read as Swamp to gameplay but take ROCK scatter (basalt), never reeds.
-            let biome_match = if biome == Biome::Rocky {
-                here == Some(Biome::Rocky) || is_lava_world(x, z)
-            } else if biome == Biome::Swamp {
-                here == Some(Biome::Swamp) && !is_lava_world(x, z)
-            } else {
-                here == Some(biome)
-            };
+            let biome_match = here == Some(biome);
             biome_match
                 && !is_river_world(x, z) // keep props off the (sub-tile) river surface
                 && !is_pool_world(x, z) // …and off the swamp bog pools
@@ -3038,11 +2888,8 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
     // Per-class damp lean, in `frontier_cover()` order [grass, clover, fern, flower, mushroom]:
     // grass + sun-flowers (poppies/buttercups) take the dry/trodden sweeps, while ferns, clover
     // and mushrooms cluster in the damp green hollows — so WHICH plant you see matches the patch
-    // it grows on. The reskin's dead-litter cover is one class, so it just ignores the lean.
-    // Home + arena are lush meadows → apply the damp-affinity species lean; the Ashlands' single
-    // dead-litter cover class has no lean to apply.
-    let meadow_affinity: &[f32] =
-        if active_id() != MapId::Ashlands as u8 { &[-0.6, 0.5, 0.9, -0.15, 1.0] } else { &[] };
+    // it grows on.
+    let meadow_affinity: &[f32] = &[-0.6, 0.5, 0.9, -0.15, 1.0];
     scatter_region(
         &grass_cfg,
         commands,
@@ -3074,24 +2921,9 @@ fn config_for(b: Biome) -> BiomeConfig {
     }
 }
 
-/// Ground cover for the open frontier, chosen by the active map. The home isle gets the lush
-/// meadow (grass tufts, clover, ferns, flowers, mushrooms — all hard-coded green/floral in
-/// `groundcover.rs`); a reskinned map like Ashlands instead gets **charred ground litter** (grey
-/// pebbles, bark twigs, rust-burnt leaves, pinecones, acorns) so the cinder frontier reads as a
-/// scorched waste, not a flower lawn. (Recolouring every cover mesh per-map would be far more
-/// invasive — the litter family is already neutral/dead-toned, so we just scatter that instead.)
+/// Ground cover for the open frontier: the lush meadow (grass tufts, clover, ferns, flowers,
+/// mushrooms — all hard-coded green/floral in `groundcover.rs`).
 fn frontier_cover() -> Vec<PropClass> {
-    if active_id() == MapId::Ashlands as u8 {
-        return vec![
-            PropClass {
-                variants: (0..gc::NUM_LITTER_VARIANTS).map(|v| (gc::build_floor_litter_mesh(v), 1.0)).collect(),
-                chance: 0.26,
-                scale: (0.7, 1.35),
-                tree: false,
-                block_radius: 0.0,
-            },
-        ];
-    }
     vec![
         PropClass {
             variants: (0..gc::NUM_GRASS_VARIANTS).map(|v| (gc::build_grass_tuft_mesh(v), 1.0)).collect(),

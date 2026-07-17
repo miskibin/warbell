@@ -492,8 +492,8 @@ pub(crate) fn restore_discovered_landmarks(
 
 /// On load, if the saved run was on a different map than the one currently built, swap the
 /// [`crate::worldmap::ActiveMap`] resource and re-arm the world rebuild. The booted world is Home
-/// by default, so resuming an Ashlands run would otherwise land on Home terrain. Same-map loads
-/// (the common case) skip the rebuild and resume in place. Reads the carried `SaveData`.
+/// by default, so resuming a run saved on another map would otherwise land on Home terrain. Same-map
+/// loads (the common case) skip the rebuild and resume in place. Reads the carried `SaveData`.
 pub(crate) fn restore_active_map(
     mut ev: MessageReader<GameLoaded>,
     mut active: ResMut<crate::worldmap::ActiveMap>,
@@ -558,7 +558,7 @@ mod tests {
             keep_hp: 640.0,
             keep_max: 1400.0,
             heirs: 5,
-            map_id: 1, // Ashlands — exercises the non-default map round-trip
+            map_id: 2, // Arena — a non-default map id exercises the round-trip
             player,
             bank: tbank,
             bag,
@@ -593,7 +593,7 @@ mod tests {
         assert_eq!(back.wave_index, 2);
         assert_eq!(back.player.gold, 777);
         assert_eq!(back.heirs, 5);
-        assert_eq!(back.map_id, 1, "map id round-trips");
+        assert_eq!(back.map_id, 2, "map id round-trips");
         assert_eq!(back.upgrades, data.upgrades);
         assert!(back.defenses.walls);
         assert_eq!(back.rescued_camps, vec![true, false, true]);
