@@ -106,3 +106,11 @@ Warbell's **source code** is **source-available** under the
 their own terms (e.g. [game-icons.net](https://game-icons.net) icons under CC BY 3.0, the
 Cinzel / EB Garamond fonts under the SIL Open Font License; audio and other art may be
 separately licensed). See [`LICENSE`](LICENSE) for the full text and the asset note.
+
+
+I am also working on realistic procedural world generation in bevy 
+<img width="1900" height="1002" alt="image" src="https://github.com/user-attachments/assets/2b327d0a-a6a9-47b2-b437-50a17db5e3cc" />
+<img width="1909" height="1017" alt="image" src="https://github.com/user-attachments/assets/928c556c-79ab-44b8-a84c-17101151bcb5" />
+
+<img width="1903" height="1016" alt="image" src="https://github.com/user-attachments/assets/b9833a24-d51a-4f04-bee5-c53931bfa4e1" />
+
