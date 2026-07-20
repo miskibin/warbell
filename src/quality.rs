@@ -31,6 +31,7 @@
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::camera::MainPassResolutionOverride;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
+use bevy::light::cluster::GlobalClusterSettings;
 use bevy::light::{CascadeShadowConfig, DirectionalLight, DirectionalLightShadowMap};
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
@@ -312,6 +313,9 @@ impl Plugin for QualityPlugin {
             // inserted RenderAdapterInfo into the main world. Overwrites the default only when no
             // env override / saved config locked the preset and the adapter is a weak device type.
             .add_systems(Startup, detect_adapter_quality)
+            // Weak-GPU stability: drop Bevy 0.19's GPU light-clustering readback (crash-prone under
+            // device loss + a per-frame GPU→CPU stall). Runs before the first render extract.
+            .add_systems(Startup, disable_gpu_clustering_on_weak_gpu)
             .add_systems(Update, debug_qswitch) // FOREST_QSWITCH=<preset>: flip preset at t≈4s (crash repro)
             .add_systems(Update, debug_mbtoggle) // FOREST_MBTOGGLE=1: flip motion-blur at t≈4s (crash repro)
             .add_systems(
@@ -409,6 +413,66 @@ fn detect_adapter_quality(
             info.0.device_type
         );
         *quality = GraphicsQuality::Low;
+    }
+}
+
+/// Bevy 0.19 added **GPU-driven light clustering**: a per-frame compute pass whose results are read
+/// back to the CPU (`map_buffer_on_submit` → `get_mapped_range`) every frame. On weak integrated
+/// GPUs that readback is doubly bad:
+///
+/// 1. **Performance** — it forces a hard GPU→CPU sync every frame, stalling the pipeline on exactly
+///    the tiled/integrated GPUs least able to afford it (the reporter's "the game is very lag").
+/// 2. **Stability** — the readback path is *not* crash-safe. If the device is ever lost (a driver
+///    timeout under load — precisely what a struggling iGPU hits), the map callback panics on the
+///    now-invalid staging buffer, poisons its `Mutex`, and the next frame's
+///    `readback_data.lock().unwrap()` brings the whole process down. That is issue #67: an Intel
+///    iGPU reports `DeviceLost`, then `bevy_pbr::cluster::gpu` panics with a `PoisonError`.
+///
+/// Falling back to **CPU clustering** (the pre-0.19 path, `gpu_clustering = None`) removes the
+/// readback machinery entirely — Bevy's render error handler then rides out transient device errors
+/// instead of hard-crashing. Our scene only ever has dozens of lights, so CPU clustering costs us
+/// nothing. Applied to integrated / virtual / CPU adapters (same weak set as the quality default);
+/// `FOREST_GPUCLUSTER=on|off` force-overrides either way (testing / a mis-classified adapter).
+fn disable_gpu_clustering_on_weak_gpu(
+    adapter_info: Option<Res<RenderAdapterInfo>>,
+    cluster: Option<ResMut<GlobalClusterSettings>>,
+) {
+    let Some(mut cluster) = cluster else { return };
+    // Device didn't support the GPU path in the first place — already on stable CPU clustering.
+    if cluster.gpu_clustering.is_none() {
+        return;
+    }
+
+    // Env escape hatch wins (headless testing, or a user on an adapter we classify wrong).
+    let forced = std::env::var("FOREST_GPUCLUSTER").ok().and_then(|s| {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "1" | "on" | "true" | "yes" => Some(true),
+            "0" | "off" | "false" | "no" => Some(false),
+            _ => None,
+        }
+    });
+
+    let keep_gpu = match forced {
+        Some(k) => k,
+        None => {
+            // Default: keep GPU clustering only on discrete (and unknown "Other") adapters; drop it
+            // on the weak set that hits the readback stall + DeviceLost crash.
+            let Some(info) = adapter_info.as_ref() else { return };
+            use wgpu::DeviceType;
+            !matches!(
+                info.0.device_type,
+                DeviceType::IntegratedGpu | DeviceType::VirtualGpu | DeviceType::Cpu
+            )
+        }
+    };
+
+    if !keep_gpu {
+        let name = adapter_info.as_ref().map(|i| i.0.name.clone()).unwrap_or_default();
+        info!(
+            "Disabling GPU light clustering (adapter: {name:?}) — falling back to stable CPU \
+             clustering to avoid the per-frame readback stall and the DeviceLost crash (issue #67)."
+        );
+        cluster.gpu_clustering = None;
     }
 }
 
