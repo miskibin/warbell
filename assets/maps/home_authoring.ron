@@ -1,0 +1,17 @@
+(
+    version: 1,
+    name: "Home authoring foundation",
+    target: Home,
+    biome_regions: [],
+    height_patches: [],
+    river_splines: [],
+    road_strokes: [],
+    scatter_paint: [],
+    poi_placements: [],
+    validation: (
+        block_save_on_errors: true,
+        require_reachability: true,
+        require_flat_major_pois: true,
+        require_no_collisions: true,
+    ),
+)

@@ -189,6 +189,19 @@ enum TB {
     Blight,
 }
 
+fn tb_from_author_biome(biome: crate::map_authoring::AuthorBiome) -> TB {
+    match biome {
+        crate::map_authoring::AuthorBiome::Grass => TB::Grass,
+        crate::map_authoring::AuthorBiome::Sand => TB::Sand,
+        crate::map_authoring::AuthorBiome::Forest => TB::Forest,
+        crate::map_authoring::AuthorBiome::Rock => TB::Rock,
+        crate::map_authoring::AuthorBiome::Snow => TB::Snow,
+        crate::map_authoring::AuthorBiome::Desert => TB::Desert,
+        crate::map_authoring::AuthorBiome::Swamp => TB::Swamp,
+        crate::map_authoring::AuthorBiome::Blight => TB::Blight,
+    }
+}
+
 struct Region {
     x: f32,
     z: f32,
@@ -1900,6 +1913,16 @@ type Grid = Vec<Option<(TB, i32)>>;
 /// switch-back. The one-time regen is fully covered by the loading veil. `tiles()` hands out a
 /// cheap `Arc` clone; every reader goes through `tile_at`, so the swap is invisible to them.
 static TILES: OnceLock<Mutex<HashMap<u8, Arc<Grid>>>> = OnceLock::new();
+
+/// Drop memoised terrain grids after the editor loads or mutates an authoring asset. Roads/bridges
+/// are still procedural in this foundation pass; future road-paint integration should get matching
+/// cache invalidation in `roads.rs` / `bridges.rs`.
+pub(crate) fn clear_tile_cache() {
+    if let Some(cache) = TILES.get() {
+        cache.lock().expect("tile cache poisoned").clear();
+    }
+}
+
 fn tiles() -> Arc<Grid> {
     let id = active_id();
     let cache = TILES.get_or_init(|| Mutex::new(HashMap::new()));
@@ -1913,12 +1936,48 @@ fn build_grid() -> Arc<Grid> {
     let mut v = Vec::with_capacity((COLS * ROWS) as usize);
     for iz in 0..ROWS {
         for ix in 0..COLS {
-            v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
+            let bx = ix as f32 / MAP_SCALE;
+            let bz = iz as f32 / MAP_SCALE;
+            v.push(apply_authoring_tile(bx, bz, classify(bx, bz)));
         }
     }
     prune_stray_islets(&mut v);
     terrace_inland(&mut v);
     Arc::new(v)
+}
+
+fn authoring_sample_base(x: f32, z: f32) -> crate::map_authoring::AuthoringSample {
+    if active_id() == MapId::Home as u8 {
+        crate::map_authoring::sample_base(x, z)
+    } else {
+        crate::map_authoring::AuthoringSample::default()
+    }
+}
+
+fn authoring_water_sd_base(x: f32, z: f32) -> Option<f32> {
+    if active_id() == MapId::Home as u8 {
+        crate::map_authoring::water_signed_distance_base(x, z)
+    } else {
+        None
+    }
+}
+
+fn apply_authoring_tile(x: f32, z: f32, tile: Option<(TB, i32)>) -> Option<(TB, i32)> {
+    let sample = authoring_sample_base(x, z);
+    if sample.water {
+        return None;
+    }
+    let Some((mut tb, mut h)) = tile else {
+        return None;
+    };
+    if let Some(biome) = sample.biome {
+        tb = tb_from_author_biome(biome);
+    }
+    if let Some(class) = sample.height_class {
+        h = class;
+    }
+    h = (h + sample.height_delta).clamp(1, 20);
+    Some((tb, h))
 }
 
 /// Sink any small land clump the `nw_headland` coast noise pinched off just offshore — the
@@ -2134,7 +2193,8 @@ fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
     // a smooth shore for the lake AND the swamp bog pools too, not just rivers. The lake/pools
     // aren't gated by `river_blocked` (that's a river-only keep-out); they carry their own gating.
     let river = if river_blocked(bx, bz) { f32::INFINITY } else { river_sd(bx, bz) };
-    let sd = river.min(lake_sd(bx, bz)).min(pool_or_stream_sd(bx, bz));
+    let authored_water = authoring_water_sd_base(bx, bz).unwrap_or(f32::INFINITY);
+    let sd = river.min(lake_sd(bx, bz)).min(pool_or_stream_sd(bx, bz)).min(authored_water);
     (sd, sd < 0.0)
 }
 
@@ -2152,7 +2212,10 @@ fn smooth_surface_y(wx: f32, wz: f32) -> Option<f32> {
     // tile is land by centre yet half water on screen. Reject the exact water area here (cheap:
     // `river_sd` early-outs outside the rivers' bbox; `pool_sd` outside the swamp interiors) so
     // the hero/NPCs/scatter can't stand on the rendered-water half.
-    if is_river(gx / MAP_SCALE, gz / MAP_SCALE) || is_pool(gx / MAP_SCALE, gz / MAP_SCALE) {
+    if is_river(gx / MAP_SCALE, gz / MAP_SCALE)
+        || is_pool(gx / MAP_SCALE, gz / MAP_SCALE)
+        || authoring_water_sd_base(gx / MAP_SCALE, gz / MAP_SCALE).is_some_and(|sd| sd < 0.0)
+    {
         return None;
     }
     let ix = gx.floor() as i32;
@@ -2227,7 +2290,9 @@ pub fn is_river_world(wx: f32, wz: f32) -> bool {
     if crate::rival::fort_flat_zone(wx, wz) {
         return false;
     }
-    is_river((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
+    let bx = (wx + GX) / MAP_SCALE;
+    let bz = (wz + GZ) / MAP_SCALE;
+    is_river(bx, bz) || authoring_water_sd_base(bx, bz).is_some_and(|sd| sd < 0.0)
 }
 
 /// True ONLY over a real standing-water body — the deliberate **lake** or the open **sea** off the
@@ -2391,6 +2456,15 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     let blight_w = smoothstep(-BLEND, BLEND, crate::ork_fortress::blight_edge_base(x, z));
     if blight_w > 0.0 {
         col = mix3(col, biome_col_at(TB::Blight, x, z), blight_w);
+    }
+    let authored = authoring_sample_base(x, z);
+    if let Some(biome) = authored.biome {
+        let tb = tb_from_author_biome(biome);
+        let w = authored.biome_weight.clamp(0.0, 1.0);
+        col = mix3(col, biome_col_at(tb, x, z), w);
+        if tb == TB::Swamp {
+            wet = wet.max(w);
+        }
     }
     // Sandy coast fade — damped inside the Blight: `dist_from_coast` only knows the OLD
     // island shape, so without the damp the whole southern landmass would tint to beach.

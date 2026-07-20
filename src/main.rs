@@ -74,6 +74,7 @@ mod landmarks;
 mod loading;
 mod lumberjack;
 mod mainmenu;
+mod map_authoring;
 mod miner;
 mod navgrid;
 mod nightsky;
@@ -184,6 +185,8 @@ fn main() {
                 // 1.0 a 30-unit distance is near-silent). Tune alongside per-species volume.
                 .set(AudioPlugin { default_spatial_scale: SpatialScale::new(0.15), ..default() }),
         )
+        // Dev-only map authoring overlay loader. Inactive unless `FOREST_MAP_AUTHORING=<path>` is set.
+        .add_plugins(map_authoring::MapAuthoringPlugin)
         // Split across two calls: a single tuple of all of these exceeds the arity the
         // `Plugins` trait is implemented for (≤15).
         .add_plugins((
