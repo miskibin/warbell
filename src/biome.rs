@@ -1014,12 +1014,23 @@ pub fn scatter_region(
                         let trunk_r = (unit_r * s).min(0.8);
                         crate::blockers::add(cx, cz, trunk_r);
                         let base = cardinal(&mut r);
+                        // EXPERIMENTAL (`FOREST_PHOTOTREES=1`): swap in a procedurally-grown tree
+                        // with photographic leaf sprigs. Substituted right here, at the last
+                        // moment, precisely so it changes NOTHING else — placement, spacing
+                        // rejection, blockers, slope thinning and every mask above already ran and
+                        // are untouched, and the roll is drawn from the same per-tile RNG so the
+                        // world stays deterministic. Photo trees are one merged mesh on one shared
+                        // material (see `phototrees::mesh::build_tree`), so the one-entity-per-tree
+                        // batching contract below holds identically for both paths.
+                        let photo = crate::phototrees::get().map(|p| p.pick(r.next()));
                         // Trees stay individual entities (chop HP + wind sway) sharing one
                         // uploaded handle per variant — the renderer auto-batches the instances.
                         let mut tree = commands.spawn((
-                            Mesh3d(c.handles[vi].clone()),
+                            Mesh3d(photo.as_ref().map_or_else(|| c.handles[vi].clone(), |p| p.0.clone())),
                             // Translucent-foliage material, NOT the shared prop `mat`.
-                            MeshMaterial3d(tree_mat.clone()),
+                            MeshMaterial3d(
+                                photo.as_ref().map_or_else(|| tree_mat.clone(), |p| p.1.clone()),
+                            ),
                             // Identity rotation — wind `Sway` overwrites it each frame.
                             Transform {
                                 translation: Vec3::new(cx, py, cz),

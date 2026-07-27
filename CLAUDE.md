@@ -369,6 +369,13 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   written, so you'll `Read` the **stale** previous file and misread it as "my change did nothing".
   Always grep the run output for `Screenshot saved` / `error[` / `panic` / `Validation` before
   trusting the image; if a frame looks wrong, re-run once before diagnosing it.
+  **`FOREST_TPS` is NOT a fixed camera — never use it for an A/B comparison.** It boots the real
+  follow-cam, which *orbits*, eases toward its anchor, and dollies OUT when a foe rings the hero
+  (`OrbitCam::combat`) — and a hero staged with `FOREST_HERO` in a biome gets attacked during the
+  warmup. Two runs with byte-identical env therefore land on different framings, which silently
+  turns "before vs after" into "two different shots" (this invalidated a whole comparison round
+  before anyone checked). Use `FOREST_CAM` for anything measured, and prove the pair really matches
+  by diffing a patch of pure sky — a good pair diffs to <0.001.
   **For any A/B that MEASURES colour or luminance, the hero must be at FULL HP.** `grade.rs`'s
   reactive grade darkens the whole frame and drains ~25% global saturation below `LOW_THRESHOLD`
   (0.35 HP), modulated by a **wall-clock** `sin(now * 5.5)` heartbeat — so two "identical" shots

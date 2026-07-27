@@ -93,6 +93,7 @@ mod props;
 mod quadruped;
 mod quality;
 mod quest;
+mod phototrees; // FOREST_PHOTOTREES=1: experimental procedural/photographic trees (off by default)
 mod rc;
 mod roads;
 mod rival;
@@ -280,6 +281,11 @@ fn main() {
         // quality.rs (`god_rays`); same custom-post-pass family as dof/outline. Standalone call
         // because the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(godrays::GodRaysPlugin)
+        // Experimental photoreal trees (`FOREST_PHOTOTREES=1`) — builds the procedural tree meshes
+        // + foliage atlas at PreStartup so the world build can spawn them. A no-op unless the env
+        // var is set. Standalone call for the same reason as godrays: the tuples above are at the
+        // `Plugins` arity-15 cap, and appending to one is what broke the build first try.
+        .add_plugins(phototrees::PhotoTreesPlugin)
         // Cinematic atmospherics post pass (height fog + sun in-scatter + cloud light patches).
         // Toggled per-preset alongside god-rays in quality.rs; same custom-post-pass family.
         .add_plugins(atmospherics::AtmosphericsPlugin)
