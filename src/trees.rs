@@ -24,6 +24,70 @@
 use bevy::prelude::*;
 
 use crate::meshkit::{flat_shaded, merged, tinted};
+
+/// How much light passes THROUGH a canopy (0 = opaque leaves, 1 = full translucency).
+/// Override live for A/B with `FOREST_LEAFTRANS=<0..1>` (0 restores the old opaque look).
+///
+/// 0.22, down from an initial 0.35, because transmission MOVES energy rather than adding it —
+/// Bevy computes `diffuse_color = base * (1 - diffuse_transmission)`, so whatever the back-side
+/// lobe gains, the front-lit lobe loses. Measured at 0.35 on a matched front-lit pair: near canopy
+/// −15.8%, mid canopy −8.7%, and crown hue drifting duller-green than the untouched bushes beside
+/// it. The backlit payoff is strongly COMPRESSIVE though — at 0.35 it was +85% on pixels below
+/// L=0.10 and +47% on 0.10–0.20, versus only +7% on already-lit pixels — so pulling back to 0.22
+/// keeps most of the shade-side lift for roughly two-thirds of the front-lit cost.
+///
+/// Known imperfection, accepted deliberately: each tree is ONE merged mesh with ONE material
+/// (`build_tree_mesh` → `merged(parts)`), so the TRUNK is translucent too, as are the leafless
+/// `Dead`/`Stump` kinds and the desert/rocky/swamp `tree: true` classes (cacti, drowned trunks).
+/// Physically wrong. In practice it reads as a mild rim light on bark and pale bark actually goes
+/// slightly DARKER, so nothing blows out. Splitting trunk from crown would mean two meshes, two
+/// materials and two entities per tree across ~15-20k trees — a far worse trade than the artefact.
+const LEAF_TRANSMISSION: f32 = 0.22;
+
+/// The trunk-tree material: the shared prop `StandardMaterial` **plus diffuse transmission**.
+///
+/// This is the one deliberate exception to the "every prop shares one white vertex-colour
+/// material" batching contract (`biome::scatter_region`), and it earns the extra draw batch:
+/// `diffuse_transmission` is the single strongest "real foliage" cue there is, and it costs no
+/// new assets, no shader work and no extra geometry — just a pipeline specialization.
+///
+/// What it fixes: our crowns are solid faceted meshes lit by one directional sun, so the
+/// sun-opposite side resolved to flat dead shade and every tree read as an *opaque blob*. Real
+/// canopies are thin and lit from behind — the far side glows. With transmission the shade side
+/// picks up the sun's own colour, so backlit trees rim-glow at dawn/dusk, the treeline separates
+/// into layers instead of one dark mass, and it compounds with the god-rays + haze already there.
+///
+/// `thickness` stays at Bevy's default 0.0, which is exactly right: the docs define 0.0 as "an
+/// infinitely-thin film, transmitting light without distorting it" — leaf semantics. Any non-zero
+/// value would refract like a glass lens.
+///
+/// Rendering notes: `diffuse_transmission > 0.0` makes Bevy force `OpaqueRendererMethod::Forward`
+/// (it isn't packed into the G-buffer) — a no-op for us, we're forward already. It also sets the
+/// `DIFFUSE_TRANSMISSION` pipeline key, so trees specialize into their own pipeline; that plus
+/// the separate handle is the whole cost. Trees are already individual entities sharing one mesh
+/// handle per variant, so instance batching within the tree bucket is unchanged.
+pub fn foliage_material(materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+    let amount = std::env::var("FOREST_LEAFTRANS")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(LEAF_TRANSMISSION)
+        .clamp(0.0, 1.0);
+    materials.add(StandardMaterial {
+        base_color: Color::WHITE, // vertex colour carries the hue, same as every prop
+        perceptual_roughness: 0.92,
+        reflectance: 0.18,
+        diffuse_transmission: amount,
+        // Deliberately NOT `double_sided` / `cull_mode: None`. Tempting — "light has to reach the
+        // back faces" — but wrong: verified in `bevy_pbr/render/pbr_functions.wgsl:426`, the
+        // transmitted lobe is evaluated on the FRONT-facing fragment with the normal simply
+        // inverted (`N = -in.N`, `V = -in.V`, and the lobe position pushed back by `thickness`).
+        // Back faces never need to rasterize. Since `double_sided` only flips normals and
+        // `cull_mode: None` is what would actually draw them, adding either would be a no-op flag
+        // or a doubling of tree triangle throughput — on ~15-20k trees, on an iGPU already at
+        // 24 fps. Keep back-face culling.
+        ..default()
+    })
+}
 use crate::palette::{
     lin, AUTUMN_DARK, AUTUMN_GOLD, AUTUMN_LIGHT, AUTUMN_MID, AUTUMN_OLIVE, AUTUMN_RED, BIRCH_DARK,
     BIRCH_LIGHT, BIRCH_MARK, BIRCH_TRUNK, CUT_WOOD, DEAD_WOOD, DEAD_WOOD_DARK, FOLIAGE_DARK,

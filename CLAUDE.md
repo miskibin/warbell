@@ -369,6 +369,15 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   written, so you'll `Read` the **stale** previous file and misread it as "my change did nothing".
   Always grep the run output for `Screenshot saved` / `error[` / `panic` / `Validation` before
   trusting the image; if a frame looks wrong, re-run once before diagnosing it.
+  **For any A/B that MEASURES colour or luminance, the hero must be at FULL HP.** `grade.rs`'s
+  reactive grade darkens the whole frame and drains ~25% global saturation below `LOW_THRESHOLD`
+  (0.35 HP), modulated by a **wall-clock** `sin(now * 5.5)` heartbeat — so two "identical" shots
+  taken seconds apart differ everywhere, including in pure sky, and a hurt hero can invert the
+  sign of the effect you're measuring. A staged `FOREST_HERO` in a biome gets mauled by wildlife
+  within the warmup, which is exactly how this bites. **`FOREST_IMMORTAL=1` does NOT save you** —
+  it clamps to 1 HP, i.e. *maximum* dread grade. Use a free-cam (`FOREST_CAM`) with the hero left
+  at his safe default spawn, and verify neutrality by checking that a patch of pure sky matches
+  between the two frames before trusting any measured delta.
 
 ## Reference material
 

@@ -27,6 +27,11 @@ use bevy::{
 };
 
 const SHADER_ASSET_PATH: &str = "shaders/outline.wgsl";
+/// Also stale vs the camera's real `near: 0.04` (`scene::default_projection`) — but harmless
+/// here, unlike `dof.rs`: the shader only uses it in the RATIO `abs(dn - dc) / dc`, where a
+/// constant scale factor cancels. Deliberately NOT "fixed" to 0.04 — the only behavioural delta
+/// would be the `max(dc, 0.1)` guard starting to bite on first-person geometry held at the lens,
+/// i.e. re-tuning the FP weapon's outline for no gain. Left as-is on purpose.
 const NEAR: f32 = 0.1;
 
 /// Per-camera outline settings (also the shader uniform).

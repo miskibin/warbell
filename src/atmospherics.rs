@@ -88,8 +88,23 @@ impl Default for Atmospherics {
             cam_pos: Vec3::ZERO,
             // 0.010 (was 0.018 → 0.015 → 0.012): eased again on player feedback — forward
             // visibility kept reading short. The haze should layer the forest, not curtain the view.
-            density: 0.006, // was 0.010 — 2026-07-08: thinner haze, more forward visibility
+            // 2026-07-27: 0.006 → 0.011. The 07-08 thinning was a reaction to haze that read as
+            // a *curtain*, but it also stripped the aerial-perspective depth cue the frame leans
+            // on — and it left the terrain-LOD hand-off happening in clear air. Raised back above
+            // the old 0.010 now that the depth softening is haze-led rather than bokeh-led
+            // (`dof.rs` 2026-07-27): distance now separates by TONE, which is what reads as
+            // "mature", where bokeh past a few px just reads as a rendering fault. Forward
+            // visibility is protected by `fog_start` (the clear bubble) and `fog_max` (the
+            // ceiling), not by keeping density near zero.
+            //
+            // Landed at 0.009 after shooting 0.011: 0.011 read as an over-thick curtain past
+            // ~150u (distant peaks lost ALL internal shading and went to flat pale fill — paper
+            // cutouts — and the far coast disappeared entirely). 0.009 is still a real +50% over
+            // the 0.006 it replaces, which is the "a bit stronger" that was actually asked for.
+            density: 0.009,
             sun_dir: Vec3::Y,
+            // 0.07: fog thins with altitude, so it pools in the valleys / river cuts and thins
+            // over the ridge tops — the layering that separates near hills from far ones.
             height_falloff: 0.07,
             fog_color: Vec3::new(0.85, 0.80, 0.66),
             inscatter_exp: 4.0,
@@ -97,13 +112,29 @@ impl Default for Atmospherics {
             time: 0.0,
             // 0.10 — the patches multiply the TONEMAPPED image, so even modest values read
             // strongly; 0.18+ turned the ground into muddy bands (verified via FOREST_ATMO A/B).
-            cloud_strength: 0.10,
+            // 2026-07-27: 0.10 → 0.13. Still well under the 0.18 that banded the ground; the
+            // drifting light patches are the cheapest "big sky above a big world" cue we have.
+            cloud_strength: 0.13,
             cloud_scale: 0.018,
             noise_strength: 0.40,
             // 24 (was 13): the fog-free bubble around the camera pushed out so nearby props /
             // enemies / the hero himself never sit in haze — the veil starts past melee range.
-            fog_start: 48.0, // was 24 — 2026-07-08: haze bubble pushed out, veil starts much farther
-            fog_max: 0.62, // was 0.84 — distant terrain never fully buries, keeps visibility
+            // 44 (was 48, earlier 24): the clear bubble is what keeps the *gameplay* radius —
+            // hero, melee, loot, the near treeline — completely haze-free. Pulled in only a
+            // little, so the raised density lands on the mid/far field where it belongs.
+            fog_start: 44.0,
+            // 0.66 (was 0.62, earlier 0.84): the ceiling. Lets the far coast + ridgelines sit
+            // clearly BEHIND air instead of hovering in the same plane as the mid-ground, while
+            // still holding a third of the terrain's own value so the island never dissolves to a
+            // flat sky wash (the failure mode 0.84 had).
+            //
+            // Tried 0.72 and backed off: it was the main culprit in flattening the distant snow
+            // ridge to an unshaded silhouette, and it also sharpened the horizon boundary where
+            // the haze curtain meets the sky glow into a conspicuous drawn-looking band. The
+            // atmospherics pass deliberately leaves SKY fragments untouched (`atmospherics.wgsl:69`
+            // — cleared depth returns early), so the fog ceiling IS that seam's contrast: every
+            // point of `fog_max` makes it more visible. Keep this modest.
+            fog_max: 0.66,
             fade: 0.0, // starts off; the driver raises it with daylight
             base_height: 0.0,
             _pad: 0.0,

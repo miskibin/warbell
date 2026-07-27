@@ -13,7 +13,7 @@
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     forward_io::{VertexOutput, FragmentOutput},
 }
@@ -180,6 +180,19 @@ fn fragment(
     in: VertexOutput,
     @builtin(front_facing) is_front: bool,
 ) -> FragmentOutput {
+    // LOD crossfade discard — MUST come first, exactly as `bevy_pbr::pbr.wgsl` does it.
+    // `ForestExtension` overrides only `fragment_shader()`, so this main pass replaces
+    // pbr.wgsl wholesale while the depth PREPASS still falls through to `pbr_prepass.wgsl`,
+    // which DOES dither. Without this line the two terrain LODs both drew fully in the
+    // `TERRAIN_LOD..+BAND` ring while the prepass wrote a 4×4 checkerboard of the two — so
+    // `depth_compare: GreaterEqual` resolved to a per-pixel nearest-of-both, and the coarse
+    // drape's straight ramp over a mesa tier punched through the cliff walls: the
+    // "terrain shows through the mountains" bug. Also the reason `spawn_terrain_sheet`'s
+    // "dithered crossfade" comment was aspirational — the dither was never wired.
+#ifdef VISIBILITY_RANGE_DITHER
+    visibility_range_dither(in.position, in.visibility_range_dither);
+#endif
+
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
     let wp = in.world_position.xz;

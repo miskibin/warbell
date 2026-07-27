@@ -2779,6 +2779,33 @@ fn rut_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
 /// The sea plane + shore-distance bake + background sailboats, then plan the ork camps (BEFORE
 /// scatter, so their clearings can be reserved out of the prop placement).
 fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>, water_mats: &mut Assets<WaterMaterial>) {
+    // KNOWN ARTEFACT — the hard tan stripe across the horizon in HIGH camera shots. This 900×900
+    // quad has a half-extent of 450, so its far rim is a hard geometric edge at constant z = −450.
+    // Above that rim there is NO scene geometry, so you see the Atmosphere's own grazing/planet
+    // tone ≈(174,146,115); immediately below it the sea renders ~568u out, where the Linear fog is
+    // fully clamped, as flat ≈(181,180,183). Two unrelated colours meeting at a one-pixel step —
+    // and because the rim is constant-z with no camera roll, the step is perfectly horizontal
+    // across ~1898/1920 columns, which is exactly why it reads as a *drawn band* rather than air.
+    //
+    // Diagnosed 2026-07-27, to sub-pixel: from `FOREST_CAM="0,30,120,0,4,-60"` the rim projects to
+    // row 435.3 (measured transition 434→435) and the Atmosphere's horizon — planet dip
+    // `sqrt(2·h/inner_radius)` = 0.176° for h=30 — to row 376.3 (measured 375-376). The band is
+    // that 59px angular wedge.
+    //
+    // Two hypotheses were tested and DISPROVEN, so don't retry them: it is not haze density (no
+    // `atmospherics.rs` value moves it — peak |dL/dy| 0.0892 → 0.0891), and it is not the Linear
+    // fog's `end` sitting inside the camera `far` (pushing `end` past `far` is a measured no-op:
+    // the rim is at 568u, where fog is fully clamped whether `end` is 215 or 230 — and `far`
+    // doesn't clip the rasterizer anyway, since Bevy builds `perspective_infinite_reverse_rh` and
+    // uses `far` only for whole-AABB CPU culling, which never rejects this camera-spanning quad).
+    //
+    // Scale note: the wedge grows with camera height — ~59px at y=30, but only ~4px at a
+    // gameplay-height eye (y≈2, rim angle 0.25° vs dip 0.045°). So it's an overview/marketing-shot
+    // problem, not a play-view one. Real fixes, none of them one-liners: extend the sea past the
+    // true horizon (≈19.5k units at y=30 — needs a separate cheap backdrop quad, because this
+    // mesh's extent is tied to `bake_shore_distance`'s `shore_region` UV mapping), or match the fog
+    // colour to the Atmosphere's horizon colour across the whole day cycle, or drop `DistanceFog`
+    // on the sea in favour of the Atmosphere's own aerial perspective.
     let sea_mesh = meshes.add(Plane3d::default().mesh().size(900.0, 900.0).subdivisions(8).build());
     let (shore_tex, bog_tex, shore_region) = bake_shore_distance(images);
     let sea = water_mats.add(ExtendedMaterial {

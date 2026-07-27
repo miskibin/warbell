@@ -906,6 +906,9 @@ pub fn scatter_region(
         reflectance: 0.18,
         ..default()
     });
+    // Trunk-trees get their OWN material — the one deliberate exception to the shared-material
+    // batching contract (see `crate::trees::foliage_material` for why it earns the extra batch).
+    let tree_mat = crate::trees::foliage_material(materials);
 
     let classes = upload_classes(&cfg.classes, meshes);
     let cover = upload_classes(&cfg.cover, meshes);
@@ -1015,7 +1018,8 @@ pub fn scatter_region(
                         // uploaded handle per variant — the renderer auto-batches the instances.
                         let mut tree = commands.spawn((
                             Mesh3d(c.handles[vi].clone()),
-                            MeshMaterial3d(mat.clone()),
+                            // Translucent-foliage material, NOT the shared prop `mat`.
+                            MeshMaterial3d(tree_mat.clone()),
                             // Identity rotation — wind `Sway` overwrites it each frame.
                             Transform {
                                 translation: Vec3::new(cx, py, cz),

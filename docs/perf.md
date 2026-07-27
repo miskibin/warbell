@@ -56,6 +56,44 @@ Remove-Item Env:FOREST_FREEROAM,Env:FOREST_CAM,Env:FOREST_NOCULL -ErrorAction Si
 
 Read `main_opaque_pass_3d` from F2 in each — identical view, so the delta is purely the culling.
 
+**GOTCHA — `FOREST_PERFTEST` does NOT imply `FOREST_NOVSYNC`, and the saved config ships
+`vsync: true`.** Without `FOREST_NOVSYNC=1` every run reports a vsync-pinned frame time and any A/B
+is meaningless (all rows land on the refresh interval). Always pass both. Also note the *resolved*
+preset comes from `%APPDATA%\tileworld\graphics.json`, not from a default — on an Ultra config the
+main pass runs at `render_scale 2.0` (3840×2160), a 4× fragment load, which makes such a run a
+*sensitive* test for per-fragment costs and a *misleading* one for anything else.
+
+**Read the GPU pass timers, not frame time, for small deltas.** On a discrete GPU this scene is
+CPU-bound (GPU Σ ≈3.6 ms inside a ≈10.7 ms frame), and frame-time sd is ±0.7-0.9 ms — so frame ms
+cannot resolve anything under ~1 ms, while the pass timers are stable to ±0.01 ms. A useful
+self-check that the pinned view really is identical across runs: `main_opaque_pass_3d` should match
+to ~0.001 ms between two runs that don't touch opaque geometry.
+
+### 2026-07-27 — visual-fidelity pass (DoF `NEAR` fix, terrain LOD dither, haze, leaf transmission)
+
+`RTX 5060 Ti` (DiscreteGpu, Vulkan 610.74), Ultra + `render_scale 2.0`, pinned
+`FOREST_CAM="0,30,60,0,0,-30"` + `FOREST_FREEROAM=1`, `FOREST_PERFTEST=60 FOREST_NOVSYNC=1`,
+8 steady samples after discarding 20 s of warmup. **Not** representative of `igpu-strong-cpu`.
+
+| run | frame ms mean [min-max] sd | GPU Σ | `main_opaque_pass_3d` | `bin_unpacking` |
+|---|---|---|---|---|
+| all changes in | 10.72 [9.6-11.8] sd 0.72 | 3.630 | 2.400 | 0.345 |
+| `FOREST_LEAFTRANS=0` | 10.68 [9.4-11.8] sd 0.71 | 3.504 | 2.321 | 0.305 |
+| `FOREST_NOBLUR=1` | 10.50 [9.5-12.3] sd 0.87 | 3.607 | 2.401 | 0.325 |
+
+- **Tree translucency material costs a real but small +0.126 ms GPU (+3.5%)** — `main_opaque_pass_3d`
+  +0.079 ms (+3.3%, the per-fragment `DIFFUSE_TRANSMISSION` branch) and `bin_unpacking` +0.040 ms
+  (+11.6%, the extra material bin). Ranges do not overlap, so this is signal, not noise. Invisible
+  in frame time *here* only because the GPU isn't the bottleneck — on the fragment-bound iGPU row
+  it lands directly on the frame, and it scales with tree pixel coverage (this pose is moderate,
+  not worst-case).
+- **DoF at the reduced radius: not measurable** (GPU Σ −0.022 ms, ranges touch). Caveat on what that
+  isolates: `FOREST_NOBLUR` only zeroes `max_radius`, so the pass still dispatches and still does a
+  full-res read/write — it measures the radius-dependent *sampling* cost, not the pass's existence.
+  The custom post chain (dof/outline/godrays/atmospherics) is not individually instrumented.
+- **No leaks** over 60 s in all three runs: entities 11872, meshes 4248, materials 235, images 143,
+  font atlas 14k/14p — all flat. (`rss=4MB` is a mis-scaled diagnostic, not a real reading.)
+
 ## Terrain far-LOD (July 2026, with the MAP_SCALE 2.2 → 2.6 bump)
 
 The terrain sheets were the last full-res-everywhere geometry: chunked (48-tile blocks) and
@@ -63,10 +101,22 @@ frustum-culled, but every on-screen chunk drew 1 quad/tile + terrace walls + mar
 river banks regardless of distance. `worldmap::build_terrain_chunk_coarse` now builds a second,
 stride-4 **coarse drape** per chunk (~1/16th the vertices; no walls, no river cuts — the channel
 just dips under the always-drawn water plane; short perimeter skirts hide LOD seams). The two
-meshes swap via `VisibilityRange` at **110–136u** (camera→chunk-AABB, `use_aabb`) with a dithered
-crossfade — unlike the scatter culls this band is deliberately NON-abrupt: terrain is huge and a
-hard swap pops its silhouette; only the ring of chunks currently inside the band pays the
-per-fragment discard. The coarse mesh is `NotShadowCaster` (cascades end ~150 anyway).
+meshes swap via `VisibilityRange` at **150–176u** (camera→chunk-AABB, `use_aabb`; `worldmap.rs`
+`TERRAIN_LOD`/`TERRAIN_LOD_BAND` — this doc said 110–136 until 2026-07-27, from before the radius
+was pushed out for MAP_SCALE 2.6) with a dithered crossfade — unlike the scatter culls this band is
+deliberately NON-abrupt: terrain is huge and a hard swap pops its silhouette; only the ring of
+chunks currently inside the band pays the per-fragment discard. The coarse mesh is
+`NotShadowCaster` (cascades end ~150 anyway).
+
+**The crossfade was not actually wired until 2026-07-27.** `terrain.wgsl` overrides
+`fragment_shader()` and so replaces `bevy_pbr::pbr.wgsl` wholesale, but it never called
+`visibility_range_dither` — while the depth prepass, which is *not* overridden, fell through to
+`pbr_prepass.wgsl`, which does dither. So in the 150–176u ring both LODs drew fully in the colour
+pass against a prepass depth that was a 4×4 checkerboard of the two, and `depth_compare:
+GreaterEqual` resolved to a per-pixel nearest-of-both — an interpenetrating union in which the
+coarse drape's straight ramp over a mesa tier punched through the full-res cliff walls ("terrain
+showing through the mountains"). Any future terrain fragment shader MUST keep that dither call
+first, guarded by `#ifdef VISIBILITY_RANGE_DITHER`.
 
 This is what pays for MAP_SCALE 2.6 (tiles ∝ scale², ~1.4× vs 2.2): beyond ~136u only ~1/16-density
 terrain draws, so the full-res vertex load now tracks the LOD radius, not the island size.
