@@ -34,6 +34,7 @@ wgpu = { version = "29", default-features = false }
 # transitively via bevy, so cargo unifies it at no extra compile cost).
 winit = "0.30"
 image = { version = "0.25", default-features = false, features = ["png"] }
+ron = "0.12.2"
 
 # Profiling build: turns on Bevy's per-system tracing spans, written to a chrome-trace JSON on exit
 # (`trace-<ts>.json`). `cargo run --features profiling` then `tools/trace_summary.py <file>` gives an
