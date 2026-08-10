@@ -73,11 +73,45 @@
 
 <main class="log">
 
-  <!-- ── v0.21.1 ── -->
+  <!-- ── v0.22.0 ── -->
   <article class="rel latest rv">
     <div class="rel-head">
-      <span class="rel-ver">v0.21.1</span>
+      <span class="rel-ver">v0.22.0</span>
       <span class="rel-badge">Latest</span>
+      <span class="rel-date">August 10, 2026</span>
+    </div>
+    <p class="rel-sum">Real save slots with a 10-minute autosave, the two ground-rendering bugs fixed for good, and a deep endgame performance pass — big sieges run light again.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">New</span></div>
+        <ul>
+          <li><strong>Five manual save slots.</strong> Save from the pause menu into any slot — each row shows the night, hero level and playtime. A new <strong>LOAD GAME</strong> picker on the title, in pause and after a game over; <strong>CONTINUE</strong> resumes the newest save. Your old single save migrates automatically.</li>
+          <li><strong>Autosave every 10 minutes</strong> of play into its own autosave slot, on top of the dawn autosave. A save that comes due mid-siege waits for dawn, so a load can never skip a night you didn't fight. <strong>New Game only clears the autosave</strong> — manual slots survive.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed</span></div>
+        <ul>
+          <li><strong>Ground textures failing to load.</strong> After a new game or map switch, whole terrain sheets could stop rendering — the ground masks didn't survive the world rebuild. They do now.</li>
+          <li><strong>Faintly see-through ground.</strong> The terrain shader never forced its output opaque, and the two terrain LOD meshes could mis-align their crossfade into real see-through checkerboard holes. Both fixed.</li>
+          <li>Depth-of-field distance scaling, stronger haze and backlit foliage from the interim builds are included.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag perf">Performance</span></div>
+        <ul>
+          <li>The terrain sampler every creature stands on is <strong>~6.6× faster</strong> (measured, bit-identical results), and invader pathfinding reads a pre-baked height grid.</li>
+          <li>Distant NPCs steer with a cheap direct step beyond ~90 m; rig animation culls beyond 70 m; orks share materials again so the horde batches; health bars and hit effects stopped re-uploading GPU data every frame.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.22.0">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.21.1 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.21.1</span>
       <span class="rel-date">July 20, 2026</span>
     </div>
     <p class="rel-sum">Installer hotfix — v0.21.0 wouldn't install over an existing copy. Same game build, working setup.</p>
