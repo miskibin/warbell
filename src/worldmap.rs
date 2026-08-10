@@ -3885,6 +3885,85 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
 mod tests {
     use super::*;
 
+    /// The [`water_near`] tile mask is a pure OPTIMIZATION: wherever it claims a tile is dry
+    /// (0 — so `smooth_surface_y` skips the exact river/pool SDF test), the exact test must
+    /// agree at every sub-tile point, or footing would silently change vs. the pre-mask code
+    /// (NPCs/hero standing on rendered water). Sweeps every tile at a 3×3 sub-grid including
+    /// near-corner offsets — if the conservative bake margins are ever too tight, this fails
+    /// with the exact tile.
+    #[test]
+    fn water_near_mask_never_hides_water() {
+        let mask = water_near();
+        let mut checked = 0u64;
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                if mask[(iz * COLS + ix) as usize] != 0 {
+                    continue; // flagged tiles run the exact test at runtime — nothing to prove
+                }
+                for fz in [0.06f32, 0.5, 0.94] {
+                    for fx in [0.06f32, 0.5, 0.94] {
+                        let bx = (ix as f32 + fx) / MAP_SCALE;
+                        let bz = (iz as f32 + fz) / MAP_SCALE;
+                        checked += 1;
+                        assert!(
+                            !is_river(bx, bz) && !is_pool(bx, bz),
+                            "tile ({ix},{iz}) baked as dry, but sub-sample (+{fx},+{fz}) is water"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(checked > 500_000, "mask marked almost everything wet — bake is broken ({checked} checks)");
+    }
+
+    /// The baked per-map tile-centre height array ([`tile_centre_ground`], what the nav-grid
+    /// A* reads) must be bit-identical to the live sampler at every tile — catches any
+    /// index-transposition or NaN-encoding slip in the bake.
+    #[test]
+    fn baked_centre_heights_match_live_sampler() {
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                let baked = tile_centre_ground(ix, iz);
+                let live = ground_at_world(ix as f32 - GX + 0.5, iz as f32 - GZ + 0.5);
+                assert_eq!(baked, live, "baked vs live height mismatch at tile ({ix},{iz})");
+            }
+        }
+    }
+
+    /// Not an assertion — a timing probe (`cargo test bench_ -- --nocapture`) used to A/B the
+    /// ground-sampler hot path against older revisions. Kept because it's the empirical guard
+    /// for "the whole game samples ground through this; it must stay cheap at siege counts".
+    #[test]
+    fn bench_ground_sampler_smoke() {
+        let _ = ground_at_world(0.0, 0.0); // warm the per-map bakes
+        let t = std::time::Instant::now();
+        let mut acc = 0.0f32;
+        let mut hits = 0u32;
+        for i in 0..400_000u32 {
+            let x = ((i % 631) as f32) * 0.37 - 110.0;
+            let z = ((i / 631) as f32) * 0.53 - 110.0;
+            if let Some(h) = ground_at_world(x, z) {
+                acc += h;
+                hits += 1;
+            }
+        }
+        println!("bench_ground_sampler: 400k samples in {:?} (sum {acc:.1}, hits {hits})", t.elapsed());
+    }
+
+    /// Timing probe for invader-style A* replans (see `bench_ground_sampler_smoke`).
+    #[test]
+    fn bench_navgrid_paths_smoke() {
+        let _ = ground_at_world(0.0, 0.0); // warm the per-map bakes
+        let t = std::time::Instant::now();
+        let mut total_pts = 0usize;
+        for k in 0..40 {
+            let ang = k as f32 * 0.157;
+            let from = Vec2::new(ang.cos() * 34.0, ang.sin() * 34.0);
+            total_pts += crate::navgrid::path_to_budget(from, Vec2::new(0.0, -8.0), crate::navgrid::NAV_MAX_NODES).len();
+        }
+        println!("bench_navgrid: 40 spawn-ring→keep paths in {:?} ({total_pts} waypoints)", t.elapsed());
+    }
+
     /// Every pair of adjacent LAND tiles outside the coastal ridge band must differ by ≤1
     /// height class. NPC movement (nav-grid `can_step`, local `steer::can_stand`) refuses any
     /// >1-class step, so a 2+-class inland cliff wedges wandering NPCs at its base. Regression
