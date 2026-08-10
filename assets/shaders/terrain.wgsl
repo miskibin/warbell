@@ -461,5 +461,12 @@ fn fragment(
         out.color = pbr_input.material.base_color;
     }
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    // Terrain is opaque, but this shader hijacks base_color.a as a DATA channel (per-vertex
+    // wetness ≥ 0, negative = cliff flag), and unlike stock pbr.wgsl it never runs
+    // `alpha_discard`, whose Opaque branch is what forces a back to 1.0. Without this, all
+    // dry ground writes a≈0 into the HDR target and every alpha-preserving downstream pass
+    // (DoF/godrays/atmospherics/outline forward `scene.a` verbatim) delivers a see-through
+    // ground to any alpha-aware consumer (upscale blit, screenshots, compositors).
+    out.color.a = 1.0;
     return out;
 }

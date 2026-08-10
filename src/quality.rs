@@ -678,9 +678,22 @@ fn apply_quality(
     // setting (an A/B knob to isolate the terrain-shader cost).
     let (bump, ground_q, variety) = s.terrain.params();
     let q_override = std::env::var("FOREST_GROUNDLOD").ok().and_then(|v| v.trim().parse::<f32>().ok());
-    for (_, m) in terrain_mats.iter_mut() {
-        let q = q_override.unwrap_or(ground_q);
-        m.extension.params.params2 = Vec4::new(bump, q, variety, 0.0);
+    let want = Vec4::new(bump, q_override.unwrap_or(ground_q), variety, 0.0);
+    // Touch ONLY the terrain materials whose value actually differs. This whole system runs on ANY
+    // settings change (toggling shadows, bloom, a resolution tweak…), and `Assets::iter_mut` queues
+    // an `AssetEvent::Modified` for **every** asset it walks whether or not anything is stored — so
+    // the old unconditional loop re-uploaded + re-bound every terrain chunk on settings that have
+    // nothing to do with the ground. Collect the stale ids read-only first, then `get_mut` just
+    // those (which marks only them modified). Steady state: an empty list, zero GPU work.
+    let stale: Vec<AssetId<TerrainMaterial>> = terrain_mats
+        .iter()
+        .filter(|(_, m)| m.extension.params.params2 != want)
+        .map(|(id, _)| id)
+        .collect();
+    for id in stale {
+        if let Some(mut m) = terrain_mats.get_mut(id) {
+            m.extension.params.params2 = want;
+        }
     }
 }
 
@@ -833,7 +846,7 @@ struct GraphicsConfig {
     audio: AudioPrefs,
 }
 
-/// `graphics.json` next to the save file (same OS data-dir resolution as `savegame::save_path`).
+/// `graphics.json` next to the save slots (same OS data-dir resolution as `savegame::save_dir`).
 fn config_path() -> std::path::PathBuf {
     use std::path::PathBuf;
     let dir = if let Ok(appdata) = std::env::var("APPDATA") {

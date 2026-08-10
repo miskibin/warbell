@@ -226,20 +226,35 @@ Wraps core's tested A* (`tileworld_core::pathfinding`) onto forest's world-space
 register impassable collision boxes; **gate gaps register none**, so A* threads the gates with no
 explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints to the keep.
 
-### Save / load (`src/savegame.rs`) — the one-slot snapshot
+### Save / load (`src/savegame.rs`) — six slots, snapshot-style
 
 A save is a **logic snapshot, not an ECS dump**: the world is built once at `Startup` and is
 persistent within a process, so we serialize the run-state *resources* (hero / economy / town /
 upgrades / keep / heirs / night) plus a few world flags (looted chests, rescued camps, discovered
-landmarks) to one JSON slot, and on load overwrite those resources + mark the already-spawned
-entities. Two write triggers, **both Prep-only**:
+landmarks) to one JSON file per slot, and on load overwrite those resources + mark the
+already-spawned entities.
 
-- **Dawn autosave** — `autosave_on_dawn` fires on the `Wave → Prep` edge (a cleared night).
-- **Manual save** — the pause-menu **Save Game** button sends `RequestSave`; `manual_save` writes
-  while in `Prep` (greyed/refused during a siege). Allowed on day 1 (`wave_index == -1`).
+**Slots**: index `0` is the **autosave** (`autosave.json`), `1..=MANUAL_SLOTS` (5) are the player's
+manual slots (`save{n}.json`), all in the same OS data dir. A legacy single-slot `save.json` is
+renamed into slot 0 once at boot. `SaveSlots` caches a `SlotMeta` per slot (timestamp / night /
+playtime / level) so menus can label + order slots without re-reading disk each frame; refresh it
+with `refresh_slots` after any write or delete. **New Game only ever deletes slot 0** — manual slots
+survive a fresh run and stay loadable from the title's LOAD GAME.
 
-Both build the snapshot from one shared `SaveCtx` SystemParam (`snapshot()`), so there's a single
-field list to keep in sync. Loading: `begin_continue` drops the file into `PendingLoad`,
+Three write triggers, **all Prep-only**:
+
+- **Dawn autosave** — `autosave_on_dawn` fires on the `Wave → Prep` edge (a cleared night) → slot 0.
+- **Periodic autosave** — `autosave_tick` every `AUTOSAVE_INTERVAL` (600s) of `Playtime`, the
+  pause-aware play clock (mirrors `siege::GameTime`: sim-gated + frozen while `SkyClock.paused`).
+  A trigger during a night marks the save *owed* and lands the moment the night is cleared → slot 0.
+- **Manual save** — the pause menu's **SAVE GAME** opens the slot picker, which sends
+  `RequestSave(slot)`; `manual_save` writes while in `Prep` (greyed/refused during a siege).
+  Allowed on day 1 (`wave_index == -1`).
+
+All build the snapshot from one shared `SaveCtx` SystemParam (`snapshot()`), so there's a single
+field list to keep in sync. The **slot picker** overlay (`game_state.rs`: `SlotPicker` +
+`sync_slot_picker` / `slot_picker_click`, cloned from the `ConfirmWipe` pattern) serves both saving
+(pause) and loading (pause **and** title). Loading: `load_slot` drops the file into `PendingLoad`,
 `apply_pending_load` writes it back over the live resources the next `Playing` frame and emits
 `GameLoaded`, then the entity-owning modules reconcile from that message (`town.rs` rebuilds
 meshes, chests re-open, landmarks re-mark, **bosses despawn already-slain wardens**). Restore always
@@ -257,7 +272,8 @@ already serialize via the core `serde` feature and ride `Player`/`Bag`/`Town`/`R
    owning module — and read the value off the carried `SaveData`, never live `PlayerRes`/etc., which
    `apply_pending_load` may write the same frame in undefined order.
 
-Things deliberately **not** saved (fine — derived/transient): timed `Buffs`, pickup `Toasts`, the
+Things deliberately **not** saved (fine — derived/transient): `siege::GameTime` (the night-timeline
+clock; `savegame::Playtime` IS saved), timed `Buffs`, pickup `Toasts`, the
 battlefield (invaders/bolts/corpses — swept on Continue), warden *levels* (re-level from 1), and
 warden *kills* as such (the permanent boon flag on `Player` is the record — `boss::despawn_slain_wardens`
 reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so it's saved via `Town`.

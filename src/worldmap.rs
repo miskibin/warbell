@@ -584,10 +584,20 @@ struct RiverField {
 }
 fn river_points() -> Arc<RiverField> {
     static PTS: OnceLock<Mutex<HashMap<u8, Arc<RiverField>>>> = OnceLock::new();
+    // Same lock-free steady state as `tiles()`: river_sd sits on the per-frame ground-sample
+    // path, so the mutex is for the once-per-map bake only.
+    thread_local! {
+        static LOCAL: std::cell::RefCell<Option<(u8, Arc<RiverField>)>> = const { std::cell::RefCell::new(None) };
+    }
+    let id = active_id();
+    if let Some(f) = LOCAL.with(|l| l.borrow().as_ref().and_then(|(cid, f)| (*cid == id).then(|| f.clone()))) {
+        return f;
+    }
     let cache = PTS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().expect("river point cache poisoned");
-    guard
-        .entry(active_id())
+    let f = cache
+        .lock()
+        .expect("river point cache poisoned")
+        .entry(id)
         .or_insert_with(|| {
             let mut pts: Vec<(f32, f32, f32)> = Vec::new();
             for (ri, def) in active_rivers().iter().enumerate() {
@@ -636,7 +646,9 @@ fn river_points() -> Arc<RiverField> {
             const PAD: f32 = 2.5;
             Arc::new(RiverField { pts, bb: [bb[0] - PAD, bb[1] - PAD, bb[2] + PAD, bb[3] + PAD] })
         })
-        .clone()
+        .clone();
+    LOCAL.with(|l| *l.borrow_mut() = Some((id, f.clone())));
+    f
 }
 
 /// Signed distance (base units) from `(x, z)` to the nearest river surface: negative inside the
@@ -786,24 +798,7 @@ pub fn waterfall_site_world() -> (Vec2, Vec2) {
 /// away from them. Self-contained (region + warden + Blight gating INSIDE) so `classify`,
 /// `corner_water` and `smooth_surface_y` all see the same shoreline.
 fn pool_sd(x: f32, z: f32) -> f32 {
-    let mut best = f32::INFINITY;
-    for reg in active_map().regions {
-        if reg.biome != TB::Swamp || reg.peak != 0 {
-            continue;
-        }
-        if (x - reg.x).hypot(z - reg.z) > reg.r {
-            continue; // fast reject — blobs live well inside the region
-        }
-        for (fx, fz, frx, frz) in POOL_BLOBS {
-            let (cx, cz) = (reg.x + fx * reg.r, reg.z + fz * reg.r);
-            let (rx, rz) = (frx * reg.r, frz * reg.r);
-            let dx = (x - cx) / rx;
-            let dz = (z - cz) / rz;
-            // Normalised ellipse → approx base-unit signed distance (same trick as `lake_sd`).
-            let sd = ((dx * dx + dz * dz).sqrt() - 1.0) * rx.min(rz);
-            best = best.min(sd);
-        }
-    }
+    let best = pool_blob_sd_raw(x, z);
     if best == f32::INFINITY {
         return best;
     }
@@ -828,6 +823,35 @@ fn pool_sd(x: f32, z: f32) -> f32 {
     // Organic shoreline: wave the ellipse edge with noise. Only nibbles ±0.9 base units, so a
     // blob's guaranteed deep core (−rx·min ≈ −3..−5) survives.
     best + noise_a(x * 0.45, z * 0.45) * 0.9
+}
+
+/// The pool-blob field WITHOUT the keep-outs (warden glade / Blight / lake margin) that
+/// [`pool_sd`] applies on top — those return a hard `INFINITY`, i.e. the field is
+/// DISCONTINUOUS across their edges, so no centre-sample-plus-margin bake can bound it.
+/// The [`water_near`] mask samples THIS field instead: keep-outs only ever REMOVE water,
+/// so ignoring them can only over-flag tiles (mask stays conservative), mirroring how the
+/// mask samples `river_sd` raw while ignoring `river_blocked`. Excludes the ellipse-edge
+/// noise (callers add it; the mask's margin covers its full swing).
+fn pool_blob_sd_raw(x: f32, z: f32) -> f32 {
+    let mut best = f32::INFINITY;
+    for reg in active_map().regions {
+        if reg.biome != TB::Swamp || reg.peak != 0 {
+            continue;
+        }
+        if (x - reg.x).hypot(z - reg.z) > reg.r {
+            continue; // fast reject — blobs live well inside the region
+        }
+        for (fx, fz, frx, frz) in POOL_BLOBS {
+            let (cx, cz) = (reg.x + fx * reg.r, reg.z + fz * reg.r);
+            let (rx, rz) = (frx * reg.r, frz * reg.r);
+            let dx = (x - cx) / rx;
+            let dz = (z - cz) / rz;
+            // Normalised ellipse → approx base-unit signed distance (same trick as `lake_sd`).
+            let sd = ((dx * dx + dz * dz).sqrt() - 1.0) * rx.min(rz);
+            best = best.min(sd);
+        }
+    }
+    best
 }
 
 /// Full "still water" field: the swamp bog pools PLUS the waterfall plunge stream. Every
@@ -1901,10 +1925,26 @@ type Grid = Vec<Option<(TB, i32)>>;
 /// cheap `Arc` clone; every reader goes through `tile_at`, so the swap is invisible to them.
 static TILES: OnceLock<Mutex<HashMap<u8, Arc<Grid>>>> = OnceLock::new();
 fn tiles() -> Arc<Grid> {
+    // HOT PATH — every ground sample of every mover funnels through here (tens of thousands of
+    // calls per frame in a big siege). The global mutex is only for the once-per-map build;
+    // steady-state reads come from a thread-local `(map id, Arc)` pair so a lookup is a TLS hit
+    // + an Arc clone, no lock. A map switch changes `active_id`, which misses the TLS pair and
+    // falls through to the mutex exactly once per thread.
+    thread_local! {
+        static LOCAL: std::cell::RefCell<Option<(u8, Arc<Grid>)>> = const { std::cell::RefCell::new(None) };
+    }
     let id = active_id();
-    let cache = TILES.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().expect("tile cache poisoned");
-    guard.entry(id).or_insert_with(build_grid).clone()
+    LOCAL.with(|l| {
+        if let Some((cid, g)) = l.borrow().as_ref() {
+            if *cid == id {
+                return g.clone();
+            }
+        }
+        let cache = TILES.get_or_init(|| Mutex::new(HashMap::new()));
+        let g = cache.lock().expect("tile cache poisoned").entry(id).or_insert_with(build_grid).clone();
+        *l.borrow_mut() = Some((id, g.clone()));
+        g
+    })
 }
 /// Classify the whole grid for the **active** map, then relax inland cliffs. Sampling runs in
 /// BASE space so the island silhouette is unchanged; `active_map()` (via `classify`/the noise
@@ -2032,10 +2072,106 @@ fn terrace_inland(v: &mut [Option<(TB, i32)>]) {
     }
 }
 fn tile_at(ix: i32, iz: i32) -> Option<(TB, i32)> {
+    tile_in(&tiles(), ix, iz)
+}
+/// `tile_at` against an already-fetched grid — the per-sample fns below fetch the `Arc` ONCE
+/// and read all their tiles through this, instead of paying a `tiles()` lookup per tile.
+fn tile_in(grid: &Grid, ix: i32, iz: i32) -> Option<(TB, i32)> {
     if ix < 0 || iz < 0 || ix >= COLS || iz >= ROWS {
         return None;
     }
-    tiles()[(iz * COLS + ix) as usize]
+    grid[(iz * COLS + ix) as usize]
+}
+
+/// Per-tile conservative "could any point of this tile be river/pool water?" mask, baked once
+/// per map (same keying/caching shape as [`tiles`]). `smooth_surface_y` must reject the exact
+/// sub-tile water area (the banks are rendered sub-tile via marching-squares), but the exact
+/// test — `river_sd`'s point scan + `pool_or_stream_sd`'s region/blob scan — is far too heavy
+/// to run for every ground sample of every mover. This mask lets the common case (dry inland
+/// tile) skip the SDFs entirely; only tiles the bake marked water-adjacent pay for the exact
+/// check. Margins are conservative: tile half-diagonal in base units (~0.28 at MAP_SCALE 2.6)
+/// plus each field's own edge-noise amplitude (river fray ≤0.41, pool shore wave ≤0.9, stream
+/// fray ≤0.4) plus slack — so the mask can only ever say "check" too often, never "dry" wrongly.
+/// `river_sd` is sampled RAW (ignoring `river_blocked`): blocking only shrinks water, so a
+/// blocked-at-centre tile still gets the exact check if the raw channel is near.
+static WATER_NEAR: OnceLock<Mutex<HashMap<u8, Arc<Vec<u8>>>>> = OnceLock::new();
+fn water_near() -> Arc<Vec<u8>> {
+    thread_local! {
+        static LOCAL: std::cell::RefCell<Option<(u8, Arc<Vec<u8>>)>> = const { std::cell::RefCell::new(None) };
+    }
+    let id = active_id();
+    if let Some(m) = LOCAL.with(|l| l.borrow().as_ref().and_then(|(cid, m)| (*cid == id).then(|| m.clone()))) {
+        return m;
+    }
+    let cache = WATER_NEAR.get_or_init(|| Mutex::new(HashMap::new()));
+    let m = cache.lock().expect("water mask cache poisoned").entry(id).or_insert_with(build_water_near).clone();
+    LOCAL.with(|l| *l.borrow_mut() = Some((id, m.clone())));
+    m
+}
+/// Tile-CENTRE terrain height (`ground_at_world` at `tile + 0.5`) for the active map, baked
+/// once per map into a flat array. The nav-grid's A* (`navgrid::ForestGrid`) reads tile-centre
+/// heights millions of times per second during a siege replan storm — terrain is static per
+/// map, so those are pure re-derivations. `None` = water / off-map (encoded as NaN in the bake).
+static CENTRE_H: OnceLock<Mutex<HashMap<u8, Arc<Vec<f32>>>>> = OnceLock::new();
+pub fn tile_centre_ground(ix: i32, iz: i32) -> Option<f32> {
+    if ix < 0 || iz < 0 || ix >= COLS || iz >= ROWS {
+        return None;
+    }
+    thread_local! {
+        static LOCAL: std::cell::RefCell<Option<(u8, Arc<Vec<f32>>)>> = const { std::cell::RefCell::new(None) };
+    }
+    let id = active_id();
+    let grid = LOCAL
+        .with(|l| l.borrow().as_ref().and_then(|(cid, g)| (*cid == id).then(|| g.clone())))
+        .unwrap_or_else(|| {
+            let cache = CENTRE_H.get_or_init(|| Mutex::new(HashMap::new()));
+            let g = cache
+                .lock()
+                .expect("centre height cache poisoned")
+                .entry(id)
+                .or_insert_with(|| {
+                    let mut v = vec![f32::NAN; (COLS * ROWS) as usize];
+                    for iz in 0..ROWS {
+                        for ix in 0..COLS {
+                            if let Some(h) = ground_at_world(ix as f32 - GX + 0.5, iz as f32 - GZ + 0.5) {
+                                v[(iz * COLS + ix) as usize] = h;
+                            }
+                        }
+                    }
+                    Arc::new(v)
+                })
+                .clone();
+            LOCAL.with(|l| *l.borrow_mut() = Some((id, g.clone())));
+            g
+        });
+    let h = grid[(iz * COLS + ix) as usize];
+    (!h.is_nan()).then_some(h)
+}
+
+fn build_water_near() -> Arc<Vec<u8>> {
+    // Margin maths (worst case, sampled at the tile CENTRE): a sub-tile point sits ≤ the tile
+    // half-diagonal (0.5·√2 / MAP_SCALE ≈ 0.28 base) away, and each field's edge-noise term
+    // can differ between the centre and that point by up to its full swing both ways.
+    // `omottle` spans ±1.5 → the river fray term spans ±(1.5·0.28 + 1.5·0.13) ≈ ±0.62 (swing
+    // 1.23); `noise_a` spans ±1.5 → the pool shore wave spans ±1.35 (one-sided vs the raw
+    // blob field) and the stream fray ±0.6 (already inside `stream_sd`, swing 1.2). Pools are
+    // sampled through [`pool_blob_sd_raw`] — the keep-out-free, noise-free blob field —
+    // because `pool_sd`'s keep-outs are DISCONTINUOUS (hard `INFINITY` edges no margin can
+    // bound) and only ever remove water. The `water_near_mask_never_hides_water` test sweeps
+    // the whole map to prove all of this holds.
+    const RIVER_NEAR: f32 = 1.7; // 0.28 + 2·0.62 + slack
+    const POOL_NEAR: f32 = 2.1; // 0.28 + 1.35 (pool, one-sided) / 2·0.6 (stream) + slack
+    let mut v = vec![0u8; (COLS * ROWS) as usize];
+    for iz in 0..ROWS {
+        for ix in 0..COLS {
+            let bx = (ix as f32 + 0.5) / MAP_SCALE;
+            let bz = (iz as f32 + 0.5) / MAP_SCALE;
+            if river_sd(bx, bz) < RIVER_NEAR || pool_blob_sd_raw(bx, bz).min(stream_sd(bx, bz)) < POOL_NEAR {
+                v[(iz * COLS + ix) as usize] = 1;
+            }
+        }
+    }
+    Arc::new(v)
 }
 
 // World ↔ tile helpers (world is the enlarged tile-space recentred on the origin).
@@ -2067,9 +2203,12 @@ pub fn is_grass_world(wx: f32, wz: f32) -> bool {
 /// `None` when no land tile at the corner chains to `h_ref` (callers fall back to the tile's
 /// own flat top).
 fn corner_top_y_for(cx: i32, cz: i32, h_ref: i32) -> Option<f32> {
+    corner_top_y_in(&tiles(), cx, cz, h_ref)
+}
+fn corner_top_y_in(grid: &Grid, cx: i32, cz: i32, h_ref: i32) -> Option<f32> {
     let mut hs: [Option<i32>; 4] = [None; 4];
     for (k, (ax, az)) in [(cx - 1, cz - 1), (cx, cz - 1), (cx - 1, cz), (cx, cz)].into_iter().enumerate() {
-        hs[k] = tile_at(ax, az).map(|(_, h)| h);
+        hs[k] = tile_in(grid, ax, az).map(|(_, h)| h);
     }
     // Seed with tiles ≤1 class from the reference, then chain outward (≤4 tiles → 3 passes).
     let mut inc = [false; 4];
@@ -2147,23 +2286,26 @@ fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
 fn smooth_surface_y(wx: f32, wz: f32) -> Option<f32> {
     let gx = wx + GX;
     let gz = wz + GZ;
-    // No footing over the real (sub-tile) river/pool surface. The per-tile `tile_at` classifies
-    // by tile CENTRE, but the bank is rendered sub-tile via marching-squares — so a boundary
-    // tile is land by centre yet half water on screen. Reject the exact water area here (cheap:
-    // `river_sd` early-outs outside the rivers' bbox; `pool_sd` outside the swamp interiors) so
-    // the hero/NPCs/scatter can't stand on the rendered-water half.
-    if is_river(gx / MAP_SCALE, gz / MAP_SCALE) || is_pool(gx / MAP_SCALE, gz / MAP_SCALE) {
-        return None;
-    }
     let ix = gx.floor() as i32;
     let iz = gz.floor() as i32;
-    let (_, h) = tile_at(ix, iz)?;
+    let grid = tiles();
+    let (_, h) = tile_in(&grid, ix, iz)?; // water/off-map tile → no footing, same as before
+    // No footing over the real (sub-tile) river/pool surface. The per-tile classification is
+    // by tile CENTRE, but the bank is rendered sub-tile via marching-squares — so a boundary
+    // tile is land by centre yet half water on screen. The exact SDF test only runs on tiles
+    // the baked [`water_near`] mask flagged; the common dry-inland sample skips it entirely
+    // (this fn is the whole game's ground sampler — it must stay cheap at siege agent counts).
+    if water_near()[(iz * COLS + ix) as usize] != 0
+        && (is_river(gx / MAP_SCALE, gz / MAP_SCALE) || is_pool(gx / MAP_SCALE, gz / MAP_SCALE))
+    {
+        return None;
+    }
     let flat = (h - 1) as f32 * GROUND_STEP;
     let (fx, fz) = (gx - ix as f32, gz - iz as f32);
-    let c00 = corner_top_y_for(ix, iz, h).unwrap_or(flat);
-    let c10 = corner_top_y_for(ix + 1, iz, h).unwrap_or(flat);
-    let c01 = corner_top_y_for(ix, iz + 1, h).unwrap_or(flat);
-    let c11 = corner_top_y_for(ix + 1, iz + 1, h).unwrap_or(flat);
+    let c00 = corner_top_y_in(&grid, ix, iz, h).unwrap_or(flat);
+    let c10 = corner_top_y_in(&grid, ix + 1, iz, h).unwrap_or(flat);
+    let c01 = corner_top_y_in(&grid, ix, iz + 1, h).unwrap_or(flat);
+    let c11 = corner_top_y_in(&grid, ix + 1, iz + 1, h).unwrap_or(flat);
     let a = c00 + (c10 - c00) * fx;
     let b = c01 + (c11 - c01) * fx;
     Some(a + (b - a) * fz)
@@ -2514,7 +2656,11 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Handle<Ima
         TextureDimension::D2,
         data,
         TextureFormat::R8Unorm,
-        RenderAssetUsages::RENDER_WORLD,
+        // MAIN_WORLD too (not RENDER_WORLD-only): terrain/water materials are re-minted on
+        // every in-process world rebuild, and a handle whose CPU copy was dropped after the
+        // first extract can leave the new material's bind group unpreparable — the sheet
+        // then never renders ("ground textures didn't load"). See terrain.rs::make_material.
+        RenderAssetUsages::default(),
     );
     // Linear filtering smooths the 1-texel bands; the default clamp-to-edge address
     // mode makes off-texture samples read the border (open sea = max distance).
@@ -2541,7 +2687,7 @@ fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Handle<Ima
         TextureDimension::D2,
         bog_data,
         TextureFormat::R8Unorm,
-        RenderAssetUsages::RENDER_WORLD,
+        RenderAssetUsages::default(), // MAIN_WORLD too — same rebuild hazard as the shore mask above
     );
     bog_img.sampler = linear;
     let region = Vec4::new(min_x, min_z, 1.0 / W as f32, 1.0 / H as f32);
@@ -2600,6 +2746,12 @@ pub fn build_step(
     creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
     state: &mut BuildState,
 ) {
+    if step == 0 {
+        // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
+        // behind the loading veil: the first caller would otherwise pay the one-time bake as a
+        // mid-gameplay frame hitch (e.g. the first invader A* of the run).
+        let _ = tile_centre_ground(0, 0);
+    }
     // The RTS arena runs a small, dedicated subset of the build: grass terrain, the sea, the
     // decorative fringe trees, ambiences and ground cover. EVERY campaign placement — castle, town
     // plots, camps, ore, chests, wildlife, defenders, ruins/landmarks, vignettes, ork fortress,
@@ -2764,7 +2916,11 @@ fn rut_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         TextureDimension::D2,
         data,
         TextureFormat::R8Unorm,
-        RenderAssetUsages::RENDER_WORLD,
+        // MAIN_WORLD too — this handle is process-cached in the static below and re-bound
+        // into BRAND-NEW terrain materials on every in-process world rebuild. RENDER_WORLD-only
+        // drops the CPU copy after the first extract, so those later materials could never
+        // (re)prepare their bind group and whole terrain sheets stopped rendering.
+        RenderAssetUsages::default(),
     );
     img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         mag_filter: ImageFilterMode::Linear,
@@ -3110,49 +3266,67 @@ fn spawn_terrain_sheet(
                 // re-opens on every world/biome rebuild. Baking the real AABB here closes that gap.
                 use bevy::camera::primitives::MeshAabb;
                 let aabb = mesh.compute_aabb();
+                // Terrain LOD: past TERRAIN_LOD the full-res chunk (1 quad/tile + walls +
+                // marching-squares banks) hands off to a stride-4 coarse drape — ~1/16th the
+                // vertices for the distant majority of the island. The band is a dithered
+                // crossfade (only the ring of chunks currently inside it pays the discard
+                // cost) so the swap doesn't pop; skirts on the coarse mesh hide the seam.
+                let coarse = if lod { build_terrain_chunk_coarse(keep, cx, x1, cz, z1) } else { None };
                 let mut e = commands.spawn((
                     Mesh3d(meshes.add(mesh)),
                     MeshMaterial3d(mat.clone()),
                     Transform::default(),
                     crate::biome::BiomeEntity,
                 ));
-                if let Some(aabb) = aabb {
-                    e.insert(aabb);
-                }
-                // Terrain LOD: past TERRAIN_LOD the full-res chunk (1 quad/tile + walls +
-                // marching-squares banks) hands off to a stride-4 coarse drape — ~1/16th the
-                // vertices for the distant majority of the island. The band is a dithered
-                // crossfade (only the ring of chunks currently inside it pays the discard
-                // cost) so the swap doesn't pop; skirts on the coarse mesh hide the seam.
-                if lod {
-                    if let Some(coarse) = build_terrain_chunk_coarse(keep, cx, x1, cz, z1) {
-                        e.insert(bevy::camera::visibility::VisibilityRange {
-                            start_margin: 0.0..0.0,
-                            end_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
-                            use_aabb: true,
-                        });
-                        // Same AABB-up-front fix for the coarse sibling: without it, a missing AABB
-                        // would fall back to the origin and this drape could flip visible near the
-                        // castle / hidden far away — the inverse of the underfoot low-res glitch.
-                        let caabb = coarse.compute_aabb();
-                        let mut ce = commands.spawn((
-                            Mesh3d(meshes.add(coarse)),
-                            MeshMaterial3d(mat.clone()),
-                            Transform::default(),
-                            crate::biome::BiomeEntity,
-                            // Shadow cascades stop at ~150 and the fog is thick out there —
-                            // the coarse drape is pure fill, never a shadow caster.
-                            bevy::light::NotShadowCaster,
-                            bevy::camera::visibility::VisibilityRange {
-                                start_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
-                                end_margin: 1.0e30..1.0e30, // no far cutoff — terrain always draws
-                                use_aabb: true,
-                            },
-                        ));
-                        if let Some(caabb) = caabb {
-                            ce.insert(caabb);
+                if let Some(coarse) = coarse {
+                    // ONE SHARED AABB (the union) for BOTH siblings. `VisibilityRange` with
+                    // `use_aabb` measures the camera→AABB distance, and the dither crossfade
+                    // is only COMPLEMENTARY (fine discards exactly the pixels the coarse
+                    // keeps) when both siblings resolve the SAME distance. The stride-4 drape
+                    // + its skirts bake slightly different bounds than the full-res mesh, so
+                    // per-mesh AABBs put the two at different points of the band — mismatched
+                    // checkerboards with see-through holes ("the ground looks slightly
+                    // transparent"), and at screen edges one sibling could frustum-cull while
+                    // the other still dithered. (Also the AABB-up-front fix: until Bevy's
+                    // `calculate_bounds` fills an AABB in, the range check falls back to the
+                    // entity translation — the world ORIGIN — pinning far-standing players'
+                    // underfoot chunks to the coarse drape on every rebuild.)
+                    let caabb = coarse.compute_aabb();
+                    let shared = match (aabb, caabb) {
+                        (Some(a), Some(b)) => {
+                            let min = a.min().min(b.min());
+                            let max = a.max().max(b.max());
+                            Some(bevy::camera::primitives::Aabb::from_min_max(min.into(), max.into()))
                         }
+                        (a, b) => a.or(b),
+                    };
+                    e.insert(bevy::camera::visibility::VisibilityRange {
+                        start_margin: 0.0..0.0,
+                        end_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
+                        use_aabb: true,
+                    });
+                    if let Some(shared) = shared {
+                        e.insert(shared);
                     }
+                    let mut ce = commands.spawn((
+                        Mesh3d(meshes.add(coarse)),
+                        MeshMaterial3d(mat.clone()),
+                        Transform::default(),
+                        crate::biome::BiomeEntity,
+                        // Shadow cascades stop at ~150 and the fog is thick out there —
+                        // the coarse drape is pure fill, never a shadow caster.
+                        bevy::light::NotShadowCaster,
+                        bevy::camera::visibility::VisibilityRange {
+                            start_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
+                            end_margin: 1.0e30..1.0e30, // no far cutoff — terrain always draws
+                            use_aabb: true,
+                        },
+                    ));
+                    if let Some(shared) = shared {
+                        ce.insert(shared);
+                    }
+                } else if let Some(aabb) = aabb {
+                    e.insert(aabb);
                 }
             }
             cx += TERRAIN_CHUNK;
@@ -3750,6 +3924,85 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The [`water_near`] tile mask is a pure OPTIMIZATION: wherever it claims a tile is dry
+    /// (0 — so `smooth_surface_y` skips the exact river/pool SDF test), the exact test must
+    /// agree at every sub-tile point, or footing would silently change vs. the pre-mask code
+    /// (NPCs/hero standing on rendered water). Sweeps every tile at a 3×3 sub-grid including
+    /// near-corner offsets — if the conservative bake margins are ever too tight, this fails
+    /// with the exact tile.
+    #[test]
+    fn water_near_mask_never_hides_water() {
+        let mask = water_near();
+        let mut checked = 0u64;
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                if mask[(iz * COLS + ix) as usize] != 0 {
+                    continue; // flagged tiles run the exact test at runtime — nothing to prove
+                }
+                for fz in [0.06f32, 0.5, 0.94] {
+                    for fx in [0.06f32, 0.5, 0.94] {
+                        let bx = (ix as f32 + fx) / MAP_SCALE;
+                        let bz = (iz as f32 + fz) / MAP_SCALE;
+                        checked += 1;
+                        assert!(
+                            !is_river(bx, bz) && !is_pool(bx, bz),
+                            "tile ({ix},{iz}) baked as dry, but sub-sample (+{fx},+{fz}) is water"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(checked > 500_000, "mask marked almost everything wet — bake is broken ({checked} checks)");
+    }
+
+    /// The baked per-map tile-centre height array ([`tile_centre_ground`], what the nav-grid
+    /// A* reads) must be bit-identical to the live sampler at every tile — catches any
+    /// index-transposition or NaN-encoding slip in the bake.
+    #[test]
+    fn baked_centre_heights_match_live_sampler() {
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                let baked = tile_centre_ground(ix, iz);
+                let live = ground_at_world(ix as f32 - GX + 0.5, iz as f32 - GZ + 0.5);
+                assert_eq!(baked, live, "baked vs live height mismatch at tile ({ix},{iz})");
+            }
+        }
+    }
+
+    /// Not an assertion — a timing probe (`cargo test bench_ -- --nocapture`) used to A/B the
+    /// ground-sampler hot path against older revisions. Kept because it's the empirical guard
+    /// for "the whole game samples ground through this; it must stay cheap at siege counts".
+    #[test]
+    fn bench_ground_sampler_smoke() {
+        let _ = ground_at_world(0.0, 0.0); // warm the per-map bakes
+        let t = std::time::Instant::now();
+        let mut acc = 0.0f32;
+        let mut hits = 0u32;
+        for i in 0..400_000u32 {
+            let x = ((i % 631) as f32) * 0.37 - 110.0;
+            let z = ((i / 631) as f32) * 0.53 - 110.0;
+            if let Some(h) = ground_at_world(x, z) {
+                acc += h;
+                hits += 1;
+            }
+        }
+        println!("bench_ground_sampler: 400k samples in {:?} (sum {acc:.1}, hits {hits})", t.elapsed());
+    }
+
+    /// Timing probe for invader-style A* replans (see `bench_ground_sampler_smoke`).
+    #[test]
+    fn bench_navgrid_paths_smoke() {
+        let _ = ground_at_world(0.0, 0.0); // warm the per-map bakes
+        let t = std::time::Instant::now();
+        let mut total_pts = 0usize;
+        for k in 0..40 {
+            let ang = k as f32 * 0.157;
+            let from = Vec2::new(ang.cos() * 34.0, ang.sin() * 34.0);
+            total_pts += crate::navgrid::path_to_budget(from, Vec2::new(0.0, -8.0), crate::navgrid::NAV_MAX_NODES).len();
+        }
+        println!("bench_navgrid: 40 spawn-ring→keep paths in {:?} ({total_pts} waypoints)", t.elapsed());
+    }
 
     /// Every pair of adjacent LAND tiles outside the coastal ridge band must differ by ≤1
     /// height class. NPC movement (nav-grid `can_step`, local `steer::can_stand`) refuses any

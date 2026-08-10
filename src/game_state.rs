@@ -98,6 +98,21 @@ pub struct ContinueInPlace(pub bool);
 #[derive(Resource, Default)]
 pub struct ConfirmWipe(pub Option<bool>);
 
+/// Which job the slot picker is doing while it's open.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PickerMode {
+    /// Pick a manual slot to write (pause menu only — the write runs in `Paused`).
+    Save,
+    /// Pick an occupied slot to resume (pause menu **and** the title screen).
+    Load,
+}
+
+/// The save/load **slot picker** overlay. `Some(mode)` = open, `None` = closed — the same
+/// resource-drives-the-overlay pattern as [`ConfirmWipe`], so one system reconciles it over
+/// whichever screen is up.
+#[derive(Resource, Default)]
+pub struct SlotPicker(pub Option<PickerMode>);
+
 /// True once a run is live (entered `Playing`) and not yet ended, so the start screen — reachable
 /// mid-run via the pause/game-over **Main Menu** button — knows to offer **RESUME** (drop back into
 /// the frozen run) and, crucially, to route **New Game** through a full in-process reset
@@ -123,6 +138,7 @@ impl Plugin for GameStatePlugin {
             .add_sub_state::<Modal>()
             .init_resource::<FreshRunPending>()
             .init_resource::<ConfirmWipe>()
+            .init_resource::<SlotPicker>()
             .init_resource::<ContinueInPlace>()
             .init_resource::<RunInProgress>()
             // Drive a pending in-process fresh run to completion (ungated — works over every screen).
@@ -134,6 +150,9 @@ impl Plugin for GameStatePlugin {
             // Overwrite-confirm dialog: reconcile its overlay + resolve its input. Ungated so it
             // works over the start / game-over / pause screens alike.
             .add_systems(Update, (sync_confirm_overlay, confirm_input))
+            // Save/load slot picker: same deal — ungated so it works over the title AND the pause
+            // screen (it's the only load path off the title besides Continue).
+            .add_systems(Update, (sync_slot_picker, slot_picker_click))
             .add_systems(Update, (pause_toggle, watch_end))
             // Pause-menu buttons + live settings labels (only while the pause screen is up).
             .add_systems(
@@ -142,6 +161,14 @@ impl Plugin for GameStatePlugin {
             )
             // Minimal overlays (fleshed out + difficulty chooser in P0.6).
             .add_systems(OnEnter(AppState::StartScreen), spawn_start_screen)
+            // FOREST_SAVETEST=picker — capture-harness hook: pop the LOAD slot picker over the
+            // title so a headless shot can verify the overlay's layout (no way to click in a
+            // FOREST_SHOT run). Pair with FOREST_MENU=1 + staged slot files.
+            .add_systems(
+                OnEnter(AppState::StartScreen),
+                (|mut picker: ResMut<SlotPicker>| picker.0 = Some(PickerMode::Load))
+                    .run_if(|| std::env::var("FOREST_SAVETEST").as_deref() == Ok("picker")),
+            )
             .add_systems(OnExit(AppState::StartScreen), despawn_screen::<StartScreenUi>)
             .add_systems(OnEnter(AppState::Paused), spawn_pause_screen)
             .add_systems(OnExit(AppState::Paused), despawn_screen::<PausedUi>)
@@ -323,19 +350,38 @@ fn drive_fresh_run(
     }
 }
 
-/// Shared by every **Continue / Load last save** entry point (game-over, the C key, pause→Load):
-/// load the save into [`PendingLoad`], flag the [`clear_battlefield`] sweep, and switch to
-/// `Playing` — all in-process, so no new window spawns. A missing/unreadable save is a no-op (the
-/// Continue button is only shown when a save exists, but this guards the file-vanished race).
-fn begin_continue(
+/// Shared by **every** load entry point (title Continue + C key, game-over Continue + C key, the
+/// slot picker): read `slot` into [`PendingLoad`], flag the [`clear_battlefield`] sweep, and switch
+/// to `Playing` — all in-process, so no new window spawns. A missing/unreadable slot is a no-op
+/// (the buttons only offer occupied slots, but this guards the file-vanished race).
+fn load_slot(
+    slot: usize,
     pending: &mut crate::savegame::PendingLoad,
     next_app: &mut NextState<AppState>,
     cont: &mut ContinueInPlace,
 ) {
-    let Some(data) = crate::savegame::load_save() else { return };
+    let Some(data) = crate::savegame::load_save(slot) else { return };
     pending.0 = Some(data);
     cont.0 = true;
     next_app.set(AppState::Playing);
+}
+
+/// **Continue**: resume the most recently written slot (autosave or manual — whichever is newest).
+/// No-op when nothing is saved.
+fn continue_latest(
+    slots: &crate::savegame::SaveSlots,
+    pending: &mut crate::savegame::PendingLoad,
+    next_app: &mut NextState<AppState>,
+    cont: &mut ContinueInPlace,
+) {
+    let Some(slot) = slots.latest() else { return };
+    load_slot(slot, pending, next_app, cont);
+}
+
+/// Whether a fresh run needs the "overwrite?" confirmation: it would either abandon the live run or
+/// clobber the autosave slot. Manual slots are never touched by New Game, so they don't count.
+fn should_confirm_wipe(slots: &crate::savegame::SaveSlots, run_active: bool) -> bool {
+    run_active || slots.autosave().is_some()
 }
 
 /// On an in-process Continue, despawn the dead run's transient combat entities so dawn reads clean:
@@ -377,6 +423,7 @@ fn pause_toggle(
     mut next_app: ResMut<NextState<AppState>>,
     mut next_modal: ResMut<NextState<Modal>>,
     confirm: Res<ConfirmWipe>,
+    picker: Res<SlotPicker>,
     gfx_menu: Res<crate::ui::graphics_menu::GraphicsMenuOpen>,
     // `Option` so Esc-pause keeps working in Skirmish even if the campaign town plugin (which owns
     // `BuildMode`) isn't present — RTS build placement is its own input-state resource, not this one.
@@ -391,6 +438,10 @@ fn pause_toggle(
     }
     // While the overwrite dialog is up, Esc belongs to it (cancel), not the pause toggle.
     if confirm.0.is_some() {
+        return;
+    }
+    // Likewise the slot picker — Esc closes IT (see `slot_picker_click`).
+    if picker.0.is_some() {
         return;
     }
     // Build mode is a live placement state (not a panel) — Esc leaves it instead of pausing.
@@ -488,8 +539,10 @@ fn start_screen_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut next_app: ResMut<NextState<AppState>>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
-    save: Res<crate::savegame::SaveExists>,
+    slots: Res<crate::savegame::SaveSlots>,
     mut confirm: ResMut<ConfirmWipe>,
+    picker: Res<SlotPicker>,
+    mut cont: ResMut<ContinueInPlace>,
     run: Res<RunInProgress>,
     siege: Option<Res<crate::siege::Siege>>,
     mut fresh: ResMut<FreshRunPending>,
@@ -500,16 +553,15 @@ fn start_screen_input(
     if gfx_menu.0 {
         return;
     }
-    // While the overwrite dialog is up, it owns the keyboard (see `confirm_input`).
-    if confirm.0.is_some() {
+    // While the overwrite dialog / slot picker is up, it owns the keyboard.
+    if confirm.0.is_some() || picker.0.is_some() {
         return;
     }
-    // C resumes the saved run; Enter/Space starts a fresh one (confirming first if it'd overwrite).
-    if save.0 && keys.just_pressed(KeyCode::KeyC) {
-        pending.0 = crate::savegame::load_save();
-        next_app.set(AppState::Playing);
+    // C resumes the newest slot; Enter/Space starts a fresh run (confirming first if it'd overwrite).
+    if slots.any() && keys.just_pressed(KeyCode::KeyC) {
+        continue_latest(&slots, &mut pending, &mut next_app, &mut cont);
     } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-        if save.0 {
+        if should_confirm_wipe(&slots, run.0) {
             confirm.0 = Some(false); // ask before wiping the existing run
         } else {
             let cur_diff = current_difficulty(siege.as_deref());
@@ -560,14 +612,15 @@ fn gameover_input(
     mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
     mut sw: ModeSwitch,
-    save: Res<crate::savegame::SaveExists>,
+    slots: Res<crate::savegame::SaveSlots>,
     mut confirm: ResMut<ConfirmWipe>,
+    picker: Res<SlotPicker>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
     mut next_app: ResMut<NextState<AppState>>,
     mut cont: ResMut<ContinueInPlace>,
 ) {
-    if confirm.0.is_some() {
-        return; // dialog owns the keyboard
+    if confirm.0.is_some() || picker.0.is_some() {
+        return; // dialog / picker owns the keyboard
     }
     let cur_diff = current_difficulty(siege.as_deref());
     // Skirmish: Enter replays the skirmish (an in-process fresh arena); nothing else applies
@@ -581,10 +634,10 @@ fn gameover_input(
     let defeat = !matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
     // C resumes last night in-process (defeat + save only); Enter starts a fresh run (confirming
     // first if it'd overwrite) — a full in-process reset, no relaunch.
-    if defeat && save.0 && keys.just_pressed(KeyCode::KeyC) {
-        begin_continue(&mut pending, &mut next_app, &mut cont);
+    if defeat && slots.any() && keys.just_pressed(KeyCode::KeyC) {
+        continue_latest(&slots, &mut pending, &mut next_app, &mut cont);
     } else if keys.just_pressed(KeyCode::Enter) {
-        if save.0 {
+        if should_confirm_wipe(&slots, sw.run.0) {
             confirm.0 = Some(false);
         } else {
             fresh.0 = Some(cur_diff); // full in-process reset (drive_fresh_run rebuilds the world)
@@ -603,9 +656,14 @@ struct GameOverUi;
 /// The "Play" / "New Game" button on the start screen (always a fresh run).
 #[derive(Component)]
 struct StartPlayButton;
-/// The "Continue" button on the start screen (loads the save). Only spawned when a save exists.
+/// The "Continue" button on the start screen (loads the newest slot). Only spawned when a save
+/// exists (an inert dim card stands in otherwise).
 #[derive(Component)]
 struct StartContinueButton;
+/// The "Load Game" button on the start screen — opens the slot picker in [`PickerMode::Load`].
+/// Only spawned when at least one slot is occupied.
+#[derive(Component)]
+struct StartLoadButton;
 /// The "Resume" button on the start screen — drops back into the live frozen run. Only spawned
 /// when [`RunInProgress`] (i.e. the menu was reached mid-run via a Main Menu button).
 #[derive(Component)]
@@ -658,6 +716,15 @@ struct ConfirmUi;
 struct ConfirmOkBtn;
 #[derive(Component)]
 struct ConfirmCancelBtn;
+// ── Save/load slot picker ──
+#[derive(Component)]
+struct SlotPickerUi;
+/// One slot row in the picker, carrying the slot index (0 = autosave). The payload-component
+/// pattern (like [`SegButton`]) keeps this to one marker instead of six.
+#[derive(Component)]
+struct SlotBtn(usize);
+#[derive(Component)]
+struct SlotCancelBtn;
 
 /// A centred full-screen scrim card root (pause / game-over).
 fn modal_root(z: i32) -> impl Bundle {
@@ -683,15 +750,15 @@ fn spawn_start_screen(
     mut commands: Commands,
     fonts: Res<UiFonts>,
     siege: Option<Res<crate::siege::Siege>>,
-    mut save: ResMut<crate::savegame::SaveExists>,
+    mut slots: ResMut<crate::savegame::SaveSlots>,
     run: Res<RunInProgress>,
 ) {
     let cur = current_difficulty(siege.as_deref());
-    // Re-check the file here: Bevy runs the initial `OnEnter(StartScreen)` *before* `Startup`
-    // (where `detect_existing_save` sets the flag), so reading `save.0` directly would miss an
-    // existing save on a fresh launch. Recompute + write it back so the flag is right from frame 0.
-    let has_save = crate::savegame::load_save().is_some();
-    save.0 = has_save;
+    // Re-scan the slots here as well as in `rescan_slots`: Bevy runs the initial
+    // `OnEnter(StartScreen)` *before* `Startup`, and the two `OnEnter` systems' order is undefined,
+    // so scanning again is what guarantees the buttons are right on frame 0 of a cold boot.
+    crate::savegame::refresh_slots(&mut slots);
+    let has_save = slots.any();
 
     commands
         .spawn((
@@ -808,6 +875,23 @@ fn spawn_start_screen(
                     ))
                     .with_children(|b| {
                         b.spawn(label(&fonts.extrabold, "CONTINUE GAME", 19.0, GREY));
+                    });
+                }
+                // Load Game — pick any slot (Continue only takes the newest). Hidden with no saves.
+                if has_save {
+                    m.spawn((
+                        Node {
+                            padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
+                            border: widgets::border(1.0),
+                            border_radius: radius(11.0),
+                            ..default()
+                        },
+                        widgets::btn_primary_paint(),
+                        StartLoadButton,
+                        anim_btn(AnimKind::Rise, 0.35, 0.7),
+                    ))
+                    .with_children(|b| {
+                        b.spawn(label(&fonts.extrabold, "LOAD GAME", 19.0, INK));
                     });
                 }
                 // New Game — a fresh run (confirms first if it'd overwrite a save).
@@ -1090,14 +1174,14 @@ fn pause_btn<M: Component, L: Bundle>(
 fn spawn_pause_screen(
     mut commands: Commands,
     fonts: Res<UiFonts>,
-    save: Res<crate::savegame::SaveExists>,
+    slots: Res<crate::savegame::SaveSlots>,
     // `Option` so it's robust whether or not the siege resource exists in Skirmish (siege is a
     // campaign-only subsystem); the save controls below only apply in Campaign anyway.
     siege: Option<Res<crate::siege::Siege>>,
     mode: Res<crate::rts::GameMode>,
 ) {
     let skirmish = matches!(*mode, crate::rts::GameMode::Skirmish);
-    let has_save = save.0;
+    let has_save = slots.any();
     // Manual save is a day-only action (a mid-siege snapshot would resume in the wrong place).
     let can_save = matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Prep));
 
@@ -1166,7 +1250,7 @@ fn spawn_pause_screen(
                     });
                 }
                 if has_save {
-                    pause_btn(c, &fonts.extrabold, "LOAD LAST SAVE", PauseLoadBtn, (), 0.12);
+                    pause_btn(c, &fonts.extrabold, "LOAD GAME", PauseLoadBtn, (), 0.12);
                 }
                 pause_btn(c, &fonts.extrabold, "RESTART", PauseRestartBtn, (), 0.14);
                 // Back to the title screen — the run stays frozen in memory, so RESUME there returns
@@ -1205,14 +1289,12 @@ fn pause_click(
     mut sw: ModeSwitch,
     time: Res<Time>,
     mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
-    save: Res<crate::savegame::SaveExists>,
+    slots: Res<crate::savegame::SaveSlots>,
     mut confirm: ResMut<ConfirmWipe>,
-    mut pending: ResMut<crate::savegame::PendingLoad>,
-    mut cont_req: ResMut<ContinueInPlace>,
-    mut save_req: MessageWriter<crate::savegame::RequestSave>,
+    mut picker: ResMut<SlotPicker>,
 ) {
-    if confirm.0.is_some() {
-        return; // dialog owns input
+    if confirm.0.is_some() || picker.0.is_some() {
+        return; // dialog / picker owns input
     }
     let skirmish = matches!(*sw.mode, crate::rts::GameMode::Skirmish);
     let cur_diff = current_difficulty(siege.as_deref());
@@ -1244,16 +1326,17 @@ fn pause_click(
             next_app.set(AppState::StartScreen); // run kept live; RESUME on the title returns here
         }
         if save_b.is_some() {
-            // `manual_save` (savegame.rs) does the write + the "Game saved" notice.
-            save_req.write(crate::savegame::RequestSave);
+            // Pick the manual slot first; `slot_picker_click` then fires `RequestSave(slot)` and
+            // `manual_save` (savegame.rs) does the write + the "Game saved to slot N" notice.
+            picker.0 = Some(PickerMode::Save);
         }
         if load.is_some() {
-            // Resume the save in-process: the battlefield sweep clears the live wave and
+            // Pick a slot to resume in-process: the battlefield sweep clears the live wave and
             // `apply_pending_load` rolls run-state back to the saved dawn (geometry persists).
-            begin_continue(&mut pending, &mut next_app, &mut cont_req);
+            picker.0 = Some(PickerMode::Load);
         }
         if restart_b.is_some() {
-            if save.0 {
+            if should_confirm_wipe(&slots, true) {
                 confirm.0 = Some(true); // Restart wipes the save too — confirm (from_pause = true)
             } else {
                 fresh.0 = Some(cur_diff); // full in-process reset (drive_fresh_run rebuilds the world)
@@ -1270,7 +1353,7 @@ fn spawn_gameover_screen(
     fonts: Res<UiFonts>,
     siege: Option<Res<crate::siege::Siege>>,
     player: Option<Res<crate::player::PlayerRes>>,
-    save: Res<crate::savegame::SaveExists>,
+    slots: Res<crate::savegame::SaveSlots>,
     mode: Res<crate::rts::GameMode>,
     outcome: Res<crate::rts::RtsOutcome>,
 ) {
@@ -1300,7 +1383,7 @@ fn spawn_gameover_screen(
     };
     // On a defeat with a save, offer to resume last night; a victory ends the saga (no Continue).
     // Skirmish has no save/continue at all (each Potyczka is a fresh in-process run).
-    let can_continue = !skirmish && !won && save.0;
+    let can_continue = !skirmish && !won && slots.any();
 
     commands.spawn((modal_root(50), GameOverUi)).with_children(|root| {
         root.spawn((
@@ -1395,26 +1478,29 @@ fn start_click(
             Option<&QuitButton>,
             Option<&StartSettingsButton>,
             Option<&SkirmishButton>,
+            Option<&StartLoadButton>,
         ),
         Changed<Interaction>,
     >,
     mut next_app: ResMut<NextState<AppState>>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
     siege: Option<ResMut<crate::siege::Siege>>,
-    save: Res<crate::savegame::SaveExists>,
+    slots: Res<crate::savegame::SaveSlots>,
     mut confirm: ResMut<ConfirmWipe>,
+    mut picker: ResMut<SlotPicker>,
+    mut cont_req: ResMut<ContinueInPlace>,
     mut sw: ModeSwitch,
     mut fresh: ResMut<FreshRunPending>,
     mut credits: ResMut<crate::mainmenu::CreditsOpen>,
     mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if confirm.0.is_some() {
-        return; // dialog up — the scrim already blocks these, but be explicit
+    if confirm.0.is_some() || picker.0.is_some() {
+        return; // dialog / picker up — the scrim already blocks these, but be explicit
     }
     let mut siege = siege;
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, play, cont, resume, cred, seg, quit, settings_b, skirmish_b) in &q {
+    for (interaction, play, cont, resume, cred, seg, quit, settings_b, skirmish_b, load_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -1431,7 +1517,7 @@ fn start_click(
             gfx_menu.0 = true; // open the graphics Settings page over the start screen
         }
         if play.is_some() {
-            if save.0 {
+            if should_confirm_wipe(&slots, sw.run.0) {
                 confirm.0 = Some(false); // New Game would overwrite — confirm first
             } else {
                 begin_new_game(sw.run.0, cur_diff, map_changed(&sw.active_map), &mut pending, &mut next_app, &mut fresh);
@@ -1440,9 +1526,12 @@ fn start_click(
         if resume.is_some() {
             next_app.set(AppState::Playing); // back into the live frozen run, world intact
         }
-        if cont.is_some() && save.0 {
-            pending.0 = crate::savegame::load_save();
-            next_app.set(AppState::Playing);
+        if cont.is_some() {
+            // Same in-process load path as everywhere else (incl. the battlefield sweep).
+            continue_latest(&slots, &mut pending, &mut next_app, &mut cont_req);
+        }
+        if load_b.is_some() {
+            picker.0 = Some(PickerMode::Load); // pick any slot, not just the newest
         }
         if cred.is_some() {
             credits.0 = true;
@@ -1489,13 +1578,14 @@ fn gameover_click(
     siege: Option<Res<crate::siege::Siege>>,
     mut sw: ModeSwitch,
     time: Res<Time>,
-    save: Res<crate::savegame::SaveExists>,
+    slots: Res<crate::savegame::SaveSlots>,
     mut confirm: ResMut<ConfirmWipe>,
+    picker: Res<SlotPicker>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
     mut next_app: ResMut<NextState<AppState>>,
     mut cont_req: ResMut<ContinueInPlace>,
 ) {
-    if confirm.0.is_some() {
+    if confirm.0.is_some() || picker.0.is_some() {
         return;
     }
     let skirmish = matches!(*sw.mode, crate::rts::GameMode::Skirmish);
@@ -1518,14 +1608,15 @@ fn gameover_click(
             next_app.set(AppState::StartScreen); // run already ended; title offers New/Continue
         }
         if again.is_some() {
-            if save.0 {
+            if should_confirm_wipe(&slots, sw.run.0) {
                 confirm.0 = Some(false); // would overwrite — confirm first
             } else {
                 fresh.0 = Some(cur_diff); // full in-process reset (drive_fresh_run rebuilds the world)
             }
         }
         if cont.is_some() {
-            begin_continue(&mut pending, &mut next_app, &mut cont_req); // resume last night in-process
+            // Resume the newest slot in-process.
+            continue_latest(&slots, &mut pending, &mut next_app, &mut cont_req);
         }
     }
 }
@@ -1573,7 +1664,7 @@ fn spawn_confirm(commands: &mut Commands, fonts: &UiFonts) {
             c.spawn(label(&fonts.display, "OVERWRITE SAVED GAME?", 22.0, TEXT));
             c.spawn(label(
                 &fonts.regular,
-                "This deletes your current run. It can't be undone.",
+                "This wipes the autosave for your current run. Manual slots are kept.",
                 14.0,
                 TEXT_DIM,
             ));
@@ -1635,7 +1726,7 @@ fn confirm_input(
     mut confirm: ResMut<ConfirmWipe>,
     mut next_app: ResMut<NextState<AppState>>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
-    mut save: ResMut<crate::savegame::SaveExists>,
+    mut slots: ResMut<crate::savegame::SaveSlots>,
     mut fresh: ResMut<FreshRunPending>,
     app: Res<State<AppState>>,
     siege: Option<Res<crate::siege::Siege>>,
@@ -1668,8 +1759,10 @@ fn confirm_input(
         return;
     }
     if ok {
-        crate::savegame::delete_save();
-        save.0 = false;
+        // Only the AUTOSAVE is wiped — a fresh run must not be able to eat the player's manual
+        // slots, which stay loadable from the title's Load Game.
+        crate::savegame::delete_save(0);
+        crate::savegame::refresh_slots(&mut slots);
         confirm.0 = None;
         if *app.get() == AppState::StartScreen && !run.0 {
             // Cold-boot start screen — the world is already fresh, so start in-process directly.
@@ -1682,6 +1775,176 @@ fn confirm_input(
             let cur_diff = current_difficulty(siege.as_deref());
             fresh.0 = Some(cur_diff);
         }
+    }
+}
+
+// ── Save / load slot picker ─────────────────────────────────────────────────────────────
+
+/// One slot's menu line: `"SLOT 3 — NIGHT 5 · LV 7 · 42 MIN"`, or `"SLOT 3 — EMPTY"`.
+/// `wave_index` counts cleared nights from 0, so `-1` is still day one.
+fn slot_label(slot: usize, meta: Option<&crate::savegame::SlotMeta>) -> String {
+    let name = if slot == 0 { "AUTOSAVE".to_string() } else { format!("SLOT {slot}") };
+    let Some(m) = meta else { return format!("{name} — EMPTY") };
+    let when = if m.wave_index < 0 {
+        "DAY 1".to_string()
+    } else {
+        format!("NIGHT {}", m.wave_index + 2)
+    };
+    format!("{name} — {when} · LV {} · {} MIN", m.level, (m.playtime_secs / 60.0) as u64)
+}
+
+/// Spawn / despawn the slot-picker overlay to match [`SlotPicker`] — the same reconcile-on-mismatch
+/// shape as [`sync_confirm_overlay`], so it cleans up across the state transition a load triggers.
+fn sync_slot_picker(
+    mut commands: Commands,
+    picker: Res<SlotPicker>,
+    slots: Res<crate::savegame::SaveSlots>,
+    fonts: Res<UiFonts>,
+    existing: Query<Entity, With<SlotPickerUi>>,
+) {
+    let have = !existing.is_empty();
+    match (picker.0, have) {
+        (Some(mode), false) => spawn_slot_picker(&mut commands, &fonts, &slots, mode),
+        (None, true) => {
+            for e in &existing {
+                commands.entity(e).despawn();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The picker card: a slot row per choice plus CANCEL, over a click-blocking scrim above every
+/// screen (z 120 — above the confirm dialog, which is never open at the same time).
+/// **Save** lists all five manual slots (empty ones included — that's how you fill them);
+/// **Load** lists only occupied slots, autosave first.
+fn spawn_slot_picker(
+    commands: &mut Commands,
+    fonts: &UiFonts,
+    slots: &crate::savegame::SaveSlots,
+    mode: PickerMode,
+) {
+    let rows: Vec<usize> = match mode {
+        PickerMode::Save => (1..=crate::savegame::MANUAL_SLOTS).collect(),
+        PickerMode::Load => {
+            (0..crate::savegame::SLOT_COUNT).filter(|&i| slots.0[i].is_some()).collect()
+        }
+    };
+    let (title, hint) = match mode {
+        PickerMode::Save => ("SAVE GAME", "Pick a slot to write · Esc to cancel"),
+        PickerMode::Load => ("LOAD GAME", "Pick a slot to resume · Esc to cancel"),
+    };
+
+    commands.spawn((modal_root(120), SlotPickerUi)).with_children(|root| {
+        root.spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(9.0),
+                padding: UiRect::axes(Val::Px(40.0), Val::Px(28.0)),
+                border: widgets::border(1.0),
+                border_radius: radius(R_PANEL),
+                ..default()
+            },
+            widgets::card_paint(),
+            anim(AnimKind::PopIn, 0.0, 0.26),
+        ))
+        .with_children(|c| {
+            c.spawn((
+                label(&fonts.display, title, FONT_DISPLAY, GOLD),
+                Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+            ));
+            for (i, &slot) in rows.iter().enumerate() {
+                let text = slot_label(slot, slots.0[slot].as_ref());
+                c.spawn((
+                    Node {
+                        width: Val::Px(340.0),
+                        padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border: widgets::border(1.0),
+                        border_radius: radius(R_BTN),
+                        ..default()
+                    },
+                    widgets::btn_primary_paint(),
+                    SlotBtn(slot),
+                    anim_btn(AnimKind::PopIn, 0.04 + i as f32 * 0.03, 0.28),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.extrabold, text, 14.0, INK));
+                });
+            }
+            c.spawn((
+                Node {
+                    width: Val::Px(340.0),
+                    padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: widgets::border(1.0),
+                    border_radius: radius(R_BTN),
+                    margin: UiRect::top(Val::Px(6.0)),
+                    ..default()
+                },
+                widgets::btn_primary_paint(),
+                SlotCancelBtn,
+                anim_btn(AnimKind::PopIn, 0.04 + rows.len() as f32 * 0.03, 0.28),
+            ))
+            .with_children(|b| {
+                b.spawn(label(&fonts.extrabold, "CANCEL", 14.0, INK));
+            });
+            c.spawn((
+                label(&fonts.regular, hint, 12.0, GREY),
+                Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
+            ));
+        });
+    });
+}
+
+/// Resolve the slot picker. **Save** fires a [`RequestSave`](crate::savegame::RequestSave) for the
+/// picked manual slot (`manual_save` runs in `Paused` and does the write + guards); **Load** routes
+/// through the shared [`load_slot`], so a load from the title and a load from the pause menu take
+/// exactly the same in-process path. Esc / CANCEL closes. Ungated; no-ops while closed.
+#[allow(clippy::type_complexity)]
+fn slot_picker_click(
+    keys: Res<ButtonInput<KeyCode>>,
+    q: Query<(&Interaction, Option<&SlotBtn>, Option<&SlotCancelBtn>), Changed<Interaction>>,
+    mut picker: ResMut<SlotPicker>,
+    mut save_req: MessageWriter<crate::savegame::RequestSave>,
+    mut pending: ResMut<crate::savegame::PendingLoad>,
+    mut next_app: ResMut<NextState<AppState>>,
+    mut cont: ResMut<ContinueInPlace>,
+    mut was_open: Local<bool>,
+) {
+    // Swallow input on the opening frame, so the click/key that opened it can't also resolve it
+    // (system order vs. the openers is undefined) — same guard as `confirm_input`.
+    let opened_this_frame = picker.0.is_some() && !*was_open;
+    *was_open = picker.0.is_some();
+    let Some(mode) = picker.0 else { return };
+    if opened_this_frame {
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::Escape) {
+        picker.0 = None;
+        return;
+    }
+    for (interaction, slot_b, cancel_b) in &q {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if cancel_b.is_some() {
+            picker.0 = None;
+            return;
+        }
+        let Some(SlotBtn(slot)) = slot_b else { continue };
+        match mode {
+            PickerMode::Save => {
+                save_req.write(crate::savegame::RequestSave(*slot));
+            }
+            PickerMode::Load => load_slot(*slot, &mut pending, &mut next_app, &mut cont),
+        }
+        picker.0 = None;
+        return;
     }
 }
 

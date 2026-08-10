@@ -1,5 +1,5 @@
-//! **Save / Continue** — one-slot autosave at every dawn, and resume a run after a defeat or
-//! after quitting.
+//! **Save / Continue** — six save slots (one autosave + five manual), a dawn + every-10-minutes
+//! autosave, and resume a run after a defeat or after quitting.
 //!
 //! The world is built once at `Startup` and is otherwise *persistent* within a process (in-run
 //! state changes never rebuild the island; a *fresh-run* reset rebuilds it **in-process** —
@@ -9,12 +9,17 @@
 //! plus a few world flags (looted treasure chests, rescued camps, discovered landmarks), write
 //! them as JSON, and on load overwrite those same resources + mark the already-spawned entities.
 //!
-//! - **Autosave** fires on the `Wave → Prep` edge (a cleared night) — see [`autosave_on_dawn`].
-//! - **Continue** resumes the save **in-process** (no relaunch / new window): `game_state`'s
-//!   `begin_continue` drops it into [`PendingLoad`] + flags the battlefield sweep, then
+//! - **Slots** — index `0` is the **autosave**, `1..=`[`MANUAL_SLOTS`] are the player's manual
+//!   slots (`autosave.json` / `save{n}.json`). [`SaveSlots`] caches one [`SlotMeta`] per slot so the
+//!   menus can label + order them without re-reading the disk every frame.
+//! - **Autosave** fires on the `Wave → Prep` edge (a cleared night) — see [`autosave_on_dawn`] —
+//!   and every [`AUTOSAVE_INTERVAL`] seconds of *play* time ([`Playtime`], pause-aware) once the
+//!   run is back in a saveable `Prep` day — see [`autosave_tick`]. Both write slot 0.
+//! - **Continue** resumes a slot **in-process** (no relaunch / new window): `game_state`'s
+//!   `load_slot` drops it into [`PendingLoad`] + flags the battlefield sweep, then
 //!   [`apply_pending_load`] writes it back over the live run-state the moment the run plays and
-//!   emits [`GameLoaded`] so `town.rs` reconciles its building meshes. The start / game-over
-//!   screens (in `game_state.rs`) show a Continue button when [`SaveExists`].
+//!   emits [`GameLoaded`] so `town.rs` reconciles its building meshes. The start / game-over /
+//!   pause screens (in `game_state.rs`) show Continue / Load when [`SaveSlots::any`].
 //!
 //! Serialization rides `tileworld_core`'s optional `serde` feature (Player/Bag/Town/ResourceState);
 //! `UpgradeState.purchased` is `&'static str`, so the save stores the id strings and
@@ -54,6 +59,16 @@ use crate::game_state::SimAppExt;
 /// Bump on any breaking change to [`SaveData`] — an older/garbage file is then treated as "no
 /// save" (logged, never fatal).
 const SAVE_VERSION: u32 = 1;
+
+/// How many **manual** save slots the player gets (slot indices `1..=MANUAL_SLOTS`). Slot `0` is
+/// the autosave, so there are `MANUAL_SLOTS + 1` files on disk in total.
+pub const MANUAL_SLOTS: usize = 5;
+
+/// Total slot count including the autosave at index 0 — the length of [`SaveSlots`].
+pub const SLOT_COUNT: usize = MANUAL_SLOTS + 1;
+
+/// Seconds of **play** time ([`Playtime`], which freezes with the sim) between periodic autosaves.
+pub const AUTOSAVE_INTERVAL: f64 = 600.0;
 
 /// The full snapshot of a run, taken at dawn. One JSON object = one save slot.
 #[derive(Serialize, Deserialize, Clone)]
@@ -118,16 +133,84 @@ pub struct SaveData {
     /// default to `false` (the fort still stands).
     #[serde(default)]
     pub rival_destroyed: bool,
+    // ── slot metadata (menu labels / "latest slot" ordering) ──
+    /// Unix seconds at the moment the snapshot was taken. Additive — old saves default to `0`,
+    /// which still sorts as "oldest" in [`SaveSlots::latest`] without hiding the slot.
+    #[serde(default)]
+    pub saved_at: u64,
+    /// Total **play** time of the run when it was saved (see [`Playtime`]). Additive — old saves
+    /// default to `0.0` and simply resume with the clock restarting.
+    #[serde(default)]
+    pub playtime_secs: f64,
 }
 
 /// Set when the player picks **Continue**; drained by [`apply_pending_load`] on the next play frame.
 #[derive(Resource, Default)]
 pub struct PendingLoad(pub Option<SaveData>);
 
-/// Whether a valid save file exists — drives the Continue button's visibility. Set at startup and
-/// flipped true after each successful autosave.
+/// One slot's headline, read off its file — everything the menus need to label + order a slot
+/// without deserializing the whole run again.
+#[derive(Clone, Copy, Debug)]
+pub struct SlotMeta {
+    /// Unix seconds the snapshot was written (`0` for a pre-slots save — still a valid slot).
+    pub saved_at: u64,
+    /// The saved run's night index (`-1` = day one, before the first siege).
+    pub wave_index: i32,
+    /// Play time of the saved run, in seconds.
+    pub playtime_secs: f64,
+    /// The hero's level at the save.
+    pub level: i64,
+}
+
+/// What's on disk, cached: `0` = autosave, `1..=`[`MANUAL_SLOTS`] = manual slots. Refreshed at
+/// startup, whenever the start screen opens, and after every write/delete — see [`refresh_slots`].
+/// Replaces the old single `SaveExists` flag.
 #[derive(Resource, Default)]
-pub struct SaveExists(pub bool);
+pub struct SaveSlots(pub [Option<SlotMeta>; SLOT_COUNT]);
+
+impl SaveSlots {
+    /// Any slot at all occupied — drives the Continue / Load buttons' visibility.
+    pub fn any(&self) -> bool {
+        self.0.iter().any(|s| s.is_some())
+    }
+
+    /// The autosave slot's meta (slot 0), if it exists — what New Game would overwrite.
+    pub fn autosave(&self) -> Option<&SlotMeta> {
+        self.0[0].as_ref()
+    }
+
+    /// The most recently written slot — what **Continue** resumes. Ties (including a whole set of
+    /// legacy `saved_at == 0` files) resolve to the lowest index, i.e. the autosave.
+    pub fn latest(&self) -> Option<usize> {
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| m.as_ref().map(|m| (i, m.saved_at)))
+            .max_by_key(|&(i, at)| (at, std::cmp::Reverse(i)))
+            .map(|(i, _)| i)
+    }
+}
+
+/// Pause-aware **play** clock for the current run, in seconds — the periodic autosave's ruler.
+/// Mirrors `siege::GameTime`: its advancing system is sim-gated *and* skips while the day/night
+/// cycle is paused, so idling in a menu never triggers an autosave. Round-trips the save
+/// (`SaveData::playtime_secs`) and resets to 0 on a fresh run.
+#[derive(Resource, Default)]
+pub struct Playtime(pub f64);
+
+/// When the next periodic autosave is due (in [`Playtime`] seconds) and whether one is *owed* —
+/// a trigger that lands mid-siege sets `pending` and waits for the next `Prep` day.
+#[derive(Resource)]
+pub struct AutosaveTimer {
+    pub next_at: f64,
+    pub pending: bool,
+}
+
+impl Default for AutosaveTimer {
+    fn default() -> Self {
+        Self { next_at: AUTOSAVE_INTERVAL, pending: false }
+    }
+}
 
 /// Emitted by [`apply_pending_load`] once the resource state is restored, carrying the snapshot so
 /// the modules that own world entities reconcile them: `town.rs` rebuilds building meshes,
@@ -135,31 +218,55 @@ pub struct SaveExists(pub bool);
 #[derive(Message, Clone)]
 pub struct GameLoaded(pub SaveData);
 
-/// Request a snapshot **now** — fired by the pause-menu **Save Game** button (see
-/// `game_state::pause_click`). Handled by [`manual_save`], which writes only while in `Prep`
-/// (a mid-siege save would resume in the wrong place). The dawn autosave doesn't use this.
+/// Request a snapshot into a **manual** slot (`1..=`[`MANUAL_SLOTS`]) — fired by the pause menu's
+/// slot picker (see `game_state::slot_picker_click`). Handled by [`manual_save`], which writes only
+/// while in `Prep` (a mid-siege save would resume in the wrong place). The autosaves don't use this.
 #[derive(Message)]
-pub struct RequestSave;
+pub struct RequestSave(pub usize);
 
 pub struct SaveGamePlugin;
 
 impl Plugin for SaveGamePlugin {
     fn build(&self, app: &mut App) {
         // Resources + messages stay registered in both modes (game_state reads `PendingLoad` and
-        // `SaveExists` non-optionally). No save/load in Skirmish — every system is Campaign-only.
+        // `SaveSlots` non-optionally). No save/load in Skirmish — every system is Campaign-only.
         app.init_resource::<PendingLoad>()
-            .init_resource::<SaveExists>()
+            .init_resource::<SaveSlots>()
+            .init_resource::<Playtime>()
+            .init_resource::<AutosaveTimer>()
             .add_message::<GameLoaded>()
             .add_message::<RequestSave>()
-            // Ungated: only checks whether a save file exists (no gameplay side effects), so it can
-            // run in EVERY boot — a campaign-booted process can flip modes mid-process. Save/load
-            // systems below stay `in_campaign`-gated.
-            .add_systems(Startup, detect_existing_save)
-            // Snapshot at dawn (a cleared night). Gated like the rest of the sim.
-            .add_sim_systems(autosave_on_dawn.run_if(crate::rts::in_campaign))
+            // Ungated: only scans which save files exist (no gameplay side effects), so it can run
+            // in EVERY boot — a campaign-booted process can flip modes mid-process. Save/load
+            // systems below stay `in_campaign`-gated. The Startup pass also migrates a legacy
+            // single-slot `save.json` into the autosave slot.
+            .add_systems(Startup, boot_slots)
+            // Re-scan whenever the title comes up (a run may have written slots since).
+            .add_systems(OnEnter(AppState::StartScreen), rescan_slots)
+            // A fresh run restarts the play clock + the periodic-autosave countdown. Same hooks as
+            // every other `reset_*` — a Continue then overwrites them in `apply_pending_load`.
+            .add_systems(OnExit(AppState::StartScreen), reset_run_clocks)
+            .add_systems(OnExit(AppState::GameOver), reset_run_clocks)
+            // Pause-aware play clock + the snapshots it drives. Gated like the rest of the sim, and
+            // chained so a dawn write always precedes (and re-arms) the periodic one.
+            .add_sim_systems(
+                (advance_playtime, autosave_on_dawn, autosave_tick)
+                    .chain()
+                    .run_if(crate::rts::in_campaign),
+            )
             // Manual save (pause-menu button). Runs in `Paused` — where the world is frozen but
             // every run-state resource still lives — so it can snapshot the current day on demand.
             .add_systems(Update, manual_save.run_if(in_state(AppState::Paused)).run_if(crate::rts::in_campaign))
+            // FOREST_SAVETEST=1 — headless-harness hook: write one real autosave (the full
+            // `SaveCtx::snapshot()` path) ~2s into Play, so a capture run can verify the save
+            // pipeline end-to-end (write → refresh → next boot's menu sees it) with no keypress.
+            .add_systems(
+                Update,
+                savetest_write
+                    .run_if(|| std::env::var("FOREST_SAVETEST").is_ok())
+                    .run_if(in_state(AppState::Playing))
+                    .run_if(crate::rts::in_campaign),
+            )
             // Apply a pending load the moment a run is playing (cheap no-op when nothing pending).
             .add_systems(Update, apply_pending_load.run_if(in_state(AppState::Playing)).run_if(crate::rts::in_campaign))
             // Reconcile world entities from the GameLoaded snapshot (ungated; fires once per load).
@@ -174,9 +281,9 @@ impl Plugin for SaveGamePlugin {
 
 // ── File location + IO ──────────────────────────────────────────────────────────────
 
-/// The save file path: an OS data dir when resolvable, else a CWD fallback. One fixed file.
-fn save_path() -> PathBuf {
-    let dir = if let Ok(appdata) = std::env::var("APPDATA") {
+/// The save **directory**: an OS data dir when resolvable, else `None` (→ a CWD-file fallback).
+fn save_dir() -> Option<PathBuf> {
+    if let Ok(appdata) = std::env::var("APPDATA") {
         Some(PathBuf::from(appdata).join("tileworld"))
     } else if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         Some(PathBuf::from(xdg).join("tileworld"))
@@ -184,17 +291,52 @@ fn save_path() -> PathBuf {
         Some(PathBuf::from(home).join(".local/share/tileworld"))
     } else {
         None
-    };
-    match dir {
+    }
+}
+
+/// One slot's file name: slot 0 is the autosave, `1..=MANUAL_SLOTS` the manual slots.
+fn slot_file(slot: usize) -> String {
+    if slot == 0 { "autosave.json".to_string() } else { format!("save{slot}.json") }
+}
+
+/// A slot's full path (same dir resolution for every slot; CWD-prefixed when there's no data dir).
+fn slot_path(slot: usize) -> PathBuf {
+    match save_dir() {
+        Some(d) => d.join(slot_file(slot)),
+        None => PathBuf::from(format!("tileworld-{}", slot_file(slot))),
+    }
+}
+
+/// Where the pre-multi-slot single save lived. Migrated into slot 0 once, at boot.
+fn legacy_path() -> PathBuf {
+    match save_dir() {
         Some(d) => d.join("save.json"),
         None => PathBuf::from("tileworld-save.json"),
     }
 }
 
-/// Read + parse + version-check the save. Returns `None` for missing / unreadable / unparseable /
+/// Move a pre-multi-slot `save.json` into the autosave slot, once, at boot. Best-effort: if the
+/// autosave slot already exists, or the rename fails, the legacy file is simply left alone (it is
+/// never read again, so the worst case is a stale file on disk — never a lost or corrupt run).
+fn migrate_legacy_save() {
+    let legacy = legacy_path();
+    let auto = slot_path(0);
+    if !legacy.exists() || auto.exists() {
+        return;
+    }
+    if let Some(parent) = auto.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::rename(&legacy, &auto) {
+        Ok(()) => info!("migrated legacy save into the autosave slot"),
+        Err(e) => warn!("could not migrate legacy save at {legacy:?}: {e}"),
+    }
+}
+
+/// Read + parse + version-check one slot. Returns `None` for missing / unreadable / unparseable /
 /// stale-version files (a load just isn't offered — never a crash).
-pub fn load_save() -> Option<SaveData> {
-    let path = save_path();
+pub fn load_save(slot: usize) -> Option<SaveData> {
+    let path = slot_path(slot);
     let text = std::fs::read_to_string(&path).ok()?;
     let data: SaveData = match serde_json::from_str(&text) {
         Ok(d) => d,
@@ -210,20 +352,21 @@ pub fn load_save() -> Option<SaveData> {
     Some(data)
 }
 
-/// Delete the one save slot — used by every **fresh-run** entry point (New Game / Restart) so the
-/// old run can't be resumed. A missing file is not an error (already gone is the goal).
-pub fn delete_save() {
-    let path = save_path();
+/// Delete one slot. Used by the fresh-run entry points on **slot 0 only** — a New Game wipes the
+/// autosave (the run it would resume) but never the player's manual slots. A missing file is not an
+/// error (already gone is the goal).
+pub fn delete_save(slot: usize) {
+    let path = slot_path(slot);
     match std::fs::remove_file(&path) {
-        Ok(()) => info!("deleted save"),
+        Ok(()) => info!("deleted save slot {slot}"),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => warn!("failed to delete save: {e}"),
+        Err(e) => warn!("failed to delete save slot {slot}: {e}"),
     }
 }
 
-/// Serialize + write the save (creating the parent dir). Errors are returned for the caller to log.
-fn write_save(data: &SaveData) -> std::io::Result<()> {
-    let path = save_path();
+/// Serialize + write one slot (creating the parent dir). Errors are returned for the caller to log.
+fn write_save(slot: usize, data: &SaveData) -> std::io::Result<()> {
+    let path = slot_path(slot);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -232,8 +375,57 @@ fn write_save(data: &SaveData) -> std::io::Result<()> {
     std::fs::write(&path, json)
 }
 
-fn detect_existing_save(mut exists: ResMut<SaveExists>) {
-    exists.0 = load_save().is_some();
+/// Re-scan every slot file and rebuild the cached [`SaveSlots`] metas. Cheap enough for the menus
+/// (six small JSON reads), so it runs at boot, on every entry to the title, and after every write
+/// or delete — never per frame.
+pub fn refresh_slots(slots: &mut SaveSlots) {
+    for slot in 0..SLOT_COUNT {
+        slots.0[slot] = load_save(slot).map(|d| SlotMeta {
+            saved_at: d.saved_at,
+            wave_index: d.wave_index,
+            playtime_secs: d.playtime_secs,
+            level: d.player.level,
+        });
+    }
+}
+
+/// Startup: migrate a legacy single-slot save, then take the first slot scan.
+fn boot_slots(mut slots: ResMut<SaveSlots>) {
+    migrate_legacy_save();
+    refresh_slots(&mut slots);
+}
+
+/// Re-scan the slots whenever the title screen opens (`OnEnter(StartScreen)`), so its Continue /
+/// Load buttons reflect anything the run just wrote. Bevy runs the initial `OnEnter(StartScreen)`
+/// *before* `Startup`, so this is also what makes the buttons right on frame 0 of a cold boot —
+/// hence the legacy migration runs here too (it no-ops once done).
+fn rescan_slots(mut slots: ResMut<SaveSlots>) {
+    migrate_legacy_save();
+    refresh_slots(&mut slots);
+}
+
+/// The two per-run clocks, bundled so [`apply_pending_load`] can restore both without blowing past
+/// Bevy's 16-param system ceiling.
+#[derive(SystemParam)]
+struct RunClocks<'w> {
+    playtime: ResMut<'w, Playtime>,
+    timer: ResMut<'w, AutosaveTimer>,
+}
+
+/// Fresh-run reset (`OnExit(StartScreen)` / `OnExit(GameOver)`, like every other `reset_*`): the
+/// play clock restarts at zero and the periodic autosave is re-armed a full interval out. A
+/// **Continue** takes the same path, then [`apply_pending_load`] overwrites both from the snapshot.
+fn reset_run_clocks(mut playtime: ResMut<Playtime>, mut timer: ResMut<AutosaveTimer>) {
+    playtime.0 = 0.0;
+    *timer = AutosaveTimer::default();
+}
+
+/// Unix seconds now — the save's timestamp (`0` if the clock is somehow before the epoch).
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // ── Snapshot source (shared by the dawn autosave + the manual save) ─────────────────────
@@ -259,6 +451,7 @@ struct SaveCtx<'w, 's> {
     quest: Res<'w, QuestLogRes>,
     rival: Res<'w, crate::rival::RivalState>,
     active_map: Res<'w, crate::worldmap::ActiveMap>,
+    playtime: Res<'w, Playtime>,
     chests: Query<'w, 's, (&'static Chest, &'static ChestId)>,
     landmarks: Query<'w, 's, &'static Landmark>,
 }
@@ -313,16 +506,18 @@ impl SaveCtx<'_, '_> {
             rival_population: self.rival.population,
             rival_built: self.rival.built,
             rival_destroyed: self.rival.destroyed,
+            saved_at: unix_now(),
+            playtime_secs: self.playtime.0,
         }
     }
 }
 
-/// Write `data` and flip [`SaveExists`] on success. Returns whether the write landed (callers add
-/// their own user feedback / log line).
-fn flush_save(data: &SaveData, exists: &mut SaveExists) -> bool {
-    match write_save(data) {
+/// Write `data` into `slot` and refresh the cached [`SaveSlots`] on success. Returns whether the
+/// write landed (callers add their own user feedback / log line).
+fn flush_save(slot: usize, data: &SaveData, slots: &mut SaveSlots) -> bool {
+    match write_save(slot, data) {
         Ok(()) => {
-            exists.0 = true;
+            refresh_slots(slots);
             true
         }
         Err(e) => {
@@ -332,13 +527,30 @@ fn flush_save(data: &SaveData, exists: &mut SaveExists) -> bool {
     }
 }
 
-// ── Autosave at dawn ────────────────────────────────────────────────────────────────
+// ── Play clock + autosave (dawn edge + every 10 minutes of play) ─────────────────────
+
+/// Advance the pause-aware [`Playtime`] clock. Sim-gated (so panels/pause freeze it) and held while
+/// the day/night cycle is paused, exactly like `siege::advance_game_clock` — idling in a menu must
+/// never age the run toward its next autosave.
+fn advance_playtime(
+    time: Res<Time>,
+    sky: Res<crate::scene::SkyClock>,
+    mut playtime: ResMut<Playtime>,
+) {
+    if sky.paused {
+        return;
+    }
+    playtime.0 += time.delta_secs() as f64;
+}
 
 /// Write a snapshot on every `Wave → Prep` edge (a cleared night) — the "just survived a night"
-/// checkpoint. `prev` tracks last frame's phase to fire exactly once on the transition.
+/// checkpoint, into the autosave slot. `prev` tracks last frame's phase to fire exactly once on the
+/// transition. Also re-arms the periodic autosave, so dawn and the 10-minute timer can't
+/// double-write back to back.
 fn autosave_on_dawn(
     mut prev: Local<Option<GamePhase>>,
-    mut exists: ResMut<SaveExists>,
+    mut slots: ResMut<SaveSlots>,
+    mut timer: ResMut<AutosaveTimer>,
     ctx: SaveCtx,
 ) {
     let phase = ctx.siege.phase;
@@ -347,29 +559,76 @@ fn autosave_on_dawn(
     if !dawn || ctx.siege.wave_index < 0 {
         return;
     }
-    if flush_save(&ctx.snapshot(), &mut exists) {
+    if flush_save(0, &ctx.snapshot(), &mut slots) {
         info!("autosaved after night {}", ctx.siege.wave_index + 1);
+        timer.pending = false;
+        timer.next_at = ctx.playtime.0 + AUTOSAVE_INTERVAL;
     }
 }
 
-// ── Manual save (pause-menu Save Game button) ────────────────────────────────────────
-
-/// Honor a [`RequestSave`] (the pause-menu **Save Game** button): snapshot the current run.
-/// Only while in `Prep` — a snapshot taken mid-siege would resume in the wrong place (the saved
-/// `wave_index` rolls back to a clean Prep, skipping the night you were fighting), so saving is a
-/// day-only action. Unlike the dawn autosave there is **no `wave_index < 0` guard**, so day-one
-/// progress (before the first night) can be saved and resumed too.
-fn manual_save(
-    mut reqs: MessageReader<RequestSave>,
-    mut exists: ResMut<SaveExists>,
+/// The **every-10-minutes-of-play** autosave. Two halves, deliberately decoupled:
+/// 1. the countdown fires purely off [`Playtime`] — it marks the save *owed* and re-arms, so a long
+///    siege never stacks up several missed autosaves;
+/// 2. an owed save is written the first frame the run is actually saveable — the same rules as the
+///    manual save (a `Prep` day, no Hold assault in progress; day one is fine). A trigger during a
+///    night therefore lands the moment that night is cleared.
+fn autosave_tick(
+    mut slots: ResMut<SaveSlots>,
+    mut timer: ResMut<AutosaveTimer>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
     assault: Res<crate::ork_fortress::AssaultState>,
     ctx: SaveCtx,
 ) {
-    if reqs.read().count() == 0 {
+    if ctx.playtime.0 >= timer.next_at {
+        timer.pending = true;
+        timer.next_at = ctx.playtime.0 + AUTOSAVE_INTERVAL;
+    }
+    if !timer.pending || ctx.siege.phase != GamePhase::Prep || assault.breached {
         return;
     }
+    timer.pending = false;
+    if flush_save(0, &ctx.snapshot(), &mut slots) {
+        notice.push("Autosaved.", time.elapsed_secs_f64());
+        info!("periodic autosave at {:.0} min of play", ctx.playtime.0 / 60.0);
+    }
+}
+
+// ── Manual save (pause-menu Save Game button) ────────────────────────────────────────
+
+/// Honor a [`RequestSave`] (the pause menu's slot picker): snapshot the current run into the
+/// requested manual slot. Only while in `Prep` — a snapshot taken mid-siege would resume in the
+/// wrong place (the saved `wave_index` rolls back to a clean Prep, skipping the night you were
+/// fighting), so saving is a day-only action. Unlike the dawn autosave there is **no
+/// `wave_index < 0` guard**, so day-one progress (before the first night) can be saved and resumed.
+/// `FOREST_SAVETEST=1` (see the plugin registration): one real autosave write ~120 frames into
+/// Play, through the exact snapshot path the dawn/periodic autosaves use. Test-harness only.
+fn savetest_write(mut frames: Local<u32>, mut done: Local<bool>, mut slots: ResMut<SaveSlots>, ctx: SaveCtx) {
+    if *done {
+        return;
+    }
+    *frames += 1;
+    if *frames < 120 {
+        return;
+    }
+    *done = true;
+    let ok = flush_save(0, &ctx.snapshot(), &mut slots);
+    info!("FOREST_SAVETEST: autosave written = {ok}");
+}
+
+fn manual_save(
+    mut reqs: MessageReader<RequestSave>,
+    mut slots: ResMut<SaveSlots>,
+    mut notice: ResMut<Notice>,
+    time: Res<Time>,
+    assault: Res<crate::ork_fortress::AssaultState>,
+    ctx: SaveCtx,
+) {
+    // Last request wins (only one can be clicked per frame anyway); clamped into the manual range
+    // so a bad caller can never stomp the autosave slot.
+    let Some(slot) = reqs.read().map(|r| r.0.clamp(1, MANUAL_SLOTS)).last() else {
+        return;
+    };
     let now = time.elapsed_secs_f64();
     if ctx.siege.phase != GamePhase::Prep {
         notice.push("Can't save during a siege — hold the keep, then save by day.", now);
@@ -381,9 +640,9 @@ fn manual_save(
         notice.push("Can't save mid-assault — break the Hold or pull back first.", now);
         return;
     }
-    if flush_save(&ctx.snapshot(), &mut exists) {
-        notice.push("Game saved.", now);
-        info!("manual save (resume at night {})", ctx.siege.wave_index + 2);
+    if flush_save(slot, &ctx.snapshot(), &mut slots) {
+        notice.push(format!("Game saved to slot {slot}."), now);
+        info!("manual save to slot {slot} (resume at night {})", ctx.siege.wave_index + 2);
     } else {
         notice.push("Save failed — see the log.", now);
     }
@@ -411,9 +670,16 @@ fn apply_pending_load(
     mut camps: ResMut<RescuedCamps>,
     captives: Option<ResMut<crate::ork_fortress::BlightCaptives>>,
     mut disc: ResMut<Discoveries>,
+    mut clocks: RunClocks,
     mut loaded: MessageWriter<GameLoaded>,
 ) {
     let Some(data) = pending.0.take() else { return };
+
+    // Play clock: resume the saved run's total, and put the next periodic autosave a full interval
+    // out from there (so loading never fires one instantly, nor defers it past the interval).
+    clocks.playtime.0 = data.playtime_secs;
+    clocks.timer.pending = false;
+    clocks.timer.next_at = data.playtime_secs + AUTOSAVE_INTERVAL;
 
     // Run state — clean Prep at the saved night.
     siege.difficulty = data.difficulty;
@@ -582,6 +848,8 @@ mod tests {
             rival_population: 8,
             rival_built: 5,
             rival_destroyed: false,
+            saved_at: 1_750_000_000,
+            playtime_secs: 1234.0,
         }
     }
 
@@ -647,6 +915,8 @@ mod tests {
             .init_resource::<Lives>()
             .init_resource::<RescuedCamps>()
             .init_resource::<Discoveries>()
+            .init_resource::<Playtime>()
+            .init_resource::<AutosaveTimer>()
             .add_systems(Update, apply_pending_load);
 
         app.insert_resource(PendingLoad(Some(sample())));
@@ -665,9 +935,65 @@ mod tests {
         assert!(w.resource::<Inventory>().0.has_item("potion"), "satchel restored");
         assert!(w.resource::<TownRes>().0.plots[0].is_built(), "town buildings restored");
         assert_eq!(w.resource::<RescuedCamps>().done, vec![true, false, true]);
+        assert_eq!(w.resource::<Playtime>().0, 1234.0, "play clock resumed");
+        assert_eq!(
+            w.resource::<AutosaveTimer>().next_at,
+            1234.0 + AUTOSAVE_INTERVAL,
+            "next periodic autosave re-armed a full interval past the load"
+        );
         assert!(
             w.resource::<PendingLoad>().0.is_none(),
             "PendingLoad drained — apply runs exactly once"
         );
+    }
+
+    /// Slot 0 is the autosave and `1..=MANUAL_SLOTS` the manual slots — each with its own file.
+    #[test]
+    fn slot_files_are_distinct_and_autosave_is_zero() {
+        assert_eq!(slot_file(0), "autosave.json");
+        assert_eq!(slot_file(1), "save1.json");
+        assert_eq!(slot_file(MANUAL_SLOTS), format!("save{MANUAL_SLOTS}.json"));
+        let mut names: Vec<String> = (0..SLOT_COUNT).map(slot_file).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), SLOT_COUNT, "every slot maps to its own file");
+    }
+
+    fn meta(saved_at: u64) -> SlotMeta {
+        SlotMeta { saved_at, wave_index: 0, playtime_secs: 0.0, level: 1 }
+    }
+
+    /// `latest()` picks the newest slot by timestamp; ties (incl. a set of legacy `saved_at == 0`
+    /// files) fall back to the lowest index, i.e. the autosave. Empty ⇒ `None` and `any()` false.
+    #[test]
+    fn latest_slot_picks_newest_then_lowest_index() {
+        let mut slots = SaveSlots::default();
+        assert!(!slots.any());
+        assert_eq!(slots.latest(), None);
+
+        slots.0[0] = Some(meta(100));
+        slots.0[3] = Some(meta(500));
+        assert!(slots.any());
+        assert_eq!(slots.latest(), Some(3), "newest wins");
+
+        slots.0[0] = Some(meta(500));
+        assert_eq!(slots.latest(), Some(0), "a tie prefers the autosave slot");
+
+        let mut legacy = SaveSlots::default();
+        legacy.0[2] = Some(meta(0));
+        assert_eq!(legacy.latest(), Some(2), "a legacy save with no timestamp still resumes");
+    }
+
+    /// A save written before multi-slot has no `saved_at` / `playtime_secs` → both default, and the
+    /// slot stays loadable (it just sorts oldest).
+    #[test]
+    fn old_save_without_slot_metadata_defaults() {
+        let mut v = serde_json::to_value(sample()).expect("to value");
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("saved_at");
+        obj.remove("playtime_secs");
+        let back: SaveData = serde_json::from_value(v).expect("deserialize old save");
+        assert_eq!(back.saved_at, 0);
+        assert_eq!(back.playtime_secs, 0.0);
     }
 }

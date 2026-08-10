@@ -47,7 +47,11 @@ const ORK_LEASH: f32 = 16.0;
 /// `tools/trace_summary.py`) as the #2 CPU cost in the game after the wildlife brain's identical
 /// pattern. An ork beyond this still idles/patrols (cheap); only the rival-seek scan is cut, and
 /// only while it isn't already mid Hunt/Attack (so an in-progress brawl finishes on its own).
-const ORK_BRAIN_LOD_R: f32 = 90.0;
+///
+/// It ALSO picks the steering flavour (`steer::advance_lod`): beyond it a patrolling/hunting ork
+/// walks the cheap direct line instead of paying the 9-heading escape fan — the same swap the
+/// wildlife brain makes, and by far the bigger of the two savings. Equal to `steer::LOD_R`.
+const ORK_BRAIN_LOD_R: f32 = steer::LOD_R;
 /// Damage per club hit (queued onto `player::PendingHeroDamage`). Old-game grunt `orkConfig.ts`
 /// damage is 24; this is an intentional **−10% playtest nerf** (24 → 21.6) because the hero was
 /// dying too fast on Normal — a deliberate divergence from parity, not a reintroduced rescale.
@@ -324,6 +328,9 @@ fn ork_brain(
     mut music: ResMut<crate::audio::MusicState>,
     mut ring: ResMut<crate::melee_ring::MeleeRing>,
     mut was_clearing: Local<bool>,
+    // Reused across frames (clear keeps the capacity) so the rival-seek snapshot doesn't heap-alloc
+    // a fresh Vec of the whole camp population every single frame.
+    mut snap: Local<Vec<(Entity, Faction, Vec2)>>,
     mut q: Query<
         (Entity, &mut Ork, &mut Transform, Option<&crate::player::Health>, Option<&crate::boss::Slowed>),
         (
@@ -344,7 +351,8 @@ fn ork_brain(
     let mut fighting = false;
 
     // Snapshot (entity, faction, pos) so an ork with no hero in sight can seek a rival to brawl.
-    let snap: Vec<(Entity, Faction, Vec2)> = q.iter().map(|(e, o, _, _, _)| (e, o.faction, o.pos)).collect();
+    snap.clear();
+    snap.extend(q.iter().map(|(e, o, _, _, _)| (e, o.faction, o.pos)));
 
     for (self_e, mut o, mut tf, health, slowed) in &mut q {
         // Frostbite boon: a chilled ork crawls (factor < 1; 0 = frozen).
@@ -355,6 +363,11 @@ fn ork_brain(
         // Berserker frenzy: under 40% HP it charges faster + strikes more often.
         let frenzied =
             o.variant == OrkVariant::Berserker && health.is_some_and(|h| h.hp < h.max * 0.4);
+
+        // Hero-distance LOD, hoisted out of the rival-seek branch below because it now gates the
+        // *steering* flavour too (see `steer::advance_lod`): the 9-heading escape fan is the real
+        // per-ork cost, and it's wasted on a warband nobody is near enough to watch clip a rock.
+        let near = hero.alive && o.pos.distance(hero.pos) < ORK_BRAIN_LOD_R;
 
         // ── Aggro: notice the hero near the camp → chase, then stand & strike; orks far
         // from their home never engage (each warband stays local). ──
@@ -392,11 +405,10 @@ fn ork_brain(
             // from rival skirmishing alone, and an "already active" OR never lets them leave once
             // the scan itself is gated on it. Leaving `rival` at `None` when far reuses the
             // existing "no rival found → stand down to Idle" branch just below.
-            let near = hero.alive && o.pos.distance(hero.pos) < ORK_BRAIN_LOD_R;
             let mut rival: Option<(Entity, Vec2)> = None;
             if near {
                 let mut best = ORK_SIGHT;
-                for (re, rf, rp) in &snap {
+                for (re, rf, rp) in snap.iter() {
                     if *re == self_e || *rf == o.faction {
                         continue;
                     }
@@ -452,7 +464,7 @@ fn ork_brain(
                     o.moving = false;
                 } else {
                     let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
-                    match steer::advance(o.pos, o.facing, o.target, o.speed * dt, o.body_r, cur_y, ORK_MAX_TURN * dt) {
+                    match steer::advance_lod(near, o.pos, o.facing, o.target, o.speed * dt, o.body_r, cur_y, ORK_MAX_TURN * dt) {
                         Some(s) => {
                             o.facing = s.facing;
                             o.pos = s.pos;
@@ -496,7 +508,7 @@ fn ork_brain(
                 } else {
                     o.target
                 };
-                match steer::advance(o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, ORK_MAX_TURN * 1.6 * dt) {
+                match steer::advance_lod(near, o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, ORK_MAX_TURN * 1.6 * dt) {
                     Some(s) => {
                         o.facing = s.facing;
                         o.pos = s.pos;
@@ -882,6 +894,20 @@ fn shaman_heal(
     mut q: Query<(Entity, &mut Ork, &GlobalTransform, &mut crate::player::Health), Without<crate::dying::Dying>>,
 ) {
     let dt = time.delta_secs().min(0.05);
+    // Tick the casters' cooldowns first, and bail out entirely unless one of them lands this frame.
+    // Shamans are a small minority of a warband and the heal cooldown is seconds long, so the
+    // overwhelmingly common case is "nobody is ready" — and that case used to still build a
+    // whole-horde `allies` Vec on the heap, every frame, to find nothing.
+    let mut any_ready = false;
+    for (_, mut o, _, _) in &mut q {
+        if o.shaman {
+            o.heal_cd -= dt;
+            any_ready |= o.heal_cd <= 0.0;
+        }
+    }
+    if !any_ready {
+        return;
+    }
     // Snapshot every ork's (entity, faction, xz, hp, max) so we can target then mutate.
     let allies: Vec<(Entity, Faction, Vec2, f32, f32)> = q
         .iter()
@@ -894,11 +920,8 @@ fn shaman_heal(
     // shaman's own Ork). Defer the target heal to pass 2 to avoid overlapping mutable borrows.
     let mut heals: Vec<(Entity, Vec3)> = Vec::new();
     for (self_e, mut o, _gt, _h) in &mut q {
-        if !o.shaman {
-            continue;
-        }
-        o.heal_cd -= dt;
-        if o.heal_cd > 0.0 {
+        // (Cooldowns were already ticked in the readiness pass above.)
+        if !o.shaman || o.heal_cd > 0.0 {
             continue;
         }
         let mut best: Option<(Entity, Vec2)> = None;
@@ -946,18 +969,33 @@ fn ork_brawl(
     >,
 ) {
     let dt = time.delta_secs().min(0.05);
-    let snap: Vec<(Entity, Vec2)> = q.iter().map(|(e, o, _)| (e, o.pos)).collect();
+    // Pass 1 (read-only): who lands a blow this frame? The brawl target's position comes from a
+    // direct `q.get` — an O(1) entity lookup — instead of the old linear `.find()` over a snapshot
+    // Vec, which made this O(orks²) every frame (and rebuilt the snapshot Vec on the heap each
+    // time) for a fight only a handful of them are ever in.
     let mut hits: Vec<(Entity, f32)> = Vec::new();
-    for (_e, mut o, _h) in &mut q {
-        o.brawl_cd -= dt;
+    let mut landed: Vec<Entity> = Vec::new();
+    for (e, o, _h) in &q {
         let Some(rt) = o.brawl_target else { continue };
-        if let Some((_, rp)) = snap.iter().find(|(re, _)| *re == rt) {
-            if o.pos.distance(*rp) < BRAWL_RANGE && o.brawl_cd <= 0.0 {
-                o.brawl_cd = BRAWL_CD;
-                hits.push((rt, BRAWL_DMG));
-            }
+        if o.brawl_cd - dt > 0.0 {
+            continue; // still on cooldown once this frame's tick lands
+        }
+        let Ok((_, rival, _)) = q.get(rt) else { continue }; // target dead / not a brawler
+        if o.pos.distance(rival.pos) < BRAWL_RANGE {
+            landed.push(e);
+            hits.push((rt, BRAWL_DMG));
         }
     }
+    // Pass 2: tick every cooldown, then re-arm the ones that just swung.
+    for (_e, mut o, _h) in &mut q {
+        o.brawl_cd -= dt;
+    }
+    for e in landed {
+        if let Ok((_, mut o, _h)) = q.get_mut(e) {
+            o.brawl_cd = BRAWL_CD;
+        }
+    }
+    // Pass 3: apply each landed blow to its target's Health.
     for (e, dmg) in hits {
         if let Ok((_, _, mut h)) = q.get_mut(e) {
             if h.hp > 0.0 {

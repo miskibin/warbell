@@ -429,7 +429,14 @@ fn chop_work(
                 tp
             };
             let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
-            let advanced = steer::advance(
+            // Steering LOD (`steer::advance_lod`): a cutter trekking to a tree far from the hero
+            // walks the direct line instead of the ~80-lookup escape fan. Only the long A*-followed
+            // leg takes it — the close-in approach (`d <= 6`, where `CLOSE_GIVEUP_SECS` watches for
+            // a tree stranded up a terrace lip) keeps the full fan, so that wedge detector still
+            // sees real steering.
+            let near = (hero.alive && v.pos.distance(hero.pos) < crate::steer::LOD_R) || d <= 6.0;
+            let advanced = steer::advance_lod(
+                near,
                 v.pos,
                 v.facing,
                 step_target,

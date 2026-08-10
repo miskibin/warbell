@@ -252,7 +252,7 @@ fn main() {
             town::TownPlugin, // city-building: plots, build menu, economy, burn/repair
             lumberjack::LumberjackPlugin, // woodcutters fell real trees (safe zone + threat sense)
             miner::MinerPlugin, // stone miners work real boulders + cart the stone home (ranges far)
-            savegame::SaveGamePlugin, // dawn autosave + Continue/New Game (one slot)
+            savegame::SaveGamePlugin, // dawn + 10-min autosave, 5 manual slots, Continue/Load
             demo::DemoPlugin, // scripted clip scenarios (FOREST_DEMO=explore|defend; build→town.rs)
             separation::SeparationPlugin, // orks + townsfolk shove apart so bodies don't interpenetrate
             castle_decor::CastleDecorPlugin, // courtyard dressing + upgrade-bought set pieces
