@@ -833,7 +833,7 @@ struct GraphicsConfig {
     audio: AudioPrefs,
 }
 
-/// `graphics.json` next to the save file (same OS data-dir resolution as `savegame::save_path`).
+/// `graphics.json` next to the save slots (same OS data-dir resolution as `savegame::save_dir`).
 fn config_path() -> std::path::PathBuf {
     use std::path::PathBuf;
     let dir = if let Ok(appdata) = std::env::var("APPDATA") {
