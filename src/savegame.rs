@@ -257,6 +257,16 @@ impl Plugin for SaveGamePlugin {
             // Manual save (pause-menu button). Runs in `Paused` — where the world is frozen but
             // every run-state resource still lives — so it can snapshot the current day on demand.
             .add_systems(Update, manual_save.run_if(in_state(AppState::Paused)).run_if(crate::rts::in_campaign))
+            // FOREST_SAVETEST=1 — headless-harness hook: write one real autosave (the full
+            // `SaveCtx::snapshot()` path) ~2s into Play, so a capture run can verify the save
+            // pipeline end-to-end (write → refresh → next boot's menu sees it) with no keypress.
+            .add_systems(
+                Update,
+                savetest_write
+                    .run_if(|| std::env::var("FOREST_SAVETEST").is_ok())
+                    .run_if(in_state(AppState::Playing))
+                    .run_if(crate::rts::in_campaign),
+            )
             // Apply a pending load the moment a run is playing (cheap no-op when nothing pending).
             .add_systems(Update, apply_pending_load.run_if(in_state(AppState::Playing)).run_if(crate::rts::in_campaign))
             // Reconcile world entities from the GameLoaded snapshot (ungated; fires once per load).
@@ -591,6 +601,21 @@ fn autosave_tick(
 /// wrong place (the saved `wave_index` rolls back to a clean Prep, skipping the night you were
 /// fighting), so saving is a day-only action. Unlike the dawn autosave there is **no
 /// `wave_index < 0` guard**, so day-one progress (before the first night) can be saved and resumed.
+/// `FOREST_SAVETEST=1` (see the plugin registration): one real autosave write ~120 frames into
+/// Play, through the exact snapshot path the dawn/periodic autosaves use. Test-harness only.
+fn savetest_write(mut frames: Local<u32>, mut done: Local<bool>, mut slots: ResMut<SaveSlots>, ctx: SaveCtx) {
+    if *done {
+        return;
+    }
+    *frames += 1;
+    if *frames < 120 {
+        return;
+    }
+    *done = true;
+    let ok = flush_save(0, &ctx.snapshot(), &mut slots);
+    info!("FOREST_SAVETEST: autosave written = {ok}");
+}
+
 fn manual_save(
     mut reqs: MessageReader<RequestSave>,
     mut slots: ResMut<SaveSlots>,

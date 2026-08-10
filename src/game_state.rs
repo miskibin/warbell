@@ -161,6 +161,14 @@ impl Plugin for GameStatePlugin {
             )
             // Minimal overlays (fleshed out + difficulty chooser in P0.6).
             .add_systems(OnEnter(AppState::StartScreen), spawn_start_screen)
+            // FOREST_SAVETEST=picker — capture-harness hook: pop the LOAD slot picker over the
+            // title so a headless shot can verify the overlay's layout (no way to click in a
+            // FOREST_SHOT run). Pair with FOREST_MENU=1 + staged slot files.
+            .add_systems(
+                OnEnter(AppState::StartScreen),
+                (|mut picker: ResMut<SlotPicker>| picker.0 = Some(PickerMode::Load))
+                    .run_if(|| std::env::var("FOREST_SAVETEST").as_deref() == Ok("picker")),
+            )
             .add_systems(OnExit(AppState::StartScreen), despawn_screen::<StartScreenUi>)
             .add_systems(OnEnter(AppState::Paused), spawn_pause_screen)
             .add_systems(OnExit(AppState::Paused), despawn_screen::<PausedUi>)

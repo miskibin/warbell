@@ -3266,49 +3266,67 @@ fn spawn_terrain_sheet(
                 // re-opens on every world/biome rebuild. Baking the real AABB here closes that gap.
                 use bevy::camera::primitives::MeshAabb;
                 let aabb = mesh.compute_aabb();
+                // Terrain LOD: past TERRAIN_LOD the full-res chunk (1 quad/tile + walls +
+                // marching-squares banks) hands off to a stride-4 coarse drape — ~1/16th the
+                // vertices for the distant majority of the island. The band is a dithered
+                // crossfade (only the ring of chunks currently inside it pays the discard
+                // cost) so the swap doesn't pop; skirts on the coarse mesh hide the seam.
+                let coarse = if lod { build_terrain_chunk_coarse(keep, cx, x1, cz, z1) } else { None };
                 let mut e = commands.spawn((
                     Mesh3d(meshes.add(mesh)),
                     MeshMaterial3d(mat.clone()),
                     Transform::default(),
                     crate::biome::BiomeEntity,
                 ));
-                if let Some(aabb) = aabb {
-                    e.insert(aabb);
-                }
-                // Terrain LOD: past TERRAIN_LOD the full-res chunk (1 quad/tile + walls +
-                // marching-squares banks) hands off to a stride-4 coarse drape — ~1/16th the
-                // vertices for the distant majority of the island. The band is a dithered
-                // crossfade (only the ring of chunks currently inside it pays the discard
-                // cost) so the swap doesn't pop; skirts on the coarse mesh hide the seam.
-                if lod {
-                    if let Some(coarse) = build_terrain_chunk_coarse(keep, cx, x1, cz, z1) {
-                        e.insert(bevy::camera::visibility::VisibilityRange {
-                            start_margin: 0.0..0.0,
-                            end_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
-                            use_aabb: true,
-                        });
-                        // Same AABB-up-front fix for the coarse sibling: without it, a missing AABB
-                        // would fall back to the origin and this drape could flip visible near the
-                        // castle / hidden far away — the inverse of the underfoot low-res glitch.
-                        let caabb = coarse.compute_aabb();
-                        let mut ce = commands.spawn((
-                            Mesh3d(meshes.add(coarse)),
-                            MeshMaterial3d(mat.clone()),
-                            Transform::default(),
-                            crate::biome::BiomeEntity,
-                            // Shadow cascades stop at ~150 and the fog is thick out there —
-                            // the coarse drape is pure fill, never a shadow caster.
-                            bevy::light::NotShadowCaster,
-                            bevy::camera::visibility::VisibilityRange {
-                                start_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
-                                end_margin: 1.0e30..1.0e30, // no far cutoff — terrain always draws
-                                use_aabb: true,
-                            },
-                        ));
-                        if let Some(caabb) = caabb {
-                            ce.insert(caabb);
+                if let Some(coarse) = coarse {
+                    // ONE SHARED AABB (the union) for BOTH siblings. `VisibilityRange` with
+                    // `use_aabb` measures the camera→AABB distance, and the dither crossfade
+                    // is only COMPLEMENTARY (fine discards exactly the pixels the coarse
+                    // keeps) when both siblings resolve the SAME distance. The stride-4 drape
+                    // + its skirts bake slightly different bounds than the full-res mesh, so
+                    // per-mesh AABBs put the two at different points of the band — mismatched
+                    // checkerboards with see-through holes ("the ground looks slightly
+                    // transparent"), and at screen edges one sibling could frustum-cull while
+                    // the other still dithered. (Also the AABB-up-front fix: until Bevy's
+                    // `calculate_bounds` fills an AABB in, the range check falls back to the
+                    // entity translation — the world ORIGIN — pinning far-standing players'
+                    // underfoot chunks to the coarse drape on every rebuild.)
+                    let caabb = coarse.compute_aabb();
+                    let shared = match (aabb, caabb) {
+                        (Some(a), Some(b)) => {
+                            let min = a.min().min(b.min());
+                            let max = a.max().max(b.max());
+                            Some(bevy::camera::primitives::Aabb::from_min_max(min.into(), max.into()))
                         }
+                        (a, b) => a.or(b),
+                    };
+                    e.insert(bevy::camera::visibility::VisibilityRange {
+                        start_margin: 0.0..0.0,
+                        end_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
+                        use_aabb: true,
+                    });
+                    if let Some(shared) = shared {
+                        e.insert(shared);
                     }
+                    let mut ce = commands.spawn((
+                        Mesh3d(meshes.add(coarse)),
+                        MeshMaterial3d(mat.clone()),
+                        Transform::default(),
+                        crate::biome::BiomeEntity,
+                        // Shadow cascades stop at ~150 and the fog is thick out there —
+                        // the coarse drape is pure fill, never a shadow caster.
+                        bevy::light::NotShadowCaster,
+                        bevy::camera::visibility::VisibilityRange {
+                            start_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
+                            end_margin: 1.0e30..1.0e30, // no far cutoff — terrain always draws
+                            use_aabb: true,
+                        },
+                    ));
+                    if let Some(shared) = shared {
+                        ce.insert(shared);
+                    }
+                } else if let Some(aabb) = aabb {
+                    e.insert(aabb);
                 }
             }
             cx += TERRAIN_CHUNK;
