@@ -798,24 +798,7 @@ pub fn waterfall_site_world() -> (Vec2, Vec2) {
 /// away from them. Self-contained (region + warden + Blight gating INSIDE) so `classify`,
 /// `corner_water` and `smooth_surface_y` all see the same shoreline.
 fn pool_sd(x: f32, z: f32) -> f32 {
-    let mut best = f32::INFINITY;
-    for reg in active_map().regions {
-        if reg.biome != TB::Swamp || reg.peak != 0 {
-            continue;
-        }
-        if (x - reg.x).hypot(z - reg.z) > reg.r {
-            continue; // fast reject — blobs live well inside the region
-        }
-        for (fx, fz, frx, frz) in POOL_BLOBS {
-            let (cx, cz) = (reg.x + fx * reg.r, reg.z + fz * reg.r);
-            let (rx, rz) = (frx * reg.r, frz * reg.r);
-            let dx = (x - cx) / rx;
-            let dz = (z - cz) / rz;
-            // Normalised ellipse → approx base-unit signed distance (same trick as `lake_sd`).
-            let sd = ((dx * dx + dz * dz).sqrt() - 1.0) * rx.min(rz);
-            best = best.min(sd);
-        }
-    }
+    let best = pool_blob_sd_raw(x, z);
     if best == f32::INFINITY {
         return best;
     }
@@ -840,6 +823,35 @@ fn pool_sd(x: f32, z: f32) -> f32 {
     // Organic shoreline: wave the ellipse edge with noise. Only nibbles ±0.9 base units, so a
     // blob's guaranteed deep core (−rx·min ≈ −3..−5) survives.
     best + noise_a(x * 0.45, z * 0.45) * 0.9
+}
+
+/// The pool-blob field WITHOUT the keep-outs (warden glade / Blight / lake margin) that
+/// [`pool_sd`] applies on top — those return a hard `INFINITY`, i.e. the field is
+/// DISCONTINUOUS across their edges, so no centre-sample-plus-margin bake can bound it.
+/// The [`water_near`] mask samples THIS field instead: keep-outs only ever REMOVE water,
+/// so ignoring them can only over-flag tiles (mask stays conservative), mirroring how the
+/// mask samples `river_sd` raw while ignoring `river_blocked`. Excludes the ellipse-edge
+/// noise (callers add it; the mask's margin covers its full swing).
+fn pool_blob_sd_raw(x: f32, z: f32) -> f32 {
+    let mut best = f32::INFINITY;
+    for reg in active_map().regions {
+        if reg.biome != TB::Swamp || reg.peak != 0 {
+            continue;
+        }
+        if (x - reg.x).hypot(z - reg.z) > reg.r {
+            continue; // fast reject — blobs live well inside the region
+        }
+        for (fx, fz, frx, frz) in POOL_BLOBS {
+            let (cx, cz) = (reg.x + fx * reg.r, reg.z + fz * reg.r);
+            let (rx, rz) = (frx * reg.r, frz * reg.r);
+            let dx = (x - cx) / rx;
+            let dz = (z - cz) / rz;
+            // Normalised ellipse → approx base-unit signed distance (same trick as `lake_sd`).
+            let sd = ((dx * dx + dz * dz).sqrt() - 1.0) * rx.min(rz);
+            best = best.min(sd);
+        }
+    }
+    best
 }
 
 /// Full "still water" field: the swamp bog pools PLUS the waterfall plunge stream. Every
@@ -2137,14 +2149,24 @@ pub fn tile_centre_ground(ix: i32, iz: i32) -> Option<f32> {
 }
 
 fn build_water_near() -> Arc<Vec<u8>> {
-    const RIVER_NEAR: f32 = 1.0; // half-diag 0.28 + fray 0.41 + slack
-    const POOL_NEAR: f32 = 1.6; // half-diag 0.28 + pool shore wave 0.9 + slack
+    // Margin maths (worst case, sampled at the tile CENTRE): a sub-tile point sits ≤ the tile
+    // half-diagonal (0.5·√2 / MAP_SCALE ≈ 0.28 base) away, and each field's edge-noise term
+    // can differ between the centre and that point by up to its full swing both ways.
+    // `omottle` spans ±1.5 → the river fray term spans ±(1.5·0.28 + 1.5·0.13) ≈ ±0.62 (swing
+    // 1.23); `noise_a` spans ±1.5 → the pool shore wave spans ±1.35 (one-sided vs the raw
+    // blob field) and the stream fray ±0.6 (already inside `stream_sd`, swing 1.2). Pools are
+    // sampled through [`pool_blob_sd_raw`] — the keep-out-free, noise-free blob field —
+    // because `pool_sd`'s keep-outs are DISCONTINUOUS (hard `INFINITY` edges no margin can
+    // bound) and only ever remove water. The `water_near_mask_never_hides_water` test sweeps
+    // the whole map to prove all of this holds.
+    const RIVER_NEAR: f32 = 1.7; // 0.28 + 2·0.62 + slack
+    const POOL_NEAR: f32 = 2.1; // 0.28 + 1.35 (pool, one-sided) / 2·0.6 (stream) + slack
     let mut v = vec![0u8; (COLS * ROWS) as usize];
     for iz in 0..ROWS {
         for ix in 0..COLS {
             let bx = (ix as f32 + 0.5) / MAP_SCALE;
             let bz = (iz as f32 + 0.5) / MAP_SCALE;
-            if river_sd(bx, bz) < RIVER_NEAR || pool_or_stream_sd(bx, bz) < POOL_NEAR {
+            if river_sd(bx, bz) < RIVER_NEAR || pool_blob_sd_raw(bx, bz).min(stream_sd(bx, bz)) < POOL_NEAR {
                 v[(iz * COLS + ix) as usize] = 1;
             }
         }
