@@ -472,16 +472,25 @@ fn drive_hp_bars(
             }
         };
         if dying.is_some() {
-            *vis = Visibility::Hidden; // no bar over a crumpling corpse
+            vis.set_if_neq(Visibility::Hidden); // no bar over a crumpling corpse
             continue;
         }
         let ratio = (cur / max).clamp(0.0, 1.0);
         if ratio >= 1.0 {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
             continue;
         }
         let root = ork_gt.translation();
         let mut head = root + Vec3::Y * bar.y;
+        // Distance cull FIRST, off the un-adjusted overhead point: a damaged enemy across the map
+        // shouldn't float a bar in the sky, and the great majority of bars during a siege are out
+        // here — so bail before paying for the cone/billboard math below. (The close-range cone can
+        // only ever pull `head` DOWN toward the camera, and it only engages inside `HP_BAR_NEAR`,
+        // far under the cull radius, so testing the raw overhead point culls the same set.)
+        if head.distance(cam_pos) > HP_BAR_MAX_DIST {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        }
         // Close-range readability (the FP melee case): as the camera closes inside HP_BAR_NEAR
         // the bar SLIDES DOWN from overhead to the foe's CHEST — at arm's length even a
         // cone-clamped overhead bar sits right at the frame's top edge (a WORLD_BUMP ork's bar
@@ -499,13 +508,8 @@ fn drive_hp_bars(
             let pull = closeness * 0.8;
             head += (cam_pos - head).normalize_or_zero() * pull;
         }
-        // Cull distant bars so a damaged enemy across the map doesn't float a bar in the sky.
         let dist = head.distance(cam_pos);
-        if dist > HP_BAR_MAX_DIST {
-            *vis = Visibility::Hidden;
-            continue;
-        }
-        *vis = Visibility::Visible;
+        vis.set_if_neq(Visibility::Visible);
         tf.translation = head;
         tf.look_at(cam_pos, Vec3::Y); // billboard (materials are double-sided)
         // Close-up shrink: a 0.6u quad at arm's length stripes across the frame; ease it down as
@@ -516,15 +520,29 @@ fn drive_hp_bars(
             if let Ok((mut fg_tf, mut fg_mat)) = fgs.get_mut(c) {
                 fg_tf.scale.x = HP_BAR_W * ratio;
                 fg_tf.translation.x = -(1.0 - ratio) * HP_BAR_W / 2.0;
-                fg_mat.0 = if hurting { assets.fg_hurt.clone() } else { assets.fg.clone() };
+                // Only WRITE the handle when it actually changes: assigning through `Mut` marks the
+                // component changed whether or not the value differs, which re-triggers extract +
+                // prepare for every visible bar, every frame (the same guard `rts::unitbars` uses).
+                let want = if hurting { &assets.fg_hurt } else { &assets.fg };
+                if fg_mat.0.id() != want.id() {
+                    fg_mat.0 = want.clone();
+                }
             }
         }
     }
 }
 
-// ── 3. Hurt-flash (per-entity material, cloned externally) ──────────────────
-// Shared by orks AND wildlife: a struck target whitens for a beat. Both ship sharing one skin
-// material (batching), so we clone a per-entity copy on the fly and flash only that copy.
+// ── 3. Hurt-flash (per-entity material, cloned LAZILY) ──────────────────────
+// Shared by orks AND wildlife: a struck target whitens for a beat. Both ship sharing ONE skin
+// material per variant/herd so the renderer batches the whole horde into a few draw calls, and a
+// flash has to touch one body alone — so the struck entity borrows a private clone of that skin
+// **for the duration of the flash only**, then hands it back.
+//
+// This used to be eager: every ork and every animal got its own material clone the frame it
+// spawned. That silently destroyed the batching it was built to protect — a 100-ork siege meant
+// 100 unique materials × ~17 mesh children each, i.e. no instancing anywhere in the horde, all so
+// that the handful being hit at any instant could flash. Now the clone is minted on the flash's
+// first frame and freed when it rings out, so at rest the horde is back to one material.
 
 /// A struck ork / animal flashes hot until this time (s); `intensity` is the per-hit peak emissive
 /// (tiered by blow weight at the hit-site, ~0.3 light → ~0.95 heavy).
@@ -541,88 +559,91 @@ impl HurtFlash {
     }
 }
 
-/// A target's own (cloned) skin material handle, so we can flash one ork / animal without
-/// touching the rest of the warband / herd (both ship sharing one material for batching).
+/// The private skin a currently-flashing ork / animal has borrowed: `own` is the clone its mesh
+/// children point at while it whitens, `shared` is the batched variant/herd skin they came from and
+/// go back to when the flash rings out. Present ONLY for the length of a flash.
 #[derive(Component)]
-struct HurtSkin(Handle<crate::creature::CreatureMaterial>);
-
-/// Give every ork its own material clone (orks ship sharing one for batching).
-/// Cheap — there are only dozens of orks — and keeps `orks.rs` untouched.
-fn ensure_ork_skin(
-    mut commands: Commands,
-    mut mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
-    orks: Query<(Entity, &Children), (With<Ork>, Without<HurtSkin>)>,
-    child_mats: Query<&MeshMaterial3d<crate::creature::CreatureMaterial>>,
-    eyes: Query<(), With<crate::orks::OrkEye>>,
-) {
-    for (e, children) in &orks {
-        // Base skin = a NON-eye child's material (the shared white body mat); the glowing eyes
-        // keep their own emissive material untouched (else the whole ork would flash amber).
-        let Some(shared) =
-            children.iter().filter(|c| eyes.get(*c).is_err()).find_map(|c| child_mats.get(c).ok())
-        else {
-            continue;
-        };
-        let Some(base) = mats.get(&shared.0).cloned() else { continue };
-        let own = mats.add(base);
-        for &c in children {
-            if eyes.get(c).is_ok() {
-                continue; // leave the glowing eyes alone
-            }
-            if child_mats.get(c).is_ok() {
-                // `try_insert`: an ork (BiomeEntity) can be despawned the same frame it's first
-                // seen here (biome rebuild / kill), which despawns its children too.
-                commands.entity(c).try_insert(MeshMaterial3d(own.clone()));
-            }
-        }
-        commands.entity(e).try_insert(HurtSkin(own));
-    }
+struct HurtSkin {
+    own: Handle<crate::creature::CreatureMaterial>,
+    shared: Handle<crate::creature::CreatureMaterial>,
 }
 
-/// Same trick for wildlife: each animal gets its own clone of the shared white herd material so a
-/// struck one flashes alone. No eyes to skip, so every mesh child takes the clone. Keeps
-/// `wildlife.rs` untouched.
-fn ensure_animal_skin(
-    mut commands: Commands,
-    mut mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
-    animals: Query<(Entity, &Children), (With<crate::wildlife::Animal>, Without<HurtSkin>)>,
-    child_mats: Query<&MeshMaterial3d<crate::creature::CreatureMaterial>>,
-) {
-    for (e, children) in &animals {
-        let Some(shared) = children.iter().find_map(|c| child_mats.get(c).ok()) else { continue };
-        let Some(base) = mats.get(&shared.0).cloned() else { continue };
-        let own = mats.add(base);
-        for &c in children {
-            if child_mats.get(c).is_ok() {
-                // `try_insert`: an animal (BiomeEntity) can be despawned the same frame it's first
-                // seen here (biome rebuild / kill / eaten), which despawns its children too.
-                commands.entity(c).try_insert(MeshMaterial3d(own.clone()));
-            }
-        }
-        commands.entity(e).try_insert(HurtSkin(own));
-    }
-}
-
+/// Drive every hurt-flash: mint the private skin on the first frame, ramp its emissive down, then
+/// restore the shared skin (re-batching the horde) and free the clone on the last.
+///
+/// The mesh materials are swapped through the query directly (not via `Commands`), so a flash
+/// starts on the very frame the hit lands rather than a frame late.
+///
+/// **Death fade is untouched by this**: `dying.rs` crumples a corpse with a transform-only
+/// animation *precisely because* the horde shares materials, so a `Dying` entity needs no private
+/// skin. One that dies mid-flash simply keeps the clone until it rings out (or until the corpse is
+/// reaped, which drops the last strong handle and frees the asset anyway).
 fn hurt_flash(
     time: Res<Time>,
     mut commands: Commands,
     mut mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
-    q: Query<(Entity, &HurtFlash, &HurtSkin)>,
+    // Only orks + wildlife carry a shared creature skin this trick knows how to borrow (the old
+    // eager `ensure_*_skin` pair covered exactly these two).
+    flashing: Query<
+        (Entity, &HurtFlash, Option<&HurtSkin>, &Children),
+        Or<(With<Ork>, With<crate::wildlife::Animal>)>,
+    >,
+    mut child_mats: Query<&mut MeshMaterial3d<crate::creature::CreatureMaterial>>,
+    eyes: Query<(), With<crate::orks::OrkEye>>,
 ) {
     let now = time.elapsed_secs();
-    for (e, hf, skin) in &q {
+    for (e, hf, skin, children) in &flashing {
         let remain = hf.until - now;
         if remain <= 0.0 {
-            if let Some(mut m) = mats.get_mut(&skin.0) {
-                m.base.emissive = LinearRgba::BLACK;
+            // Rung out: hand the shared skin back (the horde batches again) and drop the clone.
+            if let Some(s) = skin {
+                for &c in children {
+                    if let Ok(mut m) = child_mats.get_mut(c) {
+                        if m.0.id() == s.own.id() {
+                            m.0 = s.shared.clone();
+                        }
+                    }
+                }
+                mats.remove(&s.own);
+                commands.entity(e).try_remove::<HurtSkin>();
             }
-            commands.entity(e).remove::<HurtFlash>();
+            commands.entity(e).try_remove::<HurtFlash>();
             continue;
         }
+        // Lazily borrow a private skin on the flash's FIRST frame.
+        let own = match skin {
+            Some(s) => s.own.clone(),
+            None => {
+                // Base skin = a NON-eye child's material (the shared body mat); the glowing eyes
+                // keep their own emissive material untouched (else the whole ork would flash amber).
+                // Wildlife has no eye children, so this filter is a no-op for a herd.
+                let Some(shared) = children
+                    .iter()
+                    .filter(|c| eyes.get(*c).is_err())
+                    .find_map(|c| child_mats.get(c).ok().map(|m| m.0.clone()))
+                else {
+                    continue;
+                };
+                let Some(base) = mats.get(&shared).cloned() else { continue };
+                let own = mats.add(base);
+                for &c in children {
+                    if eyes.get(c).is_ok() {
+                        continue; // leave the glowing eyes alone
+                    }
+                    if let Ok(mut m) = child_mats.get_mut(c) {
+                        m.0 = own.clone();
+                    }
+                }
+                // `try_insert`: an ork/animal (BiomeEntity) can be despawned the same frame it's
+                // struck (biome rebuild / kill / eaten), which despawns its children too.
+                commands.entity(e).try_insert(HurtSkin { own: own.clone(), shared });
+                own
+            }
+        };
         // Front-loaded pop: bright at the contact frame, falls off fast (k² not linear) so it
         // punches then clears instead of plateauing. Warm-tinted + scaled by the per-hit intensity.
         let k = (remain / HURT_FLASH_DUR).clamp(0.0, 1.0);
-        if let Some(mut m) = mats.get_mut(&skin.0) {
+        if let Some(mut m) = mats.get_mut(&own) {
             let v = k * k * hf.intensity;
             m.base.emissive =
                 LinearRgba::rgb(v * HURT_FLASH_TINT[0], v * HURT_FLASH_TINT[1], v * HURT_FLASH_TINT[2]);
@@ -769,8 +790,6 @@ impl Plugin for CombatFxPlugin {
                     hit_test,
                     spawn_floats,
                     drive_floats,
-                    ensure_ork_skin,
-                    ensure_animal_skin,
                     hurt_flash,
                     drive_hit_squash,
                     ensure_hp_bars,

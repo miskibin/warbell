@@ -248,7 +248,7 @@ pub fn drive_hit_stop(
 /// Bevy's 16-param ceiling now that it also spawns the planar impact flashes (which need
 /// `Assets<StandardMaterial>` to clone a per-instance fade material).
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct Juice<'w> {
+pub struct Juice<'w, 's> {
     feedback: ResMut<'w, crate::combat_fx::HitFeedback>,
     hitstop: ResMut<'w, HitStop>,
     materials: ResMut<'w, Assets<StandardMaterial>>,
@@ -257,6 +257,9 @@ pub struct Juice<'w> {
     /// First-person flag — folded in here (not a standalone `Res`) so `player_attack` stays under
     /// Bevy's 16-param ceiling. In FP the view owns facing, so the lock-on facing-snap is skipped.
     fp: Res<'w, FirstPerson>,
+    /// The impact flashes currently alive — counted so a cleave can't blow past
+    /// [`MAX_IMPACT_LIGHTS`]. Also folded in here to stay under the param ceiling.
+    lights: Query<'w, 's, (), With<LightFade>>,
 }
 
 /// Townsfolk the hero can harmlessly bonk with a swing: the [`crate::villagers::Villager`] bodies
@@ -324,9 +327,23 @@ pub(crate) struct LightFade {
     peak: f32,
 }
 
-/// Spawn one impact flash at `at`. Intensity in lumens (scene torches run 18–95k; a flash reads
-/// at ~15–30k over range ~6).
-pub(crate) fn spawn_impact_light(commands: &mut Commands, at: Vec3, color: Color, peak: f32, life: f32, now: f32) {
+/// Max impact flashes alive at once. Each one is a real (if unshadowed) point light the clustered
+/// forward renderer has to bin and light every affected fragment against, so a cleave landing on
+/// four orks — or a war party's worth of blows in one siege frame — can otherwise stack a dozen
+/// lights into the same few metres, where they're indistinguishable from two or three anyway.
+pub(crate) const MAX_IMPACT_LIGHTS: usize = 8;
+
+/// Spawn one impact flash at `at`, unless [`MAX_IMPACT_LIGHTS`] are already alive. Intensity in
+/// lumens (scene torches run 18–95k; a flash reads at ~15–30k over range ~6).
+///
+/// `live` is the caller's running count of flashes currently in the world (seeded from a
+/// `Query<(), With<LightFade>>` count, then bumped per spawn so a burst inside one system's loop
+/// still respects the cap).
+pub(crate) fn spawn_impact_light(commands: &mut Commands, live: &mut usize, at: Vec3, color: Color, peak: f32, life: f32, now: f32) {
+    if *live >= MAX_IMPACT_LIGHTS {
+        return;
+    }
+    *live += 1;
     commands.spawn((
         PointLight {
             color,
@@ -497,7 +514,9 @@ pub(crate) fn spawn_sweep_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3
 
 /// A short-lived planar flash (slash streak / kill shockwave / blood splat / blade-trail ribbon).
 /// Owns a cloned material so it can alpha-fade alone; [`update_fx_fades`] frees that material on
-/// despawn so per-hit clones never leak.
+/// despawn so per-hit clones never leak (verified: the `mats.remove(&f.mat)` on the ring-out path
+/// below is the only exit, and an effect swept early by a biome rebuild drops its last strong
+/// handle with the entity, which frees the asset too).
 #[derive(Component)]
 pub(crate) struct FxFade {
     born: f32,
@@ -507,7 +526,17 @@ pub(crate) struct FxFade {
     s1: Vec3,
     a0: f32,
     face: FadeFace,
+    /// Alpha last actually written into `mat`. Writing a material re-uploads its uniform + rebuilds
+    /// its bind group, so the fade only writes when the value has moved a visible step — see
+    /// [`FADE_ALPHA_STEP`].
+    last_a: f32,
 }
+
+/// Minimum alpha change worth re-writing a fade's material for. A blood splat lives 3.5s (≈210
+/// frames) and drains 0.72 → 0 alpha; at this step that's ~35 material writes instead of 210, with
+/// each step far under the eye's threshold on a translucent decal. The short flashes (a 0.11s slash)
+/// step every frame anyway, so they're unaffected.
+const FADE_ALPHA_STEP: f32 = 0.02;
 
 /// How a fading quad orients each frame.
 #[derive(Clone, Copy)]
@@ -529,11 +558,11 @@ pub fn update_fx_fades(
     mut commands: Commands,
     mut mats: ResMut<Assets<StandardMaterial>>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
-    mut q: Query<(Entity, &FxFade, &mut Transform)>,
+    mut q: Query<(Entity, &mut FxFade, &mut Transform)>,
 ) {
     let now = time.elapsed_secs();
     let cam_pos = cam_q.single().map(|t| t.translation()).ok();
-    for (e, f, mut tf) in &mut q {
+    for (e, mut f, mut tf) in &mut q {
         let k = (now - f.born) / f.life;
         if k >= 1.0 {
             commands.entity(e).despawn();
@@ -555,8 +584,15 @@ pub fn update_fx_fades(
             }
             _ => {}
         }
-        if let Some(mut m) = mats.get_mut(&f.mat) {
-            m.base_color = m.base_color.with_alpha(f.a0 * (1.0 - k));
+        // Only touch the material when the alpha has moved a visible step (see `FADE_ALPHA_STEP`):
+        // a `get_mut` here re-prepares the bind group, and a busy fight keeps dozens of these
+        // decals alive at once.
+        let a = f.a0 * (1.0 - k);
+        if (a - f.last_a).abs() >= FADE_ALPHA_STEP {
+            if let Some(mut m) = mats.get_mut(&f.mat) {
+                m.base_color = m.base_color.with_alpha(a);
+            }
+            f.last_a = a;
         }
     }
 }
@@ -811,6 +847,9 @@ pub fn player_attack(
 
     let mut hit_any = false;
     let mut killed_any = false;
+    // Live impact-flash count, seeded once and bumped per spawn below, so a cleave that lands on
+    // four bodies in one frame still respects `MAX_IMPACT_LIGHTS`.
+    let mut live_lights = juice.lights.iter().count();
     // Direct-hit bookkeeping for the cleave pass (positions to splash from + who's already hit).
     let mut struck: Vec<Vec2> = Vec::new();
     let mut hit_ents: Vec<Entity> = Vec::new();
@@ -844,13 +883,13 @@ pub fn player_attack(
         if hero.heavy {
             spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
             spawn_burst(&mut commands, &fx, mid, true);
-            spawn_impact_light(&mut commands, mid, Color::srgb(1.0, 0.85, 0.5), 26_000.0, 0.18, now_s);
+            spawn_impact_light(&mut commands, &mut live_lights, mid, Color::srgb(1.0, 0.85, 0.5), 26_000.0, 0.18, now_s);
         }
         // A blood splat under the target on EVERY hit (small + brief), big + lingering on a kill.
         spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), dead, now_s);
         if dead {
             spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
-            spawn_impact_light(&mut commands, mid, Color::srgb(1.0, 0.9, 0.6), 18_000.0, 0.15, now_s);
+            spawn_impact_light(&mut commands, &mut live_lights, mid, Color::srgb(1.0, 0.9, 0.6), 18_000.0, 0.15, now_s);
         }
         hit_any = true;
         // Floating number above the target + a white hurt-flash on a survivor.
@@ -1271,7 +1310,7 @@ fn spawn_fade(
         pose.with_scale(s0),
         bevy::light::NotShadowCaster,
         crate::biome::BiomeEntity,
-        FxFade { born: now, life, mat, s0, s1, a0, face },
+        FxFade { born: now, life, mat, s0, s1, a0, face, last_a: a0 },
     ));
 }
 

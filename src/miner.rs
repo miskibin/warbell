@@ -412,7 +412,13 @@ fn pick_work(
             // Apply the step on ANY result, including a PIVOT (`Some`, `moving:false`) so the miner
             // can turn toward an opening instead of freezing facing a wall — see `chop_work`'s note;
             // this pivot-facing drop was the courtyard/gate "standing still" wedge.
-            match steer::advance(v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, 3.0 * dt) {
+            // Steering LOD (`steer::advance_lod`): the stone haul crosses half the island, so most
+            // of it happens far from the hero — walk the direct line there instead of paying the
+            // ~80-lookup escape fan. Only the long A*-followed leg takes it; the close-in approach
+            // (`d <= 6`, watched by `CLOSE_GIVEUP_SECS` for a rock stranded one terrace up) keeps
+            // the full fan so that wedge detector still sees real steering.
+            let near = (hero.alive && v.pos.distance(hero.pos) < crate::steer::LOD_R) || d <= 6.0;
+            match steer::advance_lod(near, v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, 3.0 * dt) {
                 Some(s) => {
                     v.facing = s.facing;
                     v.pos = s.pos;

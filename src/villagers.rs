@@ -963,6 +963,8 @@ fn recruit(
 fn villager_brain(
     time: Res<Time>,
     spots: Res<TownSpots>,
+    // Only for the steering LOD ring (`steer::advance_lod`) — the wander itself ignores the hero.
+    hero: Res<crate::player::HeroState>,
     mut q: Query<
         (&mut Villager, &mut Transform, Has<Kid>),
         (
@@ -1006,7 +1008,13 @@ fn villager_brain(
                     v.moving = false;
                 } else {
                     let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
-                    match steer::advance(v.pos, v.facing, v.target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
+                    // Steering LOD: with the hero off adventuring, the whole town's ambient wander
+                    // drops the escape fan for a direct line (see `steer::advance_lod`). A townsperson
+                    // that clips a house corner from 90u away is invisible, and `step_clear` waives
+                    // the prop test for a mover already inside a blocker, so one that ends up in a
+                    // wall simply walks back out when the hero returns.
+                    let near = hero.alive && v.pos.distance(hero.pos) < crate::steer::LOD_R;
+                    match steer::advance_lod(near, v.pos, v.facing, v.target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                         Some(s) => {
                             v.facing = s.facing;
                             v.pos = s.pos;
@@ -1647,6 +1655,12 @@ fn guard_combat(
 
     for (self_e, mut g, mut hp, mut v, mut tf, mut path, rallied, mut archer) in &mut guards {
         g.atk_cd -= dt;
+        // Steering LOD ring (`steer::advance_lod`): a militiaman marching far from the hero — a
+        // rallied war party sweeping the far side of the island, a freed captive walking home —
+        // takes the cheap direct line instead of the ~80-lookup escape fan. It only swaps local
+        // avoidance: the A* `NavPath` below still supplies every step target, so the walk still
+        // threads the river crossings and the castle gate.
+        let near = hero_pos.is_some_and(|h| v.pos.distance(h) < crate::steer::LOD_R);
         if !in_wave {
             // Peacetime mend — slow, so a mauling leaves a mark (no more instant dawn heal).
             hp.hp = (hp.hp + GUARD_REGEN * dt).min(hp.max);
@@ -1772,7 +1786,7 @@ fn guard_combat(
                     tp
                 };
                 let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
-                if let Some(s) = steer::advance(v.pos, v.facing, step_target, GUARD_SPEED * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
+                if let Some(s) = steer::advance_lod(near, v.pos, v.facing, step_target, GUARD_SPEED * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
                     v.facing = s.facing;
                     v.pos = s.pos;
                     v.moving = s.moving;
@@ -1815,7 +1829,7 @@ fn guard_combat(
                     g.post
                 };
                 let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
-                if let Some(s) = steer::advance(v.pos, v.facing, step_target, GUARD_SPEED * 0.6 * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
+                if let Some(s) = steer::advance_lod(near, v.pos, v.facing, step_target, GUARD_SPEED * 0.6 * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                     v.facing = s.facing;
                     v.pos = s.pos;
                     v.moving = s.moving;

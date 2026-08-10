@@ -50,6 +50,8 @@ pub fn apply_hero_damage(
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
+    // Live impact flashes — the parry clash below respects the same cap the hero's blows do.
+    lights: Query<(), With<super::combat::LightFade>>,
 ) {
     // A warden critical landed this frame (lethal unless blocked/dodged). Read + clear it here so
     // it's consumed exactly once, alongside the same pending-damage drain it rode in on.
@@ -138,7 +140,8 @@ pub fn apply_hero_damage(
                     // plus a brief cool flash — reads as a CLASH, not a generic hit pop.
                     let at = Vec3::new(hero.pos.x + fwd.x * 0.7, hero.y + 1.1, hero.pos.y + fwd.y * 0.7);
                     super::combat::spawn_clash(&mut commands, fx, at, fwd);
-                    super::combat::spawn_impact_light(&mut commands, at, Color::srgb(0.95, 0.97, 1.0), 22_000.0, 0.18, nowf);
+                    let mut live_lights = lights.iter().count();
+                    super::combat::spawn_impact_light(&mut commands, &mut live_lights, at, Color::srgb(0.95, 0.97, 1.0), 22_000.0, 0.18, nowf);
                 }
                 hitstop.remaining = hitstop.remaining.max(0.08);
                 feedback.trauma = (feedback.trauma + 0.25).min(1.0);

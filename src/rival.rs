@@ -1096,7 +1096,7 @@ fn rival_combat(
                 }
             } else {
                 let sp = v.speed * dt;
-                step_toward(&mut v, tpos, sp, cur_y, dt);
+                step_toward(&mut v, tpos, sp, cur_y, dt, true);
             }
         } else {
             // Hold post: stand guard most of the time, with the occasional short repositioning step,
@@ -1110,7 +1110,7 @@ fn rival_combat(
                 sol.patrol_t = 9.0 + next_f(&mut sol.rng) * 10.0; // then stand there a good while
             }
             let sp = v.speed * 0.5 * dt;
-            step_toward(&mut v, sol.patrol, sp, cur_y, dt);
+            step_toward(&mut v, sol.patrol, sp, cur_y, dt, true);
         }
 
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
@@ -1168,7 +1168,7 @@ fn rival_workers(
             }
         } else {
             let sp = v.speed * 0.5 * dt;
-            step_toward(&mut v, w.patrol, sp, cur_y, dt);
+            step_toward(&mut v, w.patrol, sp, cur_y, dt, true);
         }
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
@@ -1178,8 +1178,12 @@ fn rival_workers(
 }
 
 /// Steer a soldier's `Villager` pose one step toward `target` (shared by chase + patrol).
-fn step_toward(v: &mut crate::villagers::Villager, target: Vec2, step: f32, cur_y: f32, dt: f32) {
-    match crate::steer::advance(v.pos, v.facing, target, step, v.body_r, cur_y, SOLDIER_TURN * dt) {
+/// `near` picks the steering flavour (see `steer::advance_lod`): the garrison brains pass `true`
+/// because they're already wholesale-frozen outside [`RIVAL_LOD_R`], so anything still stepping is
+/// by definition next to the hero; a raider — which marches the length of the island to the player's
+/// keep — passes its own hero distance and drops the escape fan for the long approach.
+fn step_toward(v: &mut crate::villagers::Villager, target: Vec2, step: f32, cur_y: f32, dt: f32, near: bool) {
+    match crate::steer::advance_lod(near, v.pos, v.facing, target, step, v.body_r, cur_y, SOLDIER_TURN * dt) {
         Some(s) => {
             v.facing = s.facing;
             v.pos = s.pos;
@@ -1385,6 +1389,8 @@ fn rival_raid_brain(
             }
         }
         let cur_y = crate::steer::footing(vpos.x, vpos.y).unwrap_or(tf.translation.y);
+        // Steering LOD for the long march in from the desert (see `step_toward`).
+        let near = hero.alive && vpos.distance(hero.pos) < crate::steer::LOD_R;
         let turn = RAIDER_TURN * 2.0 * dt;
         // The keep-assault distance: a swordsman batters the wall, a bowman volleys from a bowshot.
         let keep_range = if is_archer { RAIDER_KEEP_RANGE_BOW } else { RAIDER_KEEP_RANGE };
@@ -1436,7 +1442,7 @@ fn rival_raid_brain(
                     }
                 }
             } else {
-                step_toward(&mut v, tpos, RAIDER_SPEED * dt, cur_y, dt);
+                step_toward(&mut v, tpos, RAIDER_SPEED * dt, cur_y, dt, near);
             }
         } else if vpos.distance(goal) <= keep_range {
             v.moving = false;
@@ -1473,7 +1479,7 @@ fn rival_raid_brain(
                 keep.hp = (keep.hp - RAIDER_KEEP_DMG).max(0.0);
             }
         } else {
-            step_toward(&mut v, goal, RAIDER_SPEED * dt, cur_y, dt);
+            step_toward(&mut v, goal, RAIDER_SPEED * dt, cur_y, dt, near);
         }
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };

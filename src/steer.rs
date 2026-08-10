@@ -147,6 +147,9 @@ pub fn advance(
 /// walks straight onto a carved river — the render then has no ground to sit on and falls back to
 /// its stale Y, so it visibly FLOATS over the water ("bears floating next to rivers"). One
 /// `footing()` sample per frame, vs the ~80 the full `advance` fan costs, so LOD savings stand.
+///
+/// Prefer [`advance_lod`] at a call site that wants the LOD split — it keeps the branch (and its
+/// rationale) in one place.
 pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_turn_dt: f32) -> Step {
     let to = goal - pos;
     let dist = to.length();
@@ -162,5 +165,44 @@ pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_tu
         Step { facing: new_facing, pos: np, moving: true }
     } else {
         Step { facing: new_facing, pos, moving: false }
+    }
+}
+
+/// Shared **steering LOD radius**: distance from the HERO past which a mover drops from the full
+/// obstacle-aware [`advance`] to the cheap [`advance_direct`]. Matches the value the wildlife brain
+/// (`wildlife::BRAIN_LOD_R`) and the camp-ork brain (`orks::ORK_BRAIN_LOD_R`) already use for their
+/// own decision LODs, so every agent family switches flavour at the same ring.
+///
+/// Bigger than the *limb* cull (70u, camera-relative) on purpose: steering LOD is far less visible
+/// than skinning LOD — nobody at 90u can see a distant body clip the corner of a rock — while the
+/// fan scan it saves is ~80 terrain/blocker lookups per mover per frame, i.e. the single biggest
+/// per-agent CPU cost in an endgame frame (120–150 live agents: a big ork wave + the militia + the
+/// town + wildlife).
+pub const LOD_R: f32 = 90.0;
+
+/// [`advance`] with the shared distance LOD applied: a `near` mover pays the full escape-fan; a far
+/// one gets [`advance_direct`]'s straight line (still footing-gated, so it can't walk onto water —
+/// but no prop/cliff fan). A far mover therefore never reports "boxed in" (`None`), which is
+/// correct: with no fan there is nothing to be boxed in by.
+///
+/// **The LOD swaps the local-avoidance flavour only — never the route.** A caller following an A*
+/// [`crate::navgrid::NavPath`] keeps feeding its next waypoint as `goal`, so a far invader still
+/// threads the castle gates: consecutive waypoints are one tile apart along a route the pathfinder
+/// already proved walkable, and the straight line between two such waypoints IS that route.
+#[allow(clippy::too_many_arguments)]
+pub fn advance_lod(
+    near: bool,
+    pos: Vec2,
+    facing: f32,
+    goal: Vec2,
+    step_dist: f32,
+    body_r: f32,
+    cur_y: f32,
+    max_turn_dt: f32,
+) -> Option<Step> {
+    if near {
+        advance(pos, facing, goal, step_dist, body_r, cur_y, max_turn_dt)
+    } else {
+        Some(advance_direct(pos, facing, goal, step_dist, max_turn_dt))
     }
 }

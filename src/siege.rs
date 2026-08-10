@@ -1172,7 +1172,15 @@ fn invader_brain(
             let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
             let speed = o.speed
                 * if o.holding { crate::melee_ring::HOLD_SPEED } else { 1.4 * if frenzied { 1.4 } else { 1.0 } };
-            match steer::advance(o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, orks::ORK_MAX_TURN * 1.6 * dt) {
+            // Steering LOD (`steer::advance_lod`): a horde still trekking in from the spawn ring,
+            // far from the hero, walks the cheap direct line instead of each paying the ~80-lookup
+            // escape fan — the dominant per-invader cost of a big night wave. It does NOT change the
+            // route: `step_target` is still the next A* waypoint, one tile along a proven-walkable
+            // path, so a far invader threads the gates exactly as before. Anything INSIDE the wall
+            // ring keeps the full fan regardless of hero distance — that's the tight, prop-dense
+            // ground where clipping a wall or the keep would actually be visible and unfair.
+            let near = (hero.alive && hero_d < steer::LOD_R) || in_yard;
+            match steer::advance_lod(near, o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, orks::ORK_MAX_TURN * 1.6 * dt) {
                 Some(s) => {
                     o.facing = s.facing;
                     o.pos = s.pos;

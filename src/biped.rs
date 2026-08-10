@@ -102,19 +102,44 @@ pub(crate) fn biped_pose(d: &BipedDrive, now: f32) -> Pose {
     }
 }
 
+/// Squared CAMERA distance past which a rig is no longer posed — the same 70u radius the legacy
+/// box rigs cull at (`orks::LIMB_CULL2`, `wildlife::LIMB_CULL2`); at that range fog + DoF have long
+/// since swallowed the individual joints. Posing is ~20 joint writes per rig per frame, so with a
+/// siege-sized crowd this is one of the fattest ungated Update systems in the game.
+const LIMB_CULL2: f32 = 70.0 * 70.0;
+
 /// Pose every biped: one [`Pose`] per root (from its [`BipedDrive`]), written onto its [`BipedPart`]s.
 /// Ungated (like the hero animator) so a frozen/paused world still draws its mobs posed.
+///
+/// Distance-culled from the camera ([`LIMB_CULL2`]), matching `ork_limbs` / `animal_limbs`. A culled
+/// rig simply keeps its last pose (same precedent) — it is not reset, so nothing snaps; when the
+/// camera closes back in, the next frame poses it from the live drive. The **hero is never culled**:
+/// he drives his own richer animator (`player::anim::hero_anim`) and never carries a `BipedDrive`,
+/// but the marker check is kept explicit so the first-person view-model can never be frozen out by
+/// this system if the hero is ever moved onto the shared rig.
 pub fn animate_biped(
     time: Res<Time>,
-    drives: Query<(Entity, &BipedDrive)>,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    drives: Query<(Entity, &BipedDrive, Option<&GlobalTransform>, Has<crate::player::Hero>)>,
     mut parts: Query<(&BipedPart, &mut Transform)>,
     // Reused across frames so a full siege+town's worth of bipeds doesn't heap-alloc a fresh map
     // every frame (clear keeps the capacity).
     mut poses: Local<HashMap<Entity, Pose>>,
 ) {
     let now = time.elapsed_secs();
+    let cam_p = cam.iter().next().map(|g| g.translation());
     poses.clear();
-    poses.extend(drives.iter().map(|(e, d)| (e, biped_pose(d, now))));
+    poses.extend(drives.iter().filter_map(|(e, d, gt, is_hero)| {
+        if !is_hero {
+            // No transform yet (spawned this frame) → pose it; the cull needs a real position.
+            if let (Some(cp), Some(gt)) = (cam_p, gt) {
+                if gt.translation().distance_squared(cp) > LIMB_CULL2 {
+                    return None;
+                }
+            }
+        }
+        Some((e, biped_pose(d, now)))
+    }));
     for (part, mut tf) in &mut parts {
         if let Some(pose) = poses.get(&part.root) {
             let jp = pose.get(part.joint);
