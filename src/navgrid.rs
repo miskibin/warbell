@@ -7,14 +7,11 @@
 //! world unit; `tile = floor(world + G)`. We map a forest tile ↔ a core `PathPoint` (tile+0.5),
 //! and the edge-midpoint `wall_at` test (in core) is what opens gates while blocking walls.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 use tileworld_core::pathfinding::{find_path, Grid, PathPoint};
 
 use crate::blockers;
-use crate::worldmap::{ground_at_world, COLS, GROUND_STEP, GX, GZ, ROWS};
+use crate::worldmap::{COLS, GROUND_STEP, GX, GZ, ROWS};
 
 /// A* node budget for the invader keep-march. The spawn ring is 30 tiles out, but on the enlarged
 /// map an invader spawned across one of the four rivers must detour to a bridge, so the explored
@@ -31,30 +28,18 @@ fn tile_world_centre(ix: i32, iz: i32) -> (f32, f32) {
     (ix as f32 - GX + 0.5, iz as f32 - GZ + 0.5)
 }
 
-/// Forest's terrain + blocker set, viewed as a pathfinding `Grid`. Caches `ground_at_world` per
-/// tile for the lifetime of one [`find_path`] call: A* re-queries the same tile's height many
-/// times over a search (`can_step`'s corner-cut check re-reads its own `(fx,fz)` up to 3× per
-/// node; any tile bordering multiple explored nodes gets re-derived once per neighbor), and
-/// `ground_at_world` (marching-squares corner smoothing + river/pool SDF) is real work, not an
-/// array read — measured via a targeted trace-window capture as ~208ms in a single long-haul
-/// `path_to_budget` call (the stone-miner's castle→Rocky-biome ore search). Pure memoization of
-/// a deterministic, unchanging-mid-search function: same answers, just not recomputed, so this
-/// cannot change which paths are found or any caller's behavior — only how fast they're found.
-/// Fresh per call (constructed at each `path_to_budget` call site below), so nothing goes stale.
+/// Forest's terrain + blocker set, viewed as a pathfinding `Grid`. Tile-centre heights come
+/// from `worldmap::tile_centre_ground` — a per-map baked flat array (terrain is static per
+/// map), so A*'s many re-reads of the same tiles are single array loads. This replaced a
+/// per-`find_path` `RefCell<HashMap>` memo (which re-derived every tile once per search —
+/// measured at ~208ms for one long-haul stone-miner search before any caching existed).
+/// Blockers/bridges stay live queries: walls ARE built and razed mid-run.
 #[derive(Default)]
-pub struct ForestGrid {
-    height_cache: RefCell<HashMap<(i32, i32), Option<f32>>>,
-}
+pub struct ForestGrid;
 
 impl ForestGrid {
     fn height_at(&self, ix: i32, iz: i32) -> Option<f32> {
-        if let Some(h) = self.height_cache.borrow().get(&(ix, iz)) {
-            return *h;
-        }
-        let (wx, wz) = tile_world_centre(ix, iz);
-        let h = ground_at_world(wx, wz);
-        self.height_cache.borrow_mut().insert((ix, iz), h);
-        h
+        crate::worldmap::tile_centre_ground(ix, iz)
     }
 }
 

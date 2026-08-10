@@ -90,7 +90,12 @@ pub fn make_material(
             bevy::render::render_resource::TextureDimension::D2,
             vec![0u8],
             bevy::render::render_resource::TextureFormat::R8Unorm,
-            bevy::asset::RenderAssetUsages::RENDER_WORLD,
+            // MAIN_WORLD too: RENDER_WORLD-only drops the CPU copy after the first extract,
+            // and a material minted on a later in-process world rebuild then binds a handle
+            // whose GPU image can no longer be (re)prepared — the terrain draw never becomes
+            // ready and the ground renders untextured/absent. Keeping the main-world copy
+            // (a few hundred KB at most across these masks) keeps the handle re-preparable forever.
+            bevy::asset::RenderAssetUsages::default(),
         );
         (images.add(img), Vec4::ZERO)
     });
