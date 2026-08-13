@@ -329,7 +329,7 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   0.18.1 API forms are in `docs/specs/bevy-0-18-1-polished-static-3d-scene-verified-apis.md` (the
   mesh-building API is unchanged in 0.19, so it still applies); the per-slice spec docs sometimes
   **guess wrong** about the Bevy API — trust the verified doc + the real Bevy source, now under
-  `C:\Users\skibi\.cargo\registry\src\index.crates.io-*\bevy_*-0.19.0\src`.
+  `C:\Users\skibi\.cargo\registry\src\index.crates.io-*\bevy_*-0.19.1\src`.
 - **Determinism**: scatter/placement uses `mulberry32` (core `rng.rs`) seeded per-tile, so the
   world is reproducible. "Feels the same" parity, not byte-exact RNG/map.
 - **Forest's divergences are canonical, not bugs**: `siege.rs`'s wave director is richer than
