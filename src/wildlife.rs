@@ -387,18 +387,26 @@ fn animal_brain(
                     a.moving = false;
                 } else {
                     let spd = if a.mode == Mode::Flee { a.speed } else { a.wander_speed };
-                    // Far from the hero: skip the obstacle-aware fan-scan entirely (see
-                    // `steer::advance_direct` — this IS the real cost this whole LOD pass was
-                    // chasing, not the predator/prey search). A distant animal clipping a rock
-                    // nobody's near enough to see is a non-issue; the cheap direct line is enough
-                    // to keep it visibly wandering.
+                    // Far from the hero: skip the 9-heading escape fan (see `steer::advance_direct`
+                    // — the fan IS the real cost this whole LOD pass was chasing, not the
+                    // predator/prey search). The step is still fully gated on ground, step height
+                    // and blockers, so a distant animal can't walk through a wall or up a cliff;
+                    // it just doesn't steer *around* what it bumps into.
+                    let cur_y = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
                     if !near {
-                        let s = steer::advance_direct(a.pos, a.facing, a.target, spd * dt, MAX_TURN * dt);
+                        let s = steer::advance_direct(
+                            a.pos,
+                            a.facing,
+                            a.target,
+                            spd * dt,
+                            a.body_r,
+                            cur_y,
+                            MAX_TURN * dt,
+                        );
                         a.facing = s.facing;
                         a.pos = s.pos;
                         a.moving = s.moving;
                     } else {
-                        let cur_y = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
                         // Shared local steering (escape-fan + continuity bias + turn-rate cap) —
                         // the anti-flicker logic, identical for orks (see `steer.rs`).
                         match steer::advance(a.pos, a.facing, a.target, spd * dt, a.body_r, cur_y, MAX_TURN * dt) {

@@ -135,22 +135,38 @@ pub fn advance(
 }
 
 /// Cheap fallback for [`advance`] when the mover is far from the hero/camera (ambient wildlife or
-/// camp orks beyond their LOD radius): a straight line toward the goal with the same turn-rate
-/// cap, but NO obstacle-fan scan or footing/blocker checks. `advance`'s 9-direction escape-fan
-/// alone costs up to ~80 terrain/blocker lookups per call (`step_clear` → `can_stand`'s 5
-/// `footing()` samples × up to 3 `blockers::is_blocked` checks, × 9 candidate headings) — measured
-/// (segmented `Instant` timing inside `wildlife::animal_brain`, after gating the predator/prey
-/// search itself turned out to be a near-zero-cost no-op) as ~99% of the wildlife brain's real
-/// per-frame cost. Wholly wasted on an actor nobody's near enough to see clip through a rock.
-/// Never boxed-in (no obstacle-fan to fail), but it DOES keep a single centre-footing gate: the
-/// step is refused if the new centre has no footing (open water / void). Without it a far animal
-/// walks straight onto a carved river — the render then has no ground to sit on and falls back to
-/// its stale Y, so it visibly FLOATS over the water ("bears floating next to rivers"). One
-/// `footing()` sample per frame, vs the ~80 the full `advance` fan costs, so LOD savings stand.
+/// camp orks beyond their LOD radius): a straight line toward the goal with the same turn-rate cap
+/// and the same one [`step_clear`] gate, but **no 9-heading escape fan**. The fan is what costs:
+/// up to ~80 terrain/blocker lookups per call (`step_clear` → `can_stand`'s 5 `footing()` samples ×
+/// up to 3 `blockers::is_blocked` checks, × 9 candidate headings) — measured (segmented `Instant`
+/// timing inside `wildlife::animal_brain`, after gating the predator/prey search itself turned out
+/// to be a near-zero-cost no-op) as ~99% of the wildlife brain's real per-frame cost. Dropping the
+/// fan to a single `step_clear` keeps ~90% of that saving.
+///
+/// **It keeps the full `step_clear` gate on purpose — do not thin it back to a bare `footing()`
+/// sample.** `step_clear` is the *only* thing that consults [`crate::blockers`], so a centre-only
+/// footing test didn't just trade away prop clipping (the documented, accepted cost): it dropped
+/// wall segments, gate towers, the keep box and every building, plus the [`MAX_STEP`] height cap.
+/// A far mover then walked THROUGH the castle wall instead of threading its gate and stepped
+/// straight up a mesa face — both plainly visible whenever the fight moved away from the hero (a
+/// guard chasing an invader out past the wall ring, a rival raid marching the length of the
+/// island). Being footing-gated also still stops the "bears floating next to rivers" case, where a
+/// far animal walked onto a carved river and the render fell back to its stale Y.
+///
+/// Never boxed-in (no fan to fail) — a blocked step pivots in place toward the goal and reports
+/// `moving: false`, which is what the callers' stall/wedge clocks read to re-plan.
 ///
 /// Prefer [`advance_lod`] at a call site that wants the LOD split — it keeps the branch (and its
 /// rationale) in one place.
-pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_turn_dt: f32) -> Step {
+pub fn advance_direct(
+    pos: Vec2,
+    facing: f32,
+    goal: Vec2,
+    step_dist: f32,
+    body_r: f32,
+    cur_y: f32,
+    max_turn_dt: f32,
+) -> Step {
     let to = goal - pos;
     let dist = to.length();
     if dist < 1e-4 {
@@ -159,10 +175,10 @@ pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_tu
     let want = to.x.atan2(to.y);
     let new_facing = facing + wrap_pi(want - facing).clamp(-max_turn_dt, max_turn_dt);
     let fdir = Vec2::new(new_facing.sin(), new_facing.cos());
-    let np = pos + fdir * step_dist;
-    // Only step where there's ground to stand on; else pivot in place (turn toward goal, don't move).
-    if footing(np.x, np.y).is_some() {
-        Step { facing: new_facing, pos: np, moving: true }
+    // Same gate as the near path — ground, step height AND props/walls/buildings; else pivot in
+    // place (turn toward the goal, don't move) so the caller's stall clock can notice and re-plan.
+    if step_clear(pos, fdir, step_dist, body_r, cur_y) {
+        Step { facing: new_facing, pos: pos + fdir * step_dist, moving: true }
     } else {
         Step { facing: new_facing, pos, moving: false }
     }
@@ -188,9 +204,10 @@ pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_tu
 pub const LOD_R: f32 = 90.0;
 
 /// [`advance`] with the shared distance LOD applied: a `near` mover pays the full escape-fan; a far
-/// one gets [`advance_direct`]'s straight line (still footing-gated, so it can't walk onto water —
-/// but no prop/cliff fan). A far mover therefore never reports "boxed in" (`None`), which is
-/// correct: with no fan there is nothing to be boxed in by.
+/// one gets [`advance_direct`]'s straight line — same `step_clear` gate (ground, step height,
+/// props, walls, buildings), just no fan to steer around what it hits. A far mover therefore never
+/// reports "boxed in" (`None`), which is correct: with no fan there is nothing to be boxed in by;
+/// it pivots in place with `moving: false` until its caller re-plans or the hero comes near.
 ///
 /// **The LOD swaps the local-avoidance flavour only — never the route.** A caller following an A*
 /// [`crate::navgrid::NavPath`] keeps feeding its next waypoint as `goal`, so a far invader still
@@ -210,6 +227,40 @@ pub fn advance_lod(
     if near {
         advance(pos, facing, goal, step_dist, body_r, cur_y, max_turn_dt)
     } else {
-        Some(advance_direct(pos, facing, goal, step_dist, max_turn_dt))
+        Some(advance_direct(pos, facing, goal, step_dist, body_r, cur_y, max_turn_dt))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **The far LOD path must still respect blockers.** The v0.22.0 perf pass gave
+    /// [`advance_direct`] a bare centre-`footing` gate, which reads terrain only — [`step_clear`] is
+    /// the sole caller of [`crate::blockers`]. A far mover therefore walked straight through wall
+    /// segments, gate towers, the keep box and every building, wherever the fight moved away from
+    /// the hero. Pin that the direct step refuses a blocked heading while the identical unblocked
+    /// step advances.
+    #[test]
+    fn the_far_path_refuses_a_blocked_step() {
+        let _g = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+
+        // The castle sits at the origin on force-flattened grass, so this is stable open ground.
+        let pos = Vec2::new(0.0, 0.0);
+        let cur_y = footing(pos.x, pos.y).expect("the castle grass must have footing");
+        let goal = Vec2::new(0.0, 6.0); // due +Z, i.e. facing 0
+        let (step, body_r, turn) = (0.5, 0.4, 1.0);
+
+        let clear = advance_direct(pos, 0.0, goal, step, body_r, cur_y, turn);
+        assert!(clear.moving, "open ground must advance");
+
+        // Drop a wall across the path, one step ahead.
+        crate::blockers::add_box(0.0, 0.6, 3.0, 0.3);
+        let blocked = advance_direct(pos, 0.0, goal, step, body_r, cur_y, turn);
+        assert!(!blocked.moving, "a wall across the path must refuse the far step too");
+        assert_eq!(blocked.pos, pos, "a refused step pivots in place, it does not phase through");
+
+        crate::blockers::reset();
     }
 }

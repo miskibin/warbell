@@ -291,14 +291,15 @@ pub fn wall_between(ax: f32, az: f32, bx: f32, bz: f32) -> bool {
     false
 }
 
+/// The blocker store is a set of process-global statics, so tests that `reset()`/`add_box` must not
+/// run concurrently or they clobber each other's fixtures. Every such test — here and in `steer`,
+/// whose stepping gate consults this store — serializes on this one lock.
+#[cfg(test)]
+pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// The blocker store is a set of process-global statics, so tests that `reset()`/`add_box`
-    /// must not run concurrently or they clobber each other's fixtures. Serialize them on one lock.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// A wall between attacker and target blocks the attack line-of-sight ([`wall_between`]),
     /// while a clear diagonal past the wall's end does not, and endpoints flush against the wall
