@@ -80,6 +80,25 @@ impl MeleeRing {
     }
 }
 
+/// Hand a slain striker's token straight back to the ring.
+///
+/// [`MeleeRing::release`] is only called on *landing a blow*, and `try_claim`'s prune only drops
+/// **expired** holders — so an ork killed mid-swing kept its token for the rest of its
+/// [`TOKEN_TIME`]. With [`MELEE_CAP`] at 2, cutting down the two orks currently pressing you (the
+/// common case — they are the ones in reach) froze the whole surrounding horde out of the ring for
+/// up to 2.6s: they prowled and swung at nothing, the exact symptom the module doc says this design
+/// removed. Reaping holders that are gone or [`Dying`](crate::dying::Dying) each frame keeps the
+/// slot contestable the instant its holder drops. At most [`MELEE_CAP`] entries, so it's free.
+pub(crate) fn release_dead_holders(
+    mut ring: ResMut<MeleeRing>,
+    strikers: Query<(), (With<crate::orks::Ork>, Without<crate::dying::Dying>)>,
+) {
+    if ring.holders.is_empty() {
+        return;
+    }
+    ring.holders.retain(|e, _| strikers.contains(*e));
+}
+
 /// Steering target for a waiting ork: a point ON the ring, led ~20° along its orbit (sign fixed
 /// per-entity), so following it prowls the ork slowly AROUND the hero instead of parking it.
 pub fn hold_point(e: Entity, hero: Vec2, pos: Vec2) -> Vec2 {

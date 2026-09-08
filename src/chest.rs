@@ -80,6 +80,14 @@ pub(crate) struct Chest {
     pub(crate) tier: ChestTier,
 }
 
+impl Chest {
+    /// A bare chest for headless tests (`savegame`'s load-reconcile tests build one of each state).
+    #[cfg(test)]
+    pub(crate) fn for_test(cache: bool, opened: bool) -> Self {
+        Chest { cache, opened, opened_at: 0.0, factor: 0.0, trophy: None, hoard: false, tier: ChestTier::Wood }
+    }
+}
+
 /// Number of scattered chests `populate_chests` places, keyed `ChestId(0..CHEST_COUNT)`.
 pub(crate) const CHEST_COUNT: usize = 24;
 

@@ -73,11 +73,53 @@
 
 <main class="log">
 
-  <!-- ── v0.22.0 ── -->
+  <!-- ── v0.22.1 ── -->
   <article class="rel latest rv">
     <div class="rel-head">
-      <span class="rel-ver">v0.22.0</span>
+      <span class="rel-ver">v0.22.1</span>
       <span class="rel-badge">Latest</span>
+      <span class="rel-date">September 8, 2026</span>
+    </div>
+    <p class="rel-sum">A bug-fix release — including one that could quietly destroy a run: RESUME on the title screen used to reset your game back to night one.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed &mdash; your save</span></div>
+        <ul>
+          <li><strong>RESUME no longer wipes your run.</strong> Going to the main menu mid-game and clicking <strong>RESUME</strong> dropped you back in at night one &mdash; level 1, no gold, empty satchel, upgrade tree cleared, town gone &mdash; because re-entering through the title took the same path as starting fresh. Nothing had been saved since the last dawn, so the run was simply lost.</li>
+          <li><strong>Loading a save rewinds the world properly.</strong> Loot a chest or win a landmark trial, then die and Continue from an earlier save: the loot left your satchel, but the chest stayed open and the trial stayed claimed, so that treasure and gear were gone for good. Both rewind with the save now, and the &ldquo;all landmarks found&rdquo; bonus is reachable again.</li>
+          <li>An autosave that fails to write is retried instead of silently skipped for another ten minutes.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed &mdash; combat &amp; crowds</span></div>
+        <ul>
+          <li><strong>Orks stop circling and swinging at nothing after you kill the ones attacking you.</strong> The two you just cut down kept holding the only two attack slots for up to 2.6 seconds; those free up the moment a striker drops.</li>
+          <li><strong>Enemies and townsfolk stop walking through your castle walls.</strong> Last release's performance pass gave anyone more than ~90&nbsp;m from the hero a cheap straight-line step that skipped collision entirely &mdash; walls, gate towers, the keep, buildings and the step-height limit alike. Whenever the fighting moved away from you, bodies crossed the wall instead of threading the gate and climbed straight up cliffs. Distant movers are blocked again, at a fraction of the old cost.</li>
+          <li><strong>The world stops falling apart the instant you die.</strong> Every ork, villager, worker and raider on the island &mdash; including the ones standing over your body &mdash; switched to cheap distant movement the moment the hero went down, drifting through walls in slow motion while the succession camera swung onto that exact crowd.</li>
+          <li>Camps free their prisoners the moment the last ork falls, rather than waiting out the death animation. Freshly killed animals no longer howl while they topple.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed &mdash; crashes</span></div>
+        <ul>
+          <li>Several rare crashes where a frozen or poisoned enemy, a fading hit effect, a dropped item or an animal's idle call landed on the exact frame the game removed that creature or rebuilt the world.</li>
+          <li>The night director's difficulty lookup could have picked the final boss wave on day one; the first night is pinned to the first wave.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag perf">Under the hood</span></div>
+        <ul>
+          <li>Engine updated to Bevy 0.19.1. Three new regression tests cover the RESUME wipe and both halves of the save-rewind bug.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.22.1">Release on GitHub &rarr;</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.22.0 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.22.0</span>
       <span class="rel-date">August 10, 2026</span>
     </div>
     <p class="rel-sum">Real save slots with a 10-minute autosave, the two ground-rendering bugs fixed for good, and a deep endgame performance pass — big sieges run light again.</p>

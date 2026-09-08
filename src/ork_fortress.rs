@@ -218,7 +218,7 @@ impl Plugin for OrkFortressPlugin {
             // again — the world rebuild respawns every fortress entity, so only these flags leak.
             .add_systems(
                 OnExit(AppState::StartScreen),
-                reset_fortress_on_new_run,
+                reset_fortress_on_new_run.run_if(crate::game_state::fresh_run_reset),
             )
             .add_systems(OnExit(AppState::GameOver), reset_fortress_on_new_run)
             // Sim carries the freeze gate, per the game_state contract.

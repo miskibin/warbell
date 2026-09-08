@@ -469,7 +469,7 @@ impl Plugin for PlayerPlugin {
             // Fresh run: wipe progression + revive the hero on a new run (NOT on un-pause).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                reset_player.run_if(crate::rts::in_campaign),
+                reset_player.run_if(crate::rts::in_campaign).run_if(crate::game_state::fresh_run_reset),
             )
             .add_systems(
                 OnExit(crate::game_state::AppState::GameOver),

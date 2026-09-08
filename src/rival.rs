@@ -1390,7 +1390,8 @@ fn rival_raid_brain(
         }
         let cur_y = crate::steer::footing(vpos.x, vpos.y).unwrap_or(tf.translation.y);
         // Steering LOD for the long march in from the desert (see `step_toward`).
-        let near = hero.alive && vpos.distance(hero.pos) < crate::steer::LOD_R;
+        // Positional only — never conjoined with `hero.alive`; see `steer::LOD_R`.
+        let near = vpos.distance(hero.pos) < crate::steer::LOD_R;
         let turn = RAIDER_TURN * 2.0 * dt;
         // The keep-assault distance: a swordsman batters the wall, a bowman volleys from a bowshot.
         let keep_range = if is_archer { RAIDER_KEEP_RANGE_BOW } else { RAIDER_KEEP_RANGE };
@@ -1584,7 +1585,7 @@ impl Plugin for RivalPlugin {
         app.init_resource::<RivalState>()
             // Fresh run wipes the rival's economy + reaps its raised buildings (the static fort,
             // built from `worldmap::build_step`, persists).
-            .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rival)
+            .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rival.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_rival)
             // Tax + paced building, garrison upkeep, and the soldier combat brain (frozen with the
             // sim under any panel / pause).

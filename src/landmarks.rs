@@ -96,6 +96,23 @@ pub struct Landmark {
     shrine_ready_at: f32,
 }
 
+impl Landmark {
+    /// A bare landmark for headless tests (`savegame`'s load-reconcile tests flip its flags).
+    #[cfg(test)]
+    pub(crate) fn for_test(name: &'static str, discovered: bool, gear_claimed: bool) -> Self {
+        Landmark {
+            name,
+            lore: "",
+            buff: BuffKind::Power,
+            buff_mag: 0.0,
+            discovered,
+            gear: "",
+            gear_claimed,
+            shrine_ready_at: 0.0,
+        }
+    }
+}
+
 /// One emissive mote in a landmark's beacon column. `name` ties it to its landmark so the
 /// column despawns on discovery.
 #[derive(Component)]
@@ -324,7 +341,7 @@ impl Plugin for LandmarksPlugin {
             // Wipe the found/completed tally on a fresh run — the freshly-rebuilt `Landmark` entities
             // reset to undiscovered, but this resource is not `BiomeEntity` and otherwise leaks across
             // runs, letting the all-found +75g bonus fire early (or never) in the next run.
-            .add_systems(OnExit(AppState::StartScreen), reset_discoveries)
+            .add_systems(OnExit(AppState::StartScreen), reset_discoveries.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_discoveries)
             // Beacon drift is a visual — runs even while the world is frozen, like the particles.
             .add_systems(Update, beacon_drift)

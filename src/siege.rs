@@ -246,7 +246,10 @@ pub fn step_wave_director(input: &WaveStepInput) -> WaveStepResult {
             // fixed count of nights. Past the WAVES table the index clamps to the last (hardest)
             // wave, which replays with the ECS-side hero-level HP escalation, while `wave_index`
             // keeps climbing so the "Night N" counter still rises.
-            let i = (input.wave_index as usize).min(WAVES.len() - 1);
+            // Clamp BEFORE the cast, like `night_dmg_scale`: `wave_index` is an `i32` whose
+            // documented day-one value is `-1`, and `-1 as usize` saturates, so `.min()` would then
+            // pick the LAST (boss) row rather than wave 0.
+            let i = input.wave_index.clamp(0, WAVES.len() as i32 - 1) as usize;
             let def = &WAVES[i];
             let count = effective_count(i, input.mods);
             // Spawn on interval until the wave's quota is met.
@@ -580,7 +583,7 @@ impl Plugin for SiegePlugin {
         app
             // Fresh run: reset on leaving the start screen or game-over (NOT on un-pausing,
             // which is a Playing↔Paused transition and never touches these).
-            .add_systems(OnExit(AppState::StartScreen), reset_siege.run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(AppState::StartScreen), reset_siege.run_if(crate::rts::in_campaign).run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_siege.run_if(crate::rts::in_campaign));
         // No OnExit(Paused) reset: pause-menu Restart resets in-process by routing through
         // StartScreen → Playing (see game_state::drive_fresh_run), so OnExit(StartScreen) covers it.
@@ -949,7 +952,7 @@ fn run_director(
 /// strays into range, batter the keep (or the hero) on the strike cooldown, and reap if stuck
 /// far out. Reuses the camp ork's tuning + steering; distinct from the leashed [`orks::ork_brain`].
 #[allow(clippy::too_many_arguments)]
-fn invader_brain(
+pub(crate) fn invader_brain(
     time: Res<Time>,
     game: Res<GameTime>,
     hero: Res<HeroState>,
@@ -1179,7 +1182,8 @@ fn invader_brain(
             // path, so a far invader threads the gates exactly as before. Anything INSIDE the wall
             // ring keeps the full fan regardless of hero distance — that's the tight, prop-dense
             // ground where clipping a wall or the keep would actually be visible and unfair.
-            let near = (hero.alive && hero_d < steer::LOD_R) || in_yard;
+            // Positional only — never conjoined with `hero.alive`; see `steer::LOD_R`.
+            let near = hero_d < steer::LOD_R || in_yard;
             match steer::advance_lod(near, o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, orks::ORK_MAX_TURN * 1.6 * dt) {
                 Some(s) => {
                     o.facing = s.facing;
@@ -1480,6 +1484,21 @@ mod tests {
         assert_eq!(effective_count(0, mods_for(Difficulty::Hard)), 6); // round(5·1.25=6.25)=6
         let boss = WAVES.len() - 1; // count 1; easy round(0.8)=1 floored, never 0
         assert_eq!(effective_count(boss, mods_for(Difficulty::Easy)), 1);
+    }
+
+
+    /// `wave_index` is an `i32` whose documented day-one value is `-1`. Casting it to `usize`
+    /// before the clamp saturates, and `.min(len - 1)` then picks the LAST (boss) row — the hardest
+    /// wave — instead of wave 0. Clamp first, like `night_dmg_scale` does.
+    #[test]
+    fn day_one_wave_index_selects_the_first_wave_not_the_boss() {
+        assert_ne!(
+            WAVES[0].count,
+            WAVES[WAVES.len() - 1].count,
+            "the table's first and last rows must differ"
+        );
+        let i = (-1i32).clamp(0, WAVES.len() as i32 - 1) as usize;
+        assert_eq!(i, 0, "a -1 wave_index resolves to the first wave");
     }
 
     #[test]

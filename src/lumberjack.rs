@@ -434,7 +434,8 @@ fn chop_work(
             // leg takes it — the close-in approach (`d <= 6`, where `CLOSE_GIVEUP_SECS` watches for
             // a tree stranded up a terrace lip) keeps the full fan, so that wedge detector still
             // sees real steering.
-            let near = (hero.alive && v.pos.distance(hero.pos) < crate::steer::LOD_R) || d <= 6.0;
+            // Positional only — never conjoined with `hero.alive`; see `steer::LOD_R`.
+            let near = v.pos.distance(hero.pos) < crate::steer::LOD_R || d <= 6.0;
             let advanced = steer::advance_lod(
                 near,
                 v.pos,

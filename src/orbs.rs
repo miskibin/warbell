@@ -59,7 +59,7 @@ impl Plugin for OrbsPlugin {
             // Fresh run (New Game / Restart / Play Again): sweep in-flight motes and drop any queued
             // bursts. They aren't `BiomeEntity` (so the world rebuild skips them) and would otherwise
             // home onto the reset hero and bank last run's gold/xp into the new run.
-            .add_systems(OnExit(AppState::StartScreen), reset_orbs)
+            .add_systems(OnExit(AppState::StartScreen), reset_orbs.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_orbs)
             .add_sim_systems(
                 (spawn_queued_orbs, step_reward_orbs)

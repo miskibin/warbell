@@ -565,7 +565,9 @@ pub fn update_fx_fades(
     for (e, mut f, mut tf) in &mut q {
         let k = (now - f.born) / f.life;
         if k >= 1.0 {
-            commands.entity(e).despawn();
+            // `try_despawn`: these quads are tagged `BiomeEntity`, so a biome swap (keys 1-5) or a
+            // New Game rebuild can wipe a still-fading decal in the same frame this reap fires.
+            commands.entity(e).try_despawn();
             mats.remove(&f.mat);
             continue;
         }

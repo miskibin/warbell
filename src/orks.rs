@@ -312,6 +312,12 @@ impl Plugin for OrksPlugin {
         // The melee attack-token ring (shared with the siege invader brain — see `melee_ring`).
         app.init_resource::<crate::melee_ring::MeleeRing>();
         app.add_systems(Update, (ork_limbs, ork_drive)); // limb anim keeps running while frozen
+        // Ungated + before both brains: hand a slain striker's token straight back, so the horde
+        // can't be frozen out of the ring for a full TOKEN_TIME (see `melee_ring`).
+        app.add_systems(
+            Update,
+            crate::melee_ring::release_dead_holders.before(ork_brain).before(crate::siege::invader_brain),
+        );
         app.add_systems(
             Update,
             (ork_brain, ork_brawl, shaman_heal).run_if(in_state(crate::game_state::Modal::None)),
@@ -367,7 +373,8 @@ fn ork_brain(
         // Hero-distance LOD, hoisted out of the rival-seek branch below because it now gates the
         // *steering* flavour too (see `steer::advance_lod`): the 9-heading escape fan is the real
         // per-ork cost, and it's wasted on a warband nobody is near enough to watch clip a rock.
-        let near = hero.alive && o.pos.distance(hero.pos) < ORK_BRAIN_LOD_R;
+        // Positional only — never conjoined with `hero.alive`; see `steer::LOD_R`.
+        let near = o.pos.distance(hero.pos) < ORK_BRAIN_LOD_R;
 
         // ── Aggro: notice the hero near the camp → chase, then stand & strike; orks far
         // from their home never engage (each warband stays local). ──

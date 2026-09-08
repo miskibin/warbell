@@ -73,7 +73,10 @@ pub(crate) fn animal_voices(
     mut commands: Commands,
     voices: Res<Voices>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
-    mut q: Query<(Entity, &mut Animal, &GlobalTransform)>,
+    // `Without<Dying>`: a wolf you just killed must not howl while it topples — and the corpse is
+    // reaped mid-fade (and swept by the `BiomeEntity` world rebuild), which the child spawn below
+    // would otherwise race.
+    mut q: Query<(Entity, &mut Animal, &GlobalTransform), Without<crate::dying::Dying>>,
 ) {
     let dt = time.delta_secs();
     let Ok(cam) = cam.single() else { return };
@@ -98,20 +101,28 @@ pub(crate) fn animal_voices(
             continue;
         }
         a.call_cd = MIN_GAP;
+        if set.clips.is_empty() {
+            continue; // a species whose clip set failed to load — `len() - 1` below would underflow
+        }
         let i = (rng_range(&mut a.rng, 0.0, set.clips.len() as f32) as usize).min(set.clips.len() - 1);
         let clip = set.clips[i].clone();
         let volume = set.volume * WILDLIFE_GAIN;
-        commands.entity(e).with_children(|p| {
-            p.spawn((
-                AudioPlayer(clip),
-                PlaybackSettings {
-                    mode: PlaybackMode::Despawn,
-                    volume: Volume::Linear(volume),
-                    spatial: true,
-                    ..default()
-                },
-                Transform::default(),
-            ));
+        // `queue_silenced`, same as `ambience::attach_campfire_audio`: animals are `BiomeEntity`, so
+        // a biome swap / world rebuild can despawn this one between the query and command
+        // application — a bare `with_children` would panic there. The closure runs only if it lives.
+        commands.entity(e).queue_silenced(move |mut animal: EntityWorldMut| {
+            animal.with_children(|p| {
+                p.spawn((
+                    AudioPlayer(clip),
+                    PlaybackSettings {
+                        mode: PlaybackMode::Despawn,
+                        volume: Volume::Linear(volume),
+                        spatial: true,
+                        ..default()
+                    },
+                    Transform::default(),
+                ));
+            });
         });
     }
 }

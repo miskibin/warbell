@@ -1553,7 +1553,9 @@ fn ground_pickup(
             && try_grant(&mut inv.0, &mut toasts.0, d.item_id, 1, now)
         {
             cues.write(AudioCue::UiSelect);
-            commands.entity(e).despawn();
+            // `try_despawn`: drops are `BiomeEntity`, so the world-rebuild wipe can beat this reap
+            // when the hero happens to be standing on one as a biome swap / New Game fires.
+            commands.entity(e).try_despawn();
         }
     }
 }

@@ -141,7 +141,7 @@ impl Plugin for InventoryPlugin {
             .add_message::<QuickFlash>()
             .add_systems(Startup, (debug_seed, debug_equip, debug_bufftest))
             // Fresh run wipes bag, buffs and toasts (with the rest of progression).
-            .add_systems(OnExit(AppState::StartScreen), reset_inventory)
+            .add_systems(OnExit(AppState::StartScreen), reset_inventory.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_inventory)
             // Every Continue path clears transient buffs/toasts (keyed off the load event).
             .add_systems(Update, clear_transients_on_load)

@@ -108,7 +108,15 @@ pub fn default_dof() -> Dof {
     // frame by `scene::drive_dof_focus` (use `FOREST_FOCAL` to pin it, or `FOREST_NOBLUR` to kill
     // the pass outright). A 4th value sets `debug_view` to paint the raw CoC.
     if let Ok(s) = std::env::var("FOREST_DOF") {
-        let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        // `collect::<Option<_>>`, NOT `filter_map(..ok())`: dropping an unparseable field silently
+        // SHIFTED the rest ("44,x,200,3.5" became range=44, far_ramp=200, max_radius=3.5 with no
+        // warning). A non-finite value is rejected for the same reason — `NaN` survives `clamp` and
+        // rides straight into the shader uniform.
+        let v: Vec<f32> = s
+            .split(',')
+            .map(|p| p.trim().parse::<f32>().ok().filter(|f| f.is_finite()))
+            .collect::<Option<Vec<f32>>>()
+            .unwrap_or_default();
         if v.len() == 3 || v.len() == 4 {
             d.range = v[0];
             d.far_ramp = v[1];

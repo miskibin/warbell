@@ -85,7 +85,7 @@ impl Plugin for SuccessionPlugin {
         // in the RTS. Resources stay registered; every system is gated.
         app.init_resource::<Lives>()
             .init_resource::<Succession>()
-            .add_systems(OnExit(AppState::StartScreen), reset_lives.run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(AppState::StartScreen), reset_lives.run_if(crate::rts::in_campaign).run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_lives.run_if(crate::rts::in_campaign))
             // `OnExit(GameOver)` fires on an in-process Continue (fresh runs relaunch instead);
             // `reset_lives` clears the defeat flag before `apply_pending_load` restores the save.

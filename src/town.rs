@@ -239,7 +239,7 @@ impl Plugin for TownPlugin {
             // START_WOOD grant must come last or it gets wiped (system-order race).
             .add_systems(
                 OnExit(AppState::StartScreen),
-                reset_town.after(crate::economy::reset_economy),
+                reset_town.after(crate::economy::reset_economy).run_if(crate::game_state::fresh_run_reset),
             )
             .add_systems(
                 OnExit(AppState::GameOver),
