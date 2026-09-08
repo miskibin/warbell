@@ -178,6 +178,13 @@ pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_tu
 /// fan scan it saves is ~80 terrain/blocker lookups per mover per frame, i.e. the single biggest
 /// per-agent CPU cost in an endgame frame (120–150 live agents: a big ork wave + the militia + the
 /// town + wildlife).
+///
+/// **The ring is purely positional — never conjoin it with `HeroState::alive`.** `alive` goes false
+/// for the whole down/succession window, so `hero.alive && d < LOD_R` collapsed the LOD for *every*
+/// actor on the map the instant the hero was killed — including the orks standing on the corpse —
+/// dropping them all to the fan-free [`advance_direct`] just as `succession` slow-mos the world and
+/// swings the camera onto that exact crowd. `HeroState::pos` keeps mirroring the body while down,
+/// so measuring against it is both correct and still cheap.
 pub const LOD_R: f32 = 90.0;
 
 /// [`advance`] with the shared distance LOD applied: a `near` mover pays the full escape-fan; a far

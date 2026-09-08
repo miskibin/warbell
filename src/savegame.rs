@@ -70,6 +70,9 @@ pub const SLOT_COUNT: usize = MANUAL_SLOTS + 1;
 /// Seconds of **play** time ([`Playtime`], which freezes with the sim) between periodic autosaves.
 pub const AUTOSAVE_INTERVAL: f64 = 600.0;
 
+/// Seconds of **play** time to wait before retrying an owed autosave whose write failed.
+pub const AUTOSAVE_RETRY: f64 = 30.0;
+
 /// The full snapshot of a run, taken at dawn. One JSON object = one save slot.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SaveData {
@@ -204,11 +207,15 @@ pub struct Playtime(pub f64);
 pub struct AutosaveTimer {
     pub next_at: f64,
     pub pending: bool,
+    /// Earliest [`Playtime`] a *failed* owed autosave may be retried. A write can fail for reasons
+    /// that persist (read-only save dir, full disk); the owed save is kept rather than dropped, but
+    /// it backs off to [`AUTOSAVE_RETRY`] instead of hammering the disk (and the log) every frame.
+    pub retry_at: f64,
 }
 
 impl Default for AutosaveTimer {
     fn default() -> Self {
-        Self { next_at: AUTOSAVE_INTERVAL, pending: false }
+        Self { next_at: AUTOSAVE_INTERVAL, pending: false, retry_at: 0.0 }
     }
 }
 
@@ -245,7 +252,7 @@ impl Plugin for SaveGamePlugin {
             .add_systems(OnEnter(AppState::StartScreen), rescan_slots)
             // A fresh run restarts the play clock + the periodic-autosave countdown. Same hooks as
             // every other `reset_*` — a Continue then overwrites them in `apply_pending_load`.
-            .add_systems(OnExit(AppState::StartScreen), reset_run_clocks)
+            .add_systems(OnExit(AppState::StartScreen), reset_run_clocks.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_run_clocks)
             // Pause-aware play clock + the snapshots it drives. Gated like the rest of the sim, and
             // chained so a dawn write always precedes (and re-arms) the periodic one.
@@ -584,13 +591,22 @@ fn autosave_tick(
         timer.pending = true;
         timer.next_at = ctx.playtime.0 + AUTOSAVE_INTERVAL;
     }
-    if !timer.pending || ctx.siege.phase != GamePhase::Prep || assault.breached {
+    if !timer.pending
+        || ctx.siege.phase != GamePhase::Prep
+        || assault.breached
+        || ctx.playtime.0 < timer.retry_at
+    {
         return;
     }
-    timer.pending = false;
+    // Clear `pending` only once the write actually LANDS. Clearing it up-front dropped an owed
+    // autosave silently whenever the write failed (disk full, read-only save dir), costing the
+    // player a whole interval; now it stays owed and retries on an `AUTOSAVE_RETRY` back-off.
     if flush_save(0, &ctx.snapshot(), &mut slots) {
+        timer.pending = false;
         notice.push("Autosaved.", time.elapsed_secs_f64());
         info!("periodic autosave at {:.0} min of play", ctx.playtime.0 / 60.0);
+    } else {
+        timer.retry_at = ctx.playtime.0 + AUTOSAVE_RETRY;
     }
 }
 
@@ -744,18 +760,24 @@ fn apply_pending_load(
 
 /// Re-mark discovered landmarks on a load (entity flags; the tally is restored as a resource in
 /// [`apply_pending_load`]). Their beacons are snuffed by `landmarks::snuff_found_beacons`.
+///
+/// Each flag is set to **exactly** what the snapshot says — including back to `false`. A load
+/// rewinds the run, but the world entities are never rebuilt on a same-map Continue, so only
+/// ever setting the flags *true* let the abandoned run's progress leak into the resumed one: a
+/// rune trial won and then lost to a defeat stayed `gear_claimed`, so `start_rune_trial` skipped
+/// the landmark forever while the gear itself had rolled out of the restored satchel. The
+/// discovery tally has the same shape — `Discoveries::found` rewinds to the saved (lower) count
+/// while the extra landmarks stayed `discovered`, stranding `found` below `total` and putting the
+/// all-found bonus permanently out of reach.
 pub(crate) fn restore_discovered_landmarks(
     mut ev: MessageReader<GameLoaded>,
     mut landmarks: Query<&mut Landmark>,
 ) {
     let Some(GameLoaded(data)) = ev.read().last() else { return };
     for mut lm in &mut landmarks {
-        if data.discovered_landmarks.iter().any(|n| n == lm.name) {
-            lm.set_discovered(true);
-        }
-        if data.claimed_landmark_gear.iter().any(|n| n == lm.name) {
-            lm.set_gear_claimed(true);
-        }
+        let name = lm.name;
+        lm.set_discovered(data.discovered_landmarks.iter().any(|n| n == name));
+        lm.set_gear_claimed(data.claimed_landmark_gear.iter().any(|n| n == name));
     }
 }
 
@@ -783,7 +805,15 @@ pub(crate) fn restore_active_map(
     veil.raise(time.elapsed_secs());
 }
 
-/// Re-open looted treasure chests on a load (entity flag + lid pose), keyed by `ChestId`.
+/// Restore one-shot treasure chests to their saved state on a load (entity flag + lid pose),
+/// keyed by `ChestId`.
+///
+/// Sets `opened` to **exactly** the saved flag, both ways. Only ever setting it `true` leaked the
+/// abandoned run's looting into the resumed one: loot a chest on night 5, die, Continue from the
+/// night-4 autosave — the haul correctly rolled out of the satchel, but the chest entity stayed
+/// `opened` (a same-map Continue never rebuilds the world), and `chest_interact` skips opened
+/// chests, so that loot was gone for the rest of the process. Caches are left alone: they respawn
+/// on their own dawn cycle and are deliberately not persisted.
 pub(crate) fn restore_opened_chests(
     mut ev: MessageReader<GameLoaded>,
     mut chests: Query<(&mut Chest, &ChestId, &Children)>,
@@ -791,12 +821,19 @@ pub(crate) fn restore_opened_chests(
 ) {
     let Some(GameLoaded(data)) = ev.read().last() else { return };
     for (mut chest, id, children) in &mut chests {
-        if !chest.cache && data.opened_chests.get(id.0).copied().unwrap_or(false) {
-            chest.opened = true;
-            for &c in children {
-                if let Ok(mut lt) = lids.get_mut(c) {
-                    lt.rotation = Quat::from_rotation_x(CHEST_LID_OPEN);
-                }
+        if chest.cache {
+            continue;
+        }
+        let opened = data.opened_chests.get(id.0).copied().unwrap_or(false);
+        if chest.opened == opened {
+            continue;
+        }
+        chest.opened = opened;
+        // Snap the lid (no swing on load, same as the open path's restore contract).
+        let angle = if opened { CHEST_LID_OPEN } else { 0.0 };
+        for &c in children {
+            if let Ok(mut lt) = lids.get_mut(c) {
+                lt.rotation = Quat::from_rotation_x(angle);
             }
         }
     }
@@ -945,6 +982,65 @@ mod tests {
             w.resource::<PendingLoad>().0.is_none(),
             "PendingLoad drained — apply runs exactly once"
         );
+    }
+
+    /// A load must roll world-entity flags **back**, not just forward. Loot a chest, then resume a
+    /// save taken before that loot: the bag rewinds, so the chest has to re-close or its haul is
+    /// unreachable for the rest of the process (a same-map Continue never rebuilds the world).
+    /// Caches are exempt — they respawn on their own dawn cycle and aren't persisted.
+    #[test]
+    fn load_reopens_and_recloses_chests_to_match_the_snapshot() {
+        let mut app = App::new();
+        app.add_message::<GameLoaded>().add_systems(Update, restore_opened_chests);
+
+        // 0: saved as opened, currently shut  → must open.
+        // 1: saved as shut, currently OPENED  → must re-close (the bug this pins).
+        // 2: a cache, currently opened        → untouched.
+        let ids: Vec<Entity> = [
+            (0usize, false, false),
+            (1, false, true),
+            (2, true, true),
+        ]
+        .into_iter()
+        .map(|(id, cache, opened)| {
+            let lid = app.world_mut().spawn((ChestLid, Transform::default())).id();
+            app.world_mut()
+                .spawn((Chest::for_test(cache, opened), ChestId(id)))
+                .add_child(lid)
+                .id()
+        })
+        .collect();
+
+        let mut data = sample();
+        data.opened_chests = vec![true, false, false];
+        app.world_mut().write_message(GameLoaded(data));
+        app.update();
+
+        let w = app.world();
+        assert!(w.get::<Chest>(ids[0]).unwrap().opened, "saved-open chest re-opens");
+        assert!(!w.get::<Chest>(ids[1]).unwrap().opened, "chest looted after the save re-closes");
+        assert!(w.get::<Chest>(ids[2]).unwrap().opened, "caches are left alone");
+    }
+
+    /// Same rule for landmark flags: a rune trial won *after* the save must un-claim on load, or
+    /// `start_rune_trial` skips that landmark forever while its gear has rolled out of the satchel.
+    #[test]
+    fn load_rewinds_landmark_discovery_and_gear_flags() {
+        let mut app = App::new();
+        app.add_message::<GameLoaded>().add_systems(Update, restore_discovered_landmarks);
+
+        let saved = app.world_mut().spawn(Landmark::for_test("The Old Mill", false, false)).id();
+        let after = app.world_mut().spawn(Landmark::for_test("Sunken Shrine", true, true)).id();
+
+        // `sample()` carries The Old Mill as both discovered and gear-claimed, and nothing else.
+        app.world_mut().write_message(GameLoaded(sample()));
+        app.update();
+
+        let w = app.world();
+        assert!(w.get::<Landmark>(saved).unwrap().is_discovered(), "saved landmark re-marks");
+        assert!(w.get::<Landmark>(saved).unwrap().is_gear_claimed(), "saved gear stays claimed");
+        assert!(!w.get::<Landmark>(after).unwrap().is_discovered(), "post-save discovery rewinds");
+        assert!(!w.get::<Landmark>(after).unwrap().is_gear_claimed(), "post-save trial re-arms");
     }
 
     /// Slot 0 is the autosave and `1..=MANUAL_SLOTS` the manual slots — each with its own file.

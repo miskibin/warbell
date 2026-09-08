@@ -78,7 +78,7 @@ impl Plugin for EconomyPlugin {
             .init_resource::<Defenses>()
             .init_resource::<EconomyState>()
             // Fresh run wipes the economy (gold resets with PlayerRes).
-            .add_systems(OnExit(AppState::StartScreen), reset_economy)
+            .add_systems(OnExit(AppState::StartScreen), reset_economy.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_economy)
             // No OnExit(Paused) reset: pause-menu Restart resets **in-process** by routing through
             // StartScreen → Playing (see game_state::drive_fresh_run), so this OnExit(StartScreen)

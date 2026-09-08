@@ -68,7 +68,7 @@ impl Plugin for QuestPlugin {
             // Skirmish. Everything else (reset/detect/panel) stays `in_campaign`-gated.
             .add_systems(Startup, setup_quest_root)
             // Fresh run → restart the chain (mirrors the economy/town resets).
-            .add_systems(OnExit(AppState::StartScreen), reset_quests.run_if(crate::rts::in_campaign))
+            .add_systems(OnExit(AppState::StartScreen), reset_quests.run_if(crate::rts::in_campaign).run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_quests.run_if(crate::rts::in_campaign))
             // Opening the upgrade tree is a state transition, not a Modal::None event.
             .add_systems(OnEnter(Modal::UpgradeTree), detect_war_table.run_if(crate::rts::in_campaign))

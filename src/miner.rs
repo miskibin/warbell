@@ -417,7 +417,8 @@ fn pick_work(
             // ~80-lookup escape fan. Only the long A*-followed leg takes it; the close-in approach
             // (`d <= 6`, watched by `CLOSE_GIVEUP_SECS` for a rock stranded one terrace up) keeps
             // the full fan so that wedge detector still sees real steering.
-            let near = (hero.alive && v.pos.distance(hero.pos) < crate::steer::LOD_R) || d <= 6.0;
+            // Positional only — never conjoined with `hero.alive`; see `steer::LOD_R`.
+            let near = v.pos.distance(hero.pos) < crate::steer::LOD_R || d <= 6.0;
             match steer::advance_lod(near, v.pos, v.facing, step_target, v.speed * dt, v.body_r, cur_y, 3.0 * dt) {
                 Some(s) => {
                     v.facing = s.facing;

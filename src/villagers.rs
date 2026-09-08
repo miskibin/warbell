@@ -405,7 +405,7 @@ impl Plugin for VillagersPlugin {
                 Update,
                 disband_on_load.after(rally_follow).before(guard_combat),
             )
-            .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rescues)
+            .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rescues.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_rescues)
             .add_systems(
                 Update,
@@ -870,7 +870,10 @@ fn camp_rescue(
     time: Res<Time>,
     mut town: ResMut<crate::town::TownRes>,
     mut rescued: ResMut<RescuedCamps>,
-    orks: Query<&crate::orks::Ork, Without<crate::orks::WaveInvader>>,
+    // `Without<Dying>` like the two systems this was cloned from (`ork_fortress::blight_rescue`,
+    // `camps::respawn_warbands`): without it a camp's fading corpses read as a live warband, so the
+    // cage stayed shut and the "+N townsfolk" payoff lagged the killing blow by the full 1.4s fade.
+    orks: Query<&crate::orks::Ork, (Without<crate::orks::WaveInvader>, Without<crate::dying::Dying>)>,
     cages_q: Query<(&crate::camps::Cage, &Transform)>,
     mut doors_q: Query<&mut crate::camps::CageDoor>,
     caged_q: Query<(Entity, &Captive)>,
@@ -1013,7 +1016,8 @@ fn villager_brain(
                     // that clips a house corner from 90u away is invisible, and `step_clear` waives
                     // the prop test for a mover already inside a blocker, so one that ends up in a
                     // wall simply walks back out when the hero returns.
-                    let near = hero.alive && v.pos.distance(hero.pos) < crate::steer::LOD_R;
+                    // Positional only — never conjoined with `hero.alive`; see `steer::LOD_R`.
+                    let near = v.pos.distance(hero.pos) < crate::steer::LOD_R;
                     match steer::advance_lod(near, v.pos, v.facing, v.target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                         Some(s) => {
                             v.facing = s.facing;

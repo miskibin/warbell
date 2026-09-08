@@ -121,6 +121,26 @@ pub struct SlotPicker(pub Option<PickerMode>);
 #[derive(Resource, Default)]
 pub struct RunInProgress(pub bool);
 
+/// Set for exactly one `StartScreen → Playing` transition: the player picked **RESUME** on the
+/// title (offered only while [`RunInProgress`]) and is dropping back into the *live, frozen* run
+/// with its world and resources intact.
+///
+/// That transition is the very one every fresh-run path is funnelled through — `OnExit(StartScreen)`
+/// is where the whole `reset_*` suite lives (see [`drive_fresh_run`]) — so without this flag a
+/// RESUME silently wiped the run back to night one (level 1, no gold, empty satchel, town
+/// despawned) with no save written since the last dawn. Every run-state reset therefore carries
+/// [`fresh_run_reset`]; the flag is cleared again `OnEnter(Playing)`, after those resets have had
+/// their chance to run.
+#[derive(Resource, Default)]
+pub struct ResumingRun(pub bool);
+
+/// Run condition for every `OnExit(AppState::StartScreen)` **run-state** reset: true on a fresh run
+/// or a load (both want the wipe — a load then overwrites from the snapshot), false on a title
+/// RESUME, which must leave the live run untouched. See [`ResumingRun`].
+pub fn fresh_run_reset(resuming: Res<ResumingRun>) -> bool {
+    !resuming.0
+}
+
 /// Marker on campaign-only presentation — the hero rig, campaign HUD roots, compass, quest
 /// tracker, hint root, sky clouds… Tag the ROOT entity (visibility cascades to children).
 /// [`apply_mode_visibility`] hides everything tagged while the live mode is Skirmish and shows it
@@ -141,6 +161,7 @@ impl Plugin for GameStatePlugin {
             .init_resource::<SlotPicker>()
             .init_resource::<ContinueInPlace>()
             .init_resource::<RunInProgress>()
+            .init_resource::<ResumingRun>()
             // Drive a pending in-process fresh run to completion (ungated — works over every screen).
             .add_systems(Update, drive_fresh_run)
             // Hide/show campaign vs RTS presentation whenever the live GameMode flips (ungated).
@@ -176,7 +197,7 @@ impl Plugin for GameStatePlugin {
             .add_systems(OnExit(AppState::GameOver), despawn_screen::<GameOverUi>)
             // Track whether a run is live, so the (now mid-run-reachable) start screen offers
             // RESUME and routes New Game correctly. See [`RunInProgress`].
-            .add_systems(OnEnter(AppState::Playing), mark_run_active)
+            .add_systems(OnEnter(AppState::Playing), (mark_run_active, clear_resuming))
             .add_systems(OnEnter(AppState::GameOver), clear_run_active)
             .add_systems(
                 Update,
@@ -306,6 +327,7 @@ fn drive_fresh_run(
     mut world_ready: ResMut<crate::biome::WorldReady>,
     mut pending_build: ResMut<crate::biome::PendingBuild>,
     mut pending_load: ResMut<crate::savegame::PendingLoad>,
+    mut resuming: ResMut<ResumingRun>,
     mut cont: ResMut<ContinueInPlace>,
     siege: Option<ResMut<crate::siege::Siege>>,
     time: Res<Time>,
@@ -317,6 +339,11 @@ fn drive_fresh_run(
         *armed = false;
         return;
     };
+    // A fresh run must NEVER inherit a pending RESUME: this path hops back through StartScreen, and
+    // a stale flag would suppress the very `reset_*` suite the hop exists to fire. (Reachable by
+    // arming a New Game and then clicking RESUME before the rebuild lands — both buttons are live
+    // on the veiled title.) The fresh run wins; RESUME has nothing to return to once it's armed.
+    resuming.0 = false;
     // Keep the cover up across the hop + the chunked rebuild (hides the start-screen flash).
     veil.raise(time.elapsed_secs());
 
@@ -499,6 +526,12 @@ fn watch_end(
 /// routes New Game through an in-process reset instead of a dirty direct start.
 fn mark_run_active(mut run: ResMut<RunInProgress>) {
     run.0 = true;
+}
+
+/// The run is live again — drop the one-shot RESUME flag. Runs `OnEnter(Playing)`, i.e. *after*
+/// the `OnExit(StartScreen)` resets it was there to suppress, so the next New Game wipes normally.
+fn clear_resuming(mut resuming: ResMut<ResumingRun>) {
+    resuming.0 = false;
 }
 
 /// The run ended (Victory/Defeat) — the start screen reached from game-over has nothing live to
@@ -1493,6 +1526,7 @@ fn start_click(
     mut fresh: ResMut<FreshRunPending>,
     mut credits: ResMut<crate::mainmenu::CreditsOpen>,
     mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
+    mut resuming: ResMut<ResumingRun>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if confirm.0.is_some() || picker.0.is_some() {
@@ -1524,7 +1558,10 @@ fn start_click(
             }
         }
         if resume.is_some() {
-            next_app.set(AppState::Playing); // back into the live frozen run, world intact
+            // Back into the live frozen run, world intact — suppress the fresh-run reset suite that
+            // `OnExit(StartScreen)` otherwise fires on this exact transition (see `ResumingRun`).
+            resuming.0 = true;
+            next_app.set(AppState::Playing);
         }
         if cont.is_some() {
             // Same in-process load path as everywhere else (incl. the battlefield sweep).
@@ -1968,12 +2005,49 @@ mod tests {
         app
     }
 
+    /// **RESUME must not wipe the live run.** The title's RESUME re-enters `Playing` through the
+    /// very `StartScreen → Playing` edge that every fresh run uses as its reset trigger, so without
+    /// [`ResumingRun`] the whole `reset_*` suite fired and the run reverted to night one — level,
+    /// gold, satchel, upgrades and town all gone, with no save written since the last dawn.
+    #[test]
+    fn resume_from_the_title_skips_the_fresh_run_resets() {
+        #[derive(Resource, Default)]
+        struct Wiped(bool);
+
+        fn app_with(resuming: bool) -> App {
+            let mut app = booted(AppState::StartScreen);
+            app.init_resource::<Wiped>()
+                .insert_resource(ResumingRun(resuming))
+                .add_systems(
+                    OnExit(AppState::StartScreen),
+                    (|mut w: ResMut<Wiped>| w.0 = true).run_if(fresh_run_reset),
+                )
+                .add_systems(OnEnter(AppState::Playing), clear_resuming);
+            app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Playing);
+            app.update();
+            app
+        }
+
+        assert!(!app_with(true).world().resource::<Wiped>().0, "RESUME leaves the run intact");
+        assert!(app_with(false).world().resource::<Wiped>().0, "New Game / Continue still wipe");
+
+        // And the flag is one-shot: the next New Game off the same session must wipe again.
+        let mut app = app_with(true);
+        assert!(!app.world().resource::<ResumingRun>().0, "cleared once the run is live");
+        app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::StartScreen);
+        app.update();
+        app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Playing);
+        app.update();
+        assert!(app.world().resource::<Wiped>().0, "a later New Game wipes normally");
+    }
+
     /// A headless app wired with just enough to exercise [`drive_fresh_run`]: the state machine,
     /// the resources it reads/writes, and the system itself. No rendering.
     fn fresh_run_app(state: AppState) -> App {
         let mut app = booted(state);
         app.init_resource::<FreshRunPending>()
             .init_resource::<ContinueInPlace>()
+            .init_resource::<ResumingRun>()
             .init_resource::<crate::loading::Veil>()
             .insert_resource(crate::biome::WorldReady(true))
             .insert_resource(crate::biome::PendingBuild(false))

@@ -247,7 +247,8 @@ fn animal_brain(
         // never lets them leave that state once the search is gated on it — a ratchet that stayed
         // permanently open. Instead, explicitly snap a distant chase back to Graze the moment it's
         // out of LOD range: nobody's watching a wolf run down a deer 150 world-units away anyway.
-        let near = hero.alive && a.pos.distance(hero.pos) < BRAIN_LOD_R;
+        // Positional only — never conjoined with `hero.alive`; see `steer::LOD_R`.
+        let near = a.pos.distance(hero.pos) < BRAIN_LOD_R;
         if !near {
             if matches!(a.mode, Mode::Hunt | Mode::Flee) {
                 a.mode = Mode::Graze;

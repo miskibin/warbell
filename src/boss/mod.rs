@@ -243,7 +243,7 @@ impl Plugin for BossPlugin {
             // Fresh in-process run (New Game / Restart / Play Again all exit StartScreen or GameOver
             // without a GameLoaded): rebuild the full level-1 pantheon so a warden slain in a prior
             // run isn't permanently gone (wardens aren't BiomeEntity, so the world rebuild skips them).
-            .add_systems(OnExit(AppState::StartScreen), respawn_wardens_on_new_run)
+            .add_systems(OnExit(AppState::StartScreen), respawn_wardens_on_new_run.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), respawn_wardens_on_new_run)
             // On a loaded game, remove wardens the saved hero already slew (ungated; once per load).
             .add_systems(Update, despawn_slain_wardens)
@@ -666,13 +666,17 @@ fn tick_status(
     mut commands: Commands,
     mut player: ResMut<PlayerRes>,
     mut poisoned: Query<(Entity, &Poisoned, &mut Health), Without<Dying>>,
-    slowed: Query<(Entity, &Slowed)>,
+    // `Without<Dying>` like its sibling: a chilled ork routinely dies mid-slow, and a corpse must
+    // not keep being ticked (nor have its status stripped) while it fades.
+    slowed: Query<(Entity, &Slowed), Without<Dying>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
     for (e, p, mut h) in &mut poisoned {
         if now >= p.until {
-            commands.entity(e).remove::<Poisoned>();
+            // `try_remove`: the venom holder is an ork/animal other systems despawn outright the
+            // same frame (wave sweep on defeat/victory, rival sweep, the BiomeEntity world wipe).
+            commands.entity(e).try_remove::<Poisoned>();
             continue;
         }
         let dmg = p.dps * dt;
@@ -684,7 +688,7 @@ fn tick_status(
     }
     for (e, s) in &slowed {
         if now >= s.until {
-            commands.entity(e).remove::<Slowed>();
+            commands.entity(e).try_remove::<Slowed>(); // same race as `Poisoned` above
         }
     }
 }
