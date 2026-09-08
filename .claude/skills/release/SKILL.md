@@ -36,7 +36,16 @@ player's point of view**:
 
 1. **Pick the version.** Ask the user patch vs minor if it's not obvious (features → minor). Bump
    `version` in `Cargo.toml`.
-2. **Write release notes** to `dist-notes.md` (markdown — this becomes the GitHub-release body).
+2. **Write release notes** to **BOTH** paths — they feed two different publish routes and only
+   one of them is `dist-notes.md`:
+   - `dist-notes.md` — what `scripts/release.ps1 -NotesFile` reads on the dev-machine route. It is
+     **gitignored**, so it never reaches CI.
+   - `docs/release-notes/vX.Y.Z.md` — what `release.yml`'s "Locate handwritten release notes" step
+     looks for, and the ONLY notes CI can see. **Commit it.** Miss it and the CI route silently
+     publishes GitHub's auto-generated "What's Changed" PR list as the release body instead of your
+     notes (this is exactly what happened to v0.22.1 — fixed after the fact via the releases API).
+     This matters most on the web/cloud route, where CI is the only publisher.
+
    Use the writing guidance above. End with the self-signed-installer SmartScreen note.
 3. **Write the `site/changelog.html` entry**: insert a new `<article class="rel latest rv">` at the
    top of `<main class="log">`, and **demote the previous latest** (drop its `latest` class and
@@ -44,8 +53,9 @@ player's point of view**:
    (rel-ver / rel-badge / rel-date) · `rel-sum` · `rel-card` with `grp` blocks tagged
    `tag new` / `tag fix` / `tag perf` · `rel-foot` linking to
    `https://github.com/miskibin/warbell/releases/tag/vX`. Download links stay `Warbell-Setup.msi`.
-4. **Commit the version bump + changelog** with explicit paths (never `git add -A` — the MSI/PDB
-   are gitignored but stay explicit): `git commit -- Cargo.toml Cargo.lock site/changelog.html`
+4. **Commit the version bump + changelog + notes** with explicit paths (never `git add -A` — the
+   MSI/PDB are gitignored but stay explicit):
+   `git commit -- Cargo.toml Cargo.lock site/changelog.html docs/release-notes/vX.Y.Z.md`
    with a `chore(release): vX.Y.Z` message. Don't push yet — the script pushes `main`. (Pushing
    `main` with the changelog also triggers `pages.yml` to redeploy the site.)
 5. **Confirm with the user** before publishing — the next step is public and hard to undo.
@@ -53,7 +63,10 @@ player's point of view**:
    the exe + `Warbell-Setup.msi`, pushes `main` + the tag (→ CI canonical release + Pages redeploy),
    and creates/updates the release with our notes + the MSI attached.
 7. **Verify**:
-   - `gh release view vX.Y.Z --repo miskibin/warbell --json tagName,assets` → shows `Warbell-Setup.msi`.
+   - `gh release view vX.Y.Z --repo miskibin/warbell --json tagName,assets,body` → shows
+     `Warbell-Setup.msi` AND **your** notes in the body, not a "What's Changed" PR list. A PR list
+     means `docs/release-notes/vX.Y.Z.md` was missing at the release commit; fix the body with
+     `gh release edit vX.Y.Z --notes-file docs/release-notes/vX.Y.Z.md` and commit the file.
    - `gh release list --repo miskibin/warbell --limit 1` → the new version is `Latest` (so the
      `latest/download` link resolves).
    - `gh run list --repo miskibin/warbell --workflow release.yml --limit 1` → CI build is running.
