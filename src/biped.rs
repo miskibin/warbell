@@ -126,6 +126,7 @@ pub fn animate_biped(
     // every frame (clear keeps the capacity).
     mut poses: Local<HashMap<Entity, Pose>>,
 ) {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::BipedAnimation);
     let now = time.elapsed_secs();
     let cam_p = cam.iter().next().map(|g| g.translation());
     poses.clear();

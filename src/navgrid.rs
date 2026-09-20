@@ -100,6 +100,7 @@ pub fn path_to(from: Vec2, to: Vec2) -> Vec<Vec2> {
 /// stone miner's castle→Rocky haul (~100 tiles + river detours). On an unreachable goal A*
 /// drains the open set and exits early, so a generous budget only costs when a route exists.
 pub fn path_to_budget(from: Vec2, to: Vec2, max_nodes: u32) -> Vec<Vec2> {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::Pathfinding);
     find_path(&ForestGrid::default(), world_to_pathpoint(from.x, from.y), world_to_pathpoint(to.x, to.y), max_nodes)
         .into_iter()
         .map(|p| Vec2::new(p.x as f32 - GX, p.z as f32 - GZ))
@@ -116,4 +117,35 @@ pub struct NavPath {
     pub next_replan: f32,
     /// The goal the cached path was computed for (replan if it moves).
     pub goal_cached: Vec2,
+    /// An empty result must wait for its retry deadline, unlike an exhausted successful route.
+    failed: bool,
+}
+
+impl NavPath {
+    /// `periodic` retains the keep/worker march's timed refresh; guards instead refresh a live
+    /// route only when its goal moves. Failed searches always retry after the staggered deadline.
+    pub fn needs_replan(&self, now: f32, goal: Vec2, periodic: bool) -> bool {
+        tileworld_core::pathfinding::should_replan_path(
+            self.failed && self.waypoints.is_empty(),
+            self.cursor >= self.waypoints.len(),
+            now >= self.next_replan,
+            self.goal_cached.distance_squared(goal) > 4.0,
+            periodic,
+        )
+    }
+
+    pub fn set_route(&mut self, waypoints: Vec<Vec2>, goal: Vec2, retry_at: f32) {
+        self.failed = waypoints.is_empty();
+        self.waypoints = waypoints;
+        self.cursor = 0;
+        self.goal_cached = goal;
+        self.next_replan = retry_at;
+    }
+
+    /// Entering direct-steer range abandons the cached route, not a failed search to retry.
+    pub fn clear_route(&mut self) {
+        self.waypoints.clear();
+        self.cursor = 0;
+        self.failed = false;
+    }
 }

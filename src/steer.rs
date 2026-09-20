@@ -53,6 +53,14 @@ pub fn can_stand(x: f32, z: f32, r: f32, cur_y: f32) -> bool {
 /// True if a step of `dist` along `dir` from `pos` keeps the footprint on safe ground and clear
 /// of props (centre + lead point).
 pub fn step_clear(pos: Vec2, dir: Vec2, dist: f32, body_r: f32, cur_y: f32) -> bool {
+    step_clear_with_origin(pos, dir, dist, body_r, cur_y, &mut None)
+}
+
+/// The escape fan probes many headings from one unchanged origin. Lazily sample its blocker
+/// state once per advance call; never retain it across actors/frames or cache destination tests.
+fn step_clear_with_origin(
+    pos: Vec2, dir: Vec2, dist: f32, body_r: f32, cur_y: f32, origin_blocked: &mut Option<bool>,
+) -> bool {
     let np = pos + dir * dist;
     let lead = np + dir * body_r;
     if !can_stand(np.x, np.y, body_r, cur_y) {
@@ -60,7 +68,7 @@ pub fn step_clear(pos: Vec2, dir: Vec2, dist: f32, body_r: f32, cur_y: f32) -> b
     }
     // Already inside a blocker (e.g. a building raised over the spot the mover was standing
     // on): waive the prop test so it can walk out — normal collision resumes once clear.
-    if crate::blockers::is_blocked(pos.x, pos.y) {
+    if *origin_blocked.get_or_insert_with(|| crate::blockers::is_blocked(pos.x, pos.y)) {
         return true;
     }
     !crate::blockers::is_blocked(np.x, np.y) && !crate::blockers::is_blocked(lead.x, lead.y)
@@ -110,9 +118,10 @@ pub fn advance(
     // instead of flip-flopping between the two ±97° escapes every frame (the jitter bug).
     let mut best: Option<Vec2> = None;
     let mut best_score = f32::NEG_INFINITY;
+    let mut origin_blocked = None;
     for off in [0.0f32, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.7, -1.7] {
         let dir = Vec2::from_angle(off).rotate(base);
-        if step_clear(pos, dir, step_dist, body_r, cur_y) {
+        if step_clear_with_origin(pos, dir, step_dist, body_r, cur_y, &mut origin_blocked) {
             let score = dir.dot(base) + 0.6 * dir.dot(cur_dir);
             if score > best_score {
                 best_score = score;
@@ -127,7 +136,7 @@ pub fn advance(
     let want = dir.x.atan2(dir.y);
     let new_facing = facing + wrap_pi(want - facing).clamp(-max_turn_dt, max_turn_dt);
     let fdir = Vec2::new(new_facing.sin(), new_facing.cos());
-    if step_clear(pos, fdir, step_dist, body_r, cur_y) {
+    if step_clear_with_origin(pos, fdir, step_dist, body_r, cur_y, &mut origin_blocked) {
         Some(Step { facing: new_facing, pos: pos + fdir * step_dist, moving: true })
     } else {
         Some(Step { facing: new_facing, pos, moving: false })
@@ -234,6 +243,80 @@ pub fn advance_lod(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Baseline escape fan: each candidate calls the public, uncached step gate. Keeping this
+    /// independent of advance's per-call cache catches changes to turning, tie-breaking, the
+    /// embedded-origin escape rule, and the final post-turn collision probe.
+    fn uncached_advance(
+        pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, body_r: f32,
+        cur_y: f32, max_turn_dt: f32,
+    ) -> Option<Step> {
+        let to = goal - pos;
+        let dist = to.length();
+        if dist < 1e-4 { return None; }
+        let base = to / dist;
+        let cur_dir = Vec2::new(facing.sin(), facing.cos());
+        let mut best = None;
+        let mut best_score = f32::NEG_INFINITY;
+        for off in [0.0_f32, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.7, -1.7] {
+            let dir = Vec2::from_angle(off).rotate(base);
+            if step_clear(pos, dir, step_dist, body_r, cur_y) {
+                let score = dir.dot(base) + 0.6 * dir.dot(cur_dir);
+                if score > best_score {
+                    best_score = score;
+                    best = Some(dir);
+                }
+            }
+        }
+        let dir = best?;
+        let want = dir.x.atan2(dir.y);
+        let facing = facing + wrap_pi(want - facing).clamp(-max_turn_dt, max_turn_dt);
+        let dir = Vec2::new(facing.sin(), facing.cos());
+        let moving = step_clear(pos, dir, step_dist, body_r, cur_y);
+        Some(Step { facing, pos: if moving { pos + dir * step_dist } else { pos }, moving })
+    }
+
+    #[test]
+    fn cached_origin_matches_uncached_steering_across_calls() {
+        let _g = crate::blockers::TEST_LOCK.lock().unwrap();
+        for fixture in 0..5 {
+            crate::blockers::reset();
+            match fixture {
+                1 => crate::blockers::add_box(0.0, 0.6, 3.0, 0.3),
+                2 => crate::blockers::add_box(0.0, 0.0, 1.5, 1.5), // start inside a new structure
+                3 => {
+                    crate::blockers::add_obb(0.4, 0.6, 0.2, 1.2, 0.7);
+                    crate::blockers::add(-0.6, 0.1, 0.4);
+                }
+                _ => {} // clear again after the previous fixture: no cross-call cache
+            }
+            for pos in [Vec2::ZERO, Vec2::new(1.0, 1.0), Vec2::new(-2.0, -1.0)] {
+                let ground = footing(pos.x, pos.y).expect("castle ground");
+                for height in [ground, ground + 10.0] { // wrong-height steps must remain blocked
+                    for goal in [pos, Vec2::new(0.0, 6.0), Vec2::new(6.0, 0.0), Vec2::new(-4.0, -3.0)] {
+                        for facing in [-2.4_f32, 0.0, 1.7] {
+                            for step in [0.15_f32, 0.5] {
+                                for radius in [0.2_f32, 0.4] {
+                                    let expected = uncached_advance(pos, facing, goal, step, radius, height, 0.3);
+                                    let actual = advance(pos, facing, goal, step, radius, height, 0.3);
+                                    match (actual, expected) {
+                                        (Some(a), Some(b)) => {
+                                            assert_eq!(a.pos, b.pos, "fixture {fixture}");
+                                            assert_eq!(a.facing.to_bits(), b.facing.to_bits());
+                                            assert_eq!(a.moving, b.moving);
+                                        }
+                                        (None, None) => {}
+                                        _ => panic!("cached and uncached routing differ in fixture {fixture}"),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        crate::blockers::reset();
+    }
 
     /// **The far LOD path must still respect blockers.** The v0.22.0 perf pass gave
     /// [`advance_direct`] a bare centre-`footing` gate, which reads terrain only — [`step_clear`] is

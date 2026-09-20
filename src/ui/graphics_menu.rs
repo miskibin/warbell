@@ -25,7 +25,7 @@ use bevy::ui_widgets::{
 use crate::player::FirstPerson;
 use crate::quality::{
     save_graphics_config, AaLevel, AoLevel, AudioPrefs, GraphicsQuality, GraphicsSettings,
-    ShadowLevel, TerrainDetail, WindowSettings,
+    ShadowLevel, StartupRenderConfig, TerrainDetail, VegetationDensity, WindowSettings,
 };
 
 use super::fonts::{label, UiFonts};
@@ -63,7 +63,7 @@ impl Plugin for GraphicsMenuPlugin {
                 Update,
                 (
                     sync_overlay, // spawn / despawn / rebuild the panel
-                    (tab_click, menu_buttons, menu_keys, sync_segments, sync_controls, sync_slider_visual)
+                    (tab_click, menu_buttons, menu_keys, sync_segments, sync_controls, sync_slider_visual, sync_restart_notice)
                         .run_if(menu_is_open),
                 ),
             );
@@ -94,6 +94,8 @@ fn stage_open(mut open: ResMut<GraphicsMenuOpen>, mut tab: ResMut<SettingsTab>) 
 struct GfxMenuRoot;
 #[derive(Component)]
 struct GfxCloseBtn;
+#[derive(Component)]
+struct RestartNotice;
 /// A top-bar tab button; click selects its tab.
 #[derive(Component, Clone, Copy)]
 struct TabBtn(SettingsTab);
@@ -136,6 +138,7 @@ enum Seg {
     Aa(AaLevel),
     Ao(AoLevel),
     Terrain(TerrainDetail),
+    Vegetation(VegetationDensity),
     Resolution(Option<[u32; 2]>),
     Fullscreen(bool),
     /// Camera mode — `true` = first person.
@@ -341,11 +344,34 @@ fn graphics_pane(p: &mut Pane<'_>, fonts: &UiFonts, quality: GraphicsQuality, s:
         ("High", Seg::Terrain(TerrainDetail::High)),
         ("Ultra", Seg::Terrain(TerrainDetail::Ultra)),
     ], Seg::Terrain(s.terrain));
+    seg_row(p, fonts, "Ground cover (restart)", &[
+        ("Low", Seg::Vegetation(VegetationDensity::Low)),
+        ("Medium", Seg::Vegetation(VegetationDensity::Medium)),
+        ("High", Seg::Vegetation(VegetationDensity::High)),
+    ], Seg::Vegetation(s.vegetation));
     check_row(p, fonts, "Bloom", ToggleId::Bloom, s.bloom);
     check_row(p, fonts, "Depth of field", ToggleId::Dof, s.depth_of_field);
     check_row(p, fonts, "Outline", ToggleId::Outline, s.outline);
     check_row(p, fonts, "God rays", ToggleId::GodRays, s.god_rays);
-    check_row(p, fonts, "Motion blur", ToggleId::MotionBlur, s.motion_blur);
+    check_row(p, fonts, "Motion blur (restart)", ToggleId::MotionBlur, s.motion_blur);
+    p.spawn((label(&fonts.regular, "", 12.0, GOLD), RestartNotice));
+}
+
+fn sync_restart_notice(
+    settings: Res<GraphicsSettings>,
+    startup: Res<StartupRenderConfig>,
+    mut labels: Query<&mut Text, With<RestartNotice>>,
+) {
+    let text = if startup.restart_required(&settings) {
+        "Restart to apply all graphics changes. Close Settings to save."
+    } else {
+        ""
+    };
+    for mut label in &mut labels {
+        if label.0 != text {
+            label.0 = text.to_string();
+        }
+    }
 }
 
 fn display_pane(p: &mut Pane<'_>, fonts: &UiFonts, w: &WindowSettings) {
@@ -594,6 +620,7 @@ fn menu_buttons(
             Seg::Aa(l) => set_custom(&mut quality, || settings.antialias = l),
             Seg::Ao(l) => set_custom(&mut quality, || settings.ssao = l),
             Seg::Terrain(l) => set_custom(&mut quality, || settings.terrain = l),
+            Seg::Vegetation(l) => set_custom(&mut quality, || settings.vegetation = l),
             Seg::Resolution(r) => window.resolution = r,
             Seg::Fullscreen(fs) => window.fullscreen = fs,
             Seg::Camera(active) => first_person.active = active,
@@ -692,6 +719,7 @@ fn sync_segments(
             Seg::Aa(l) => settings.antialias == l,
             Seg::Ao(l) => settings.ssao == l,
             Seg::Terrain(l) => settings.terrain == l,
+            Seg::Vegetation(l) => settings.vegetation == l,
             Seg::Resolution(r) => window.resolution == r,
             Seg::Fullscreen(fs) => window.fullscreen == fs,
             Seg::Camera(active) => first_person.active == active,

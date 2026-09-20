@@ -256,14 +256,23 @@ fn drive_night_sky(
     let twinkle = 1.0 + 0.06 * (t * 2.3).sin() + 0.04 * (t * 5.1).sin();
     let s = STAR_BRIGHT * night * twinkle;
     if let Some(mut m) = materials.get_mut(&mats.stars) {
-        m.base_color = Color::linear_rgb(s, s, s);
+        let color = Color::linear_rgb(s, s, s);
+        if m.base_color != color {
+            m.base_color = color;
+        }
     }
     if let Some(mut m) = materials.get_mut(&mats.moon) {
-        m.base_color = Color::linear_rgb(0.9 * night, 0.93 * night, night);
+        let color = Color::linear_rgb(0.9 * night, 0.93 * night, night);
+        if m.base_color != color {
+            m.base_color = color;
+        }
     }
     if let Some(mut m) = materials.get_mut(&mats.glow) {
         let g = 0.10 * night;
-        m.base_color = Color::linear_rgb(g * 0.8, g * 0.9, g);
+        let color = Color::linear_rgb(g * 0.8, g * 0.9, g);
+        if m.base_color != color {
+            m.base_color = color;
+        }
     }
 }
 

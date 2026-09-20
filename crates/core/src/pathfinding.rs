@@ -15,6 +15,24 @@ pub struct PathPoint {
     pub z: f64,
 }
 
+/// Shared route-cache retry policy. Failure is different from finishing a successful route:
+/// its empty waypoint list must not trigger a fresh A* every frame. A substantially changed
+/// goal invalidates a failure immediately; an unchanged failed goal retries when due even for
+/// callers that otherwise refresh successful routes only when the goal moves.
+pub fn should_replan_path(
+    failed: bool,
+    route_exhausted: bool,
+    retry_due: bool,
+    goal_moved: bool,
+    periodic: bool,
+) -> bool {
+    if failed {
+        retry_due || goal_moved
+    } else {
+        route_exhausted || if periodic { retry_due || goal_moved } else { retry_due && goal_moved }
+    }
+}
+
 /// Everything A* needs to know about the world. Mirrors the chokepoint queries
 /// the TS `isWalkable` made into tileMap/obstacles/houseBlockers.
 pub trait Grid {
@@ -462,5 +480,52 @@ mod tests {
         }
         let path = find_path(&g, p(1.0, 1.0), p((n - 1) as f64, (n - 1) as f64), 10_000);
         assert!(path.is_empty());
+    }
+
+    #[test]
+    fn failed_route_waits_then_retries_an_unchanged_goal() {
+        let mut g = MockGrid::new();
+        g.set_map(&["..~..", "..~..", "..~.."]);
+        for periodic in [false, true] {
+            let mut searches = 0;
+            let mut retry_at = 0.0;
+            let mut failed = false;
+            let mut route = Vec::new();
+            // Simulate frames of a stationary, unreachable destination. The empty result must
+            // not bypass the half-second backoff, but the unchanged goal must eventually retry.
+            for now in [0.0, 0.016, 0.032, 0.25, 0.499, 0.5] {
+                if should_replan_path(failed, route.is_empty(), now >= retry_at, false, periodic) {
+                    route = find_path(&g, p(0.0, 1.0), p(4.0, 1.0), 800);
+                    failed = route.is_empty();
+                    retry_at = now + 0.5;
+                    searches += 1;
+                }
+            }
+            assert!(failed);
+            assert_eq!(searches, 2, "only the initial attempt and the deadline retry");
+        }
+    }
+
+    #[test]
+    fn changed_goal_invalidates_failure_without_waiting() {
+        for periodic in [false, true] {
+            assert!(should_replan_path(true, true, false, true, periodic));
+        }
+    }
+
+    #[test]
+    fn successful_routes_preserve_progress_and_goal_stagger() {
+        // Finishing a real route allows immediate progression regardless of the retry deadline.
+        for periodic in [false, true] {
+            assert!(should_replan_path(false, true, false, false, periodic));
+        }
+        // Guards retain the moving-goal throttle and do not replace stable, usable routes.
+        assert!(!should_replan_path(false, false, false, true, false));
+        assert!(should_replan_path(false, false, true, true, false));
+        assert!(!should_replan_path(false, false, true, false, false));
+        // Keep/worker marches retain their periodic refresh and immediate goal invalidation.
+        assert!(should_replan_path(false, false, true, false, true));
+        assert!(should_replan_path(false, false, false, true, true));
+        assert!(!should_replan_path(false, false, false, false, true));
     }
 }

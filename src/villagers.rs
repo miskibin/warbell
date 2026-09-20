@@ -1068,6 +1068,7 @@ fn worker_steer(
         ),
     >,
 ) {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::WorkerSteer);
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
@@ -1102,15 +1103,13 @@ fn worker_steer(
             // Far from the post: follow the A* route (threads the wall gates). Close in:
             // cheap direct steer, no pathing churn — same split as the guard post-march.
             let step_target = if dist > GUARD_PATH_RANGE {
-                if path.cursor >= path.waypoints.len()
-                    || now >= path.next_replan
-                    || path.goal_cached.distance(work_pos) > 2.0
-                {
-                    path.waypoints = crate::navgrid::path_to(v.pos, work_pos);
-                    path.cursor = 0;
-                    path.goal_cached = work_pos;
-                    // Stagger replans so a dawn shift-change doesn't path everyone on one frame.
-                    path.next_replan = now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05;
+                if path.needs_replan(now, work_pos, true) {
+                    // Stagger regular refreshes and failed-route retries alike.
+                    path.set_route(
+                        crate::navgrid::path_to(v.pos, work_pos),
+                        work_pos,
+                        now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05,
+                    );
                 }
                 while path.cursor < path.waypoints.len()
                     && v.pos.distance(path.waypoints[path.cursor]) < 1.2
@@ -1119,8 +1118,7 @@ fn worker_steer(
                 }
                 path.waypoints.get(path.cursor).copied().unwrap_or(work_pos)
             } else {
-                path.waypoints.clear();
-                path.cursor = 0;
+                path.clear_route();
                 work_pos
             };
             let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
@@ -1629,6 +1627,7 @@ fn guard_combat(
         ),
     >,
 ) {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::GuardCombat);
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
@@ -1769,14 +1768,14 @@ fn guard_combat(
                     // post under a rallied muster — would otherwise re-fire every frame and, with
                     // the whole war party crossing the 2u threshold together, cluster island-scale
                     // A* onto the same frames (the "go after me" perf spike). Cursor-exhaust stays
-                    // an always-allowed replan; it's naturally spread by per-guard walk progress.
-                    if path.cursor >= path.waypoints.len()
-                        || (now >= path.next_replan && path.goal_cached.distance(tp) > 2.0)
-                    {
-                        path.waypoints = crate::navgrid::path_to(v.pos, tp);
-                        path.cursor = 0;
-                        path.goal_cached = tp;
-                        path.next_replan = now + 0.5 + (self_e.to_bits() % 16) as f32 * 0.04;
+                    // an always-allowed replan for SUCCESSFUL routes; empty failed searches wait
+                    // for the retry deadline (or a new goal) instead of searching every frame.
+                    if path.needs_replan(now, tp, false) {
+                        path.set_route(
+                            crate::navgrid::path_to(v.pos, tp),
+                            tp,
+                            now + 0.5 + (self_e.to_bits() % 16) as f32 * 0.04,
+                        );
                     }
                     while path.cursor < path.waypoints.len()
                         && v.pos.distance(path.waypoints[path.cursor]) < 1.2
@@ -1785,8 +1784,7 @@ fn guard_combat(
                     }
                     path.waypoints.get(path.cursor).copied().unwrap_or(tp)
                 } else {
-                    path.waypoints.clear();
-                    path.cursor = 0;
+                    path.clear_route();
                     tp
                 };
                 let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
@@ -1811,15 +1809,13 @@ fn guard_combat(
                     // a rallied guard's post tracks the running hero every frame, so an OR here
                     // re-pathed the whole muster on the same frames → spikes. A fixed post (a freed
                     // captive marching home) never trips goal-moved, so it replans only on
-                    // cursor-exhaust — unchanged from before.
-                    if path.cursor >= path.waypoints.len()
-                        || (now >= path.next_replan && path.goal_cached.distance(g.post) > 2.0)
-                    {
-                        path.waypoints = crate::navgrid::path_to(v.pos, g.post);
-                        path.cursor = 0;
-                        path.goal_cached = g.post;
-                        // Stagger replans so freed captives don't all path on one frame.
-                        path.next_replan = now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05;
+                    // cursor-exhaust after a success, or after the failure retry deadline.
+                    if path.needs_replan(now, g.post, false) {
+                        path.set_route(
+                            crate::navgrid::path_to(v.pos, g.post),
+                            g.post,
+                            now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05,
+                        );
                     }
                     while path.cursor < path.waypoints.len()
                         && v.pos.distance(path.waypoints[path.cursor]) < 1.2
@@ -1828,8 +1824,7 @@ fn guard_combat(
                     }
                     path.waypoints.get(path.cursor).copied().unwrap_or(g.post)
                 } else {
-                    path.waypoints.clear();
-                    path.cursor = 0;
+                    path.clear_route();
                     g.post
                 };
                 let cur_y = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);

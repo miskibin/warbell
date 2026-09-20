@@ -5,20 +5,15 @@
 //! cycling is always available at runtime and is the only way to change the preset once the
 //! game is running.
 //!
-//! - **High**: the hand-tuned default look. Carries the screen-space god-rays pass (`godrays.rs`) —
-//!   cheap and reliable, so the *everyday* scene gets the light shafts, not just the showcase.
-//! - **Ultra**: the demo / "prettiest possible" preset. Everything High has, plus SSAO + SMAA at
-//!   their max levels, a 4096 shadow atlas, shadows pushed out to the fog line, and a bloom lift.
-//!   (The old volumetric god-ray pass — `VolumetricLight` + `FogVolume` — was retired: it was
-//!   imperceptible at our fog yet the frame's biggest cost (~13 ms) and blacked out the Atmosphere
-//!   sky. The screen-space pass in `godrays.rs` replaces it on both High and Ultra.)
-//! - **Low**: tuned for integrated GPUs (measured: ~4.3 ms SSAO + ~6-7 ms across 4 shadow
-//!   cascades at 19 FPS on a typical iGPU). SSAO is **removed** entirely (the component is
-//!   stripped from the camera — even the lowest-quality SSAO pass still walks the full-res depth
-//!   buffer). Shadow cascades stop at 100 tiles (authored 150) — linear fog is already opaque
-//!   there, so the far ground was invisible anyway, and this cuts one cascade's re-draw cost.
-//!   SMAA Low and 1024 shadow atlas. Stays fully playable and legible; cycling to High/Ultra
-//!   re-inserts SSAO at the preset's quality level.
+//! - **High**: the hand-tuned look with three shadow cascades and 65% ground cover.
+//! - **Ultra**: four shadow cascades, a 4096 shadow atlas, full ground cover, and stronger
+//!   post-processing. SSAO remains opt-in on every preset.
+//! - **Low**: two shadow cascades with a 1024 atlas and 100-tile reach, 35% ground cover,
+//!   SMAA Low, reduced internal resolution, and no expensive optional post-processing.
+//!
+//! Cascade counts, ground-cover density, and motion-vector buffers are fixed at startup.
+//! The Settings page shows a restart notice when those desired values differ from the active
+//! resources. Shadows Off works immediately; atlas size and shadow reach can also change live.
 //!
 //! God-rays toggle on/off by inserting/removing the camera's `godrays::GodRays` component (same
 //! mechanism as the DoF/outline post passes). The DoF blur, bloom intensity and cascade config are
@@ -32,7 +27,7 @@ use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::camera::MainPassResolutionOverride;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::light::cluster::GlobalClusterSettings;
-use bevy::light::{CascadeShadowConfig, DirectionalLight, DirectionalLightShadowMap};
+use bevy::light::{CascadeShadowConfig, DirectionalLightShadowMap};
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::post_process::effect_stack::{ChromaticAberration, Vignette};
@@ -41,7 +36,6 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use serde::{Deserialize, Serialize};
 
-use crate::scene::Sun;
 use crate::terrain::TerrainMaterial;
 
 /// Which **preset chip** is lit in the Settings page. `High`/`Ultra`/`Low` are the canonical tunes;
@@ -132,16 +126,44 @@ pub enum TerrainDetail {
     Ultra,
 }
 
+/// Cosmetic ground-cover density. Applied at startup; trees and resources are unchanged.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub enum VegetationDensity {
+    Low,
+    Medium,
+    #[default]
+    High,
+}
+
+impl VegetationDensity {
+    pub fn fraction(self) -> f32 {
+        match self {
+            Self::Low => 0.35,
+            Self::Medium => 0.65,
+            Self::High => 1.0,
+        }
+    }
+}
+
 impl ShadowLevel {
+    /// Chosen before views are created. Never change the count on a live view (Bevy 0.19).
+    pub fn cascade_count(self) -> usize {
+        match self {
+            Self::Off | Self::Low => 2,
+            Self::Medium => 3,
+            Self::High => 4,
+        }
+    }
+
     /// `(atlas_size, cascade_far)` for the on path; `None` when shadows are off.
     ///
-    /// The cascade **count** is deliberately NOT varied between levels. Changing `num_cascades` on a
+    /// The cascade **count** is deliberately NOT changed during a session. Changing `num_cascades` on a
     /// live `CascadeShadowConfig` panics Bevy's `check_dir_light_mesh_visibility`: that system's
     /// thread-local parallel queues (`view_visible_entities_queue`) are only resized for worker
     /// threads that get a task on the current run, so when the count GROWS, a thread that ran last
     /// frame at the smaller size but is idle this frame keeps its stale length and the collection
     /// loop indexes past it (an out-of-bounds in bevy_light). So every level keeps the authored
-    /// count and varies only atlas resolution + shadow reach (both safe to change at runtime).
+    /// startup count and varies only atlas resolution + shadow reach (both safe live).
     fn params(self) -> Option<(usize, f32)> {
         match self {
             ShadowLevel::Off => None,
@@ -194,12 +216,14 @@ pub struct GraphicsSettings {
     pub antialias: AaLevel,
     pub ssao: AoLevel,
     pub terrain: TerrainDetail,
+    #[serde(default)]
+    pub vegetation: VegetationDensity,
     pub bloom: bool,
     pub depth_of_field: bool,
     pub outline: bool,
     pub god_rays: bool,
-    /// Per-object motion blur (`bevy_post_process`). OFF by default on every preset — it forces an
-    /// always-on motion-vector prepass, so it's strictly opt-in. `#[serde(default)]` = `false`, so
+    /// Per-object motion blur (`bevy_post_process`). OFF by default on every preset — it forces a
+    /// motion-vector prepass on the next launch, so it's strictly opt-in. `#[serde(default)]` = `false`, so
     /// old saved configs (written before this field existed) load with it off.
     #[serde(default)]
     pub motion_blur: bool,
@@ -226,6 +250,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             // on the sun/moon still give the contact-darkening read. Re-enableable via the menu.
             ssao: AoLevel::Off,
             terrain: TerrainDetail::High,
+            vegetation: VegetationDensity::Medium,
             bloom: true,
             depth_of_field: true,
             outline: false, // crisp toon edges off by default (user preference)
@@ -238,6 +263,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             antialias: AaLevel::Ultra,
             ssao: AoLevel::Off, // off by default — see High preset (GTAO crawl without TAA)
             terrain: TerrainDetail::Ultra,
+            vegetation: VegetationDensity::High,
             bloom: true,
             depth_of_field: true,
             outline: false, // crisp toon edges off by default (user preference)
@@ -253,6 +279,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             antialias: AaLevel::Low,
             ssao: AoLevel::Off,
             terrain: TerrainDetail::Low,
+            vegetation: VegetationDensity::Low,
             bloom: false,
             depth_of_field: false,
             outline: false,
@@ -261,6 +288,32 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             render_scale: 0.6,
         },
         GraphicsQuality::Custom => preset_settings(GraphicsQuality::High),
+    }
+}
+
+/// Settings whose GPU resources or generated geometry must stay fixed for the session.
+/// Keeping this separate from the desired settings allows safe live edits and a restart notice.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct StartupRenderConfig {
+    pub shadow_cascades: usize,
+    pub motion_vectors: bool,
+    pub vegetation: VegetationDensity,
+}
+
+impl StartupRenderConfig {
+    fn from_settings(settings: &GraphicsSettings) -> Self {
+        Self {
+            shadow_cascades: settings.shadows.cascade_count(),
+            motion_vectors: settings.motion_blur,
+            vegetation: settings.vegetation,
+        }
+    }
+
+    pub fn restart_required(&self, settings: &GraphicsSettings) -> bool {
+        (settings.shadows != ShadowLevel::Off
+            && settings.shadows.cascade_count() != self.shadow_cascades)
+            || settings.motion_blur != self.motion_vectors
+            || settings.vegetation != self.vegetation
     }
 }
 
@@ -306,13 +359,16 @@ impl Plugin for QualityPlugin {
         if std::env::var("FOREST_NOVSYNC").is_ok() {
             window.vsync = false;
         }
-        app.insert_resource(settings).insert_resource(window);
+        app.insert_resource(StartupRenderConfig::from_settings(&settings))
+            .insert_resource(settings)
+            .insert_resource(window);
 
         app.init_resource::<RenderDefaults>()
-            // Hardware-aware default: runs at Startup, after the render plugin's `finish()` has
-            // inserted RenderAdapterInfo into the main world. Overwrites the default only when no
+            // Hardware-aware default: runs at PreStartup, after the render plugin's `finish()` has
+            // inserted RenderAdapterInfo into the main world. Resolve before cameras/world spawn.
+            // Overwrites the default only when no
             // env override / saved config locked the preset and the adapter is a weak device type.
-            .add_systems(Startup, detect_adapter_quality)
+            .add_systems(PreStartup, (detect_adapter_quality, finalize_startup_config).chain())
             // Weak-GPU stability: drop Bevy 0.19's GPU light-clustering readback (crash-prone under
             // device loss + a per-frame GPU→CPU stall). Runs before the first render extract.
             .add_systems(Startup, disable_gpu_clustering_on_weak_gpu)
@@ -334,8 +390,42 @@ impl Plugin for QualityPlugin {
             // stays ungated (it must catch window resizes, not just setting toggles).
             .add_systems(Update, apply_render_scale)
             // Window mode / vsync / resolution → primary window. Self-gated.
-            .add_systems(Update, apply_window_settings);
+            .add_systems(Update, apply_window_settings)
+            .add_systems(PostUpdate, report_startup_rendering);
     }
+}
+
+/// Resolve hardware defaults before any Startup system builds cameras, lights or vegetation.
+fn finalize_startup_config(
+    quality: Res<GraphicsQuality>,
+    mut settings: ResMut<GraphicsSettings>,
+    mut startup: ResMut<StartupRenderConfig>,
+) {
+    if *quality != GraphicsQuality::Custom {
+        *settings = preset_settings(*quality);
+    }
+    *startup = StartupRenderConfig::from_settings(&settings);
+    info!(
+        "Startup graphics: {:?}, {} shadow cascades, motion vectors={}, vegetation={:?}",
+        *quality, startup.shadow_cascades, startup.motion_vectors, startup.vegetation
+    );
+}
+
+/// Log actual camera/light components once, after Update has applied the quality choices.
+fn report_startup_rendering(
+    cameras: Query<Has<bevy::core_pipeline::prepass::MotionVectorPrepass>, With<Camera3d>>,
+    lights: Query<&CascadeShadowConfig>,
+    mut done: Local<bool>,
+) {
+    if *done || cameras.is_empty() || lights.is_empty() {
+        return;
+    }
+    info!(
+        "Active render resources: motion-vector cameras={}, light cascade counts={:?}",
+        cameras.iter().filter(|present| *present).count(),
+        lights.iter().map(|c| c.bounds.len()).collect::<Vec<_>>()
+    );
+    *done = true;
 }
 
 /// Debug repro: `FOREST_QSWITCH=<high|ultra|low>` flips the preset once at ~4 s of wall-clock, to
@@ -497,9 +587,9 @@ fn fill_settings_from_preset(quality: Res<GraphicsQuality>, mut settings: ResMut
 #[allow(clippy::too_many_arguments)]
 fn apply_quality(
     settings: Res<GraphicsSettings>,
+    startup: Res<StartupRenderConfig>,
     mut defaults: ResMut<RenderDefaults>,
     mut commands: Commands,
-    mut sun_light: Query<&mut DirectionalLight, With<Sun>>,
     cam: Query<Entity, With<Camera3d>>,
     bloom: Query<&Bloom>,
     mut cascades: Query<&mut CascadeShadowConfig>,
@@ -518,26 +608,19 @@ fn apply_quality(
     let s = &*settings;
     let god = s.god_rays; // screen-space god-rays toggled as a camera component in the per-camera loop below
 
-    // Shadows: `Off` disables the sun's shadow casting entirely (the biggest weak-GPU win — no
-    // cascade passes at all); otherwise size + cascade count + reach come from the level. Toggling
-    // `DirectionalLight::shadows_enabled` is the runtime switch; the cascade/atlas config is only
-    // re-derived when shadows are on.
+    // advance_sky owns sun/moon enablement, combining this setting with time of day every frame.
+    // Atlas size and reach can change live; cascade count is fixed at startup to avoid Bevy's
+    // stale per-thread visibility queues when the count grows.
     let shadow = s.shadows.params();
-    if let Ok(mut dl) = sun_light.single_mut() {
-        let want = shadow.is_some();
-        if dl.shadow_maps_enabled != want {
-            dl.shadow_maps_enabled = want;
-        }
-    }
     if let Some((size, far)) = shadow {
         for mut c in cascades.iter_mut() {
             let Some(auth) = defaults.cascades.as_ref() else { continue };
             // Re-derive the split layout from the authored config with only the far bound moved: the
             // first cascade keeps its authored near reach (texel density unchanged), the in-between
-            // splits re-space exponentially toward the new horizon. `num_cascades` is ALWAYS the
-            // authored count — see `ShadowLevel::params` for why changing it at runtime crashes.
+            // splits re-space exponentially toward the new horizon. `num_cascades` stays at the
+            // startup count — see `ShadowLevel::params` for why changing it live crashes.
             *c = bevy::light::CascadeShadowConfigBuilder {
-                num_cascades: auth.bounds.len(),
+                num_cascades: startup.shadow_cascades,
                 minimum_distance: auth.minimum_distance,
                 maximum_distance: far,
                 first_cascade_far_bound: auth.bounds.first().copied().unwrap_or(12.0),
@@ -616,13 +699,9 @@ fn apply_quality(
         // Chromatic aberration is disabled everywhere; ensure no stale component lingers.
         e.remove::<ChromaticAberration>();
 
-        // Motion blur: opt-in (off by default). Toggle ONLY the blur effect here — the
-        // motion-vector prepass that feeds it lives on the camera from spawn and is never toggled,
-        // because adding it to a live view crashes wgpu (the velocity texture isn't reallocated, so
-        // the bg-motion-vectors pipeline mismatches the pass). MotionBlur safely reads the
-        // always-present texture, same as the outline/DoF effect toggles. Shutter > 0.5 over-blurs
-        // past a true 24fps shutter on purpose — a clearly-visible artistic blur when enabled.
-        if s.motion_blur {
+        // Never attach an effect whose input texture was not allocated at startup. Enabling
+        // motion blur on a lean session is saved for the next launch and shown as pending in UI.
+        if s.motion_blur && startup.motion_vectors {
             e.insert(MotionBlur { shutter_angle: 1.0, samples: 2 });
         } else {
             e.remove::<MotionBlur>();
@@ -662,13 +741,16 @@ fn apply_quality(
             }
         }
 
-        // Depth prepass + contact shadows ride one gate: contact shadows (0.19) read the prepass
-        // depth, so they must share the exact on/off as the prepass. Stripped together when nothing
-        // (DoF/SSAO/outline) needs depth — that's the ~3 ms `early prepass` in the F2 profiler.
+        // Contact shadows need depth, but Shadows Off must disable them even if another effect
+        // still needs the depth prepass. Strip both when no effect consumes depth.
         if needs_depth {
-            e.insert((DepthPrepass, ContactShadows::default()));
+            e.insert(DepthPrepass);
         } else {
             e.remove::<DepthPrepass>();
+        }
+        if needs_depth && s.shadows != ShadowLevel::Off {
+            e.insert(ContactShadows::default());
+        } else {
             e.remove::<ContactShadows>();
         }
     }
@@ -694,6 +776,72 @@ fn apply_quality(
         if let Some(mut m) = terrain_mats.get_mut(id) {
             m.extension.params.params2 = want;
         }
+    }
+}
+
+#[cfg(test)]
+mod graphics_startup_tests {
+    use super::*;
+
+    #[test]
+    fn low_startup_is_lean_and_live_edits_require_restart() {
+        let mut settings = preset_settings(GraphicsQuality::Low);
+        let startup = StartupRenderConfig::from_settings(&settings);
+        assert_eq!(startup.shadow_cascades, 2);
+        assert!(!startup.motion_vectors);
+        assert_eq!(startup.vegetation, VegetationDensity::Low);
+        assert!(!startup.restart_required(&settings));
+        settings.shadows = ShadowLevel::Off;
+        assert!(!startup.restart_required(&settings), "Off works immediately");
+        settings.motion_blur = true;
+        assert!(startup.restart_required(&settings));
+        settings.motion_blur = false;
+        settings.shadows = ShadowLevel::High;
+        assert!(startup.restart_required(&settings));
+        settings.shadows = ShadowLevel::Low;
+        settings.vegetation = VegetationDensity::High;
+        assert!(startup.restart_required(&settings));
+        let restarted = StartupRenderConfig::from_settings(&settings);
+        assert!(!restarted.restart_required(&settings));
+    }
+
+    #[test]
+    fn legacy_low_config_migrates_density_without_resetting_controls() {
+        let mut cfg = GraphicsConfig {
+            quality: GraphicsQuality::Low,
+            settings: preset_settings(GraphicsQuality::Low),
+            window: WindowSettings::default(),
+            audio: AudioPrefs::default(),
+        };
+        cfg.window.resolution = Some([1280, 720]);
+        cfg.audio.master = 0.4;
+        let mut value = serde_json::to_value(cfg).unwrap();
+        value["settings"].as_object_mut().unwrap().remove("vegetation");
+        let loaded = decode_config(&value.to_string()).unwrap();
+        assert_eq!(loaded.settings.vegetation, VegetationDensity::Low);
+        assert_eq!(loaded.window.resolution, Some([1280, 720]));
+        assert_eq!(loaded.audio.master, 0.4);
+        value["quality"] = serde_json::json!("Custom");
+        assert_eq!(decode_config(&value.to_string()).unwrap().settings.vegetation, VegetationDensity::High);
+        value["settings"]["vegetation"] = serde_json::json!("High");
+        assert_eq!(decode_config(&value.to_string()).unwrap().settings.vegetation, VegetationDensity::High);
+    }
+
+    #[test]
+    fn effective_preset_is_resolved_before_startup_consumers() {
+        let high = preset_settings(GraphicsQuality::High);
+        let mut app = App::new();
+        app.insert_resource(GraphicsQuality::Low)
+            .insert_resource(StartupRenderConfig::from_settings(&high))
+            .insert_resource(high)
+            .add_systems(PreStartup, finalize_startup_config)
+            .add_systems(Startup, |startup: Res<StartupRenderConfig>, settings: Res<GraphicsSettings>| {
+                assert_eq!(startup.shadow_cascades, 2);
+                assert_eq!(startup.vegetation, VegetationDensity::Low);
+                assert!(!startup.motion_vectors);
+                assert_eq!(settings.vegetation, VegetationDensity::Low);
+            });
+        app.update();
     }
 }
 
@@ -867,7 +1015,18 @@ fn config_path() -> std::path::PathBuf {
 /// Load the saved graphics config (None = missing / unreadable / unparseable — just use defaults).
 fn load_config() -> Option<GraphicsConfig> {
     let text = std::fs::read_to_string(config_path()).ok()?;
-    serde_json::from_str(&text).ok()
+    decode_config(&text)
+}
+
+fn decode_config(text: &str) -> Option<GraphicsConfig> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let missing_vegetation = value.get("settings")?.get("vegetation").is_none();
+    let mut cfg: GraphicsConfig = serde_json::from_value(value).ok()?;
+    // Old Low configs must immediately receive Low density. Preserve every existing control.
+    if missing_vegetation && cfg.quality != GraphicsQuality::Custom {
+        cfg.settings.vegetation = preset_settings(cfg.quality).vegetation;
+    }
+    Some(cfg)
 }
 
 /// The saved audio preferences (or defaults). Lets `SettingsPlugin` seed `AudioSettings` at startup

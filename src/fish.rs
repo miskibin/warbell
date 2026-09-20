@@ -387,7 +387,9 @@ fn swim_fish(
         let above = ((y - SEA_Y) / 0.25).clamp(0.0, 1.0);
         let alpha = f.fade * (0.45 + 0.55 * above);
         if let Some(mut m) = mats.get_mut(&f.mat) {
-            m.base_color.set_alpha(alpha);
+            if m.base_color.alpha() != alpha {
+                m.base_color.set_alpha(alpha);
+            }
         }
     }
 }

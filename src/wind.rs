@@ -92,6 +92,7 @@ pub(crate) fn sway_system(
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     mut q: Query<(&Sway, &mut Transform)>,
 ) {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::Wind);
     // `elapsed_secs_wrapped` (wraps at 3600s by default) keeps f32 precision sharp over
     // long sessions; the wrap period is far longer than any sway period so there's no
     // visible jump when it wraps.

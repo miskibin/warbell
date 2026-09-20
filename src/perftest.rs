@@ -298,8 +298,8 @@ fn perf_tick(world: &mut World) {
 
     // ── GPU pass breakdown (where the frame time actually goes) ─────────────────────────
     // Reads RenderDiagnosticsPlugin's per-pass `render/<pass>/elapsed_gpu` (needs TIMESTAMP_QUERY;
-    // falls back to nothing on backends without it). If Σ passes ≈ frame_ms → GPU-bound (cut/cheapen
-    // passes); if Σ ≪ frame_ms → CPU-bound (systems/extraction/entity count).
+    // unavailable on backends without it). Samples are asynchronous and can be nested, so their
+    // sum is not a frame total and missing samples cannot establish a CPU bottleneck.
     let mut passes: Vec<(String, f64)> = {
         let d = world.resource::<DiagnosticsStore>();
         d.iter()
@@ -315,14 +315,17 @@ fn perf_tick(world: &mut World) {
             .collect()
     };
     passes.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    let gpu_total: f64 = passes.iter().map(|p| p.1).sum();
+    if passes.is_empty() {
+        info!("  GPU timings unavailable");
+        return;
+    }
     let top = passes
         .iter()
         .take(12)
         .map(|(n, ms)| format!("{n}={ms:.2}"))
         .collect::<Vec<_>>()
         .join(" ");
-    info!("  GPU Σ={gpu_total:.2}ms  {top}");
+    info!("  GPU sampled passes (not additive): {top}");
 }
 
 /// `tileworld_bevy_forest::combat_fx::FloatText` -> `FloatText` (last path segment, sans generics).

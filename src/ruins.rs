@@ -466,7 +466,10 @@ fn fx_pulse(time: Res<Time>, mut mats: ResMut<Assets<StandardMaterial>>, q: Quer
     let t = time.elapsed_secs();
     for p in &q {
         if let Some(mut m) = mats.get_mut(&p.mat) {
-            m.emissive = p.emissive * (1.0 + (t * p.freq + p.phase).sin() * p.amp);
+            let emissive = p.emissive * (1.0 + (t * p.freq + p.phase).sin() * p.amp);
+            if m.emissive != emissive {
+                m.emissive = emissive;
+            }
         }
     }
 }

@@ -39,6 +39,8 @@
 /model_proportions/
 # Profiling captures (trace_chrome writes multi-GB JSON; parsed by tools/trace_summary.py)
 trace-*.json
+/profiles/
+__pycache__/
 
 # Brainstorming visual-companion mockups (local only)
 .superpowers/

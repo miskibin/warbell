@@ -719,6 +719,7 @@ pub fn director_march(
     >,
     mut hold: Local<f32>,
 ) {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::DirectorMarch);
     if state.clear_marchers {
         state.clear_marchers = false;
         state.gate_open = false; // shut the gate behind them
@@ -781,14 +782,12 @@ pub fn director_march(
         } else {
             // (Re)plan the A* route to a standable point just inside the nearest gate, on a throttle.
             let goal = keep_march_goal(o.pos);
-            if path.cursor >= path.waypoints.len()
-                || now >= path.next_replan
-                || path.goal_cached.distance(goal) > 2.0
-            {
-                path.waypoints = crate::navgrid::path_to(o.pos, goal);
-                path.cursor = 0;
-                path.goal_cached = goal;
-                path.next_replan = now + 0.75 + (e.to_bits() % 16) as f32 * 0.05;
+            if path.needs_replan(now, goal, true) {
+                path.set_route(
+                    crate::navgrid::path_to(o.pos, goal),
+                    goal,
+                    now + 0.75 + (e.to_bits() % 16) as f32 * 0.05,
+                );
             }
             while path.cursor < path.waypoints.len()
                 && o.pos.distance(path.waypoints[path.cursor]) < 1.2
@@ -982,6 +981,7 @@ pub(crate) fn invader_brain(
         Without<crate::dying::Dying>,
     >,
 ) {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::InvaderBrain);
     if siege.phase != GamePhase::Wave {
         return;
     }
@@ -1150,15 +1150,13 @@ pub(crate) fn invader_brain(
                 // goal threads them through the gap; the in-yard press above then closes to
                 // batter range.
                 let keep_goal = keep_march_goal(o.pos);
-                if path.cursor >= path.waypoints.len()
-                    || now >= path.next_replan
-                    || path.goal_cached.distance(keep_goal) > 2.0
-                {
-                    path.waypoints = crate::navgrid::path_to(o.pos, keep_goal);
-                    path.cursor = 0;
-                    path.goal_cached = keep_goal;
-                    // Stagger replans across the horde so they don't all path on one frame.
-                    path.next_replan = now + 0.75 + (e.to_bits() % 16) as f32 * 0.05;
+                if path.needs_replan(now, keep_goal, true) {
+                    // Stagger replans, including failed searches, across the horde.
+                    path.set_route(
+                        crate::navgrid::path_to(o.pos, keep_goal),
+                        keep_goal,
+                        now + 0.75 + (e.to_bits() % 16) as f32 * 0.05,
+                    );
                 }
                 while path.cursor < path.waypoints.len()
                     && o.pos.distance(path.waypoints[path.cursor]) < 1.2

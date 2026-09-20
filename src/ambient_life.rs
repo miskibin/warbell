@@ -234,7 +234,10 @@ fn fly_butterflies(
         // Push the eased alpha into this butterfly's own wing/hind/body materials.
         for h in &b.mats {
             if let Some(mut m) = mats.get_mut(h) {
-                m.base_color.set_alpha(b.fade);
+                // AssetMut only marks the material modified when we write it.
+                if m.base_color.alpha() != b.fade {
+                    m.base_color.set_alpha(b.fade);
+                }
             }
         }
         if b.fade <= 0.001 {

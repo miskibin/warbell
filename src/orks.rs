@@ -349,6 +349,7 @@ fn ork_brain(
         ),
     >,
 ) {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::OrkBrain);
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();

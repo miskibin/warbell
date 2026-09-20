@@ -34,7 +34,11 @@ impl Plugin for BannerPlugin {
     fn build(&self, app: &mut App) {
         // Ungated visual animation (like `wind.rs` sway): reads virtual time, so it
         // freezes with the world behind panels but keeps drawing.
-        app.add_systems(Update, flutter_flags);
+        // Diagnostic only: retain the flags and their initial pose while isolating the
+        // cost of streaming their meshes. Normal gameplay always animates them.
+        if std::env::var("FOREST_FLAGANIM").as_deref() != Ok("off") {
+            app.add_systems(Update, flutter_flags);
+        }
         // Screenshot hook: FOREST_FLAGTEST=1 parks one test flag on open ground near the
         // hero spawn so the cloth can be framed in isolation.
         if std::env::var("FOREST_FLAGTEST").is_ok() {
@@ -61,6 +65,8 @@ pub struct ClothFlag {
     amp: f32,
     /// Per-flag phase so neighbouring flags don't flutter in lockstep.
     phase: f32,
+    /// Time already represented by this flag's mesh (not shared between flags).
+    last_wave_time: f32,
 }
 
 /// Spawn a cloth flag whose hoist edge hangs at world `attach` (the pole, at the flag's
@@ -82,6 +88,7 @@ pub fn spawn_flag(
         h,
         amp: h * 0.22,
         phase: attach.x * 0.7 + attach.z * 0.55, // the wind.rs position hash
+        last_wave_time: 0.0,
     };
     let mut mesh = flag_grid_mesh(&flag, field, accent);
     write_wave(&flag, 0.0, &mut mesh);
@@ -177,17 +184,57 @@ fn write_wave(flag: &ClothFlag, t: f32, mesh: &mut Mesh) {
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
 }
 
-/// Re-wave every flag's grid each frame (a handful of 55-vertex meshes — trivial).
+/// Update only when virtual time advances: modifying a Mesh also makes the renderer
+/// extract and upload it, even if the new positions would be identical.
+fn update_flag_wave(flag: &mut ClothFlag, t: f32, meshes: &mut Assets<Mesh>, handle: &Handle<Mesh>) -> bool {
+    if flag.last_wave_time == t {
+        return false;
+    }
+    let Some(mut mesh) = meshes.get_mut(handle) else { return false };
+    write_wave(flag, t, &mut mesh);
+    flag.last_wave_time = t;
+    true
+}
+
+/// Re-wave every flag as time advances, including offscreen shadow casters.
 fn flutter_flags(
     time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<(&ClothFlag, &Mesh3d)>,
+    mut q: Query<(&mut ClothFlag, &Mesh3d)>,
 ) {
     let t = time.elapsed_secs_wrapped();
-    for (flag, mesh3d) in &q {
-        if let Some(mut mesh) = meshes.get_mut(&mesh3d.0) {
-            // 0.19: Assets::get_mut returns AssetMut<Mesh>; deref to &mut Mesh for write_wave.
-            write_wave(flag, t, &mut mesh);
-        }
+    for (mut flag, mesh3d) in &mut q {
+        update_flag_wave(&mut flag, t, &mut meshes, &mesh3d.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_time_preserves_mesh_but_new_flags_catch_up() {
+        let mut meshes = Assets::<Mesh>::default();
+        let mut flag = ClothFlag { w: 1.0, h: 0.5, amp: 0.11, phase: 0.3, last_wave_time: 0.0 };
+        let mut mesh = flag_grid_mesh(&flag, 0xffffff, None);
+        write_wave(&flag, 0.0, &mut mesh);
+        let handle = meshes.add(mesh);
+        assert!(update_flag_wave(&mut flag, 12.0, &mut meshes, &handle));
+
+        // A sentinel proves the unchanged-time path does not rewrite mesh attributes.
+        meshes.get_mut(&handle).unwrap().insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[99.0, 98.0, 97.0]; NX * NY]);
+        assert!(!update_flag_wave(&mut flag, 12.0, &mut meshes, &handle));
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+            meshes.get(&handle).unwrap().attribute(Mesh::ATTRIBUTE_POSITION)
+        else { panic!("missing positions") };
+        assert_eq!(positions[0], [99.0, 98.0, 97.0]);
+
+        // A flag spawned while the clock is still at 12 must not inherit another
+        // flag's cached timestamp: its initial mesh still represents time zero.
+        let mut new_flag = ClothFlag { w: 1.0, h: 0.5, amp: 0.11, phase: 0.3, last_wave_time: 0.0 };
+        let new_handle = meshes.add(flag_grid_mesh(&new_flag, 0xffffff, None));
+        assert!(update_flag_wave(&mut new_flag, 12.0, &mut meshes, &new_handle));
+        assert!(meshes.get(&new_handle).unwrap().attribute(Mesh::ATTRIBUTE_NORMAL).is_some());
+        assert!(!update_flag_wave(&mut new_flag, 12.0, &mut meshes, &new_handle));
     }
 }

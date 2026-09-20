@@ -363,6 +363,9 @@ fn advance_sky(
     // Eases in as the sun dips toward/below the horizon — keeps the sunrise/sunset glow
     // bright, then ramps the world into a dark moonlit night.
     let night = 1.0 - smoothstep(-0.22, 0.08, elev);
+    // This system is the single writer for day/night shadow enablement. Do not override the
+    // player's Off choice on the next frame (and apply the same choice to the moon).
+    let shadows_allowed = settings.as_ref().is_none_or(|s| s.shadows != crate::quality::ShadowLevel::Off);
 
     // ── Nightfall surge ── the war-dusk moment: as the sun dives through the just-below-horizon
     // band RIGHT before the wave (the bell's plunge, or the last ~15% of a natural prep), the sky
@@ -404,7 +407,7 @@ fn advance_sky(
         // night key light. On Ultra (4096 atlas, cascades out to 190) that doubling is the
         // fill-rate spike that tanks weaker GPUs the instant night falls (the war-bell snap to
         // nightfall). Hand the night shadows to the moon alone. Mirrors the moon's `night > 0.05`.
-        light.shadow_maps_enabled = day > 0.05;
+        light.shadow_maps_enabled = shadows_allowed && day > 0.05;
         // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
         // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
         // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
@@ -439,7 +442,7 @@ fn advance_sky(
     for (mut light, mut tf) in &mut moon_q {
         *tf = Transform::from_translation(moon_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
         light.illuminance = 4600.0 * night;
-        light.shadow_maps_enabled = night > 0.05;
+        light.shadow_maps_enabled = shadows_allowed && night > 0.05;
     }
 
     // Ambient: the shadow-side fill. Day ≈265, night ≈350 — the `+ * night` term lifts the
@@ -597,6 +600,7 @@ fn setup_camera(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut media: ResMut<Assets<ScatteringMedium>>,
+    startup: Res<crate::quality::StartupRenderConfig>,
 ) {
     let env = images.add(gradient_env_cubemap());
     let medium = media.add(ScatteringMedium::default());
@@ -623,7 +627,7 @@ fn setup_camera(
     // side airy — crushed blacks were a big part of the old "harsh" read.
     grading.shadows.gain = 1.05;
 
-    commands.spawn((
+    let camera = commands.spawn((
         Camera3d::default(),
         // far=230 (was the 1000 default). The Linear fog reaches full horizon colour by 190
         // tiles (biome.rs), so everything past ~190 is solid fog — invisible but still drawn at
@@ -643,9 +647,7 @@ fn setup_camera(
         // gone — it silently no-op'd next to SSAO and only did a single focal plane. Depth
         // blur is now our own bokeh DoF post pass (`dof.rs`), which only READS the prepass
         // depth. Prepass consumers: DoF (depth), outline (depth+normal), SSAO (depth+normal).
-        // DepthPrepass is load-bearing on EVERY preset (DoF runs always). NormalPrepass is only
-        // needed when SSAO or the outline is on — the Low preset strips it (and the outline) via
-        // `quality::apply_quality`, which inserts/removes these per-preset on this camera.
+        // quality::apply_quality removes unused depth/normal passes on Low before rendering.
         Msaa::Off,
         Smaa { preset: SmaaPreset::High },
         ScreenSpaceAmbientOcclusion {
@@ -659,12 +661,6 @@ fn setup_camera(
         (
             DepthPrepass,
             NormalPrepass,
-            // Motion-vector prepass: present from spawn so the velocity texture is allocated from
-            // frame 0. It is deliberately NEVER toggled at runtime — adding it to a live view
-            // crashes (the texture isn't reallocated, so the bg-motion-vectors pipeline mismatches
-            // the render pass → wgpu validation error → quit). `quality::apply_quality` toggles only
-            // the `MotionBlur` effect that consumes it (off by default). Cheap on this low-poly scene.
-            MotionVectorPrepass,
             // 0.19 contact shadows (screen-space; requires the depth prepass above). High/Ultra
             // carry it; `quality::apply_quality` strips it on Low alongside the depth prepass.
             ContactShadows::default(),
@@ -695,7 +691,12 @@ fn setup_camera(
         // Listener for spatial wildlife audio (see `audio.rs`). `gap` = ear separation in
         // world units; scaled by the global `SpatialScale` set in `main.rs`.
         SpatialListener::new(4.0),
-    ));
+    )).id();
+    // Allocate velocity only for sessions that start with motion blur enabled. A live enable
+    // requires a restart; quality::apply_quality will never attach blur without this buffer.
+    if startup.motion_vectors {
+        commands.entity(camera).insert(MotionVectorPrepass);
+    }
 
     // 0.19: the procedural sky is its own entity (was a camera component). Its `on_add` hook parks
     // it at -Y·inner_radius so the planet sits under the world; the camera opts in via
@@ -783,7 +784,7 @@ fn drive_dof_focus(
     dof.focal = target;
 }
 
-fn setup_sun(mut commands: Commands) {
+fn setup_sun(mut commands: Commands, startup: Res<crate::quality::StartupRenderConfig>) {
     commands.spawn((
         Sun,
         DirectionalLight {
@@ -811,7 +812,7 @@ fn setup_sun(mut commands: Commands) {
         // wants a big warm ball: ~6× earth size, overexposed so Bloom halos it into a glow.
         SunDisk { angular_size: 0.060, intensity: 1.6 },
         CascadeShadowConfigBuilder {
-            num_cascades: 4,
+            num_cascades: startup.shadow_cascades,
             // 150 (was 75): with the elevated follow-cam most of the visible frame sits 60–150
             // tiles out, and a 75-tile cutoff left the whole mid/far ground shadowless — flat.
             // Long tree shadows ARE the scene's depth cue; the linear fog only fully wins by
@@ -842,7 +843,7 @@ fn setup_sun(mut commands: Commands) {
             ..default()
         },
         CascadeShadowConfigBuilder {
-            num_cascades: 4,
+            num_cascades: startup.shadow_cascades,
             maximum_distance: 150.0,
             first_cascade_far_bound: 12.0,
             ..default()
@@ -927,4 +928,43 @@ fn f32_to_f16_le(value: f32) -> [u8; 2] {
         sign | ((exp as u16) << 10) | ((mantissa >> 13) as u16)
     };
     half.to_le_bytes()
+}
+
+#[cfg(test)]
+mod shadow_settings_tests {
+    use super::*;
+    use crate::quality::{GraphicsQuality, GraphicsSettings, ShadowLevel, preset_settings};
+
+    #[test]
+    fn shadows_off_survives_day_night_and_pause_updates() {
+        let mut settings = preset_settings(GraphicsQuality::Low);
+        settings.shadows = ShadowLevel::Off;
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<GlobalAmbientLight>()
+            .init_resource::<crate::visual::VisualSettings>()
+            .insert_resource(State::new(AppState::Playing))
+            .insert_resource(SkyClock { t: 0.25, paused: true, day_secs: 150.0 })
+            .insert_resource(settings)
+            .add_systems(Update, advance_sky);
+        let sun = app.world_mut().spawn((Sun, DirectionalLight::default(), Transform::default())).id();
+        let moon = app.world_mut().spawn((Moon, DirectionalLight::default(), Transform::default())).id();
+        for state in [AppState::Playing, AppState::Paused] {
+            app.insert_resource(State::new(state));
+            for t in [0.25, 0.75, 0.0, 0.5] {
+                app.world_mut().resource_mut::<SkyClock>().t = t;
+                app.update();
+                assert!(!app.world().get::<DirectionalLight>(sun).unwrap().shadow_maps_enabled);
+                assert!(!app.world().get::<DirectionalLight>(moon).unwrap().shadow_maps_enabled);
+            }
+        }
+        app.world_mut().resource_mut::<GraphicsSettings>().shadows = ShadowLevel::Low;
+        for (t, sun_enabled) in [(0.25, true), (0.75, false)] {
+            app.world_mut().resource_mut::<SkyClock>().t = t;
+            app.update();
+            assert_eq!(app.world().get::<DirectionalLight>(sun).unwrap().shadow_maps_enabled, sun_enabled);
+            assert_eq!(app.world().get::<DirectionalLight>(moon).unwrap().shadow_maps_enabled, !sun_enabled);
+        }
+    }
 }

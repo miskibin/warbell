@@ -550,16 +550,29 @@ fn quad_pose(c: &QuadConfig, d: &QuadDrive, now: f32) -> P {
 
 /// Pose every quadruped: one [`QuadPose`] per root, written onto its [`QuadPart`]s. Ungated (like
 /// the hero/biped animators) so a frozen/paused world still draws its animals posed.
+/// Match the biped/legacy animal animator's camera-distance cutoff. A distant rig keeps its last
+/// pose and resumes from the live drive when the camera returns; its simulation still runs.
 pub fn animate_quad(
     time: Res<Time>,
-    drives: Query<(Entity, &QuadDrive)>,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    drives: Query<(Entity, &QuadDrive, Option<&GlobalTransform>)>,
     mut parts: Query<(&QuadPart, &mut Transform)>,
     // Reused across frames so a herd's worth of animals doesn't heap-alloc a fresh map every frame.
     mut poses: Local<HashMap<Entity, QuadPose>>,
 ) {
+    let _profile = crate::gameplay_profile::scope(crate::gameplay_profile::Metric::QuadrupedAnimation);
     let now = time.elapsed_secs();
+    let cam_p = cam.iter().next().map(|g| g.translation());
     poses.clear();
-    poses.extend(drives.iter().map(|(e, d)| (e, quad_pose(&quad_config(d.species), d, now).finish())));
+    poses.extend(drives.iter().filter_map(|(e, d, gt)| {
+        // Newly spawned roots may not have a propagated transform yet: pose them normally.
+        if let (Some(cp), Some(gt)) = (cam_p, gt) {
+            if gt.translation().distance_squared(cp) > 70.0 * 70.0 {
+                return None;
+            }
+        }
+        Some((e, quad_pose(&quad_config(d.species), d, now).finish()))
+    }));
     for (part, mut tf) in &mut parts {
         if let Some(pose) = poses.get(&part.root) {
             let (rot, t) = pose.get(part.joint);

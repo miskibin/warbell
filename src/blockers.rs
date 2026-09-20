@@ -53,8 +53,12 @@ fn tile(wx: f32, wz: f32) -> (i32, i32) {
 /// than under-covering it (the exact OBB test at query time still rejects false candidates).
 fn box_tile_range(cx: f32, cz: f32, hw: f32, hd: f32) -> impl Iterator<Item = (i32, i32)> {
     let diag = (hw * hw + hd * hd).sqrt();
-    let (tx0, tz0) = tile(cx - diag, cz - diag);
-    let (tx1, tz1) = tile(cx + diag, cz + diag);
+    // The point query reads only its own tile. Keep the broad phase conservative even when
+    // f32 rotation/translation rounds a boundary point just outside the ideal bounding circle.
+    // This only adds candidates; the unchanged exact OBB test still decides solidity.
+    let pad = 8.0 * f32::EPSILON * (cx.abs().max(cz.abs()) + diag + 1.0);
+    let (tx0, tz0) = tile(cx - diag - pad, cz - diag - pad);
+    let (tx1, tz1) = tile(cx + diag + pad, cz + diag + pad);
     (tx0..=tx1).flat_map(move |tx| (tz0..=tz1).map(move |tz| (tx, tz)))
 }
 
@@ -218,44 +222,23 @@ pub fn is_blocked(wx: f32, wz: f32) -> bool {
             }
         }
     }
-    let buckets = BOX_BUCKETS.read().unwrap();
-    let (tx, tz) = tile(wx, wz);
-    for dx in -1..=1 {
-        for dz in -1..=1 {
-            if let Some(bucket) = buckets.get(&(tx + dx, tz + dz)) {
-                for b in bucket {
-                    let (ex, ez) = (wx - b[0], wz - b[1]);
-                    let (cos, sin) = (b[4], b[5]);
-                    // Rotate the query into the box's local frame (inverse Y-rotation), then AABB-test.
-                    let lx = cos * ex - sin * ez;
-                    let lz = sin * ex + cos * ez;
-                    if lx.abs() <= b[2] && lz.abs() <= b[3] {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
+    box_at(wx, wz)
 }
 
 /// True if `(wx, wz)` lies inside any solid **box** obstacle (walls / towers / buildings / camp
 /// structures) — the circle obstacles (tree trunks, clutter) are ignored. Backs [`wall_between`].
 fn box_at(wx: f32, wz: f32) -> bool {
     let buckets = BOX_BUCKETS.read().unwrap();
-    let (tx, tz) = tile(wx, wz);
-    for dx in -1..=1 {
-        for dz in -1..=1 {
-            if let Some(bucket) = buckets.get(&(tx + dx, tz + dz)) {
-                for b in bucket {
-                    let (ex, ez) = (wx - b[0], wz - b[1]);
-                    let (cos, sin) = (b[4], b[5]);
-                    let lx = cos * ex - sin * ez;
-                    let lz = sin * ex + cos * ez;
-                    if lx.abs() <= b[2] && lz.abs() <= b[3] {
-                        return true;
-                    }
-                }
+    // Unlike circles, add_obb indexes a box into EVERY tile its bounds overlap. Searching
+    // neighboring buckets repeats the same boxes and performs eight unnecessary hash lookups.
+    if let Some(bucket) = buckets.get(&tile(wx, wz)) {
+        for b in bucket {
+            let (ex, ez) = (wx - b[0], wz - b[1]);
+            let (cos, sin) = (b[4], b[5]);
+            let lx = cos * ex - sin * ez;
+            let lz = sin * ex + cos * ez;
+            if lx.abs() <= b[2] && lz.abs() <= b[3] {
+                return true;
             }
         }
     }
@@ -300,6 +283,87 @@ pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_tile_box_queries_match_unbucketed_geometry() {
+        let _g = TEST_LOCK.lock().unwrap();
+        // Axis-aligned, diagonal, very thin, large, negative coordinates, and a diagonal
+        // corner whose circumscribing radius lands on a tile boundary.
+        let fixtures = [
+            (0.0_f32, 0.0_f32, 1.0_f32, 1.0_f32, 0.0_f32),
+            (-2.0, -3.0, 0.03, 3.2, 0.63),
+            (4.9999, -5.0001, 4.0, 0.15, 1.2),
+            (-8.0, 7.0, 6.0, 4.0, -0.83),
+            (0.0, 0.0, std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_PI_4),
+        ];
+        for (cx, cz, hw, hd, yaw) in fixtures {
+            reset();
+            add_obb(cx, cz, hw, hd, yaw);
+            let (cos, sin) = (yaw.cos(), yaw.sin());
+            // Full geometry oracle: it has no tile index or neighbor lookup to share a miss.
+            let check = |x: f32, z: f32| {
+                let (dx, dz) = (x - cx, z - cz);
+                let expected = (cos * dx - sin * dz).abs() <= hw
+                    && (sin * dx + cos * dz).abs() <= hd;
+                assert_eq!(box_at(x, z), expected, "box-only point ({x}, {z}), fixture {cx},{cz},{hw},{hd},{yaw}");
+                assert_eq!(is_blocked(x, z), expected, "combined point ({x}, {z})");
+            };
+            let radius = (hw * hw + hd * hd).sqrt().ceil() as i32 + 1;
+            // Tile boundaries plus points immediately on either side, including negative tiles.
+            for ix in -radius..=radius {
+                for iz in -radius..=radius {
+                    for ox in [-0.0001_f32, 0.0, 0.0001] {
+                        for oz in [-0.0001_f32, 0.0, 0.0001] {
+                            check(cx.floor() + ix as f32 + ox, cz.floor() + iz as f32 + oz);
+                        }
+                    }
+                }
+            }
+            // Rotated corners and side midpoints, just inside/on/outside the actual box.
+            for lx in [-hw, 0.0, hw] {
+                for lz in [-hd, 0.0, hd] {
+                    for scale in [0.9999_f32, 1.0, 1.0001] {
+                        check(cx + (cos * lx + sin * lz) * scale,
+                              cz + (-sin * lx + cos * lz) * scale);
+                    }
+                }
+            }
+        }
+        reset();
+    }
+
+    #[test]
+    fn box_queries_follow_gate_changes_and_reset_without_stale_results() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset();
+        add_box(0.0, 0.0, 2.0, 0.2);
+        add_obb(5.0, 5.0, 0.8, 2.0, 0.8);
+        assert!(is_blocked(0.0, 0.0));
+        assert!(wall_between(0.0, -1.0, 0.0, 1.0));
+        remove_box_near(0.0, 0.0, 0.1);
+        assert!(!is_blocked(0.0, 0.0));
+        assert!(!wall_between(0.0, -1.0, 0.0, 1.0));
+        assert!(box_at(5.0, 5.0), "opening a gate must preserve other boxes");
+        add_box(0.0, 0.0, 2.0, 0.2);
+        assert!(wall_between(0.0, -1.0, 0.0, 1.0));
+        reset();
+        assert!(!is_blocked(0.0, 0.0));
+        assert!(!box_at(5.0, 5.0));
+    }
+
+    #[test]
+    fn circle_queries_still_check_neighbor_tiles() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset();
+        // Center in tile (-1, -1), query in tile (0, 0).
+        add(-0.05, -0.05, 0.4);
+        assert!(is_blocked(0.05, 0.05));
+        assert!(!box_at(0.05, 0.05), "circle blockers must not enter wall-only queries");
+        assert!(!is_blocked(0.4, 0.4));
+        remove_at(-0.05, -0.05);
+        assert!(!is_blocked(0.05, 0.05));
+        reset();
+    }
 
     /// A wall between attacker and target blocks the attack line-of-sight ([`wall_between`]),
     /// while a clear diagonal past the wall's end does not, and endpoints flush against the wall

@@ -49,6 +49,7 @@ mod critters;
 mod cursor;
 mod debug_panel;
 mod debug_stats;
+mod gameplay_profile;
 mod decor;
 mod demo;
 mod defenses;
@@ -281,6 +282,7 @@ fn main() {
         // quality.rs (`god_rays`); same custom-post-pass family as dof/outline. Standalone call
         // because the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(godrays::GodRaysPlugin)
+        .add_plugins(gameplay_profile::GameplayProfilePlugin)
         // Experimental photoreal trees (`FOREST_PHOTOTREES=1`) — builds the procedural tree meshes
         // + foliage atlas at PreStartup so the world build can spawn them. A no-op unless the env
         // var is set. Standalone call for the same reason as godrays: the tuples above are at the

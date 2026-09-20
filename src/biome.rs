@@ -709,6 +709,33 @@ fn no_grass() -> bool {
     *ON.get_or_init(|| std::env::var("FOREST_NOGRASS").is_ok())
 }
 
+/// Stable, nested cosmetic-density mask. This uses no scatter RNG: lowering density must
+/// never move a tree, resource, blocker, or even another surviving blade of grass. Hashing
+/// world coordinates also makes the selection independent of HashMap/chunk iteration order.
+fn keep_cover(world: Vec3, fraction: f32) -> bool {
+    if fraction >= 1.0 {
+        return true;
+    }
+    if fraction <= 0.0 {
+        return false;
+    }
+    let mut h = world.x.to_bits().wrapping_mul(0x9e37_79b9)
+        ^ world.z.to_bits().rotate_left(16)
+        ^ 0xa511_e9b3;
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7feb_352d);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846c_a68b);
+    h ^= h >> 16;
+    // Use 24 bits so conversion to f32 is exact and the sample stays strictly below 1.
+    let sample = (h >> 8) as f32 / 16_777_216.0;
+    sample < fraction
+}
+
+fn thin_cover(cover: &mut Vec<PendingProp>, center: Vec3, fraction: f32) {
+    cover.retain(|prop| keep_cover(center + prop.transform.translation, fraction));
+}
+
 fn spawn_chunks(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -729,20 +756,11 @@ fn spawn_chunks(
         end_margin: 62.0..62.0,   // abrupt cutoff at 62 world units — inside the fog ramp so it hides
         use_aabb: true,
     };
+    let mut cover_chunks = Vec::new();
     for (key, bucket) in chunks {
         let center = chunk_center(key);
-        if let Some(mesh) = merge_props(bucket.cover).filter(|_| !no_grass()) {
-            let mut e = commands.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(mat.clone()),
-                Transform::from_translation(center),
-                bevy::light::NotShadowCaster,
-                GroundCoverChunk,
-                BiomeEntity,
-            ));
-            if scatter_cull_enabled() {
-                e.insert(cover_range.clone());
-            }
+        if !no_grass() && !bucket.cover.is_empty() {
+            cover_chunks.push((center, bucket.cover));
         }
         if let Some(mesh) = merge_props(bucket.props) {
             let mut e = commands.spawn((
@@ -770,6 +788,41 @@ fn spawn_chunks(
                 ));
             }
         }
+    }
+
+    // The generator deliberately has no ECS resource arguments. Read the immutable startup
+    // snapshot in a deferred command, after ALL placement/random rolls have already happened.
+    // Only cosmetic cover is filtered, before merging/uploading: the GPU really receives fewer
+    // triangles. Ordinary props, choppable trees and their collision remain untouched. This
+    // queued command retains ordering with later landmark-clear commands in the build pipeline.
+    if !cover_chunks.is_empty() {
+        let mat = mat.clone();
+        commands.queue(move |world: &mut World| {
+            let fraction = world.resource::<crate::quality::StartupRenderConfig>().vegetation.fraction();
+            let mut generated = 0;
+            let mut retained = 0;
+            let mut vertices = 0;
+            for (center, mut cover) in cover_chunks {
+                generated += cover.len();
+                thin_cover(&mut cover, center, fraction);
+                retained += cover.len();
+                let Some(mesh) = merge_props(cover) else { continue };
+                vertices += mesh.count_vertices();
+                let handle = world.resource_mut::<Assets<Mesh>>().add(mesh);
+                let mut entity = world.spawn((
+                    Mesh3d(handle),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::from_translation(center),
+                    bevy::light::NotShadowCaster,
+                    GroundCoverChunk,
+                    BiomeEntity,
+                ));
+                if scatter_cull_enabled() {
+                    entity.insert(cover_range.clone());
+                }
+            }
+            info!("ground cover: retained {retained}/{generated} props at {fraction:.0}% density; {} triangles", vertices / 3, fraction = fraction * 100.0);
+        });
     }
 }
 
@@ -1178,4 +1231,64 @@ fn cardinal(r: &mut Rng) -> Quat {
 
 fn yaw(r: &mut Rng) -> Quat {
     Quat::from_rotation_y(r.next() * std::f32::consts::TAU)
+}
+
+#[cfg(test)]
+mod cover_density_tests {
+    use super::*;
+
+    #[test]
+    fn density_selection_is_stable_nested_and_spatially_distributed() {
+        let points: Vec<_> = (0..4096)
+            .map(|i| Vec3::new((i % 64) as f32 - 31.75, 0.0, (i / 64) as f32 - 31.375))
+            .collect();
+        let low: Vec<_> = points.iter().map(|&p| keep_cover(p, 0.35)).collect();
+        let medium: Vec<_> = points.iter().map(|&p| keep_cover(p, 0.65)).collect();
+        for (i, &point) in points.iter().enumerate() {
+            assert_eq!(low[i], keep_cover(point, 0.35));
+            assert!(!low[i] || medium[i], "lower density must be a subset");
+            assert!(keep_cover(point, 1.0));
+            assert!(!keep_cover(point, 0.0));
+        }
+        // Check both the intended thinning and gross spatial/hash bias across +/- coordinates.
+        let low_count = low.iter().filter(|&&keep| keep).count();
+        let medium_count = medium.iter().filter(|&&keep| keep).count();
+        assert!((1200..1650).contains(&low_count), "low retained {low_count}");
+        assert!((2400..2900).contains(&medium_count), "medium retained {medium_count}");
+        let reverse: Vec<_> = points.iter().rev().map(|&p| keep_cover(p, 0.35)).collect();
+        assert_eq!(low.iter().rev().copied().collect::<Vec<_>>(), reverse);
+    }
+
+    #[test]
+    fn thinning_reduces_uploaded_geometry_without_moving_survivors() {
+        let center = chunk_center((-1, 2));
+        let mesh = Mesh::from(Cuboid::new(0.1, 0.2, 0.1));
+        let make_cover = || {
+            (0..256).map(|i| PendingProp {
+                mesh: mesh.clone(),
+                transform: Transform::from_xyz(
+                    (i % 16) as f32 - 7.75,
+                    0.5,
+                    (i / 16) as f32 - 7.375,
+                ),
+            }).collect::<Vec<_>>()
+        };
+        let original = make_cover();
+        let expected: Vec<_> = original.iter()
+            .filter(|p| keep_cover(center + p.transform.translation, 0.35))
+            .map(|p| p.transform)
+            .collect();
+        let full_vertices = merge_props(original).unwrap().count_vertices();
+        let mut sparse = make_cover();
+        thin_cover(&mut sparse, center, 0.35);
+        assert_eq!(sparse.iter().map(|p| p.transform).collect::<Vec<_>>(), expected);
+        assert!(!sparse.is_empty() && sparse.len() < 256);
+        let kept = sparse.len();
+        let sparse_vertices = merge_props(sparse).unwrap().count_vertices();
+        assert_eq!(sparse_vertices * 256, full_vertices * kept);
+        assert!(sparse_vertices < full_vertices);
+        let mut empty = make_cover();
+        thin_cover(&mut empty, center, 0.0);
+        assert!(merge_props(empty).is_none());
+    }
 }
