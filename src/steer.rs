@@ -53,6 +53,20 @@ pub fn can_stand(x: f32, z: f32, r: f32, cur_y: f32) -> bool {
 /// True if a step of `dist` along `dir` from `pos` keeps the footprint on safe ground and clear
 /// of props (centre + lead point).
 pub fn step_clear(pos: Vec2, dir: Vec2, dist: f32, body_r: f32, cur_y: f32) -> bool {
+    let blocks = crate::blockers::read();
+    step_clear_with(&blocks, pos, dir, dist, body_r, cur_y)
+}
+
+/// [`step_clear`] against a blocker view the caller already holds, so a 9-heading steering fan
+/// pays for one lock instead of one per sample.
+fn step_clear_with(
+    blocks: &crate::blockers::BlockView,
+    pos: Vec2,
+    dir: Vec2,
+    dist: f32,
+    body_r: f32,
+    cur_y: f32,
+) -> bool {
     let np = pos + dir * dist;
     let lead = np + dir * body_r;
     if !can_stand(np.x, np.y, body_r, cur_y) {
@@ -60,10 +74,10 @@ pub fn step_clear(pos: Vec2, dir: Vec2, dist: f32, body_r: f32, cur_y: f32) -> b
     }
     // Already inside a blocker (e.g. a building raised over the spot the mover was standing
     // on): waive the prop test so it can walk out — normal collision resumes once clear.
-    if crate::blockers::is_blocked(pos.x, pos.y) {
+    if blocks.is_blocked(pos.x, pos.y) {
         return true;
     }
-    !crate::blockers::is_blocked(np.x, np.y) && !crate::blockers::is_blocked(lead.x, lead.y)
+    !blocks.is_blocked(np.x, np.y) && !blocks.is_blocked(lead.x, lead.y)
 }
 
 /// Wrap an angle to (-π, π].
@@ -104,6 +118,8 @@ pub fn advance(
     }
     let base = to / dist;
     let cur_dir = Vec2::new(facing.sin(), facing.cos());
+    // One lock for the whole fan (up to 9 headings × 3 point tests) plus the committed step.
+    let blocks = crate::blockers::read();
 
     // Among the clear escape headings pick the one scored by goal-alignment PLUS a continuity
     // bias toward the current heading, so the mover COMMITS to one way around an obstacle
@@ -112,7 +128,7 @@ pub fn advance(
     let mut best_score = f32::NEG_INFINITY;
     for off in [0.0f32, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.7, -1.7] {
         let dir = Vec2::from_angle(off).rotate(base);
-        if step_clear(pos, dir, step_dist, body_r, cur_y) {
+        if step_clear_with(&blocks, pos, dir, step_dist, body_r, cur_y) {
             let score = dir.dot(base) + 0.6 * dir.dot(cur_dir);
             if score > best_score {
                 best_score = score;
@@ -127,7 +143,7 @@ pub fn advance(
     let want = dir.x.atan2(dir.y);
     let new_facing = facing + wrap_pi(want - facing).clamp(-max_turn_dt, max_turn_dt);
     let fdir = Vec2::new(new_facing.sin(), new_facing.cos());
-    if step_clear(pos, fdir, step_dist, body_r, cur_y) {
+    if step_clear_with(&blocks, pos, fdir, step_dist, body_r, cur_y) {
         Some(Step { facing: new_facing, pos: pos + fdir * step_dist, moving: true })
     } else {
         Some(Step { facing: new_facing, pos, moving: false })
@@ -175,9 +191,10 @@ pub fn advance_direct(
     let want = to.x.atan2(to.y);
     let new_facing = facing + wrap_pi(want - facing).clamp(-max_turn_dt, max_turn_dt);
     let fdir = Vec2::new(new_facing.sin(), new_facing.cos());
+    let blocks = crate::blockers::read();
     // Same gate as the near path — ground, step height AND props/walls/buildings; else pivot in
     // place (turn toward the goal, don't move) so the caller's stall clock can notice and re-plan.
-    if step_clear(pos, fdir, step_dist, body_r, cur_y) {
+    if step_clear_with(&blocks, pos, fdir, step_dist, body_r, cur_y) {
         Step { facing: new_facing, pos: pos + fdir * step_dist, moving: true }
     } else {
         Step { facing: new_facing, pos, moving: false }
