@@ -34,16 +34,21 @@ fn tile_world_centre(ix: i32, iz: i32) -> (f32, f32) {
 /// per-`find_path` `RefCell<HashMap>` memo (which re-derived every tile once per search —
 /// measured at ~208ms for one long-haul stone-miner search before any caching existed).
 /// Blockers/bridges stay live queries: walls ARE built and razed mid-run.
-#[derive(Default)]
-pub struct ForestGrid;
+///
+/// `blocks` is one read lock for the whole search. A* calls [`crate::blockers::BlockView::is_blocked`]
+/// on every neighbour; taking that lock per sample was most of the remaining query cost once the
+/// obstacles themselves were tile-bucketed.
+pub struct ForestGrid<'a> {
+    blocks: &'a crate::blockers::BlockView,
+}
 
-impl ForestGrid {
+impl ForestGrid<'_> {
     fn height_at(&self, ix: i32, iz: i32) -> Option<f32> {
         crate::worldmap::tile_centre_ground(ix, iz)
     }
 }
 
-impl Grid for ForestGrid {
+impl Grid for ForestGrid<'_> {
     fn cols(&self) -> i32 {
         COLS
     }
@@ -61,12 +66,12 @@ impl Grid for ForestGrid {
     }
     fn obstacle_tile(&self, ix: i32, iz: i32) -> bool {
         let (wx, wz) = tile_world_centre(ix, iz);
-        blockers::is_blocked(wx, wz) // a prop / keep / wall box sits on this tile centre
+        self.blocks.is_blocked(wx, wz) // a prop / keep / wall box sits on this tile centre
     }
     fn wall_at(&self, px: f64, pz: f64) -> bool {
         // Core passes continuous coords in ITS grid space (tile+0.5); convert back to forest
         // world. This edge-midpoint test rejects steps crossing a wall while leaving gaps open.
-        blockers::is_blocked(px as f32 - GX, pz as f32 - GZ)
+        self.blocks.is_blocked(px as f32 - GX, pz as f32 - GZ)
     }
     fn can_step(&self, fx: i32, fz: i32, tx: i32, tz: i32) -> bool {
         // Effective walk height: terrain, or a bridge deck over the river. Without the deck
@@ -100,7 +105,8 @@ pub fn path_to(from: Vec2, to: Vec2) -> Vec<Vec2> {
 /// stone miner's castle→Rocky haul (~100 tiles + river detours). On an unreachable goal A*
 /// drains the open set and exits early, so a generous budget only costs when a route exists.
 pub fn path_to_budget(from: Vec2, to: Vec2, max_nodes: u32) -> Vec<Vec2> {
-    find_path(&ForestGrid::default(), world_to_pathpoint(from.x, from.y), world_to_pathpoint(to.x, to.y), max_nodes)
+    let blocks = blockers::read();
+    find_path(&ForestGrid { blocks: &blocks }, world_to_pathpoint(from.x, from.y), world_to_pathpoint(to.x, to.y), max_nodes)
         .into_iter()
         .map(|p| Vec2::new(p.x as f32 - GX, p.z as f32 - GZ))
         .collect()
