@@ -28,6 +28,7 @@ use std::f32::consts::PI;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
+use crate::creature::{make_viewmodel_material, CreatureMaterial};
 use crate::game_state::{AppState, CampaignOnly};
 use crate::inventory::Inventory;
 use crate::ui::theme::rgb;
@@ -35,7 +36,7 @@ use crate::ui::theme::rgb;
 use super::camera::{spring, FirstPerson, OrbitCam, FP_FOV_DEG};
 use super::combat::{CHARGE_GRACE, CHARGE_THRESHOLD, HEAVY_VARIANT};
 use super::model::{self, FOREARM_LEN};
-use super::{Hero, HeroHealth, HeroMaterial, PlayMode, PlayerRes, HERO_SCALE};
+use super::{Hero, HeroHealth, PlayMode, PlayerRes, HERO_SCALE};
 
 // ── Components ─────────────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,9 @@ pub(crate) enum FpPart {
 /// Uniform scale of the shield relative to its third-person size. The heater is ~0.63u tall at
 /// hero scale — held 0.7u from the eye that would fill three quarters of the frame.
 const SHIELD_SCALE: f32 = 0.62;
+/// Strength (lux-equivalent) of the camera-locked key light on the viewmodel material — see
+/// `creature.wgsl`. The sun is 14 100 lux at noon, so this is a soft fill, not a second sun.
+const VM_KEY_LUX: f32 = 3200.0;
 /// Wrist attachment points, in each held item's own space (rig units): just below the fist on
 /// the sword grip; behind the plate on the shield strap.
 const WRIST_SWORD: Vec3 = Vec3::new(0.0, 0.0, -0.02);
@@ -121,10 +125,10 @@ fn sword_tuck() -> Kf {
 
 // Shield hand.
 fn shield_carry() -> Kf {
-    kf(-1.02, -1.08, 0.56, [0.22, 1.0, -0.10], -1.05)
+    kf(-0.90, -0.94, 0.56, [0.22, 1.0, -0.10], -1.00)
 }
 fn shield_ready() -> Kf {
-    kf(-0.90, -0.94, 0.58, [0.18, 1.0, -0.15], -0.80)
+    kf(-0.78, -0.82, 0.58, [0.18, 1.0, -0.15], -0.78)
 }
 fn shield_block() -> Kf {
     kf(-0.40, -0.30, 0.76, [0.10, 1.0, 0.10], 0.16)
@@ -306,13 +310,13 @@ fn approach(cur: &mut f32, target: f32, rate: f32, dt: f32) {
 pub(crate) fn spawn_viewmodel(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mat: Option<Res<HeroMaterial>>,
+    mut mats: ResMut<Assets<CreatureMaterial>>,
     inv: Option<Res<Inventory>>,
     cam_q: Query<Entity, With<Camera3d>>,
     root_q: Query<Entity, With<FpRoot>>,
     mut last: Local<Option<(Option<String>, Option<String>)>>,
+    mut material: Local<Option<Handle<CreatureMaterial>>>,
 ) {
-    let Some(mat) = mat else { return };
     let have = root_q.single().ok();
     let changed = inv.as_ref().is_some_and(|i| i.is_changed());
     if have.is_some() && !changed {
@@ -336,7 +340,9 @@ pub(crate) fn spawn_viewmodel(
     let shield = meshes.add(vm.shield);
     let fist = meshes.add(vm.fist);
     let forearm = meshes.add(vm.forearm);
-    let m = mat.0.clone();
+    let m = material
+        .get_or_insert_with(|| make_viewmodel_material(&mut mats, VM_KEY_LUX))
+        .clone();
 
     let leaf = |mesh: Handle<Mesh>, xf: Transform| {
         (Mesh3d(mesh), MeshMaterial3d(m.clone()), xf, NotShadowCaster)

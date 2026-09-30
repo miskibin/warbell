@@ -119,7 +119,7 @@ fn xyz(x: f32, y: f32, z: f32) -> Quat {
 fn surf_for(c: u32) -> Surf {
     match c {
         SKIRT | BELT | GRIP | PLUME | DARKCOAT | CHEST | TABARD | GAMBESON => Surf::Cloth,
-        PLEATHER | PLEATHER_DK | PTABARD | PTABARD_DK | PGLOVE | PGRIP | PDARK | PSHIELD => Surf::Cloth,
+        PLEATHER | PLEATHER_DK | PTABARD | PTABARD_DK | PGLOVE | PGRIP | PDARK | PSHIELD | FP_GLOVE | FP_GLOVE_SEAM => Surf::Cloth,
         SKIN => Surf::Skin,
         _ => Surf::Metal,
     }
@@ -778,6 +778,11 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightMeshes {
     }
 }
 
+/// First-person glove leather: the third-person `PGLOVE` (near-black) reads as a featureless hole
+/// when it fills the corner of the frame, so the viewmodel's gloves are a lighter worn brown.
+const FP_GLOVE: u32 = 0x54463a;
+const FP_GLOVE_SEAM: u32 = 0x32291f;
+
 // ── First-person viewmodel ─────────────────────────────────────────────────────────────
 // The FP hands are NOT the third-person rig's arms. They are a purpose-built set of props parented
 // to the camera (`super::viewmodel`), each authored so its own origin is the natural hinge —
@@ -790,7 +795,7 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightMeshes {
 /// (`FOREARM_LEN`). Rig units (× `HERO_SCALE` like every other hero mesh).
 fn fp_forearm_mesh(s: &Skin) -> Mesh {
     group(vec![
-        at(rbx(0.205, 0.07, 0.21, 0.02), v(0.0, -0.01, 0.0), PGLOVE), // glove cuff
+        at(rbx(0.205, 0.07, 0.21, 0.02), v(0.0, -0.01, 0.0), FP_GLOVE), // glove cuff
         at(tplate(0.165, 0.40, 0.175, 1.28, 1.22, 0.035), v(0.0, 0.05, 0.0), s.metal), // vambrace
         at(rbx(0.2, 0.028, 0.205, 0.008), v(0.0, 0.24, 0.0), s.trim), // trim band
         at(tplate(0.04, 0.34, 0.03, 1.0, 1.0, 0.01), v(0.0, 0.08, 0.092), s.metal_lt), // bright ridge down the outer plate
@@ -808,13 +813,13 @@ pub(crate) const FOREARM_LEN: f32 = 1.17;
 /// on the lower grip so the crossguard clears above it. Shared by the sword hand and the shield hand.
 fn fp_fist_mesh(s: &Skin) -> Mesh {
     group(vec![
-        at(rbx(0.165, 0.125, 0.17, 0.045), v(0.0, -0.005, 0.0), PGLOVE), // palm + curled fingers
-        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.024, 0.0), PDARK), // finger seams
-        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.056, 0.0), PDARK),
-        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.088, 0.0), PDARK),
+        at(rbx(0.165, 0.125, 0.17, 0.045), v(0.0, -0.005, 0.0), FP_GLOVE), // palm + curled fingers
+        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.024, 0.0), FP_GLOVE_SEAM), // finger seams
+        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.056, 0.0), FP_GLOVE_SEAM),
+        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.088, 0.0), FP_GLOVE_SEAM),
         at(tplate(0.12, 0.085, 0.045, 0.92, 0.9, 0.012), v(0.0, 0.01, -0.094), s.metal), // back-of-hand plate
         at(rbx(0.15, 0.03, 0.05, 0.012), v(0.0, 0.104, 0.0), s.metal_dk), // knuckle guard
-        at(rbx(0.05, 0.085, 0.07, 0.02), v(-0.095, 0.03, 0.03), PGLOVE), // thumb
+        at(rbx(0.05, 0.085, 0.07, 0.02), v(-0.095, 0.03, 0.03), FP_GLOVE), // thumb
     ])
 }
 

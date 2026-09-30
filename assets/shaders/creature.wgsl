@@ -8,6 +8,7 @@
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     mesh_functions,
+    mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
 }
 
@@ -133,6 +134,20 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var out: FragmentOutput;
     if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
         out.color = apply_pbr_lighting(pbr_input);
+        // Camera-space key light for the first-person viewmodel (params.w > 0 opts in): the world's
+        // sun/IBL knows nothing about the lens, so facing the sun (or standing in shade) would
+        // silhouette the hands and weapon. This lights them from up-left-front of the camera at a
+        // fixed strength, exposure-scaled like every other light, so they always read.
+        let fill = creature.params.w;
+        if (fill > 0.0) {
+            let cam_right = view.world_from_view[0].xyz;
+            let cam_up = view.world_from_view[1].xyz;
+            let cam_back = view.world_from_view[2].xyz;
+            let to_key = normalize(-0.55 * cam_right + 0.75 * cam_up + 0.6 * cam_back);
+            let half_lambert = clamp(dot(normalize(pbr_input.N), to_key) * 0.5 + 0.5, 0.0, 1.0);
+            let key = fill * view.exposure * half_lambert * half_lambert;
+            out.color = vec4<f32>(out.color.rgb + pbr_input.material.base_color.rgb * key, out.color.a);
+        }
     } else {
         out.color = pbr_input.material.base_color;
     }

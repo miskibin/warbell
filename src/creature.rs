@@ -18,7 +18,7 @@ pub type CreatureMaterial = ExtendedMaterial<StandardMaterial, CreatureExt>;
 #[derive(Clone, Copy, ShaderType, Debug)]
 pub struct CreatureParams {
     /// x = texture strength (luminance ±), y = micro-relief (normal perturb),
-    /// z = metal spec lift, w = spare.
+    /// z = metal spec lift, w = camera-space key-light lux (first-person viewmodel only; 0 = off).
     pub params: Vec4,
 }
 
@@ -106,6 +106,12 @@ pub fn make_hero_material(mats: &mut Assets<CreatureMaterial>) -> Handle<Creatur
     // Flat solid colours to match the previs (texture-strength 0 ⇒ no weave/grain/noise; relief 0 ⇒
     // no normal perturb). A whisper of metal sheen (spec_lift) keeps steel from going dead-matte.
     make_creature_material_with(mats, Vec4::new(0.0, 0.0, 0.12, 0.0), 0.7)
+}
+
+/// The first-person viewmodel's material: the hero's matte-steel look plus a camera-locked key light
+/// (`fill_lux`, see `creature.wgsl`) so the hands and weapon stay readable whichever way the sun lies.
+pub fn make_viewmodel_material(mats: &mut Assets<CreatureMaterial>, fill_lux: f32) -> Handle<CreatureMaterial> {
+    make_creature_material_with(mats, Vec4::new(0.0, 0.0, 0.12, fill_lux), 0.7)
 }
 
 pub struct CreaturePlugin;
