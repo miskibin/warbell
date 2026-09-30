@@ -453,8 +453,14 @@ fn drive_hp_bars(
     >,
     mut bars: Query<(Entity, &HpBar, &mut Transform, &mut Visibility, &Children)>,
     mut fgs: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), (With<HpBarFg>, Without<HpBar>)>,
+    reticle_target: Option<Res<crate::player::ReticleTarget>>,
+    fp: Option<Res<crate::player::FirstPerson>>,
 ) {
     let now = time.elapsed_secs();
+    let in_fp = fp.is_some_and(|f| f.active && f.blend > 0.5);
+    // In first person the ringed foe's health lives under the crosshair (`viewmodel::sync_reticle`),
+    // so its world-space bar — which would stripe across its chest right behind the reticle — hides.
+    let reticle_foe = reticle_target.and_then(|t| t.0);
     let Ok(cam_tf) = cam_q.single() else { return };
     let cam_pos = cam_tf.translation();
     for (bar_e, bar, mut tf, mut vis, children) in &mut bars {
@@ -471,8 +477,8 @@ fn drive_hp_bars(
                 continue;
             }
         };
-        if dying.is_some() {
-            vis.set_if_neq(Visibility::Hidden); // no bar over a crumpling corpse
+        if dying.is_some() || reticle_foe == Some(bar.ork) {
+            vis.set_if_neq(Visibility::Hidden); // no bar over a crumpling corpse / the reticle's foe
             continue;
         }
         let ratio = (cur / max).clamp(0.0, 1.0);
@@ -491,13 +497,18 @@ fn drive_hp_bars(
             vis.set_if_neq(Visibility::Hidden);
             continue;
         }
-        // Close-range readability (the FP melee case): as the camera closes inside HP_BAR_NEAR
-        // the bar SLIDES DOWN from overhead to the foe's CHEST — at arm's length even a
-        // cone-clamped overhead bar sits right at the frame's top edge (a WORLD_BUMP ork's bar
-        // floats ~0.8u above the 1.32 FP eye), while the chest line reads dead-centre. A view
-        // cone above the eye catches the mid-range in between, and any lowered bar is pulled
-        // toward the camera so the depth test doesn't bury it inside the torso.
+        // Close-range readability: as the camera closes inside HP_BAR_NEAR the bar SLIDES DOWN
+        // from overhead to the foe's CHEST. (First person never reaches that branch — arm's-length
+        // foes carry no world bar there, see below.) A view cone above the eye catches the
+        // FP mid-range in between, and any lowered bar is pulled toward the camera so the depth
+        // test doesn't bury it inside the torso.
         let flat = Vec2::new(head.x - cam_pos.x, head.z - cam_pos.z).length();
+        // First-person melee: the eye is inside the scrum, so a bar pulled to the lens would fill
+        // the screen. Foes at arm's length carry none (the reticle shows the ringed foe's health).
+        if in_fp && flat < HP_BAR_NEAR {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        }
         let closeness = ((HP_BAR_NEAR - flat) / HP_BAR_NEAR).clamp(0.0, 1.0);
         let chest = root.y + bar.y * 0.55;
         let mut want_y = head.y - (head.y - chest) * closeness;

@@ -31,12 +31,13 @@ use bevy::prelude::*;
 use crate::creature::{make_viewmodel_material, CreatureMaterial};
 use crate::game_state::{AppState, CampaignOnly};
 use crate::inventory::Inventory;
+use crate::villagers::NpcHp;
 use crate::ui::theme::rgb;
 
 use super::camera::{spring, FirstPerson, OrbitCam, FP_FOV_DEG};
 use super::combat::{CHARGE_GRACE, CHARGE_THRESHOLD, HEAVY_VARIANT};
 use super::model::{self, FOREARM_LEN};
-use super::{Hero, HeroHealth, PlayMode, PlayerRes, HERO_SCALE};
+use super::{Hero, HeroHealth, Health, PlayMode, PlayerRes, HERO_SCALE};
 
 // ── Components ─────────────────────────────────────────────────────────────────────────
 
@@ -632,8 +633,31 @@ pub(crate) struct ReticleRoot;
 pub(crate) struct ReticleDot;
 #[derive(Component)]
 pub(crate) struct ReticleRing;
+#[derive(Component)]
+pub(crate) struct ReticleHpTrack;
+#[derive(Component)]
+pub(crate) struct ReticleHpFill;
 
 const RING: f32 = 26.0;
+
+/// `sync_reticle`'s frame-to-frame memory: ring engagement ease, the eased HP fill, which foe that
+/// fill belongs to (so a new target snaps rather than sweeping in from the old one), and whether a
+/// capture harness is running.
+#[derive(Default)]
+pub(crate) struct ReticleMem {
+    engaged: f32,
+    shown_hp: f32,
+    shown_for: Option<Entity>,
+    capturing: Option<bool>,
+}
+const HP_TRACK_W: f32 = 70.0;
+const HP_TRACK_H: f32 = 6.0;
+
+/// The foe whose vitals the reticle is currently showing (None when the reticle is hidden or the
+/// foe is unhurt). `combat_fx::drive_hp_bars` hides that foe's world-space bar — in FP melee it
+/// would stripe across the foe's chest right behind the crosshair — so the HP is shown exactly once.
+#[derive(Resource, Default)]
+pub struct ReticleTarget(pub Option<Entity>);
 
 /// A tiny centre reticle for first person: a soft dot that blooms into a ring when a foe is in
 /// swinging range. Melee aims down the view axis in FP, so the player needs to see where "centre" is.
@@ -684,6 +708,29 @@ pub(crate) fn spawn_reticle(mut commands: Commands) {
                 BorderColor::all(Color::srgba(0.05, 0.04, 0.03, 0.75)),
                 ReticleDot,
             ));
+            p.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(-HP_TRACK_W * 0.5),
+                    top: Val::Px(RING * 0.5 + 9.0),
+                    width: Val::Px(HP_TRACK_W),
+                    height: Val::Px(HP_TRACK_H),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(3.0)),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.05, 0.03, 0.03, 0.0)),
+                BorderColor::all(Color::NONE),
+                ReticleHpTrack,
+            ))
+            .with_children(|t| {
+                t.spawn((
+                    Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                    BackgroundColor(Color::NONE),
+                    ReticleHpFill,
+                ));
+            });
         });
 }
 
@@ -698,13 +745,18 @@ pub(crate) fn sync_reticle(
     hero_q: Query<(&Hero, &HeroHealth)>,
     mut root_q: Query<&mut Node, (With<ReticleRoot>, Without<ReticleRing>, Without<ReticleDot>)>,
     mut ring_q: Query<(&mut Node, &mut BorderColor), (With<ReticleRing>, Without<ReticleDot>)>,
-    mut dot_q: Query<&mut BackgroundColor, With<ReticleDot>>,
-    mut engaged: Local<f32>,
-    mut capturing: Local<Option<bool>>,
+    mut dot_q: Query<&mut BackgroundColor, (With<ReticleDot>, Without<ReticleHpTrack>, Without<ReticleHpFill>)>,
+    mut track_q: Query<(&mut BackgroundColor, &mut BorderColor), (With<ReticleHpTrack>, Without<ReticleRing>)>,
+    mut fill_q: Query<(&mut Node, &mut BackgroundColor), (With<ReticleHpFill>, Without<ReticleHpTrack>, Without<ReticleRing>, Without<ReticleDot>, Without<ReticleRoot>)>,
+    vitals_q: Query<(Option<&Health>, Option<&NpcHp>)>,
+    mut target: ResMut<ReticleTarget>,
+    mut mem: Local<ReticleMem>,
 ) {
+    target.0 = None;
     let Ok(mut root) = root_q.single_mut() else { return };
     // A capture harness can't pointer-lock, so it shows the reticle regardless.
-    let capturing = *capturing
+    let capturing = *mem
+        .capturing
         .get_or_insert_with(|| std::env::var_os("FOREST_SHOT").is_some() || std::env::var_os("FOREST_CLIP").is_some());
     let Ok((hero, hh)) = hero_q.single() else { return };
     let on = *mode == PlayMode::Play
@@ -715,12 +767,12 @@ pub(crate) fn sync_reticle(
         && player.0.is_alive();
     root.display = if on { Display::Flex } else { Display::None };
     if !on {
-        *engaged = 0.0;
+        mem.engaged = 0.0;
         return;
     }
     let dt = time.delta_secs().min(0.05);
     let want = if hero.soft_pos.is_some() { 1.0 } else { 0.0 };
-    *engaged += (want - *engaged) * (1.0 - (-dt * 12.0).exp());
+    mem.engaged += (want - mem.engaged) * (1.0 - (-dt * 12.0).exp());
     // The ring snaps in on a swing and contracts onto the dot as the blow lands.
     let swing_pulse = if hero.attacking {
         let p = (hero.attack_t / hero.attack_dur.max(1e-3)).clamp(0.0, 1.0);
@@ -729,15 +781,49 @@ pub(crate) fn sync_reticle(
         0.0
     };
     if let Ok((mut node, mut border)) = ring_q.single_mut() {
-        let size = RING * (0.72 + 0.28 * *engaged + swing_pulse);
+        let size = RING * (0.72 + 0.28 * mem.engaged + swing_pulse);
         node.width = Val::Px(size);
         node.height = Val::Px(size);
         node.left = Val::Px(-size * 0.5);
         node.top = Val::Px(-size * 0.5);
-        let a = 0.85 * *engaged;
+        let a = 0.85 * mem.engaged;
         *border = BorderColor::all(Color::srgba(1.0, 0.42, 0.30, a));
     }
     if let Ok(mut bg) = dot_q.single_mut() {
         bg.0 = if hh.blocking { rgb(190, 215, 255) } else { rgb(255, 240, 205) }.with_alpha(0.92);
+    }
+
+    // The ringed foe's health, once it's hurt: a slim bar under the ring that eases down with each
+    // blow and fades with the ring.
+    let ratio = hero.soft_target.and_then(|e| {
+        let (health, npc) = vitals_q.get(e).ok()?;
+        let (hp, max) = match (health, npc) {
+            (Some(h), _) => (h.hp, h.max),
+            (_, Some(n)) => (n.hp, n.max),
+            _ => return None,
+        };
+        (max > 0.0 && hp < max).then(|| (hp / max).clamp(0.0, 1.0))
+    });
+    let show = ratio.is_some() && mem.engaged > 0.5;
+    if show {
+        target.0 = hero.soft_target;
+    }
+    let a = if show { ((mem.engaged - 0.5) * 2.0).clamp(0.0, 1.0) } else { 0.0 };
+    if let Some(r) = ratio {
+        if mem.shown_for != hero.soft_target {
+            mem.shown_for = hero.soft_target;
+            mem.shown_hp = r;
+        }
+        mem.shown_hp += (r - mem.shown_hp) * (1.0 - (-dt * 14.0).exp());
+    } else {
+        mem.shown_for = None;
+    }
+    if let Ok((mut bg, mut border)) = track_q.single_mut() {
+        bg.0 = Color::srgba(0.05, 0.03, 0.03, 0.62 * a);
+        *border = BorderColor::all(Color::srgba(0.02, 0.01, 0.01, 0.85 * a));
+    }
+    if let Ok((mut node, mut bg)) = fill_q.single_mut() {
+        node.width = Val::Percent(mem.shown_hp * 100.0);
+        bg.0 = Color::srgba(0.86, 0.22, 0.16, a);
     }
 }

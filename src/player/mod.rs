@@ -30,6 +30,7 @@ mod viewmodel;
 
 /// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
 pub use camera::FirstPerson;
+pub use viewmodel::ReticleTarget;
 /// Sand-Dash slide duration — re-exported so the standalone viewer (`viewer.rs`) can drive the
 /// dash-swipe preview at the real cadence. (`anim` reads it directly via `super::movement`.)
 pub(crate) use movement::DASH_TIME;
@@ -447,6 +448,7 @@ impl Plugin for PlayerPlugin {
             // First-person viewmodel (camera-parented hands/sword/shield) + reticle. Ungated so the
             // frozen world still draws them; `animate_viewmodel` runs after the camera so its
             // look-inertia reads this frame's view angles.
+            .init_resource::<viewmodel::ReticleTarget>()
             .add_systems(Startup, viewmodel::spawn_reticle)
             .add_systems(
                 Update,

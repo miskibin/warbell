@@ -351,7 +351,12 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   through a handedness mirror + Euler angles solved against a tilted hand frame, and was junk) is
   `player/viewmodel.rs`: purpose-built sword / shield / fist / forearm meshes
   (`model::build_viewmodel`) that are **children of the main camera** (`FpRoot`), rendered in the
-  one world pass with the hero material (`NotShadowCaster`). The whole third-person rig is simply
+  one world pass (`NotShadowCaster`) with its OWN material (`creature::make_viewmodel_material`):
+  the world's sun/IBL knows nothing about the lens, so facing the sun used to leave near-black
+  hands (median luminance 17/255). `creature.wgsl` adds an opt-in **camera-locked key light**
+  (`params.w` = `viewmodel::VM_KEY_LUX`, half-lambert from up-left-front of the lens, exposure-scaled)
+  and the FP gloves use lighter leather (`model::FP_GLOVE`, not the near-black `PGLOVE`). Any new
+  colour used by a viewmodel mesh must be mapped in `model::surf_for` or it defaults to Metal. The whole third-person rig is simply
   **hidden in FP** (`camera::fp_body_visibility`, edge-triggered) and keeps playing its normal clips
   untouched — nothing in `anim::hero_anim` is FP-aware any more, so never re-add FP branches there.
   Poses are authored in **screen space**: `Kf { (ndc x, ndc y, depth), blade direction, roll }`
@@ -372,7 +377,10 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   `FOREST_VMPOSE=swing:<0-3>:<p>|block|ready|sprint` freezes the pose, `FOREST_VMHIDE=1` hides the
   meshes but keeps the lean so `A − A_hidden` diffs isolate the viewmodel. Enemy **HP bars clamp into a
   view cone above the eye** (`combat_fx::HP_BAR_CONE_SLOPE` — the bar slides down toward the chest
-  and pulls toward a close camera, shrinking) so a towering foe's bar stays on screen in FP melee.
+  and pulls toward a close camera, shrinking) so a towering foe's bar stays on screen at FP mid-range.
+  Inside `HP_BAR_NEAR` (4u) in FP **no world bar is drawn at all** (a bar pulled to the lens filled
+  half the frame) — the ringed foe's health is a slim bar under the reticle instead
+  (`viewmodel::ReticleTarget` also hides that foe's world bar).
   NB: FP melee inherently puts the enemy in your face — the widen softens it, but no view-model
   trick removes it; third-person is the design's combat view.
 - **Capture-harness flakes — confirm the `Screenshot saved` log line, and retry before debugging.**
