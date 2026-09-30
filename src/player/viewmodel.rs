@@ -570,9 +570,13 @@ pub(crate) fn animate_viewmodel(
     let mut left = shield_carry().lerp(shield_ready(), ready);
     left = left.lerp(shield_block(), block);
     if let Some((_, p)) = attack {
-        // The off hand rides the swing: pulled back and down through the strike.
+        // The off hand counter-balances the swing: it lifts a touch as the blade winds back, then
+        // is pulled down and out with the strike, tilting with the body's twist.
+        let free = 1.0 - block;
+        let wind = smooth(p / WIND_END) * (1.0 - smooth((p - WIND_END) / (HIT_AT - WIND_END)));
         let k = smooth((p - WIND_END) / (HIT_AT - WIND_END)) * (1.0 - smooth((p - FOLLOW_END) / (1.0 - FOLLOW_END)));
-        left.p += Vec3::new(-0.05, -0.10, 0.0) * k * (1.0 - block);
+        left.p += (Vec3::new(0.02, 0.05, 0.0) * wind + Vec3::new(-0.07, -0.13, 0.0) * k) * free;
+        left.q = Quat::from_rotation_z((0.10 * k - 0.05 * wind) * free) * left.q;
     }
     left = left.lerp(shield_tuck(), roll_w);
 
