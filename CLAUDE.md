@@ -363,8 +363,13 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   (`sword_carry/ready/sprint/guard/tuck`, `shield_*`, and the four `swing()` tables with
   wind → mid → hit → end keys and per-swing camera lean), converted to camera space by `Lens`
   against `camera::FP_FOV_DEG`, so a swing is choreographed by where the blade is *on screen*.
-  Forearms are a **one-bone IK** (`solve_arm`: wrist → fixed elbow anchor behind/below the lens),
-  so an arm always connects to its hand. Weight comes from springs layered on the pose: look
+  Roll convention: `roll = 0` shows the blade's broad flat to the sky/viewer (a horizontal slash's
+  attitude) — held at rest that reads as a *paddle*, so the carry/ready/thrust/chop keys use a
+  **negative roll (~-1.0 rad)**: flat toward screen-left, edges up/forward, crossguard seen end-on,
+  fingers wrapping toward the viewer — a right hand's natural grip. Only the horizontal slash rolls
+  back toward 0 (edge leading left).
+  Forearms are a **rigid one-bone IK** (`solve_arm`: aimed wrist → elbow anchor behind/below the lens,
+  never stretched — the sleeve mesh is long enough to stay off-frame), so an arm always connects to its hand. Weight comes from springs layered on the pose: look
   inertia, a hit-recoil kick off `HitFeedback::trauma`, jump/landing hop, stride bob, and a
   **wall-avoid** that tucks the weapon down/back when `blockers` has a solid within reach.
   `camera::fp_eye_rig` owns the eye: terrace-smoothed height (`FP_VERT_RATE`), landing dip spring,

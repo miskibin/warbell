@@ -36,7 +36,7 @@ use crate::ui::theme::rgb;
 
 use super::camera::{spring, FirstPerson, OrbitCam, FP_FOV_DEG};
 use super::combat::{CHARGE_GRACE, CHARGE_THRESHOLD, HEAVY_VARIANT};
-use super::model::{self, FOREARM_LEN};
+use super::model;
 use super::{Hero, HeroHealth, Health, PlayMode, PlayerRes, HERO_SCALE};
 
 // ── Components ─────────────────────────────────────────────────────────────────────────
@@ -87,9 +87,10 @@ impl Kf {
 }
 
 /// Orientation of a held item whose long axis (blade / shield-up) points along `dir` (camera
-/// space: x right, y up, -z forward) and whose flat face is turned toward the viewer, rolled by
-/// `roll` about the long axis. The face reference leans up a little so a blade pointing straight
-/// forward shows its flat to the sky, and its edges face left/right — what a slash needs.
+/// space: x right, y up, -z forward), rolled by `roll` about the long axis. At `roll = 0` the flat
+/// face points at the sky/viewer (edges left/right — a horizontal slash's attitude). A NEGATIVE roll
+/// turns the flat toward screen-left and the edges up/forward: a right hand's natural grip, with
+/// the crossguard seen end-on and the fingers wrapping toward the viewer.
 fn item_rot(dir: Vec3, roll: f32) -> Quat {
     let y = dir.normalize();
     let face_ref = Vec3::new(0.0, 0.33, 0.94);
@@ -108,20 +109,20 @@ fn kf(x: f32, y: f32, d: f32, dir: [f32; 3], roll: f32) -> Kf {
 
 // Sword hand.
 fn sword_carry() -> Kf {
-    kf(0.66, -0.86, 0.60, [0.06, 0.50, -0.86], 0.20)
+    kf(0.64, -0.85, 0.60, [0.04, 0.50, -0.86], -1.02)
 }
 fn sword_ready() -> Kf {
-    kf(0.58, -0.68, 0.58, [-0.20, 0.72, -0.66], 0.35)
+    kf(0.58, -0.68, 0.58, [-0.08, 0.68, -0.73], -0.95)
 }
 fn sword_sprint() -> Kf {
-    kf(0.74, -0.98, 0.54, [0.20, 0.30, -0.93], 0.45)
+    kf(0.74, -0.98, 0.54, [0.20, 0.30, -0.93], -1.12)
 }
 fn sword_guard() -> Kf {
-    kf(0.80, -1.0, 0.56, [0.25, 0.35, -0.90], 0.40)
+    kf(0.80, -1.0, 0.56, [0.25, 0.35, -0.90], -1.05)
 }
 /// Sword tucked away for a dodge roll.
 fn sword_tuck() -> Kf {
-    kf(0.80, -1.45, 0.50, [0.30, 0.20, -0.90], 0.5)
+    kf(0.80, -1.45, 0.50, [0.30, 0.20, -0.90], -1.1)
 }
 
 // Shield hand.
@@ -163,28 +164,28 @@ fn swing(variant: u8) -> Swing {
         // Thrust — the hilt drawn to the ribs with the point levelled at the crosshair, then the
         // whole arm driven out along the view axis.
         2 => Swing {
-            wind: kf(0.52, -0.64, 0.50, [-0.10, 0.25, -0.96], 0.30),
-            mid: kf(0.32, -0.40, 0.72, [-0.12, 0.20, -0.97], 0.15),
-            hit: kf(0.10, -0.14, 1.00, [-0.04, 0.12, -0.99], 0.0),
-            end: kf(0.30, -0.40, 0.80, [-0.08, 0.15, -0.98], 0.10),
+            wind: kf(0.52, -0.64, 0.50, [-0.10, 0.25, -0.96], -1.0),
+            mid: kf(0.32, -0.40, 0.72, [-0.12, 0.20, -0.97], -1.0),
+            hit: kf(0.10, -0.14, 1.00, [-0.04, 0.12, -0.99], -0.95),
+            end: kf(0.30, -0.40, 0.80, [-0.08, 0.15, -0.98], -1.0),
             lean_wind: Vec3::new(-0.006, -0.006, 0.006),
             lean_strike: Vec3::new(0.012, 0.006, -0.008),
         },
         // Heavy Strike — the overhead chop writ large (also the held charge shape).
         v if v == HEAVY_VARIANT => Swing {
-            wind: kf(0.50, 0.50, 0.46, [0.15, 0.88, 0.45], 0.30),
-            mid: kf(0.25, 0.20, 0.62, [0.04, 1.0, -0.12], 0.15),
-            hit: kf(0.0, -0.55, 0.88, [0.0, 0.06, -1.0], 0.0),
-            end: kf(0.12, -0.80, 0.78, [0.02, -0.30, -0.95], 0.10),
+            wind: kf(0.50, 0.50, 0.46, [0.15, 0.88, 0.45], -0.95),
+            mid: kf(0.25, 0.20, 0.62, [0.04, 1.0, -0.12], -0.95),
+            hit: kf(0.0, -0.55, 0.88, [0.0, 0.06, -1.0], -1.0),
+            end: kf(0.12, -0.80, 0.78, [0.02, -0.30, -0.95], -1.0),
             lean_wind: Vec3::new(0.028, 0.0, -0.010),
             lean_strike: Vec3::new(-0.050, 0.006, 0.016),
         },
         // Overhead chop — blade cocked high over the shoulder, driven down the middle.
         _ => Swing {
-            wind: kf(0.72, 0.22, 0.55, [0.30, 0.80, 0.52], 0.45),
-            mid: kf(0.42, 0.04, 0.62, [0.05, 0.96, -0.25], 0.25),
-            hit: kf(0.12, -0.42, 0.80, [-0.04, 0.10, -0.99], 0.05),
-            end: kf(0.28, -0.66, 0.70, [0.0, -0.22, -0.97], 0.15),
+            wind: kf(0.72, 0.22, 0.55, [0.30, 0.80, 0.52], -0.95),
+            mid: kf(0.42, 0.04, 0.62, [0.05, 0.96, -0.25], -0.95),
+            hit: kf(0.12, -0.42, 0.80, [-0.04, 0.10, -0.99], -1.0),
+            end: kf(0.28, -0.66, 0.70, [0.0, -0.22, -0.97], -1.0),
             lean_wind: Vec3::new(0.016, -0.006, -0.008),
             lean_strike: Vec3::new(-0.034, 0.008, 0.012),
         },
@@ -618,15 +619,14 @@ pub(crate) fn animate_viewmodel(
     fp.sway = lean * draw;
 }
 
-/// One-bone IK: stand the forearm at `wrist`, reaching toward `elbow`, stretched so it always
-/// spans the gap (the far end stays off-screen below the lens).
+/// One-bone IK: stand the forearm at `wrist`, aimed at the elbow anchor. The arm is RIGID (a
+/// stretched forearm reads as rubber) — the sleeve is long enough that its far end stays below the
+/// frame however far the hand reaches.
 fn solve_arm(tf: &mut Transform, wrist: Vec3, elbow: Vec3) {
     let to = elbow - wrist;
-    let dist = to.length().max(1e-3);
     tf.translation = wrist;
-    tf.rotation = item_rot(to / dist, 0.0);
-    let stretch = (dist / (FOREARM_LEN * HERO_SCALE)).clamp(1.0, 2.6);
-    tf.scale = Vec3::new(HERO_SCALE, HERO_SCALE * stretch, HERO_SCALE);
+    tf.rotation = item_rot(to / to.length().max(1e-3), 0.0);
+    tf.scale = Vec3::splat(HERO_SCALE);
 }
 
 // ── Reticle ────────────────────────────────────────────────────────────────────────────

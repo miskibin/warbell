@@ -791,22 +791,18 @@ const FP_GLOVE_SEAM: u32 = 0x32291f;
 // directly instead of solving rig Euler angles through a tilted hand frame.
 
 /// Forearm: a steel vambrace over a dark glove cuff, widening toward the elbow into a leather
-/// sleeve that runs off the bottom of the frame. Wrist at the origin, elbow end at `+Y`
-/// (`FOREARM_LEN`). Rig units (× `HERO_SCALE` like every other hero mesh).
+/// sleeve that runs far off the bottom of the frame. Wrist at the origin, elbow end at `+Y`. Rigid:
+/// the viewmodel aims it at the elbow anchor but never stretches it. Rig units (× `HERO_SCALE`).
 fn fp_forearm_mesh(s: &Skin) -> Mesh {
     group(vec![
-        at(rbx(0.205, 0.07, 0.21, 0.02), v(0.0, -0.01, 0.0), FP_GLOVE), // glove cuff
-        at(tplate(0.165, 0.40, 0.175, 1.28, 1.22, 0.035), v(0.0, 0.05, 0.0), s.metal), // vambrace
+        at(rbx(0.19, 0.07, 0.195, 0.02), v(0.0, -0.01, 0.0), FP_GLOVE), // glove cuff
+        at(tplate(0.15, 0.40, 0.16, 1.28, 1.22, 0.035), v(0.0, 0.05, 0.0), s.metal), // vambrace
         at(rbx(0.2, 0.028, 0.205, 0.008), v(0.0, 0.24, 0.0), s.trim), // trim band
         at(tplate(0.04, 0.34, 0.03, 1.0, 1.0, 0.01), v(0.0, 0.08, 0.092), s.metal_lt), // bright ridge down the outer plate
         at(rbx(0.235, 0.05, 0.245, 0.02), v(0.0, 0.43, 0.0), s.metal_dk), // couter rim
-        at(tplate(0.23, 0.70, 0.24, 1.12, 1.12, 0.04), v(0.0, 0.47, 0.0), PLEATHER), // sleeve, off-screen end
+        at(tplate(0.205, 2.60, 0.215, 1.3, 1.3, 0.04), v(0.0, 0.47, 0.0), PLEATHER), // sleeve: runs far past the frame so a rigid forearm never shows its end
     ])
 }
-
-/// Length of [`fp_forearm_mesh`] along `+Y` (rig units) — the viewmodel stretches the arm to reach
-/// its elbow anchor, so this is only the rest length.
-pub(crate) const FOREARM_LEN: f32 = 1.17;
 
 /// Gauntleted fist, built around the grip in ITEM space (blade / haft along `+Y`, flat face `+Z`):
 /// a dark glove block with finger seams across the front and a steel back-of-hand plate, sitting
