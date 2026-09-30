@@ -159,7 +159,6 @@ pub fn player_roll(
     keys: Res<ButtonInput<KeyCode>>,
     orbit: Res<super::camera::OrbitCam>,
     player: Res<PlayerRes>,
-    fp: Res<FirstPerson>,
     fx: Option<Res<super::CombatFx>>,
     mut commands: Commands,
     mut cues: MessageWriter<AudioCue>,
@@ -177,11 +176,9 @@ pub fn player_roll(
         && idle
         && std::env::var("FOREST_ROLLTEST").is_ok()
         && time.elapsed_secs() >= *next_test;
-    // FP is excluded: the somersault would cartwheel the viewmodel arms across the lens.
     let manual = *mode == PlayMode::Play
         && player.0.is_alive()
         && orbit.locked
-        && !fp.active
         && idle
         && hh.stamina >= ROLL_STAMINA
         && keys.just_pressed(KeyCode::AltLeft);

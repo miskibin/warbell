@@ -15,8 +15,9 @@
 //! - **attack** — our one-shot swing (`attack_t/ATTACK_DURATION`) is split into the studio's
 //!   wind/strike/recovery phases (strike starts at `HIT_PHASE` so the blade meets the damage frame).
 //! - **defend** — eased in/out by a smoothed `block_amt` instead of the studio's `time`-since-block.
-//! On top sit our own layers: the Director's staged gestures (arms), the first-person viewmodel
-//! raise, the touchdown landing-squash, and a slack keel-over on death.
+//! On top sit our own layers: the Director's staged gestures (arms), the touchdown landing-squash,
+//! and a slack keel-over on death. (First person doesn't use this rig at all — it is hidden and the
+//! camera-parented `viewmodel` draws the hands.)
 
 use std::f32::consts::PI;
 
@@ -944,138 +945,10 @@ pub(crate) fn carry_pose() -> Pose {
     p
 }
 
-/// Per-variant FP viewmodel swing shaping (rig-space radians, pre-mirror). The third-person attack
-/// clips can't play on the FP arms (they orbit the lens — see the sword-arm note in [`hero_anim`]),
-/// so each attack variant gets its own compact camera-framed envelope instead of one shared
-/// wind→punch: the overhead chop cocks the blade high and drives it DOWN the frame, the horizontal
-/// slash whips it ACROSS, the thrust holds the blade level and punches the whole arm forward, and
-/// the Heavy is the chop writ large. Each `(back, fwd)` pair scales the wind-up coil and the strike
-/// punch on one joint axis.
-struct FpSwing {
-    /// Shoulder X — raise on the cock / drive on the punch.
-    sh_x: (f32, f32),
-    /// Shoulder Y — lateral pull / cross-frame sweep.
-    sh_y: (f32, f32),
-    /// Elbow fold on the cock / extension on the punch.
-    el: (f32, f32),
-    /// Wrist X — blade tips up-back / sweeps down-forward.
-    sw_x: (f32, f32),
-    /// Wrist Y — blade cocks out / whips across the frame.
-    sw_y: (f32, f32),
-    /// EDGE ROLL about the BLADE'S OWN AXIS (mesh +Y), applied as a right-multiplied local
-    /// `Quat::from_rotation_y` — NOT a wrist-euler Z term, which in XYZ order deflects the blade
-    /// sideways off its line (the first cut of this feature pointed the thrust's blade vertical).
-    /// Pronate on the cock / turn the edge over through the cut; the thrust corkscrews.
-    sw_roll: (f32, f32),
-    /// Mid-STRIKE perpendicular bulge on the shoulder `(X, Y)`, scaled by `sin(π·strike-p)` — 0 at
-    /// both strike endpoints, peaking mid-cut. Bows the blade's path into a crescent instead of a
-    /// straight endpoint-to-endpoint lerp (the old "toporny"/stick-swing read).
-    arc: (f32, f32),
-}
-
-fn fp_swing(variant: u8) -> FpSwing {
-    match variant {
-        // attack2 — horizontal slash: a falling cross-cut — the blade cocks out to the sword side
-        // and sweeps across the MID frame. (Probe history: an all-shoulder sweep marched the
-        // forearm through the lens; an all-wrist one read as a rising poke — the travel is now
-        // SPLIT between them, with sw_x keeping the blade on the level-to-down band.)
-        1 => FpSwing {
-            // Cross-travel lives almost entirely in the WRIST (sw_y): the FP eye sits ~0.2u from
-            // the shoulder, so ANY real shoulder-Y sweep (0.9 originally, still at 0.6) parks the
-            // forearm ON the lens — whole frames blacked out mid-slash. The hilt now holds
-            // low-right; the blade whips across, sw_x riding it down onto the level band (the big
-            // wrist yaw alone reads as a rising poke through the tilted hand frame).
-            // BOTH sh_x endpoints DROP (positive): the ready base holds the fist high near the
-            // face (-0.70 raise / -1.05 fold), so any cross-cut through it passes the hand
-            // straight THROUGH the lens — the mid-slash full-frame blackout every earlier cut
-            // of this table reproduced. The whole slash now runs at WAIST height (wind included;
-            // the classic FP belly-cut), the blade doing the cross-travel in the WRIST (sw_y)
-            // while sh_y.0 cocks the wind outward-right.
-            sh_x: (0.35, 0.55),
-            sh_y: (0.20, 0.25),
-            el: (0.10, 0.55),
-            sw_x: (-0.10, 0.45),
-            sw_y: (0.15, 1.15),
-            sw_roll: (-0.35, 0.60), // edge cocked over on the wind, turned through the cross-cut
-            arc: (0.0, 0.0),
-        },
-        // attack3 — forward thrust: the wind folds the elbow deep (hilt drawn to the ribs, blade
-        // kept LEVEL at the target), the strike EXTENDS the whole arm at the frame centre — the
-        // punch reads in the reach, so the wrist barely moves (X≈2.56 is the probe-solved
-        // blade-level-forward angle for the raised FP arm; sw_x holds it there through the punch).
-        2 => FpSwing {
-            // sh_x.1 NEGATIVE: the punch RAISES the extending arm to chest line, so the blade
-            // reaches across the lower-centre frame instead of vanishing under the bottom edge
-            // as the unfolding elbow drops the hand. sw_x.0 pitches the cocked blade forward,
-            // countering the deep elbow fold that otherwise stands it vertical at the frame edge.
-            sh_x: (-0.10, -0.10),
-            sh_y: (-0.10, 0.25),
-            el: (-0.60, 1.05),
-            sw_x: (0.55, 0.0),
-            sw_y: (0.15, 0.0),
-            sw_roll: (0.10, 0.90), // corkscrew: a quarter-turn about the blade axis through the punch
-            arc: (0.0, 0.0),       // a thrust IS the straight line — no crescent
-        },
-        // Heavy Strike — the overhead chop writ large: hauled higher, smashed hard down the middle
-        // (this shape is also what the held charge coils into). sw_x.1 stops at +0.55: the probe
-        // showed +1.05 swung the blade PAST straight-down into pointing back at the camera.
-        v if v == super::combat::HEAVY_VARIANT => FpSwing {
-            // Drive capped (sh_x/sw_x .1) so the hilt lands in the LOWER FRAME, not past its
-            // bottom edge — a smash that exits the screen entirely reads as nothing at all.
-            sh_x: (-0.50, 0.32),
-            // sh_y.1 pulls the extended smash toward frame CENTRE (safe from the lens here —
-            // the arm is near-straight by then), so the blow lands down the middle, not along
-            // the right edge.
-            sh_y: (-0.05, 0.28),
-            el: (-0.30, 0.90),
-            sw_x: (-0.95, 0.45),
-            sw_y: (0.05, 0.20),
-            sw_roll: (-0.20, 0.45),
-            arc: (0.0, 0.40), // the smash bows outward mid-drop — an axe-arc, not an elevator
-        },
-        // attack1 — overhead chop: blade cocked high over the shoulder, driven DOWN the frame —
-        // the Heavy's arc at a lighter scale (the first cut played the whole chop below the
-        // bottom frame edge; raising the shoulder and capping sw_x keeps the sweep IN frame).
-        _ => FpSwing {
-            sh_x: (-0.50, 0.30),
-            sh_y: (-0.05, 0.22), // slight centre-pull at extension (see the Heavy note)
-            el: (-0.32, 0.80),
-            sw_x: (-0.85, 0.55),
-            sw_y: (0.10, 0.25),
-            sw_roll: (-0.12, 0.35),
-            arc: (0.0, 0.30), // the downcut bows toward the sword side mid-strike
-        },
-    }
-}
-
-/// Per-variant FP **camera swing-sway** (screen-space radians: x = pitch(+up), y = yaw(+left),
-/// z = roll). `.0` leans through the wind-up — a small anticipation pull OPPOSITE the cut — and
-/// `.1` rides the strike WITH the blade. Written onto [`super::FirstPerson::sway`] scaled by the
-/// same wind/punch envelopes as the arms, applied by `player::camera` after `look_at`, so the view
-/// itself commits to every cut (the missing half of the old "toporne" stick-swings). Deliberately
-/// small (≤~3°) and one smooth arc per swing — a lean, never a shake (motion-sickness guard); aim
-/// is unaffected (`hero.facing` comes from the un-swayed yaw).
-fn fp_cam_sway(variant: u8) -> (Vec3, Vec3) {
-    match variant {
-        // horizontal slash: gather right, then sweep left across the frame with a matching roll.
-        1 => (Vec3::new(0.008, -0.020, 0.014), Vec3::new(-0.006, 0.032, -0.026)),
-        // thrust: a breath back, then a forward nod into the punch.
-        2 => (Vec3::new(-0.006, -0.006, 0.006), Vec3::new(0.012, 0.006, -0.008)),
-        // Heavy: the chop writ large — rise with the overhead haul, drop hard with the smash.
-        v if v == super::combat::HEAVY_VARIANT => {
-            (Vec3::new(0.028, 0.0, -0.010), Vec3::new(-0.050, 0.006, 0.016))
-        }
-        // overhead chop: rise with the cock, dip with the blow.
-        _ => (Vec3::new(0.016, -0.006, -0.008), Vec3::new(-0.034, 0.008, 0.012)),
-    }
-}
-
 pub fn hero_anim(
     time: Res<Time>,
     player: Res<super::PlayerRes>,
     dir: Res<crate::cinematic::DirectorState>,
-    // `ResMut`: hero_anim WRITES `fp.sway` (the FP camera swing-sway target) each frame.
-    mut fp: ResMut<super::FirstPerson>,
     hero_q: Query<(&Hero, &HeroHealth)>,
     mut parts: Query<(&HeroPart, &mut Transform)>,
     // Edge-detect touchdown (was airborne, now grounded) to stamp a short landing-squash window.
@@ -1083,11 +956,6 @@ pub fn hero_anim(
     mut land_at: Local<f32>,
     // Smoothed block weight (0 = open, 1 = full defend) so the brace eases in/out.
     mut block_amt: Local<f32>,
-    // FP turn-sway state: last frame's view yaw + the low-passed yaw rate (rad/s).
-    mut fp_prev_yaw: Local<f32>,
-    mut fp_sway_amt: Local<f32>,
-    // Smoothed FP "weapon drawn" weight (0 = calm low carry at the frame edges, 1 = combat-ready).
-    mut fp_ready: Local<f32>,
 ) {
     let Ok((hero, hh)) = hero_q.single() else { return };
     let now = time.elapsed_secs();
@@ -1101,7 +969,6 @@ pub fn hero_anim(
 
     // Slain: let the limbs go slack while the body keels over (root rotation owned by health.rs).
     if !player.0.is_alive() {
-        fp.sway = Vec3::ZERO; // no stale FP swing-lean on the death camera
         for (part, mut tf) in &mut parts {
             tf.rotation = match part.joint {
                 Joint::Hips => {
@@ -1126,88 +993,12 @@ pub fn hero_anim(
 
     let attack = hero.attacking.then(|| attack_phase((hero.attack_t / hero.attack_dur).clamp(0.0, 1.0)));
     let gesture = dir.gesture.map(|g| gesture_pose(g, now - dir.gesture_start));
-    let fp_amt = fp.blend.clamp(0.0, 1.0);
 
     // Pick the active clip. Actions now LAYER over locomotion so combined moves read right: swinging
     // while running keeps the legs striding (a running attack), and a jump taken at speed becomes a
     // forward leap. (Priority: victory › attack › jump › block-blended locomotion.)
     let moving = hero.moving_amt.clamp(0.0, 1.0);
 
-    // ── First-person viewmodel: procedural weapon motion ──
-    // The FP arms have no clip of their own — without this they freeze at the static tuck and read
-    // "glued to the camera". Three small joint-space layers (radians), all camera-untouched (the FP
-    // eye stays rigid — motion-sickness guard): breath (idle heave), walk-bob (stride pump),
-    // turn-sway (weapon lags the view yaw).
-    // FP weapon-ready weight: out of combat the arms settle into a calm low carry (gear barely
-    // peeking into the bottom frame corners); a hostile nearby, a swing, a charge, or a raised
-    // guard DRAWS them up into the ready stance. Quick raise (~0.15s) so an ambush reads
-    // instantly; slow lower (~0.5s + the 6s `combat_until` linger) so it never pumps mid-fight.
-    let fp_want_ready = hero.attacking
-        || hero.charge_t > CHARGE_GRACE
-        || hh.blocking
-        || hero.threats > 0
-        || now < hero.combat_until;
-    let fp_ready_rate = if fp_want_ready { 12.0 } else { 3.0 };
-    *fp_ready += ((if fp_want_ready { 1.0 } else { 0.0 }) - *fp_ready) * (dt * fp_ready_rate).min(1.0);
-    let fp_ready = fp_ready.clamp(0.0, 1.0);
-
-    // FP attack envelope, shared by the sword arm and wrist: `back` coils through the wind (and
-    // through a held Heavy-Strike charge), `fwd` punches through the strike and eases out across
-    // the recovery. The *direction* of the coil/punch comes from the per-variant [`fp_swing`]
-    // table, so the FP combo reads as three distinct cuts (chop / slash / thrust) like the
-    // third-person clips, instead of one repeated generic poke.
-    let (fp_atk_back, fp_atk_fwd) = if hero.charge_t > CHARGE_GRACE && attack.is_none() {
-        (1.0, 0.0)
-    } else {
-        match &attack {
-            Some((Phase::Wind, p)) => (*p, 0.0),
-            Some((Phase::Strike, p)) => (1.0 - *p, *p),
-            Some((Phase::Recovery, p)) => (0.0, 1.0 - *p),
-            None => (0.0, 0.0),
-        }
-    };
-    // Mid-strike crescent envelope: 0 at both strike endpoints, peaking mid-cut — feeds the
-    // per-variant `arc` bulge so the blade's path bows instead of lerping straight.
-    let fp_atk_arc = match &attack {
-        Some((Phase::Strike, p)) => (*p * PI).sin(),
-        _ => 0.0,
-    };
-    // A held charge coils into the Heavy's shape even before the release stamps the variant.
-    let fp_variant = if hero.charge_t > CHARGE_GRACE && attack.is_none() {
-        super::combat::HEAVY_VARIANT
-    } else {
-        hero.attack_variant
-    };
-    let fp_sw = fp_swing(fp_variant);
-    // FP camera swing-sway target — screen-space (NOT mirrored, unlike the rig targets below),
-    // ridden by `player::camera`. Zeroed outside FP so re-entering never inherits a stale lean.
-    fp.sway = if fp_amt > 0.0 {
-        let (wind, strike) = fp_cam_sway(fp_variant);
-        (wind * fp_atk_back + strike * fp_atk_fwd) * fp_amt
-    } else {
-        Vec3::ZERO
-    };
-
-    let (fp_breath, fp_bob_v, fp_bob_l, fp_sway) = if fp_amt > 0.0 {
-        let breath = (now * 3.1).sin() * 0.018; // ~0.5 Hz idle heave
-        // Vertical pump at 2× stride (one dip per footfall), light lateral sway at 1×; a touch
-        // stronger at sprint. `walk_phase` is already a real-speed radian cycle.
-        // Amplitudes deliberately tiny: the FP camera is rigid, so at eye scale hundredths of a
-        // radian already read clearly — bigger flails the weapon across the lens. No sprint boost
-        // for the same reason (the run's own cadence via `walk_phase` is speed-up enough).
-        let stride = moving;
-        let bob_v = (hero.walk_phase * 2.0).sin() * 0.022 * stride;
-        let bob_l = hero.walk_phase.sin() * 0.015 * stride;
-        // Turn-sway: low-pass the view-yaw rate (hero.facing IS look_yaw in FP — the camera writes
-        // it) and tilt the weapon OPPOSITE the turn, recovering as the rate settles.
-        let yaw_rate = crate::steer::wrap_pi(hero.facing - *fp_prev_yaw) / dt.max(1e-3);
-        *fp_sway_amt += (yaw_rate.clamp(-8.0, 8.0) - *fp_sway_amt) * (dt * 9.0).min(1.0);
-        (breath, bob_v, bob_l, (*fp_sway_amt * -0.012).clamp(-0.07, 0.07))
-    } else {
-        *fp_sway_amt = 0.0;
-        (0.0, 0.0, 0.0, 0.0)
-    };
-    *fp_prev_yaw = hero.facing;
     // Combat stance feeds two extra locomotion axes (backpedal blend + pelvis-vs-torso twist);
     // both are 0 out of the stance, where this reduces exactly to the plain `loco_pose`. The
     // guard overlay then colours ALL stance locomotion (idle/walk/run) into the ready-to-fight
@@ -1282,198 +1073,23 @@ pub fn hero_anim(
         }
         let mut rot = jp.r;
 
-        // Arm overrides: the Director's staged gesture wins on the arms; otherwise the first-person
-        // viewmodel carries the arms (low at rest, raised when `fp_ready`). All FP targets here are
-        // authored in RIG space — the handedness mirror below flips the finished chains onto the
-        // correct screen sides. (Combat/locomotion already in `rot`.)
+        // Arm overrides: the Director's staged gesture wins on the arms; otherwise the combat /
+        // locomotion clip already in `rot` plays. (First person hides this rig entirely — see
+        // `camera::fp_body_visibility` / `viewmodel` — so nothing here is FP-aware.)
         match part.joint {
             Joint::ShoulderR | Joint::ElbowR => {
-                let elbow = part.joint == Joint::ElbowR;
                 if let Some((Some((sh, el)), _)) = gesture {
-                    rot = if elbow { el } else { sh };
-                } else if fp_amt > 0.0 {
-                    // First-person sword ARM. The eye sits AT the chest, so the third-person
-                    // clips (whose swings/braces orbit the chest) land ON the lens — the arm is
-                    // therefore ALWAYS viewmodel-driven in FP. Two carries blended by `fp_ready`:
-                    // out of combat a calm LOW carry (arm hanging easy, the resting blade's tip
-                    // just grazing the bottom-right corner); in combat the Skyrim-style READY.
-                    // An attack layers a compact wind→punch envelope on top (the blade's sweep
-                    // itself plays on the Sword joint below). Breath/bob/sway keep it alive.
-                    let (back, fwd) = (fp_atk_back, fp_atk_fwd);
-                    // While the shield is braced the sword arm DROPS back toward the low carry —
-                    // at full ready its forearm hangs right at the lens edge (elbow z≈-0.12 in
-                    // camera space) and paints a full-height dark band down the right of the
-                    // blocking frame. The blade is tucked away during a block anyway.
-                    let fp_ready = fp_ready * (1.0 - 0.65 * block_amt);
-                    let target = if elbow {
-                        rx(lerp(-0.35, -1.05, fp_ready) + fp_sw.el.0 * back + fp_sw.el.1 * fwd + fp_bob_v * 0.6)
-                    } else {
-                        // `arc` bows the strike's path mid-cut (crescent), on top of the
-                        // endpoint envelope — see the `FpSwing::arc` note.
-                        e3(
-                            lerp(0.10, -0.70, fp_ready) + fp_sw.sh_x.0 * back + fp_sw.sh_x.1 * fwd
-                                + fp_sw.arc.0 * fp_atk_arc
-                                + fp_breath
-                                + fp_bob_v,
-                            -(fp_sway + fp_bob_l) * lerp(0.5, 1.0, fp_ready) - 0.35 * fp_ready
-                                + fp_sw.sh_y.0 * back
-                                + fp_sw.sh_y.1 * fwd
-                                + fp_sw.arc.1 * fp_atk_arc,
-                            lerp(0.12, 0.10, fp_ready),
-                        )
-                    };
-                    rot = rot.slerp(target, fp_amt);
-                }
-            }
-            Joint::Sword => {
-                // FP wrist — fully viewmodel-owned in first person: the FP arm tilts the HAND
-                // frame so far back that EVERY pose-space wrist angle (rest 1.95, the clips'
-                // sweeps) points the blade up at / behind the lens. These angles are SOLVED from
-                // the FPDBG camera-space probes (reconstruct the hand basis, invert the desired
-                // camera-space blade line back to joint-local Euler), not eyeballed:
-                // - ready: blade up-forward from the bottom-right hilt toward frame centre
-                // - attack: the envelope cocks it back-right through the wind, sweeps it across
-                //   toward centre-down through the strike (the arm punch carries the hilt)
-                // - guard: tucked down-forward-right, out of frame — the shield is the story.
-                if fp_amt > 0.0 {
-                    // Low carry — the out-of-combat grip. The old code left the wrist entirely to
-                    // the third-person pose below `fp_ready` = 0, and through the tilted FP hand
-                    // frame the rest/gait angles read as a rigid rod jutting up across the frame
-                    // ("nie trzyma miecza" bug) — so the wrist is now owned in FP at ALL times:
-                    // relaxed here (blade angled easy down-forward out of the frame's way, riding
-                    // the walk bob), drawn up into `combat` as `fp_ready` rises.
-                    let carry = e3(3.02 + fp_bob_v * 0.4, -0.30 - fp_sway * 0.5, -0.44);
-                    // `sw_roll` turns the EDGE about the blade's own axis through the cut
-                    // (pronated on the cock, rolled over through the strike; the thrust
-                    // corkscrews). Right-multiplied local +Y spin — the blade runs along mesh
-                    // +Y, so this rolls it in place without deflecting its line.
-                    let edge_roll = fp_sw.sw_roll.0 * fp_atk_back + fp_sw.sw_roll.1 * fp_atk_fwd;
-                    // Ready base: yaw −0.20 (not the old −0.60) angles the blade as a DIAGONAL
-                    // across the lower-right — the −0.60 carry pointed it almost dead along the
-                    // view axis, which on screen read as a disembodied floating rod ("jakies
-                    // nienaturalne"): a sliver of near-axial blade with the hand below frame.
-                    let combat = e3(
-                        2.70 + fp_sw.sw_x.0 * fp_atk_back + fp_sw.sw_x.1 * fp_atk_fwd + fp_bob_v * 0.5,
-                        -0.20 - fp_sway + fp_sw.sw_y.0 * fp_atk_back + fp_sw.sw_y.1 * fp_atk_fwd,
-                        -0.44,
-                    ) * Quat::from_rotation_y(edge_roll);
-                    let ready_w = if attack.is_some() { 1.0 } else { fp_ready };
-                    let target = carry.slerp(combat, ready_w).slerp(e3(-2.42, -0.60, -0.33), block_amt);
-                    rot = rot.slerp(target, fp_amt);
+                    rot = if part.joint == Joint::ElbowR { el } else { sh };
                 }
             }
             Joint::ShoulderL | Joint::ElbowL => {
-                let elbow = part.joint == Joint::ElbowL;
                 if let Some((_, Some((sh, el)))) = gesture {
-                    rot = if elbow { el } else { sh };
-                } else if fp_amt > 0.0 {
-                    // First-person shield ARM (always viewmodel-driven in FP — see the sword arm
-                    // note): it STAYS in the low carry even at combat-ready — the shield rides
-                    // edge-on beside the thigh, out of frame bar a sliver in the bottom-left
-                    // corner (raising it at ready laid the plate ALONG the lifted forearm, whose
-                    // far end crossed the lens as a wall). Only a raised guard (`block_amt`)
-                    // BRACES it up into the lower-left of frame, where the FP Shield override
-                    // below turns the plate's face to the camera.
-                    let target = if elbow {
-                        rx(lerp(-0.55, -1.20, block_amt) + fp_bob_v * 0.6)
-                    } else {
-                        e3(
-                            lerp(0.10, -0.75, block_amt) + fp_breath + fp_bob_v,
-                            -(fp_sway - fp_bob_l) * 0.5,
-                            lerp(-0.12, -0.02, block_amt),
-                        )
-                    };
-                    rot = rot.slerp(target, fp_amt);
-                }
-            }
-            Joint::Shield => {
-                // FP: the shield joint is FULLY viewmodel-owned, like the sword wrist. The
-                // third-person attack clips write the shield EVERY swing (the slash lays the
-                // plate flat, the thrust braces it forward) — and in FP the shield hand hangs
-                // right at the lens, so those writes swept the dark plate ACROSS the camera:
-                // the "whole frame blacks out mid-swing" bug that survived every arm retune.
-                // Out of block, pin it to the edge-on rest carry instead.
-                if fp_amt > 0.0 && block_amt <= 0.001 {
-                    rot = rot.slerp(shield_rest_r(), fp_amt);
-                    tf.translation = tf.translation.lerp(SHIELD_REST_T, fp_amt);
-                }
-                // FP block: turn the plate's FACE to the camera, low in frame — the pose-space
-                // defend brace (rx(π/2)) shows its BACK through the FP hand frame. Solved from
-                // the FPDBG probes like the sword wrist.
-                if fp_amt > 0.0 && block_amt > 0.001 {
-                    let k = fp_amt * block_amt;
-                    // Z carries a π roll — the other solution branch held the heater point-UP.
-                    // X tips the plate's face UP into the skylight (probe: face.y moves ≈ +1.1
-                    // per +rad of X here; -0.85 lands ≈0.4) so the brace catches light and reads
-                    // as a dimensional plate, not a flat dark wall. (A stronger -0.70 tilt +
-                    // higher mount was tried: the plate rode up into the frame centre and ate
-                    // half the view — this framing keeps it low with the rim/boss just in shot.)
-                    rot = rot.slerp(e3(-0.85, -0.02, -2.97), k);
-                    // Push the braced plate OUT of the lens. The defend pose's (0,0,0.1) mount
-                    // left the plate ~0.38u from the FP eye — it filled half the frame as one
-                    // featureless slab (the "odwrócona tarcza" read: too close to show its rim
-                    // or boss). Probe-solved hand-frame push: -Y runs along the raised forearm
-                    // AWAY from the camera, -Z drops it toward the lower frame edge — lands the
-                    // centre ≈(-0.27,-0.38,-0.6) in camera space: lower-left frame, plate in view.
-                    tf.translation = tf.translation.lerp(Vec3::new(0.0, -0.28, -0.18), k);
-                }
-            }
-            _ => {}
-        }
-
-        // ── FP handedness mirror ──
-        // The studio port left the rig handedness-MIRRORED: the joint named ShoulderR renders on
-        // the viewer's LEFT through the FP eye (three.js +Z-toward-viewer vs Bevy -Z-forward).
-        // Invisible in third person behind the low-poly silhouette, glaring at eye height ("holds
-        // the sword left-handed"). In first person, mirror the whole arm chains + held gear across
-        // the body plane — translations flip X, rotations conjugate by the reflection (keep x,
-        // negate y/z) — so the sword reads bottom-RIGHT / shield bottom-LEFT like every FP melee
-        // game, and EVERY authored pose (attack sweeps, the block brace, the charge coil) stays
-        // correct-handed with no FP-specific re-authoring. (The earlier translation-only
-        // anchor-swap left the un-mirrored rotations sweeping attacks/blocks the wrong way —
-        // the "FP is completely broken" bug.) Third person keeps the rig as authored; sword and
-        // heater shield are x-symmetric meshes, so the un-mirrored geometry doesn't tell.
-        match part.joint {
-            Joint::ShoulderR | Joint::ShoulderL | Joint::ElbowR | Joint::ElbowL | Joint::Sword | Joint::Shield => {
-                if fp_amt > 0.0 {
-                    let mirrored = Quat::from_xyzw(rot.x, -rot.y, -rot.z, rot.w);
-                    rot = rot.slerp(mirrored, fp_amt);
-                }
-                // Anchors: the shoulders are never written by poses (they spawn at ±SHOULDER_DX),
-                // so cross-fade them to the opposite side from their homes — unconditionally, so
-                // leaving FP restores them. The shield's per-pose local offset was freshly written
-                // above, so a plain X flip mirrors it (identity at fp_amt = 0).
-                let home = super::model::SHOULDER_DX;
-                match part.joint {
-                    Joint::ShoulderR => tf.translation.x = lerp(home, -home, fp_amt),
-                    Joint::ShoulderL => tf.translation.x = lerp(-home, home, fp_amt),
-                    Joint::Shield => tf.translation.x = lerp(tf.translation.x, -tf.translation.x, fp_amt),
-                    _ => {}
+                    rot = if part.joint == Joint::ElbowL { el } else { sh };
                 }
             }
             _ => {}
         }
         tf.rotation = rot;
-
-        // FP: the camera eye is rigid (no head-bob by design), so any hips/torso bob/lean/twist
-        // shakes the ENTIRE viewmodel across the lens — the run gait's torso pump alone swung the
-        // sword arm from frame-right to frame-LEFT ("macha mieczem" bug), and the loco hips-bob
-        // read as flailing. Flatten the trunk back to its rest carry in FP (the arm targets above
-        // are LOCAL to the torso, so a stable trunk keeps them pinned to the frame corners); the
-        // small controlled per-joint bob terms carry the walk feel instead. Also damps the attack
-        // clips' hip/torso drive (their forward shove pushes the chest into the near plane).
-        if fp_amt > 0.0 {
-            match part.joint {
-                Joint::Hips => {
-                    tf.translation = tf.translation.lerp(Vec3::new(0.0, 1.05, 0.0), fp_amt);
-                    tf.rotation = tf.rotation.slerp(Quat::IDENTITY, fp_amt * 0.8);
-                }
-                Joint::Torso => {
-                    tf.rotation = tf.rotation.slerp(Quat::IDENTITY, fp_amt * 0.9);
-                }
-                _ => {}
-            }
-        }
 
         // Landing squash folded over the locomotion pose right after touchdown (studio positive-knee
         // crouch: hips dip, knees bend, thighs settle back, feet flatten, torso leans in).

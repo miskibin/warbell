@@ -157,7 +157,8 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_FISHLINE="x,z"` | park one of each fish variety (silver/blue/gold) frozen mid-leap in a lit row at a world XZ (fish-model close-ups, `fish.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
-| `FOREST_FP=1` | boot straight into first-person (forces Play so the follow-cam eye-view can be captured; `player/camera.rs`) |
+| `FOREST_FP=1` | boot straight into first-person (forces Play so the follow-cam eye-view can be captured; `player/camera.rs`). Also shows the FP reticle under a capture (no pointer lock needed) |
+| `FOREST_VMPOSE=swing:<variant 0-3>:<progress 0-1>\|block\|ready\|sprint` | freeze the FP viewmodel in one pose so a still frames it exactly (`player/viewmodel.rs`); pair with `FOREST_FP=1`. `FOREST_VMHIDE=1` hides the viewmodel but keeps its camera lean, for A/B diffs |
 | `FOREST_TPS=1` (+`_AZ`/`_PITCH` rad, `_DIST` units) | boot Play + **third-person** real follow-cam so a shot/clip frames the world like actual gameplay (NOT a god-cam `FOREST_CAM`); place the hero with `FOREST_HERO`, film a walk with `FOREST_DEMO=explore` (`player/mod.rs`, `player/camera.rs`) |
 | `FOREST_LOADTEST=1` | hold the boot loading veil up (even under a capture) so it can be shot (`loading.rs`); pair with `FOREST_SHOT`+`FOREST_MENU=1` |
 | `FOREST_PANEL=tree\|inv` | seed + open the upgrade-tree / satchel panel for a shot |
@@ -169,7 +170,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_FLAGTEST=1` | park one cloth banner in open air at `(0, 6, -22)` to frame the flutter in isolation (`banner.rs`). NB the cloth streams along world ≈`(0.9, 0, -0.43)` — shoot from a spot perpendicular to that or it reads edge-on |
 | `FOREST_BELLTEST=1` | re-toll the war bell on a ~12s loop (swing + clapper + SFX) so a shot/clip frames the ring without a keypress (`castle::swing_bell`); the bell stands at `castle::BELL_POS` (4.5, 7.5) |
 | `FOREST_ROLLTEST=1` | re-arm the hero's **Alt dodge-roll** (forward, along the facing) on a ~1.8s loop so a `FOREST_TPS` shot/clip frames the somersault without a keypress (`player/movement.rs::player_roll`); skips the pointer-lock/stamina gates |
-| `FOREST_SWINGTEST=1` | re-arm the hero's **attack chain** on a ~1.15s loop (inside the combo window, so it steps chop → slash → thrust; every 4th swing is the Heavy) with no keypress, skipping the pointer-lock gate, so a `FOREST_FP`/`FOREST_TPS` clip frames every swing variant (`player/combat.rs::swing_test`). Pair with `FOREST_FPDBG=1`, which samples fast (~0.12s) under this hook, to probe the FP viewmodel through the swings |
+| `FOREST_SWINGTEST=1` | re-arm the hero's **attack chain** on a ~1.15s loop (inside the combo window, so it steps chop → slash → thrust; every 4th swing is the Heavy) with no keypress, skipping the pointer-lock gate, so a `FOREST_FP`/`FOREST_TPS` clip frames every swing variant (`player/combat.rs::swing_test`). |
 | `FOREST_IMMORTAL=1` | the hero takes hits with full juice (floats/flash/shake) but can't drop below 1 HP, so a filmed melee never trips the **succession beat** — which slow-mos the world and swings the camera to the nearest townsperson, hijacking a combat clip's framing (`player/health.rs::apply_hero_damage`) |
 | `BEVY_ASSET_ROOT` | point at this dir if running the binary from elsewhere (WGSL loads from `assets/shaders/`) |
 
@@ -346,32 +347,45 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   (Depth/Normal/MotionVector prepass + SSAO + DOF + godrays + outline + bloom) throws a hard **wgpu
   Validation Error → the app quits**. Don't re-attempt it. Anything "in front of the lens" (a FP
   weapon/arms view-model, a HUD-in-world overlay) must live in the ONE camera. The working FP
-  view-model knobs: `fp_keep` in `player/mod.rs::spawn_hero_meshes` picks which limb meshes survive
-  FP (hide the **upper-arm** meshes — they balloon at the eye — but KEEP the forearm so the weapon
-  has a hand and doesn't levitate); `camera::fp_body_visibility` applies it; the FP arm/sword/shield
-  poses live in `anim::hero_anim` (July 2026 rework): the arms are **always viewmodel-driven in FP**
-  (the eye sits AT the chest, so third-person clips orbit the lens itself — never let them play on
-  the FP arms), a `fp_ready` weight keeps the gear in a low carry at the frame edges out of combat
-  and draws it up when a threat is near / attacking / blocking, and the whole arm chains are
-  **handedness-MIRRORED** in FP (the studio rig renders its "R" joints on the viewer's left;
-  translations flip X, rotations conjugate `(x,-y,-z)`) so the sword reads bottom-right / shield
-  bottom-left. The FP wrist/shield angles were **solved from `FOREST_FPDBG=1` camera-space probes,
-  not eyeballed** — pose-space intuition is useless through the tilted FP hand frame, so tune
-  against the probe vectors (NB: FPDBG needs `FOREST_SHOT` too — without the shot harness the app
-  idles on the start screen and the probes read the menu camera). The eye sits at
-  `FP_EYE_H`/`FP_FWD_OFF` in `player/camera.rs`; and the main-camera **near-plane**
-  (`scene.rs::setup_camera`, `near: 0.04`) is lowered so the close-held weapon doesn't slice the
-  near-plane (that slicing was the walk-time "flicker"). July 2026 FP-combat polish knobs:
-  per-variant swing shaping is `anim::fp_swing` (wind/punch endpoints + `sw_roll` edge-roll about
-  the blade axis + `arc` mid-strike crescent). **The FP eye sits ~0.2u from the shoulder pivot, so
-  any real shoulder-Y sweep parks the forearm ON the lens (whole frames black out) — cross-frame
-  travel must live in the WRIST**, with `sw_x` compensating the tilted hand frame (a big wrist yaw
-  alone reads as a rising poke). Swings also drive a small per-variant **camera swing-sway**
-  (`anim::fp_cam_sway` → `FirstPerson::sway`, applied post-`look_at` in `player_camera`; a lean,
-  never a shake) and an FP **close-quarters FOV widen** (`camera::FP_CLOSE_FOV_DEG` eased off the
-  ringed foe's distance) buys back a melee-range ork's silhouette. Enemy **HP bars clamp into a
+  view-model (**rebuilt from scratch, Sept 2026** — the old one re-used the third-person rig's arms
+  through a handedness mirror + Euler angles solved against a tilted hand frame, and was junk) is
+  `player/viewmodel.rs`: purpose-built sword / shield / fist / forearm meshes
+  (`model::build_viewmodel`) that are **children of the main camera** (`FpRoot`), rendered in the
+  one world pass (`NotShadowCaster`) with its OWN material (`creature::make_viewmodel_material`):
+  the world's sun/IBL knows nothing about the lens, so facing the sun used to leave near-black
+  hands (median luminance 17/255). `creature.wgsl` adds an opt-in **camera-locked key light**
+  (`params.w` = `viewmodel::VM_KEY_LUX`, half-lambert from up-left-front of the lens, exposure-scaled)
+  and the FP gloves use lighter leather (`model::FP_GLOVE`, not the near-black `PGLOVE`). Any new
+  colour used by a viewmodel mesh must be mapped in `model::surf_for` or it defaults to Metal. The whole third-person rig is simply
+  **hidden in FP** (`camera::fp_body_visibility`, edge-triggered) and keeps playing its normal clips
+  untouched — nothing in `anim::hero_anim` is FP-aware any more, so never re-add FP branches there.
+  Poses are authored in **screen space**: `Kf { (ndc x, ndc y, depth), blade direction, roll }`
+  (`sword_carry/ready/sprint/guard/tuck`, `shield_*`, and the four `swing()` tables with
+  wind → mid → hit → end keys and per-swing camera lean), converted to camera space by `Lens`
+  against `camera::FP_FOV_DEG`, so a swing is choreographed by where the blade is *on screen*.
+  Roll convention: `roll = 0` shows the blade's broad flat to the sky/viewer (a horizontal slash's
+  attitude) — held at rest that reads as a *paddle*, so the carry/ready/thrust/chop keys use a
+  **negative roll (~-1.0 rad)**: flat toward screen-left, edges up/forward, crossguard seen end-on,
+  fingers wrapping toward the viewer — a right hand's natural grip. Only the horizontal slash rolls
+  back toward 0 (edge leading left).
+  Forearms are a **rigid one-bone IK** (`solve_arm`: aimed wrist → elbow anchor behind/below the lens,
+  never stretched — the sleeve mesh is long enough to stay off-frame), so an arm always connects to its hand. Weight comes from springs layered on the pose: look
+  inertia, a hit-recoil kick off `HitFeedback::trauma`, jump/landing hop, stride bob, and a
+  **wall-avoid** that tucks the weapon down/back when `blockers` has a solid within reach.
+  `camera::fp_eye_rig` owns the eye: terrace-smoothed height (`FP_VERT_RATE`), landing dip spring,
+  figure-eight stride bob, strafe roll, dodge-roll dip (the Alt roll now works in FP). The
+  near-plane (`scene.rs::setup_camera`, `near: 0.04`) is lowered so a close-held weapon never slices
+  it. FP swing lean is `FirstPerson::sway` (written by `animate_viewmodel`, applied post-`look_at`
+  in `player_camera`; a lean, never a shake) plus an FP **close-quarters FOV widen**
+  (`camera::FP_CLOSE_FOV_DEG`). A centre **reticle** (`viewmodel::spawn_reticle`/`sync_reticle`)
+  blooms into a ring when a foe is ringed. Tune with the captures: `FOREST_FP=1` still,
+  `FOREST_VMPOSE=swing:<0-3>:<p>|block|ready|sprint` freezes the pose, `FOREST_VMHIDE=1` hides the
+  meshes but keeps the lean so `A − A_hidden` diffs isolate the viewmodel. Enemy **HP bars clamp into a
   view cone above the eye** (`combat_fx::HP_BAR_CONE_SLOPE` — the bar slides down toward the chest
-  and pulls toward a close camera, shrinking) so a towering foe's bar stays on screen in FP melee.
+  and pulls toward a close camera, shrinking) so a towering foe's bar stays on screen at FP mid-range.
+  Inside `HP_BAR_NEAR` (4u) in FP **no world bar is drawn at all** (a bar pulled to the lens filled
+  half the frame) — the ringed foe's health is a slim bar under the reticle instead
+  (`viewmodel::ReticleTarget` also hides that foe's world bar).
   NB: FP melee inherently puts the enemy in your face — the widen softens it, but no view-model
   trick removes it; third-person is the design's combat view.
 - **Capture-harness flakes — confirm the `Screenshot saved` log line, and retry before debugging.**

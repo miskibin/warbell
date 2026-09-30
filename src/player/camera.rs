@@ -57,13 +57,11 @@ const CRIT_ZOOM_OUT: f32 = 4.5;
 const EYE_H: f32 = 0.92;
 
 /// First-person eye height above the hero's feet — sits right at the helm/eye line. (Scaled ×1.5
-/// alongside the `HERO_SCALE` bump; an eye floating above the helm reads as "too tall" and drops the
-/// sword-hand off the bottom of frame.) Original 0.74 × 1.35. Verify with `FOREST_FP`.
+/// alongside the `HERO_SCALE` bump; an eye floating above the helm reads as "too tall" and pushes the
+/// viewmodel's hands off the bottom of frame.) Original 0.74 × 1.35. Verify with `FOREST_FP`.
 const FP_EYE_H: f32 = 1.32;
-/// First-person forward eye offset (world units along the look direction). Now that the whole hero
-/// is rendered in FP (no body cull), the eye must sit IN FRONT of the head — otherwise the camera
-/// is behind the body centre and you stare at your own back/helm. Push it past the head radius so
-/// you look OUT of the face, body behind the lens, weapon-arm projecting forward into view.
+/// First-person forward eye offset (world units along the look direction): nudges the eye a touch
+/// ahead of the (hidden) body centre so it sits at the face, not inside the chest.
 const FP_FWD_OFF: f32 = 0.05;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
@@ -74,6 +72,12 @@ const FP_PITCH_LIMIT: f32 = 1.3;
 /// as breathing room, never a zoom pump; scaled by the FP blend so third person is untouched.
 const FP_CLOSE_FOV_DEG: f32 = 8.0;
 const FP_CLOSE_RANGE: f32 = 3.5;
+/// Resting first-person vertical FOV. Wider than the 50° third-person lens: at the eye you want
+/// peripheral vision, and the viewmodel's screen-space poses are authored against this value.
+pub const FP_FOV_DEG: f32 = 62.0;
+/// How fast the FP eye height follows the ground while grounded (1/s). Low on purpose: terraced
+/// terrain snaps `hero.y` by 0.5u per tile edge, and a stiff follow turns every step into a hitch.
+const FP_VERT_RATE: f32 = 11.0;
 
 /// Build-mode camera pose — eye + look-at, framing the WHOLE settlement (the castle at the origin)
 /// centred above the bottom build palette. The look-target is pushed forward (z = 5, toward the
@@ -161,14 +165,101 @@ pub struct FirstPerson {
     pub blend: f32,
     pub pitch: f32,
     /// FP swing camera-sway (screen-space radians: x = pitch(+up), y = yaw(+left), z = roll),
-    /// written by `anim::hero_anim` from the attack envelopes and applied here on top of the
-    /// settled FP pose — one smooth lean per cut (anticipation pulls opposite, the strike rides
-    /// the blade), NOT a shake. Zeroed outside FP.
+    /// written by `viewmodel::animate_viewmodel` from the attack envelopes and applied here on top
+    /// of the settled FP pose — one smooth lean per cut (anticipation pulls opposite, the strike
+    /// rides the blade), NOT a shake. Zeroed outside FP.
     pub sway: Vec3,
+    /// Smoothed eye rig (ground-following height, landing dip, stride bob, strafe lean).
+    pub eye: FpEye,
     /// Smoothed FP close-quarters FOV widen (degrees). A `WORLD_BUMP`-scaled ork at melee range
     /// fills the whole first-person frame (face-in-lens); this eases a modest wide-angle in as
     /// the ringed foe closes, buying back its silhouette + HP bar. See `FP_CLOSE_FOV_DEG`.
     pub close_fov: f32,
+}
+
+/// Per-frame memory for the first-person eye: a low-passed ground height (so terrace steps glide),
+/// a spring-driven landing dip, the eased stride amount, and the smoothed strafe roll.
+#[derive(Default)]
+pub struct FpEye {
+    y: f32,
+    primed: bool,
+    land: f32,
+    land_v: f32,
+    was_air: bool,
+    stride: f32,
+    roll: f32,
+    dive: f32,
+}
+
+/// What the eye rig hands back to `player_camera`: where the eye is, and the small extra rotation
+/// (x pitch(+up), y yaw(+left), z roll) composed on top of the look direction.
+struct FpEyePose {
+    pos: Vec3,
+    lean: Vec3,
+}
+
+/// Critically-damped-ish spring step (semi-implicit Euler), shared with the viewmodel's layers.
+pub(super) fn spring(pos: &mut f32, vel: &mut f32, target: f32, omega: f32, zeta: f32, dt: f32) {
+    let acc = (target - *pos) * omega * omega - *vel * 2.0 * zeta * omega;
+    *vel += acc * dt;
+    *pos += *vel * dt;
+}
+
+/// Advance the eye rig one frame. Height glides over terraced ground and follows a jump at full
+/// rate; landings compress the eye and spring back; stride adds a figure-eight bob; strafing rolls
+/// the view a hair into the turn; a dodge roll dips the head and pitches it forward.
+fn fp_eye_rig(eye: &mut FpEye, hero: &Hero, yaw: f32, dt: f32) -> FpEyePose {
+    let dt = dt.clamp(1e-4, 0.05);
+    let raw_y = hero.y + FP_EYE_H;
+    if !eye.primed || (eye.y - raw_y).abs() > 2.5 {
+        eye.y = raw_y;
+        eye.primed = true;
+    } else {
+        let rate = if hero.on_ground { FP_VERT_RATE } else { 38.0 };
+        eye.y += (raw_y - eye.y) * (1.0 - (-dt * rate).exp());
+    }
+
+    if hero.on_ground && eye.was_air {
+        eye.land_v -= (hero.vel_y.abs() * 0.04).clamp(0.08, 0.6);
+    }
+    eye.was_air = !hero.on_ground;
+    spring(&mut eye.land, &mut eye.land_v, 0.0, 24.0, 0.42, dt);
+
+    let grounded = if hero.on_ground { 1.0 } else { 0.0 };
+    let stride_t = hero.moving_amt.clamp(0.0, 1.0) * grounded;
+    eye.stride += (stride_t - eye.stride) * (1.0 - (-dt * 10.0).exp());
+    let run = 1.0 + hero.run_amt.clamp(0.0, 1.0) * 0.5;
+    let k = eye.stride * run;
+    let ph = hero.walk_phase;
+    let bob_y = (ph * 2.0).sin() * 0.016 * k;
+    let bob_x = ph.sin() * 0.011 * k;
+    let bob_roll = ph.sin() * 0.006 * k;
+    let bob_pitch = (ph * 2.0 + 0.6).sin() * 0.0035 * k;
+
+    let (ys, yc) = yaw.sin_cos();
+    let right = Vec2::new(-yc, ys);
+    let lateral = hero.vel.dot(right);
+    let roll_t = (-lateral * 0.0042).clamp(-0.03, 0.03);
+    eye.roll += (roll_t - eye.roll) * (1.0 - (-dt * 8.0).exp());
+
+    let dive_t = if hero.roll_t >= 0.0 {
+        let u = (hero.roll_t / super::movement::ROLL_TIME).clamp(0.0, 1.0);
+        let s = |t: f32| {
+            let c = t.clamp(0.0, 1.0);
+            c * c * (3.0 - 2.0 * c)
+        };
+        s(u / 0.2) * s((1.0 - u) / 0.25)
+    } else {
+        0.0
+    };
+    eye.dive += (dive_t - eye.dive) * (1.0 - (-dt * 14.0).exp());
+
+    let pos = Vec3::new(
+        hero.pos.x + ys * FP_FWD_OFF + right.x * bob_x,
+        eye.y + bob_y + eye.land - eye.dive * 0.42,
+        hero.pos.y + yc * FP_FWD_OFF + right.y * bob_x,
+    );
+    FpEyePose { pos, lean: Vec3::new(bob_pitch - eye.dive * 0.5, 0.0, eye.roll + bob_roll) }
 }
 
 /// Backtick toggles Play ↔ FreeRoam. Leaving Play frees the cursor and syncs the fly-cam's
@@ -221,17 +312,35 @@ pub fn toggle_first_person(
     }
 }
 
-/// First-person body visibility. FP renders the **whole hero** (so the hands don't flicker) except
-/// meshes flagged `fp_hide` — just the head, which would otherwise fill the lens as a black blob.
-/// Restores everything in third person. Driven off `fp.blend` (the eased toggle), one frame behind.
-pub fn fp_body_visibility(fp: Res<FirstPerson>, mut vis_q: Query<(&mut Visibility, &super::HeroMesh)>) {
-    let fp_on = fp.blend > 0.5;
-    for (mut vis, mesh) in &mut vis_q {
-        let want = if fp_on && mesh.fp_hide { Visibility::Hidden } else { Visibility::Inherited };
-        if *vis != want {
-            *vis = want;
+/// First-person body visibility: the entire third-person hero is hidden once the eye is inside it
+/// (the hands and weapon you see are the separate [`super::viewmodel`]). Hiding is edge-triggered on
+/// `fp.blend` plus a sweep of freshly spawned leaves (an equip reskin rebuilds the rig mid-FP), so
+/// the per-frame cost is zero and other systems' visibility writes (the Director's weapon hide) are
+/// never fought in third person.
+pub fn fp_body_visibility(
+    fp: Res<FirstPerson>,
+    mut was_hidden: Local<bool>,
+    mut vis_q: Query<&mut Visibility, With<super::HeroMesh>>,
+    fresh_q: Query<Entity, Added<super::HeroMesh>>,
+) {
+    let hide = fp.blend > 0.5;
+    if hide {
+        let sweep = !*was_hidden || !fresh_q.is_empty();
+        if sweep {
+            for mut vis in &mut vis_q {
+                if *vis != Visibility::Hidden {
+                    *vis = Visibility::Hidden;
+                }
+            }
+        }
+    } else if *was_hidden {
+        for mut vis in &mut vis_q {
+            if *vis == Visibility::Hidden {
+                *vis = Visibility::Inherited;
+            }
         }
     }
+    *was_hidden = hide;
 }
 
 pub fn player_camera(
@@ -378,12 +487,8 @@ pub fn player_camera(
     let look_yaw = a + std::f32::consts::PI;
     let (fpy_sin, fpy_cos) = look_yaw.sin_cos();
     let (fpp_sin, fpp_cos) = fp.pitch.sin_cos();
-    // Eye sits at head height, nudged forward along the (horizontal) look direction.
-    let fp_eye = Vec3::new(
-        hero.pos.x + fpy_sin * FP_FWD_OFF,
-        hero.y + FP_EYE_H,
-        hero.pos.y + fpy_cos * FP_FWD_OFF,
-    );
+    let fp_pose = fp_eye_rig(&mut fp.eye, &hero, look_yaw, time.delta_secs());
+    let fp_eye = fp_pose.pos;
     let fp_fwd = Vec3::new(fpy_sin * fpp_cos, fpp_sin, fpy_cos * fpp_cos);
     let fp_look = fp_eye + fp_fwd;
 
@@ -399,8 +504,8 @@ pub fn player_camera(
     if fp.active {
         hero.facing = look_yaw;
     }
-    // (Body parts are hidden/shown by `fp_body_visibility` — a first-person viewmodel: arms +
-    // weapon + shield stay, head/torso/legs go, so the head never fills the lens.)
+    // (The third-person body is hidden by `fp_body_visibility`; the hands/sword/shield in view are
+    // the camera-parented `viewmodel`.)
 
     // Build mode eases the camera up over the settlement (centred on the castle/origin) so EVERY plot
     // is visible — it doesn't matter which way the hero was facing. Blend back on exit.
@@ -426,12 +531,12 @@ pub fn player_camera(
     cam_tf.translation = eye;
     cam_tf.look_at(look, Vec3::Y);
 
-    // FP swing sway: the small smooth camera lean `anim::hero_anim` derives from the attack
-    // envelopes (anticipation ↔ strike). Composed AFTER look_at so it tilts the settled view;
-    // purely cosmetic — `hero.facing`/aim still come from the un-swayed look_yaw above.
-    if fpb > 0.0 && fp.sway != Vec3::ZERO {
-        let s = fp.sway * fpb;
-        cam_tf.rotation *= Quat::from_euler(EulerRot::YXZ, s.y, s.x, s.z);
+    // FP camera lean: the swing sway (`viewmodel::animate_viewmodel`) plus the eye rig's stride
+    // pitch/roll, strafe roll and dodge-roll dip. Composed AFTER look_at so it tilts the settled
+    // view; purely cosmetic — `hero.facing`/aim still come from the un-leaned look_yaw above.
+    let lean = (fp.sway + fp_pose.lean) * fpb;
+    if fpb > 0.0 && lean != Vec3::ZERO {
+        cam_tf.rotation *= Quat::from_euler(EulerRot::YXZ, lean.y, lean.x, lean.z);
     }
 
     // Trauma-based screen shake + FOV punch layered on the settled pose (fed by combat_fx on hits).
@@ -476,6 +581,7 @@ pub fn player_camera(
         let speed_fov = hero.run_amt.clamp(0.0, 1.0) * SPRINT_FOV_DEG;
         // A slight wide-angle as the combat dolly pulls back, so a mob fight reads the arena.
         let combat_fov = orbit.combat * COMBAT_FOV_PER_UNIT;
-        p.fov = base + (kick + speed_fov + combat_fov + fp.close_fov * fpb).to_radians();
+        let fp_wide = (FP_FOV_DEG.to_radians() - base).max(0.0) * fpb;
+        p.fov = base + fp_wide + (kick + speed_fov + combat_fov + fp.close_fov * fpb).to_radians();
     }
 }
