@@ -8,7 +8,7 @@
 //! - [`animate_biped`] reads every drive, builds one [`crate::player::anim::Pose`] per root, and
 //!   writes it onto that root's tagged joints.
 //!
-//! The hero keeps its own richer driver (`player::anim::hero_anim`: gestures, first-person raise,
+//! The hero keeps its own richer driver (`player::anim::hero_anim`: gestures,
 //! landing squash) and is **not** touched by this module — it only borrows the clip functions.
 //! Spawning a biped's skeleton (the joint hierarchy from a per-joint mesh set) is added alongside
 //! the first mob that uses it.
@@ -115,8 +115,8 @@ const LIMB_CULL2: f32 = 70.0 * 70.0;
 /// rig simply keeps its last pose (same precedent) — it is not reset, so nothing snaps; when the
 /// camera closes back in, the next frame poses it from the live drive. The **hero is never culled**:
 /// he drives his own richer animator (`player::anim::hero_anim`) and never carries a `BipedDrive`,
-/// but the marker check is kept explicit so the first-person view-model can never be frozen out by
-/// this system if the hero is ever moved onto the shared rig.
+/// but the marker check is kept explicit so the hero rig can never be frozen out by this system if
+/// he is ever moved onto the shared rig.
 pub fn animate_biped(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,

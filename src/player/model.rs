@@ -777,3 +777,62 @@ pub fn build_knight(weapon: Option<&str>, armor: Option<&str>) -> KnightMeshes {
         weapon: gk(weapon_parts(weapon)),
     }
 }
+
+// ── First-person viewmodel ─────────────────────────────────────────────────────────────
+// The FP hands are NOT the third-person rig's arms. They are a purpose-built set of props parented
+// to the camera (`super::viewmodel`), each authored so its own origin is the natural hinge —
+// the forearm at the WRIST running up +Y toward the elbow, the fist around the grip, the weapon /
+// shield exactly as held in third person — so the animator can place each one in camera space
+// directly instead of solving rig Euler angles through a tilted hand frame.
+
+/// Forearm: a steel vambrace over a dark glove cuff, widening toward the elbow into a leather
+/// sleeve that runs off the bottom of the frame. Wrist at the origin, elbow end at `+Y`
+/// (`FOREARM_LEN`). Rig units (× `HERO_SCALE` like every other hero mesh).
+fn fp_forearm_mesh(s: &Skin) -> Mesh {
+    group(vec![
+        at(rbx(0.205, 0.07, 0.21, 0.02), v(0.0, -0.01, 0.0), PGLOVE), // glove cuff
+        at(tplate(0.165, 0.40, 0.175, 1.28, 1.22, 0.035), v(0.0, 0.05, 0.0), s.metal), // vambrace
+        at(rbx(0.2, 0.028, 0.205, 0.008), v(0.0, 0.24, 0.0), s.trim), // trim band
+        at(tplate(0.04, 0.34, 0.03, 1.0, 1.0, 0.01), v(0.0, 0.08, 0.092), s.metal_lt), // bright ridge down the outer plate
+        at(rbx(0.235, 0.05, 0.245, 0.02), v(0.0, 0.43, 0.0), s.metal_dk), // couter rim
+        at(tplate(0.23, 0.70, 0.24, 1.12, 1.12, 0.04), v(0.0, 0.47, 0.0), PLEATHER), // sleeve, off-screen end
+    ])
+}
+
+/// Length of [`fp_forearm_mesh`] along `+Y` (rig units) — the viewmodel stretches the arm to reach
+/// its elbow anchor, so this is only the rest length.
+pub(crate) const FOREARM_LEN: f32 = 1.17;
+
+/// Gauntleted fist, built around the grip in ITEM space (blade / haft along `+Y`, flat face `+Z`):
+/// a dark glove block with finger seams across the front and a steel back-of-hand plate, sitting
+/// on the lower grip so the crossguard clears above it. Shared by the sword hand and the shield hand.
+fn fp_fist_mesh(s: &Skin) -> Mesh {
+    group(vec![
+        at(rbx(0.165, 0.125, 0.17, 0.045), v(0.0, -0.005, 0.0), PGLOVE), // palm + curled fingers
+        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.024, 0.0), PDARK), // finger seams
+        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.056, 0.0), PDARK),
+        at(rbx(0.172, 0.009, 0.178, 0.003), v(0.0, 0.088, 0.0), PDARK),
+        at(tplate(0.12, 0.085, 0.045, 0.92, 0.9, 0.012), v(0.0, 0.01, -0.094), s.metal), // back-of-hand plate
+        at(rbx(0.15, 0.03, 0.05, 0.012), v(0.0, 0.104, 0.0), s.metal_dk), // knuckle guard
+        at(rbx(0.05, 0.085, 0.07, 0.02), v(-0.095, 0.03, 0.03), PGLOVE), // thumb
+    ])
+}
+
+/// Every mesh the first-person viewmodel needs, for the equipped gear. Rebuilt by
+/// `viewmodel::sync_gear` whenever the equipped weapon / armour changes.
+pub struct ViewmodelMeshes {
+    pub forearm: Mesh,
+    pub fist: Mesh,
+    pub weapon: Mesh,
+    pub shield: Mesh,
+}
+
+pub fn build_viewmodel(weapon: Option<&str>, armor: Option<&str>) -> ViewmodelMeshes {
+    let s = skin_for(armor);
+    ViewmodelMeshes {
+        forearm: fp_forearm_mesh(&s),
+        fist: fp_fist_mesh(&s),
+        weapon: gk(weapon_parts(weapon)),
+        shield: shield_mesh(),
+    }
+}

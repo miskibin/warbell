@@ -26,6 +26,7 @@ mod health;
 pub(crate) mod model;
 mod movement;
 mod softlock;
+mod viewmodel;
 
 /// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
 pub use camera::FirstPerson;
@@ -45,9 +46,8 @@ use crate::inventory::Inventory;
 pub const HERO_SCALE: f32 = 0.6345;
 
 /// A rig **joint** — a transform-only entity the animator ([`anim`]) poses. Each joint's mesh is a
-/// separate child *leaf* entity ([`HeroMesh`]), so first-person can hide the body meshes without
-/// hiding the arm joints that hang beneath the torso. (Hands / neck / feet are unanimated, so they
-/// carry no `HeroPart`.)
+/// separate child *leaf* entity ([`HeroMesh`]). (Hands / neck / feet are unanimated, so they carry
+/// no `HeroPart`.)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Joint {
     Hips,
@@ -74,73 +74,16 @@ pub struct HeroPart {
     pub joint: Joint,
 }
 
-/// A body **mesh leaf** (child of a joint). The whole hero renders in first-person now (so the
-/// hands don't flicker), EXCEPT meshes flagged `fp_hide` — just the head, which would otherwise
-/// fill the lens as a black blob. Hidden in FP by [`camera::fp_body_visibility`].
+/// A body **mesh leaf** (child of a joint). In first person every one of these is hidden by
+/// [`camera::fp_body_visibility`] — the hands, sword and shield you see there are the separate
+/// camera-parented [`viewmodel`], so the third-person rig keeps animating untouched underneath.
 #[derive(Component)]
-pub struct HeroMesh {
-    pub fp_keep: bool,
-    /// Hidden in first-person (the head only) so it doesn't block the camera.
-    pub fp_hide: bool,
-}
+pub struct HeroMesh;
 
 /// The held weapon mesh leaf (under the right hand). Toggled `Visibility::Hidden` for weapon-free
 /// staged gestures (the Director's "hide weapon"), and read by `combat::hero_blade_trail`.
 #[derive(Component)]
 pub struct HeroWeapon;
-
-/// Debug/capture hook: `FOREST_FPDBG=1` logs the FP viewmodel joints in CAMERA space every ~2s
-/// (x right, y up, -z forward; plus each joint's local +Y tip direction, i.e. where a blade
-/// points). Turns "why is the sword not in frame" from euler-guessing into arithmetic — read the
-/// numbers off a `FOREST_FP` capture run, then set the FP targets analytically (`anim.rs`).
-pub fn fp_debug_dump(
-    time: Res<Time>,
-    fp: Res<camera::FirstPerson>,
-    cam: Query<&GlobalTransform, With<Camera3d>>,
-    parts: Query<(&HeroPart, &GlobalTransform)>,
-    hero_q: Query<(&Hero, &HeroHealth)>,
-    mut next: Local<f32>,
-) {
-    if std::env::var("FOREST_FPDBG").is_err() || fp.blend < 0.9 || time.elapsed_secs() < *next {
-        return;
-    }
-    // Under FOREST_SWINGTEST, sample fast enough to catch each swing's wind/strike (a swing is
-    // ~0.45s) — the probes are how the per-variant FP attack angles get SOLVED, not eyeballed.
-    let fast = std::env::var("FOREST_SWINGTEST").is_ok();
-    *next = time.elapsed_secs() + if fast { 0.12 } else { 2.0 };
-    if let Ok((hero, hh)) = hero_q.single() {
-        info!(
-            "FPDBG state threats={} combat_in={:.1} attacking={} variant={} ap={:.2} blocking={} blend={:.2}",
-            hero.threats,
-            hero.combat_until - time.elapsed_secs(),
-            hero.attacking,
-            hero.attack_variant,
-            if hero.attacking { hero.attack_t / hero.attack_dur } else { -1.0 },
-            hh.blocking,
-            fp.blend
-        );
-    }
-    let Ok(cam_gt) = cam.single() else { return };
-    let inv = cam_gt.affine().inverse();
-    for (p, gt) in &parts {
-        if matches!(
-            p.joint,
-            Joint::Sword | Joint::Shield | Joint::ElbowR | Joint::ElbowL | Joint::ShoulderR | Joint::ShoulderL
-        ) {
-            let pos = inv.transform_point3(gt.translation());
-            // A point 0.5 rig-units up the joint's local +Y — for the sword that's along the blade.
-            let tip = inv.transform_point3(gt.transform_point(Vec3::Y * 0.5));
-            // Unit direction probes in camera space (-Z = forward): the blade line (+Y) and the
-            // face normal (+Z — the shield's face points at local +Z).
-            let up = (tip - pos).normalize_or_zero();
-            let face = (inv.transform_point3(gt.transform_point(Vec3::Z * 0.5)) - pos).normalize_or_zero();
-            info!(
-                "FPDBG {:?} pos({:.2},{:.2},{:.2}) up({:.2},{:.2},{:.2}) face({:.2},{:.2},{:.2})",
-                p.joint, pos.x, pos.y, pos.z, up.x, up.y, up.z, face.x, face.y, face.z
-            );
-        }
-    }
-}
 
 /// The hero's hot per-frame state (mutated directly each frame, never via events).
 #[derive(Component)]
@@ -483,10 +426,9 @@ impl Plugin for PlayerPlugin {
                     camera::toggle_mode,
                     camera::toggle_first_person, // V / HUD eye button: third ⇄ first person
                     camera::player_camera,
-                    camera::fp_body_visibility, // FP viewmodel: keep arms/sword/shield, hide the rest
+                    camera::fp_body_visibility, // FP: hide the whole third-person rig (the viewmodel draws the hands)
                     reskin_hero, // rebuild limb meshes when weapon/armor equip changes
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
-                    fp_debug_dump, // debug: FOREST_FPDBG=1 logs viewmodel joints in camera space
                     anim::hero_anim,
                     combat::update_sparks,
                     combat::update_fx_fades,
@@ -500,6 +442,19 @@ impl Plugin for PlayerPlugin {
                 )
                     // Campaign-only: no hero in Skirmish, and `player_camera` must not fight the
                     // RTS iso camera (which drives the SAME single Camera3d).
+                    .run_if(crate::rts::in_campaign),
+            )
+            // First-person viewmodel (camera-parented hands/sword/shield) + reticle. Ungated so the
+            // frozen world still draws them; `animate_viewmodel` runs after the camera so its
+            // look-inertia reads this frame's view angles.
+            .add_systems(Startup, viewmodel::spawn_reticle)
+            .add_systems(
+                Update,
+                (
+                    viewmodel::spawn_viewmodel,
+                    viewmodel::animate_viewmodel.after(camera::player_camera),
+                    viewmodel::sync_reticle,
+                )
                     .run_if(crate::rts::in_campaign),
             )
             // World-sim — gated on the freeze condition (`Modal::None` ⇒ Playing, no panel).
@@ -662,11 +617,9 @@ fn spawn_hero(
 
 /// Spawn a joint entity (transform-only, optionally `HeroPart`-tagged for the animator), parented
 /// under `parent`, returning it so children can nest beneath. An optional mesh `leaf` is spawned as
-/// a separate child entity (so first-person can toggle body meshes without hiding child joints).
+/// a separate child entity (so each body mesh can be hidden on its own without hiding child joints).
 struct Leaf {
     mesh: Handle<Mesh>,
-    fp_keep: bool,
-    fp_hide: bool,
     weapon: bool,
 }
 fn spawn_joint(
@@ -688,7 +641,7 @@ fn spawn_joint(
             Mesh3d(l.mesh),
             MeshMaterial3d(mat.clone()),
             Transform::default(),
-            HeroMesh { fp_keep: l.fp_keep, fp_hide: l.fp_hide },
+            HeroMesh,
         ));
         if l.weapon {
             le.insert(HeroWeapon);
@@ -711,17 +664,7 @@ pub(crate) fn spawn_hero_meshes(
 ) {
     use Joint::*;
     let p = |t: Vec3| Transform::from_translation(t);
-    let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, fp_hide: false, weapon: false });
-    let arm = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: true, fp_hide: false, weapon: false });
-    // FP eye sits ~at chest/neck height (`FP_EYE_H`) right inside the upper body, so the head, neck,
-    // torso and shoulders crowd the lens as a dark blob. `fp_off` hides those in first-person; the
-    // forearms/hands/weapon/shield/legs stay visible. Visible in third person regardless.
-    let fp_off = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, fp_hide: true, weapon: false });
-    // The UPPER arms (shoulder meshes) sit right at the FP eye and balloon into two blobs that fill
-    // the lens. Hide just those in first person (`fp_keep:false`) like the body. The FOREARMS stay
-    // (`arm`, kept) so the sword/shield read as HELD in a hand — not levitating — posed low into the
-    // corners by the FP viewmodel raise (`anim::hero_anim`). Visible in third person regardless.
-    let upper = fp_off;
+    let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, weapon: false });
 
     use model::{HIP_DX, O_ELBOW, O_FOOT, O_HAND, O_HEAD, O_HIP_Y, O_KNEE, O_NECK, O_SHOULDER_Y, O_TORSO, SHOULDER_DX, Y_HIPS};
 
@@ -734,13 +677,13 @@ pub(crate) fn spawn_hero_meshes(
 
     // Spine: hips (anim-fixed Y_HIPS) → torso → neck → head.
     let hips = spawn_joint(commands, rig, Some(Hips), p(Vec3::new(0.0, Y_HIPS, 0.0)), mat, body(meshes.add(m.hips)));
-    let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, O_TORSO, 0.0)), mat, fp_off(meshes.add(m.torso)));
-    let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, O_NECK, 0.0)), mat, fp_off(meshes.add(m.neck)));
-    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, fp_off(meshes.add(m.head)));
+    let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, O_TORSO, 0.0)), mat, body(meshes.add(m.torso)));
+    let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, O_NECK, 0.0)), mat, body(meshes.add(m.neck)));
+    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, body(meshes.add(m.head)));
 
     // Left arm + heater shield on the hand pivot (`anim` rewrites the shield pose every frame).
-    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, upper(meshes.add(m.shoulder_l)));
-    let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, arm(meshes.add(m.elbow_l)));
+    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, body(meshes.add(m.shoulder_l)));
+    let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, body(meshes.add(m.elbow_l)));
     let hand_l = spawn_joint(commands, el_l, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
     let shield = spawn_joint(
         commands,
@@ -748,18 +691,18 @@ pub(crate) fn spawn_hero_meshes(
         Some(Shield),
         Transform { translation: Vec3::new(-0.07, -0.08, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.12, -1.5, 0.0), scale: Vec3::ONE },
         mat,
-        arm(meshes.add(m.shield)),
+        body(meshes.add(m.shield)),
     );
-    spawn_joint(commands, shield, None, p(Vec3::new(0.0, -0.03, 0.033)), mat, arm(meshes.add(m.lion)));
+    spawn_joint(commands, shield, None, p(Vec3::new(0.0, -0.03, 0.033)), mat, body(meshes.add(m.lion)));
 
     // Right arm + held weapon on its own `Sword` pivot (attacks sweep it).
-    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, upper(meshes.add(m.shoulder_r)));
-    let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, arm(meshes.add(m.elbow_r)));
+    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, body(meshes.add(m.shoulder_r)));
+    let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, body(meshes.add(m.elbow_r)));
     let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
     // Spawn at the animator's held rest (not identity) so the pre-anim first frame AND the
     // standalone viewer (which runs no animator) show the blade carried naturally instead of
     // sticking straight up through the arm.
-    spawn_joint(commands, hand_r, Some(Sword), Transform::from_rotation(anim::sword_rest_r()), mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, fp_hide: false, weapon: true }));
+    spawn_joint(commands, hand_r, Some(Sword), Transform::from_rotation(anim::sword_rest_r()), mat, Some(Leaf { mesh: meshes.add(m.weapon), weapon: true }));
 
     // Legs: hip joint → knee → ankle (HH-derived; feet land on the ground).
     let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-HIP_DX, O_HIP_Y, 0.0)), mat, body(meshes.add(m.hip_l)));
