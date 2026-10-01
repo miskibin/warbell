@@ -8,7 +8,7 @@
 
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, Face, ShaderType};
 use bevy::shader::ShaderRef;
 
 const CREATURE_SHADER: &str = "shaders/creature.wgsl";
@@ -105,7 +105,14 @@ pub fn make_creature_material(mats: &mut Assets<CreatureMaterial>) -> Handle<Cre
 pub fn make_hero_material(mats: &mut Assets<CreatureMaterial>) -> Handle<CreatureMaterial> {
     // Flat solid colours to match the previs (texture-strength 0 ⇒ no weave/grain/noise; relief 0 ⇒
     // no normal perturb). A whisper of metal sheen (spec_lift) keeps steel from going dead-matte.
-    make_creature_material_with(mats, Vec4::new(0.0, 0.0, 0.12, 0.0), 0.7)
+    let mat = make_creature_material_with(mats, Vec4::new(0.0, 0.0, 0.12, 0.0), 0.7);
+    // The hero rig is mirrored (`player::spawn_hero_meshes` scales it by x = -1 so he is
+    // right-handed). Bevy does not re-wind a reflected mesh, so every triangle's winding reads
+    // backwards; culling FRONT faces instead keeps the correct (outward) side visible.
+    if let Some(mut m) = mats.get_mut(&mat) {
+        m.base.cull_mode = Some(Face::Front);
+    }
+    mat
 }
 
 /// The first-person viewmodel's material: the hero's matte-steel look plus a camera-locked key light

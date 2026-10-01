@@ -44,16 +44,18 @@ fn smoothstep(t: f32) -> f32 {
     c * c * (3.0 - 2.0 * c)
 }
 
-/// Shield rest pose — turned EDGE-ON along the forearm when not blocking (previs look); the defend
-/// clip swings it face-forward. (Studio idle was face-out; the user wants it sideways at rest.)
+/// Shield rest pose — hung at the side, angled outward and a little forward so its broad kite shape
+/// reads from the follow-cam behind the hero (the reference render shows the shield broadside; fully
+/// edge-on, `-1.5`, collapsed it to a thin plank from behind). The defend clip swings it face-forward.
+const SHIELD_REST_YAW: f32 = -1.0;
 const SHIELD_REST_T: Vec3 = Vec3::new(-0.07, -0.08, 0.13);
 fn shield_rest_r() -> Quat {
-    e3(0.12, -1.5, 0.0)
+    e3(0.12, SHIELD_REST_YAW, 0.0)
 }
-/// Walk/run — held edge-on, a touch closer to the body.
+/// Walk/run — same angle, a touch closer to the body.
 const SHIELD_GAIT_T: Vec3 = Vec3::new(-0.1, -0.05, 0.15);
 fn shield_gait_r() -> Quat {
-    e3(0.12, -1.45, 0.0)
+    e3(0.12, SHIELD_REST_YAW + 0.05, 0.0)
 }
 /// Sword rest X-rotation — a relaxed forward-down carry (~22° below horizontal). 1.2 ("tip
 /// up-forward at the ready") held the blade near-horizontal out of a hanging fist, so the grip
@@ -63,8 +65,12 @@ fn shield_gait_r() -> Quat {
 /// backswing). Shared by the rest pose AND the attacks' wind-start / recovery-end so idle⇄attack
 /// stays smooth.
 pub(crate) const SWORD_REST_X: f32 = 1.95;
+/// Roll of the carried blade about its own length axis-plane: cocks the tip outward, away from the
+/// body, so from the follow-cam behind the hero the blade (not just the pommel) reads beside the leg.
+/// Every attack clip starts/ends on it so idle ⇄ swing stays continuous.
+pub(crate) const SWORD_REST_Z: f32 = -0.5;
 pub(crate) fn sword_rest_r() -> Quat {
-    e3(SWORD_REST_X, 0.3, 0.0)
+    e3(SWORD_REST_X, 0.3, SWORD_REST_Z)
 }
 
 /// Landing squash recovery time (a crouch that decays over this many seconds after touchdown).
@@ -567,7 +573,7 @@ fn heavy_chop(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(lerp(0.0, -0.02, p), lerp(0.0, 0.18, p), 0.0)); // eyes stay on the target
             po.sh_r = Jp::r(e3(lerp(0.12, -2.9, p), 0.0, lerp(0.15, 0.05, p))); // raise up the FRONT arc (neg X) → arm overhead, leaning toward the foe (no back-wrench)
             po.el_r = Jp::r(rx(lerp(-0.4, -0.3, p))); // near-straight: arm + blade read as one raised line
-            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.3, p), lerp(0.3, 0.2, p), 0.0)); // counter-rotate: blade laid back over the head toward horizontal (natural cock, not a vertical flagpole)
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.3, p), lerp(0.3, 0.2, p), lerp(SWORD_REST_Z, 0.0, p))); // counter-rotate: blade laid back over the head toward horizontal (natural cock, not a vertical flagpole)
             po.sh_l = Jp::r(e3(lerp(0.1, 0.45, p), lerp(0.0, 0.35, p), lerp(-0.15, -0.15, p))); // off hand drawn up to the haft (two-handed)
             po.el_l = Jp::r(rx(lerp(-0.5, -1.2, p)));
             po.shield = Jp { t: Some(SHIELD_REST_T), r: e3(lerp(0.15, 0.3, p), lerp(-1.5, -1.0, p), 0.0) };
@@ -598,7 +604,7 @@ fn heavy_chop(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(lerp(0.14, 0.0, p), lerp(-0.06, 0.0, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-1.45, 0.12, p), lerp(0.1, 0.0, p), lerp(-0.12, 0.15, p)));
             po.el_r = Jp::r(rx(lerp(-0.3, -0.4, p)));
-            po.sword = Jp::r(e3(lerp(2.75, SWORD_REST_X, p), lerp(-0.5, 0.3, p), lerp(-0.3, 0.0, p)));
+            po.sword = Jp::r(e3(lerp(2.75, SWORD_REST_X, p), lerp(-0.5, 0.3, p), lerp(-0.3, SWORD_REST_Z, p)));
             po.sh_l = Jp::r(e3(lerp(-0.2, 0.1, p), lerp(-0.12, 0.0, p), lerp(-0.4, -0.15, p)));
             po.el_l = Jp::r(rx(lerp(-0.85, -0.5, p)));
             po.hip_l = Jp::r(rx(lerp(0.5, 0.0, p)));
@@ -641,7 +647,7 @@ fn overhead_chop(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(0.0, lerp(0.0, 0.2, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(0.12, 0.35, p), lerp(0.0, -0.55, p), lerp(0.15, 0.45, p)));
             po.el_r = Jp::r(rx(lerp(-0.4, -1.75, p)));
-            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 0.55, p), lerp(0.3, 0.55, p), lerp(0.0, -0.45, p)));
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 0.55, p), lerp(0.3, 0.55, p), lerp(SWORD_REST_Z, -0.45, p)));
             po.sh_l = Jp::r(e3(lerp(0.1, 0.05, p), lerp(0.0, 0.15, p), lerp(-0.15, -0.25, p)));
             po.el_l = Jp::r(rx(lerp(-0.5, -0.65, p)));
             po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.16, p))), r: e3(lerp(0.15, 0.25, p), lerp(-0.45, -0.35, p), lerp(0.1, 0.05, p)) };
@@ -668,7 +674,7 @@ fn overhead_chop(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(lerp(0.08, 0.0, p), lerp(-0.05, 0.0, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-1.25, 0.12, p), lerp(0.2, 0.0, p), lerp(-0.15, 0.15, p)));
             po.el_r = Jp::r(rx(lerp(-0.35, -0.4, p)));
-            po.sword = Jp::r(e3(lerp(2.7, SWORD_REST_X, p), lerp(-0.8, 0.3, p), lerp(-0.8, 0.0, p)));
+            po.sword = Jp::r(e3(lerp(2.7, SWORD_REST_X, p), lerp(-0.8, 0.3, p), lerp(-0.8, SWORD_REST_Z, p)));
             po.sh_l = Jp::r(e3(lerp(-0.15, 0.1, p), lerp(-0.1, 0.0, p), lerp(-0.35, -0.15, p)));
             po.el_l = Jp::r(rx(lerp(-0.85, -0.5, p)));
             po.hip_l = Jp::r(rx(lerp(0.35, 0.0, p)));
@@ -693,7 +699,7 @@ fn horizontal_slash(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(0.0, lerp(0.0, -0.3, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(0.12, -0.15, p), lerp(0.0, -0.65, p), lerp(0.15, 0.55, p)));
             po.el_r = Jp::r(rx(lerp(-0.4, -1.35, p)));
-            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.35, p), lerp(0.3, 0.75, p), lerp(0.0, -0.6, p)));
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.35, p), lerp(0.3, 0.75, p), lerp(SWORD_REST_Z, -0.6, p)));
             po.sh_l = Jp::r(e3(lerp(0.1, 0.25, p), lerp(0.0, 0.35, p), lerp(-0.15, -0.1, p)));
             po.el_l = Jp::r(rx(lerp(-0.5, -0.4, p)));
             po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.18, p))), r: e3(lerp(0.15, 0.35, p), lerp(-0.45, -0.2, p), lerp(0.1, 0.15, p)) };
@@ -729,7 +735,7 @@ fn horizontal_slash(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(0.0, lerp(0.15, 0.0, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-1.4, 0.12, p), lerp(0.0, 0.0, p), lerp(-0.4, 0.15, p)));
             po.el_r = Jp::r(rx(lerp(-0.25, -0.4, p)));
-            po.sword = Jp::r(e3(lerp(2.45, SWORD_REST_X, p), lerp(0.05, 0.3, p), lerp(0.25, 0.0, p)));
+            po.sword = Jp::r(e3(lerp(2.45, SWORD_REST_X, p), lerp(0.05, 0.3, p), lerp(0.25, SWORD_REST_Z, p)));
             po.sh_l = Jp::r(e3(lerp(-0.35, 0.1, p), lerp(-0.45, 0.0, p), lerp(-0.4, -0.15, p)));
             po.el_l = Jp::r(rx(lerp(-0.75, -0.5, p)));
             po.hip_l = Jp::r(rx(lerp(0.3, 0.0, p)));
@@ -751,7 +757,7 @@ fn forward_thrust(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(0.0, lerp(0.0, 0.1, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(0.12, -0.35, p), lerp(0.0, -0.25, p), lerp(0.15, 0.3, p)));
             po.el_r = Jp::r(rx(lerp(-0.4, -1.45, p)));
-            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.4, p), lerp(0.3, 0.2, p), lerp(0.0, 0.3, p)));
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 2.4, p), lerp(0.3, 0.2, p), lerp(SWORD_REST_Z, 0.3, p)));
             po.sh_l = Jp::r(e3(lerp(0.1, -0.2, p), lerp(0.0, 0.25, p), lerp(-0.15, -0.3, p)));
             po.el_l = Jp::r(rx(lerp(-0.5, -0.7, p)));
             po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.12, p))), r: e3(lerp(0.15, PI / 2.0, p), lerp(-0.45, -0.1, p), lerp(0.1, 0.0, p)) };
@@ -780,7 +786,7 @@ fn forward_thrust(phase: &Phase, p: f32) -> Pose {
             po.head = Jp::r(e3(lerp(0.05, 0.0, p), lerp(-0.05, 0.0, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-1.55, 0.12, p), lerp(0.05, 0.0, p), lerp(0.05, 0.15, p)));
             po.el_r = Jp::r(rx(lerp(-0.1, -0.4, p)));
-            po.sword = Jp::r(e3(lerp(2.7, SWORD_REST_X, p), lerp(0.8, 0.3, p), lerp(0.4, 0.0, p)));
+            po.sword = Jp::r(e3(lerp(2.7, SWORD_REST_X, p), lerp(0.8, 0.3, p), lerp(0.4, SWORD_REST_Z, p)));
             po.sh_l = Jp::r(e3(lerp(-0.55, 0.1, p), lerp(0.1, 0.0, p), lerp(-0.45, -0.15, p)));
             po.el_l = Jp::r(rx(lerp(-0.85, -0.5, p)));
             po.hip_l = Jp::r(rx(lerp(0.45, 0.0, p)));
