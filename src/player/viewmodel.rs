@@ -35,7 +35,7 @@ use crate::villagers::NpcHp;
 use crate::ui::theme::rgb;
 
 use super::camera::{spring, FirstPerson, OrbitCam, FP_FOV_DEG};
-use super::combat::{CHARGE_GRACE, CHARGE_THRESHOLD, HEAVY_VARIANT};
+use super::combat::{CHARGE_GRACE, CHARGE_THRESHOLD, HEAVY_VARIANT, WIND_END, HIT_PHASE, FOLLOW_END};
 use super::model;
 use super::{Hero, HeroHealth, Health, PlayMode, PlayerRes, HERO_SCALE};
 
@@ -109,10 +109,10 @@ fn kf(x: f32, y: f32, d: f32, dir: [f32; 3], roll: f32) -> Kf {
 
 // Sword hand.
 fn sword_carry() -> Kf {
-    kf(0.64, -0.85, 0.60, [0.04, 0.50, -0.86], -1.02)
+    kf(0.62, -0.73, 0.60, [-0.08, 0.64, -0.76], -0.95)
 }
 fn sword_ready() -> Kf {
-    kf(0.58, -0.68, 0.58, [-0.08, 0.68, -0.73], -0.95)
+    kf(0.54, -0.57, 0.62, [-0.16, 0.74, -0.65], -0.88)
 }
 fn sword_sprint() -> Kf {
     kf(0.74, -0.98, 0.54, [0.20, 0.30, -0.93], -1.12)
@@ -127,7 +127,7 @@ fn sword_tuck() -> Kf {
 
 // Shield hand.
 fn shield_carry() -> Kf {
-    kf(-0.90, -0.94, 0.56, [0.22, 1.0, -0.10], -1.00)
+    kf(-0.84, -0.84, 0.60, [0.18, 1.0, -0.10], -0.82)
 }
 fn shield_ready() -> Kf {
     kf(-0.78, -0.82, 0.58, [0.18, 1.0, -0.15], -0.78)
@@ -192,11 +192,7 @@ fn swing(variant: u8) -> Swing {
     }
 }
 
-/// Swing timeline as fractions of the swing: wind-up, strike (contact lands near its middle —
-/// combat's damage frame is 0.3), follow-through, recovery to the stance.
-const WIND_END: f32 = 0.22;
-const HIT_AT: f32 = 0.40;
-const FOLLOW_END: f32 = 0.58;
+// Swing timing comes from combat: wind-up, exact contact, follow-through, recovery.
 
 fn smooth(t: f32) -> f32 {
     let c = t.clamp(0.0, 1.0);
@@ -212,8 +208,8 @@ fn swing_pose(s: &Swing, base: Kf, p: f32) -> (Kf, f32, f32) {
     if p < WIND_END {
         let t = ease_out(p / WIND_END, 3.0);
         (base.lerp(s.wind, t), t, 0.0)
-    } else if p < HIT_AT {
-        let u = ease_out((p - WIND_END) / (HIT_AT - WIND_END), 2.2);
+    } else if p < HIT_PHASE {
+        let u = smooth((p - WIND_END) / (HIT_PHASE - WIND_END));
         // Position bows through `mid` (a crescent, not a straight lerp); orientation goes
         // wind → mid → hit in two slerps.
         let ctrl = s.mid.p * 2.0 - (s.wind.p + s.hit.p) * 0.5;
@@ -221,11 +217,26 @@ fn swing_pose(s: &Swing, base: Kf, p: f32) -> (Kf, f32, f32) {
         let q = if u < 0.5 { s.wind.q.slerp(s.mid.q, u * 2.0) } else { s.mid.q.slerp(s.hit.q, (u - 0.5) * 2.0) };
         (Kf { p: pos, q }, 1.0 - u, u)
     } else if p < FOLLOW_END {
-        let t = ease_out((p - HIT_AT) / (FOLLOW_END - HIT_AT), 2.0);
+        let t = ease_out((p - HIT_PHASE) / (FOLLOW_END - HIT_PHASE), 2.0);
         (s.hit.lerp(s.end, t), 0.0, 1.0 - 0.35 * t)
     } else {
         let t = smooth((p - FOLLOW_END) / (1.0 - FOLLOW_END));
         (s.end.lerp(base, t), 0.0, 0.65 * (1.0 - t))
+    }
+}
+
+#[cfg(test)]
+mod contact_tests {
+    use super::*;
+
+    #[test]
+    fn every_viewmodel_cut_reaches_contact_when_damage_fires() {
+        for variant in 0..=HEAVY_VARIANT {
+            let s = swing(variant);
+            let (pose, _, _) = swing_pose(&s, sword_ready(), HIT_PHASE);
+            assert!(pose.p.distance(s.hit.p) < 1e-6);
+            assert!(pose.q.angle_between(s.hit.q) < 0.001);
+        }
     }
 }
 
@@ -492,7 +503,7 @@ pub(crate) fn animate_viewmodel(
 
     // ── Jump / landing response ──
     if hero.on_ground && st.was_air {
-        st.hop_v -= (hero.vel_y.abs() * 0.05).clamp(0.12, 0.6);
+        st.hop_v -= (hero.landing_speed * 0.05).clamp(0.12, 0.6);
     }
     st.was_air = !hero.on_ground;
     let (mut hop, mut hop_v) = (st.hop, st.hop_v);
@@ -574,8 +585,8 @@ pub(crate) fn animate_viewmodel(
         // The off hand counter-balances the swing: it lifts a touch as the blade winds back, then
         // is pulled down and out with the strike, tilting with the body's twist.
         let free = 1.0 - block;
-        let wind = smooth(p / WIND_END) * (1.0 - smooth((p - WIND_END) / (HIT_AT - WIND_END)));
-        let k = smooth((p - WIND_END) / (HIT_AT - WIND_END)) * (1.0 - smooth((p - FOLLOW_END) / (1.0 - FOLLOW_END)));
+        let wind = smooth(p / WIND_END) * (1.0 - smooth((p - WIND_END) / (HIT_PHASE - WIND_END)));
+        let k = smooth((p - WIND_END) / (HIT_PHASE - WIND_END)) * (1.0 - smooth((p - FOLLOW_END) / (1.0 - FOLLOW_END)));
         left.p += (Vec3::new(0.02, 0.05, 0.0) * wind + Vec3::new(-0.07, -0.13, 0.0) * k) * free;
         left.q = Quat::from_rotation_z((0.10 * k - 0.05 * wind) * free) * left.q;
     }

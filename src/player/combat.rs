@@ -20,7 +20,10 @@ use super::{FirstPerson, Hero, HeroHealth, PlayMode, PlayerRes};
 pub const ATTACK_DURATION: f32 = 0.45;
 const ATTACK_RANGE: f32 = 1.8;
 const ATTACK_CONE_DOT: f32 = 0.5; // cos 60° — front cone half-angle
-const HIT_PHASE: f32 = 0.3; // fraction into the swing where damage lands
+/// Shared choreography: the sword reaches its contact pose exactly when the hit scan fires.
+pub(crate) const WIND_END: f32 = 0.18;
+pub(crate) const HIT_PHASE: f32 = 0.34;
+pub(crate) const FOLLOW_END: f32 = 0.55;
 
 // ── Attack aim-assist ──
 // When a swing starts, the hero *gently* leans his facing toward the nearest enemy so a swing reads
@@ -64,7 +67,7 @@ const LUNGE_CAP: f32 = 1.6;
 /// Glide speed (units/s) — ~3× walk, arrives before the blade lands without reading as a yank.
 const LUNGE_SPEED: f32 = 10.0;
 /// Swing phase past which the glide cuts (the blade has landed; recovery never slides).
-const LUNGE_END_PHASE: f32 = 0.55;
+const LUNGE_END_PHASE: f32 = HIT_PHASE;
 
 // ── Riposte ──
 /// Seconds after a timed parry (see `health`) in which the next swing is the RIPOSTE — a
@@ -132,6 +135,9 @@ fn begin_swing(hero: &mut Hero, heavy: bool, aim: Option<(f32, f32)>, now: f32, 
     if heavy {
         hero.attack_variant = HEAVY_VARIANT;
         hero.attack_dur = ATTACK_DURATION;
+        // The held charge has already wound the blade up. Release starts the strike, rather
+        // than rewinding to the carry pose and raising the blade a second time.
+        hero.attack_t = WIND_END * hero.attack_dur;
         // A Heavy is its own statement — the chain restarts after it.
         hero.combo = 0;
         hero.combo_until = 0.0;
@@ -143,10 +149,54 @@ fn begin_swing(hero: &mut Hero, heavy: bool, aim: Option<(f32, f32)>, now: f32, 
         hero.attack_variant = hero.combo;
         hero.attack_dur = ATTACK_DURATION * COMBO_DUR[hero.combo as usize];
     }
+    // Commit only to a gap the collision-aware locomotion can close before contact. A charged
+    // release has less travel time than a fresh light swing; do not promise the same long assist.
+    // The reserve accounts for movement damping and the one-frame velocity handoff.
+    let travel_time = (HIT_PHASE * hero.attack_dur - hero.attack_t).max(0.0);
+    let reachable = (LUNGE_STOP + LUNGE_SPEED * travel_time * 0.5).min(LUNGE_ENGAGE);
     hero.lunge_left = match aim {
-        Some((_, d)) if !fp && d <= LUNGE_ENGAGE && d > LUNGE_STOP => (d - LUNGE_STOP).min(LUNGE_CAP),
+        Some((_, d)) if !fp && d <= reachable && d > LUNGE_STOP => (d - LUNGE_STOP).min(LUNGE_CAP),
         _ => 0.0,
     };
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    #[test]
+    fn charged_release_starts_at_the_held_wind_pose_in_both_views() {
+        for fp in [false, true] {
+            let mut hero = Hero::fresh(Vec2::ZERO, 0.0, 0.0);
+            hero.charge_t = CHARGE_THRESHOLD;
+            begin_swing(&mut hero, true, None, 1.0, fp);
+            assert!((hero.attack_t / hero.attack_dur - WIND_END).abs() < 1e-6);
+            assert!(hero.attack_t / hero.attack_dur < HIT_PHASE);
+            assert!(!hero.hit_dealt);
+        }
+    }
+
+    #[test]
+    fn charged_release_only_assists_reachable_targets_and_never_in_first_person() {
+        let mut hero = Hero::fresh(Vec2::ZERO, 0.0, 0.0);
+        begin_swing(&mut hero, true, Some((0.0, LUNGE_ENGAGE)), 1.0, false);
+        assert_eq!(hero.lunge_left, 0.0);
+        begin_swing(&mut hero, true, Some((0.0, 1.5)), 1.0, false);
+        assert!(hero.lunge_left > 0.0);
+        begin_swing(&mut hero, true, Some((0.0, 1.5)), 1.0, true);
+        assert_eq!(hero.lunge_left, 0.0);
+    }
+
+    #[test]
+    fn light_combo_keeps_its_three_steps_and_starts_before_contact() {
+        let mut hero = Hero::fresh(Vec2::ZERO, 0.0, 0.0);
+        for step in 0..3 {
+            begin_swing(&mut hero, false, None, 1.0, false);
+            assert_eq!(hero.attack_variant, step);
+            assert_eq!(hero.attack_t, 0.0);
+            hero.combo_until = 2.0;
+        }
+    }
 }
 
 /// Deterministic crit-roll source — one roll per swing. mulberry32 ("feels-the-same", no
@@ -716,6 +766,18 @@ pub fn player_attack(
     // Charging is gated on the same conditions as swinging: cursor locked (actually playing) and not
     // guarding (the shield takes priority).
     let can_act = orbit.locked && !hh.blocking;
+
+    if hh.blocking {
+        // Guard must match the pose and the damage state: no invisible cut behind the shield.
+        hero.attacking = false;
+        hero.heavy = false;
+        hero.queued = false;
+        hero.charge_t = -1.0;
+        hero.lock_face = None;
+        hero.lunge_left = 0.0;
+        hero.combo_until = 0.0;
+        return;
+    }
 
     // ── Presses: start a swing, or buffer the chain ─────────────────────────────────────────────
     // A press with no swing in flight starts one (aimed at the soft-lock/nearest foe — the O(n)

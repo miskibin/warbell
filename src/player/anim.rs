@@ -13,7 +13,7 @@
 //!   height** (the root's world Y), so the studio `height` (0 launch/landing, 1 apex) is recovered
 //!   from the hero's vertical speed and fed into the studio's exact airtime joint formulas.
 //! - **attack** — our one-shot swing (`attack_t/ATTACK_DURATION`) is split into the studio's
-//!   wind/strike/recovery phases (strike starts at `HIT_PHASE` so the blade meets the damage frame).
+//!   wind/strike/recovery phases (strike ends at `HIT_PHASE`, exactly on the damage frame).
 //! - **defend** — eased in/out by a smoothed `block_amt` instead of the studio's `time`-since-block.
 //! On top sit our own layers: the Director's staged gestures (arms), the touchdown landing-squash,
 //! and a slack keel-over on death. (First person doesn't use this rig at all — it is hidden and the
@@ -523,27 +523,71 @@ pub(crate) enum Phase {
     Recovery,
 }
 
-/// Split our one-shot swing progress `ap = attack_t/ATTACK_DURATION` into the studio phases, eased
-/// like the studio's `getAttackPhase`. `WIND_END` aligns the strike start with combat's `HIT_PHASE`.
+/// NPC cadence: their AI owns separate strike timers, so preserve its existing phase timing.
 pub(crate) fn attack_phase(ap: f32) -> (Phase, f32) {
-    const WIND_END: f32 = 0.30;
-    const STRIKE_END: f32 = 0.55;
+    if ap < 0.30 {
+        (Phase::Wind, ease_out_cubic(ap / 0.30))
+    } else if ap < 0.55 {
+        (Phase::Strike, 1.0 - (1.0 - (ap - 0.30) / 0.25).powf(2.5))
+    } else {
+        (Phase::Recovery, smoothstep((ap - 0.55) / 0.45))
+    }
+}
+
+/// Hero cadence: contact is shared with the damage scan and first-person viewmodel.
+fn hero_attack_phase(ap: f32) -> (Phase, f32) {
+    use super::combat::{WIND_END, HIT_PHASE};
     if ap < WIND_END {
         (Phase::Wind, ease_out_cubic(ap / WIND_END))
-    } else if ap < STRIKE_END {
-        let t = (ap - WIND_END) / (STRIKE_END - WIND_END);
-        (Phase::Strike, 1.0 - (1.0 - t).powf(2.5))
+    } else if ap < HIT_PHASE {
+        let t = (ap - WIND_END) / (HIT_PHASE - WIND_END);
+        (Phase::Strike, smoothstep(t))
     } else {
-        (Phase::Recovery, smoothstep((ap - STRIKE_END) / (1.0 - STRIKE_END)))
+        (Phase::Recovery, smoothstep((ap - HIT_PHASE) / (1.0 - HIT_PHASE)))
     }
 }
 
 pub(crate) fn attack_pose(variant: u8, phase: &Phase, p: f32) -> Pose {
-    match variant {
-        1 => horizontal_slash(phase, p),
-        2 => forward_thrust(phase, p),
-        v if v == super::combat::HEAVY_VARIANT => heavy_chop(phase, p),
-        _ => overhead_chop(phase, p),
+    let clip: fn(&Phase, f32) -> Pose = match variant {
+        1 => horizontal_slash,
+        2 => forward_thrust,
+        v if v == super::combat::HEAVY_VARIANT => heavy_chop,
+        _ => overhead_chop,
+    };
+    // One shared pose at each boundary. Independent authored phase tables used to reset
+    // shield/feet rotations at the strike and recovery edges, making the whole body pop.
+    match phase {
+        Phase::Wind => clip(&Phase::Wind, p),
+        Phase::Strike => clip(&Phase::Wind, 1.0).lerp(&clip(&Phase::Strike, 1.0), p),
+        Phase::Recovery => clip(&Phase::Strike, 1.0).lerp(&clip(&Phase::Recovery, 1.0), p),
+    }
+}
+
+#[cfg(test)]
+mod contact_tests {
+    use super::*;
+
+    #[test]
+    fn all_attack_joints_are_continuous_at_wind_and_contact() {
+        let joints = [Joint::Hips, Joint::Torso, Joint::Head, Joint::ShoulderL,
+            Joint::ShoulderR, Joint::ElbowL, Joint::ElbowR, Joint::HipL,
+            Joint::HipR, Joint::KneeL, Joint::KneeR, Joint::FootL,
+            Joint::FootR, Joint::Shield, Joint::Sword];
+        for variant in 0..=super::super::combat::HEAVY_VARIANT {
+            for edge in [super::super::combat::WIND_END, super::super::combat::HIT_PHASE] {
+                let (pa, a) = hero_attack_phase(edge - 1e-6);
+                let (pb, b) = hero_attack_phase(edge + 1e-6);
+                let before = attack_pose(variant, &pa, a);
+                let after = attack_pose(variant, &pb, b);
+                for joint in joints {
+                    let (a, b) = (before.get(joint), after.get(joint));
+                    assert!(a.r.angle_between(b.r) < 0.002, "variant {variant}, {joint:?}, edge {edge}");
+                    if let (Some(a), Some(b)) = (a.t, b.t) {
+                        assert!(a.distance(b) < 0.001, "translation discontinuity at {edge}");
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -986,12 +1030,12 @@ pub fn hero_anim(
         return;
     }
 
-    // Ease the block weight toward its target each frame (≈0.15s settle, ~the studio 0.22 ENTER).
+    // Frame-rate independent guard response: raise promptly, without a one-frame pose jump.
     let block_target = if hh.blocking { 1.0 } else { 0.0 };
-    *block_amt += (block_target - *block_amt) * (dt * 10.0).min(1.0);
+    *block_amt += (block_target - *block_amt) * (1.0 - (-dt * 16.0).exp());
     let block_amt = block_amt.clamp(0.0, 1.0);
 
-    let attack = hero.attacking.then(|| attack_phase((hero.attack_t / hero.attack_dur).clamp(0.0, 1.0)));
+    let attack = hero.attacking.then(|| hero_attack_phase((hero.attack_t / hero.attack_dur).clamp(0.0, 1.0)));
     let gesture = dir.gesture.map(|g| gesture_pose(g, now - dir.gesture_start));
 
     // Pick the active clip. Actions now LAYER over locomotion so combined moves read right: swinging
@@ -1030,11 +1074,16 @@ pub fn hero_anim(
         dash_pose(p).lerp(&loco, tail)
     } else if let Some((phase, p)) = &attack {
         let atk = attack_pose(hero.attack_variant, phase, *p);
-        if hero.on_ground && moving > 0.05 {
+        let action = if hero.on_ground && moving > 0.05 {
             action_over_loco(&atk, &loco, moving) // running / walking attack
         } else {
             atk
-        }
+        };
+        // Enter from the current gait/guard, then settle back into it. Contact itself is
+        // unblended, so visual timing stays exactly on the shared damage frame.
+        let ap = (hero.attack_t / hero.attack_dur).clamp(0.0, 1.0);
+        let weight = smoothstep(ap / 0.07) * smoothstep((1.0 - ap) / 0.18);
+        loco.lerp(&action, weight)
     } else if hero.charge_t > CHARGE_GRACE && hero.on_ground {
         // Holding a Heavy Strike (the light swing has finished): coil into the overhead wind-up,
         // deepening as the bar fills. Layers over locomotion so you can creep while charging.

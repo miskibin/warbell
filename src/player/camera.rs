@@ -59,7 +59,7 @@ const EYE_H: f32 = 0.92;
 /// First-person eye height above the hero's feet — sits right at the helm/eye line. (Scaled ×1.5
 /// alongside the `HERO_SCALE` bump; an eye floating above the helm reads as "too tall" and pushes the
 /// viewmodel's hands off the bottom of frame.) Original 0.74 × 1.35. Verify with `FOREST_FP`.
-const FP_EYE_H: f32 = 1.32;
+const FP_EYE_H: f32 = 1.26; // visor height of the proportioned hero, rather than above the helm
 /// First-person forward eye offset (world units along the look direction): nudges the eye a touch
 /// ahead of the (hidden) body centre so it sits at the face, not inside the chest.
 const FP_FWD_OFF: f32 = 0.05;
@@ -67,7 +67,7 @@ const FP_FWD_OFF: f32 = 0.05;
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;
 /// First-person close-quarters FOV widen: up to this many degrees as the ringed foe closes from
-/// [`FP_CLOSE_RANGE`] to point-blank. Enemies are taller than the 1.32 FP eye and stop at melee
+/// [`FP_CLOSE_RANGE`] to point-blank. Enemies are taller than the FP eye and stop at melee
 /// range, so without this a big foe is one face filling the lens. Eased slowly (~3/s) so it reads
 /// as breathing room, never a zoom pump; scaled by the FP blend so third person is untouched.
 const FP_CLOSE_FOV_DEG: f32 = 8.0;
@@ -220,7 +220,7 @@ fn fp_eye_rig(eye: &mut FpEye, hero: &Hero, yaw: f32, dt: f32) -> FpEyePose {
     }
 
     if hero.on_ground && eye.was_air {
-        eye.land_v -= (hero.vel_y.abs() * 0.04).clamp(0.08, 0.6);
+        eye.land_v -= (hero.landing_speed * 0.04).clamp(0.08, 0.6);
     }
     eye.was_air = !hero.on_ground;
     spring(&mut eye.land, &mut eye.land_v, 0.0, 24.0, 0.42, dt);
@@ -343,7 +343,9 @@ pub fn fp_body_visibility(
     *was_hidden = hide;
 }
 
-pub fn player_camera(
+/// Consume this frame's look input before movement and melee targeting. The camera pose is
+/// resolved after simulation, so aim and the follow position both use current-frame state.
+pub fn camera_input(
     mode: Res<PlayMode>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -353,20 +355,9 @@ pub fn player_camera(
     mut fp: ResMut<FirstPerson>,
     mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut hero_q: Query<&mut Hero>,
-    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Hero>)>,
-    time: Res<Time>,
-    feedback: Option<Res<crate::combat_fx::HitFeedback>>,
-    mut base_fov: Local<Option<f32>>,
     gate: CamGate,
-    mut build_blend: Local<f32>,
-    mut tension_blend: Local<f32>,
 ) {
-    if *mode != PlayMode::Play {
-        return;
-    }
-    let Ok(mut hero) = hero_q.single_mut() else { return };
-    let Ok((mut cam_tf, mut cam_proj)) = cam_q.single_mut() else { return };
-
+    if *mode != PlayMode::Play { return; }
     // Cursor only locks while actually playing with no panel up; a modal/menu frees it so its
     // buttons are clickable (and a button-click can't re-grab the view). The debug panel
     // (egui_wants) also blocks the grab so clicking a slider never locks + rotates the view.
@@ -411,6 +402,32 @@ pub fn player_camera(
     if s != 0.0 {
         orbit.dist = (orbit.dist - s * ZOOM_SENS).clamp(MIN_DIST, MAX_DIST);
     }
+
+    if fp.active {
+        if let Ok(mut hero) = hero_q.single_mut() {
+            hero.facing = orbit.azimuth + std::f32::consts::PI;
+        }
+    }
+}
+
+pub fn player_camera(
+    mode: Res<PlayMode>,
+    mut orbit: ResMut<OrbitCam>,
+    mut fp: ResMut<FirstPerson>,
+    hero_q: Query<&Hero>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Hero>)>,
+    time: Res<Time>,
+    feedback: Option<Res<crate::combat_fx::HitFeedback>>,
+    mut base_fov: Local<Option<f32>>,
+    gate: CamGate,
+    mut build_blend: Local<f32>,
+    mut tension_blend: Local<f32>,
+) {
+    if *mode != PlayMode::Play {
+        return;
+    }
+    let Ok(hero) = hero_q.single() else { return };
+    let Ok((mut cam_tf, mut cam_proj)) = cam_q.single_mut() else { return };
 
     // Tension dolly: ease a 0→1 blend toward "any warden is winding up a crit", slow enough to read
     // as a deliberate pull-back across the ~1.2s telegraph (and a smooth ease-in on release).
@@ -498,12 +515,6 @@ pub fn player_camera(
     fp.blend += (want_fp - fp.blend) * (1.0 - (-time.delta_secs() * 9.0).exp());
     let fpb = fp.blend.clamp(0.0, 1.0);
 
-    // In FP the body owns no facing — the view does (so attacks/arts fire where you look). Movement
-    // skips its facing-steer while `fp.active`, so this is the sole writer; coupling on `active` (not
-    // `blend`) keeps it consistent through the transition.
-    if fp.active {
-        hero.facing = look_yaw;
-    }
     // (The third-person body is hidden by `fp_body_visibility`; the hands/sword/shield in view are
     // the camera-parented `viewmodel`.)
 
