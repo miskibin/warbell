@@ -48,12 +48,13 @@ fn smoothstep(t: f32) -> f32 {
 /// reads from the follow-cam behind the hero (the reference render shows the shield broadside; fully
 /// edge-on, `-1.5`, collapsed it to a thin plank from behind). The defend clip swings it face-forward.
 const SHIELD_REST_YAW: f32 = -1.0;
-const SHIELD_REST_T: Vec3 = Vec3::new(-0.07, -0.08, 0.13);
+/// Hand-local; the x offset sits out past the arm so the shield's inner edge clears the hip/belt.
+const SHIELD_REST_T: Vec3 = Vec3::new(-0.11, -0.08, 0.13);
 fn shield_rest_r() -> Quat {
     e3(0.12, SHIELD_REST_YAW, 0.0)
 }
 /// Walk/run — same angle, a touch closer to the body.
-const SHIELD_GAIT_T: Vec3 = Vec3::new(-0.1, -0.05, 0.15);
+const SHIELD_GAIT_T: Vec3 = Vec3::new(-0.14, -0.05, 0.15);
 fn shield_gait_r() -> Quat {
     e3(0.12, SHIELD_REST_YAW + 0.05, 0.0)
 }

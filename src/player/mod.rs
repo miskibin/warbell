@@ -695,7 +695,7 @@ pub(crate) fn spawn_hero_meshes(
         commands,
         hand_l,
         Some(Shield),
-        Transform { translation: Vec3::new(-0.07, -0.08, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.12, -1.5, 0.0), scale: Vec3::ONE },
+        Transform { translation: Vec3::new(-0.11, -0.08, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.12, -1.5, 0.0), scale: Vec3::ONE },
         mat,
         body(meshes.add(m.shield)),
     );
