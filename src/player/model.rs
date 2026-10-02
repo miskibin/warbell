@@ -1,8 +1,12 @@
-//! **Knight hero model** — a faithful Bevy port of the user's procedural three.js
-//! "Low-Poly Knight Studio" (`knightBuilder.ts`, the *knight* branch): a finely-articulated knight
-//! (hips → torso → neck → head; shoulder → elbow → hand+weapon/shield; hip → knee → foot) in steel
-//! plate with light-steel trim, a red helm crest, a gold rampant-lion heater shield, and the
-//! equipped weapon on its own pivot.
+//! **Knight hero model** — a finely-articulated low-poly knight (hips → torso → neck → head;
+//! shoulder → elbow → hand+weapon/shield; hip → knee → foot) originally ported from the user's
+//! procedural three.js "Low-Poly Knight Studio" (`knightBuilder.ts`). The default (bare) kit now
+//! follows the user's reference render: light silver-grey plate, a dark earthy-brown tunic with a
+//! lighter brown belt, domed pauldrons with stepped lames, a rounded egg-shaped great bascinet on a
+//! short mail neck (sloped shoulder yoke, V-tapered chest — a natural human-like silhouette, not a T
+//! of ball shoulders under a tube), black gauntlets, a plain steel longsword and a plain brown plank
+//! kite shield (no gold, no heraldry).
+//! The equipped weapon rides on its own pivot.
 //!
 //! This builds only the **meshes** (one merged, flat-shaded, vertex-coloured `Mesh` per joint,
 //! against the shared white creature material); [`super`] spawns the actual joint *hierarchy* of
@@ -49,16 +53,20 @@ const GLOVE: u32 = 0x6d7178; // darker steel gauntlets / boots
 const CHEST: u32 = 0x5d4836; // brown leather gambeson chest (reference/previs torso)
 const TABARD: u32 = 0x8a5a34; // lighter-brown surcoat/skirt cloth (previs tabard)
 // ── previs palette (tools/index.html `C`) — the look the user signed off on ──
-const PSTEEL: u32 = 0x808d9d;
+const PSTEEL: u32 = 0x8f9cad; // light silver-grey plate, kept cool: the warm sun would turn a neutral grey beige
 const PSTEEL_LT: u32 = 0x95a2b2;
 const PSTEEL_DK: u32 = 0x4c5562;
 const PSTEEL_DIM: u32 = 0x6e7886;
-const PLEATHER: u32 = 0x5d4836;
+const PSTEEL_TRIM: u32 = 0xb9c4d2; // bright silver hilt/buckle/rivet trim (no gold on the default kit)
+const PLEATHER: u32 = 0x4a3a2d; // dark earthy-brown tunic
 const PLEATHER_DK: u32 = 0x3b2e21;
+const PBELT: u32 = 0x7b5b3b; // lighter brown waist belt
+const PSHIELD_FACE: u32 = 0x654b34; // plain earthy-brown shield planks
+const PSHIELD_RIM: u32 = 0x45331f; // darker wooden rim
+const PSHIELD_SEAM: u32 = 0x3a2a1b; // plank seams
 const PTABARD: u32 = 0x9a6438;
 const PTABARD_DK: u32 = 0x6f4626;
 const PGLOVE: u32 = 0x282320;
-const PGOLD: u32 = 0xb8902f;
 const PDARK: u32 = 0x191c22;
 const PBLADE: u32 = 0xc3c7cd;
 const PGRIP: u32 = 0x6a4a2e;
@@ -83,8 +91,11 @@ pub(crate) const Y_HIPS: f32 = 1.05; // spine root = previs waist 2.5 × K
 pub(crate) const O_TORSO: f32 = 0.0; // torso pivot = hips (waist)
 pub(crate) const O_NECK: f32 = 0.60; // torso → neck (head shrunk ⇒ sits a touch lower)
 pub(crate) const O_HEAD: f32 = 0.0;
+/// The helm mesh sits this far above the neck joint (rig units) so it rests on top of the gorget
+/// collar instead of sinking into it — that is what reads as a neck.
+const HEAD_LIFT: f32 = 0.08;
 pub(crate) const O_SHOULDER_Y: f32 = 0.563; // torso → shoulder (previs 1.34 × K)
-pub(crate) const SHOULDER_DX: f32 = 0.386; // half shoulder span (previs 0.92 × K)
+pub(crate) const SHOULDER_DX: f32 = 0.29; // half shoulder span (was previs 0.92 × K = 0.386; narrowed so the shoulders aren't a T-bar)
 pub(crate) const O_ELBOW: f32 = -0.358; // shoulder → elbow (arms shortened ~13%)
 pub(crate) const O_HAND: f32 = -0.497; // elbow → hand (arms shortened ~13%)
 pub(crate) const HIP_DX: f32 = 0.193; // half hip span (previs 0.46 × K)
@@ -119,7 +130,8 @@ fn xyz(x: f32, y: f32, z: f32) -> Quat {
 fn surf_for(c: u32) -> Surf {
     match c {
         SKIRT | BELT | GRIP | PLUME | DARKCOAT | CHEST | TABARD | GAMBESON => Surf::Cloth,
-        PLEATHER | PLEATHER_DK | PTABARD | PTABARD_DK | PGLOVE | PGRIP | PDARK | PSHIELD | FP_GLOVE | FP_GLOVE_SEAM => Surf::Cloth,
+        PLEATHER | PLEATHER_DK | PBELT | PTABARD | PTABARD_DK | PGLOVE | PGRIP | PDARK | PSHIELD | FP_GLOVE | FP_GLOVE_SEAM => Surf::Cloth,
+        SHIELD_BASE | PSHIELD_FACE | PSHIELD_RIM | PSHIELD_SEAM => Surf::Cloth,
         SKIN => Surf::Skin,
         _ => Surf::Metal,
     }
@@ -392,7 +404,7 @@ fn skin_for(armor: Option<&str>) -> Skin {
         Some("iron_armor") => (ArmorStyle::Iron, 0xb7bfca, 0x808b99), // bright steel
         Some("gold_armor") => (ArmorStyle::Gold, 0xc8a23a, 0xffe9a0), // gilded
         Some("dragon_plate") => (ArmorStyle::Dragon, 0x356b48, 0xd2bf92), // dragon green + bone
-        _ => (ArmorStyle::Steel, PSTEEL, PGOLD), // bare / iron sword starter
+        _ => (ArmorStyle::Steel, PSTEEL, PSTEEL_TRIM), // bare / iron sword starter
     };
     Skin {
         style,
@@ -410,9 +422,9 @@ fn skin_for(armor: Option<&str>) -> Skin {
 fn sword_parts(blade: u32) -> Vec<Mesh> {
     vec![
         at(rbx(0.08, 0.5, 0.1, 0.03), v(0.0, 0.0, 0.0), PGRIP), // grip (base at hand origin)
-        at(rbx(0.5, 0.12, 0.16, 0.04), v(0.0, 0.3, 0.0), PGOLD), // crossguard
+        at(rbx(0.56, 0.1, 0.14, 0.035), v(0.0, 0.3, 0.0), PSTEEL_TRIM), // plain steel crossguard
         at(tplate(0.18, 2.4, 0.06, 0.18, 0.5, 0.02), v(0.0, 0.36, 0.0), blade), // tapered blade
-        at(lathe(&[[0.0, 0.11], [0.11, 0.07], [0.11, -0.05], [0.0, -0.09]], 8), v(0.0, -0.29, 0.0), PGOLD), // pommel
+        at(ball(0.115), v(0.0, -0.3, 0.0), PSTEEL_TRIM), // round pommel
     ]
 }
 
@@ -571,10 +583,9 @@ fn gk(parts: Vec<Mesh>) -> Mesh {
 fn hips_mesh(s: &Skin) -> Mesh {
     gk(vec![
         at(tplate(1.0, 0.4, 1.04, 1.12, 1.1, 0.08), v(0.0, -0.18, 0.0), s.metal), // fauld
-        at(rbx(1.08, 0.2, 1.02, 0.05), v(0.0, -0.08, 0.0), PLEATHER_DK), // belt
-        part(lathe(&[[0.0, 0.13], [0.16, 0.1], [0.16, -0.02], [0.0, -0.05]], 10), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.0, 0.55), s.trim), // buckle
-        at(tplate(0.5, 0.6, 0.06, 1.4, 1.0, 0.03), v(0.0, -0.64, 0.42), PTABARD), // tabard front (shorter — a flap, not a belly)
-        at(tplate(0.5, 0.6, 0.06, 1.4, 1.0, 0.03), v(0.0, -0.64, -0.42), PTABARD_DK), // tabard back
+        // Wider than the tunic at waist height (≈1.02 × 1.0) or it would sit buried inside it.
+        at(rbx(1.2, 0.22, 1.12, 0.05), v(0.0, -0.08, 0.0), PBELT), // lighter-brown belt, wraps the waist
+        at(rbx(0.2, 0.16, 0.07, 0.025), v(0.0, -0.08, 0.57), s.trim), // plain buckle
     ])
 }
 
@@ -582,18 +593,13 @@ fn hips_mesh(s: &Skin) -> Mesh {
 /// sleeveless tabard (front + back panels — the grey sides show), per the reference.
 fn torso_mesh(s: &Skin) -> Mesh {
     let mut parts = vec![
-        at(tplate(1.12, 1.55, 1.06, 1.18, 1.12, 0.16), v(0.0, 0.0, 0.0), PLEATHER), // gambeson chest
+        at(tplate(0.96, 1.55, 0.98, 1.4, 1.1, 0.16), v(0.0, 0.0, 0.0), PLEATHER), // gambeson chest — narrow waist, broad chest (V taper)
         at(tplate(0.22, 1.24, 0.12, 0.5, 1.0, 0.05), v(0.0, 0.16, 0.5), PLEATHER), // chest keel
-        at(lathe(&[[0.0, 0.34], [0.5, 0.3], [0.56, 0.08], [0.5, 0.0], [0.0, 0.0]], 16), v(0.0, 1.45, 0.0), s.metal_lt), // gorget
-        // ── back detail (the 3rd-person camera sees this most) ──
-        at(tplate(0.9, 0.66, 0.1, 0.92, 1.0, 0.05), v(0.0, 0.9, -0.5), s.metal), // shoulder-blade backplate
-        at(tplate(0.14, 1.36, 0.1, 0.5, 1.0, 0.04), v(0.0, 0.1, -0.5), s.metal_dk), // spine ridge
-        at(rbx(1.06, 0.13, 0.08, 0.03), v(0.0, 1.02, -0.5), PLEATHER_DK), // upper back strap
-        at(rbx(1.06, 0.13, 0.08, 0.03), v(0.0, 0.42, -0.5), PLEATHER_DK), // lower back strap
-        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.42, 1.02, -0.52), s.trim), // strap buckle (upper)
-        at(rbx(0.11, 0.16, 0.07, 0.02), v(0.42, 0.42, -0.52), s.trim), // strap buckle (lower)
-        at(rbx(0.13, 0.13, 0.06, 0.02), v(0.5, 0.95, 0.46), s.trim), // side cuirass buckle R
-        at(rbx(0.13, 0.13, 0.06, 0.02), v(-0.5, 0.95, 0.46), s.trim), // side cuirass buckle L
+        // Shoulder yoke / gorget: a squashed cone that slopes from a narrow neck ring out to the pauldrons,
+        // so the shoulder line falls away from the neck instead of ending in a flat shelf.
+        part(lathe(&[[0.0, 0.36], [0.4, 0.34], [0.54, 0.22], [0.68, 0.06], [0.68, -0.1], [0.0, -0.1]], 16), Vec3::new(1.0, 1.0, 0.62), Quat::IDENTITY, v(0.0, 1.32, 0.0), s.metal_lt),
+        // The back (what the 3rd-person camera sees) is deliberately a plain flat brown slab — the
+        // reference knight's tunic has no backplate, straps or buckles on it.
     ];
     // Signature chest device per armor (silhouette/identity beyond the recolour).
     match s.style {
@@ -617,46 +623,61 @@ fn neck_mesh(s: &Skin) -> Mesh {
     gk(vec![at(rbx(0.42, 0.26, 0.42, 0.08), v(0.0, 0.0, 0.0), s.metal_dk)])
 }
 
-/// Helm: a plain closed rounded bascinet — a steel box face + a domed top, with a subtle dark visor
-/// line. No plume / gold / etching yet (silhouette stage). Spans 1 HH (5.5→6.5).
+/// Helm: a rounded, egg-shaped great bascinet — a smooth dome that narrows toward the jaw so the head
+/// reads as a head (not a tube) and sits straight down into the gorget collar. The face is a T-shaped
+/// visor (wide eye slit + vertical breath slit) on a low centre ridge; a dark mail neck shows
+/// under the rim. The skull is a touch longer front-to-back than side-to-side, like a real skull.
+/// Authored ≈1.2 previs units tall, then shrunk to 0.88 and lifted [`HEAD_LIFT`] above the neck joint.
 fn head_mesh(s: &Skin) -> Mesh {
+    const ZS: f32 = 1.08; // skull depth / width
+    let skull = lathe(
+        &[[0.0, 1.22], [0.2, 1.2], [0.38, 1.12], [0.5, 0.98], [0.57, 0.8], [0.6, 0.6], [0.57, 0.38], [0.5, 0.16], [0.45, 0.0], [0.0, 0.0]],
+        14,
+    );
     let mut parts = vec![
-        at(lathe(&[[0.0, 1.28], [0.3, 1.2], [0.5, 0.98], [0.56, 0.62], [0.57, 0.06], [0.5, 0.0], [0.0, 0.0]], 18), v(0.0, 0.2, 0.0), s.metal), // sugarloaf helm
-        at(tplate(0.12, 1.0, 0.16, 0.6, 1.0, 0.04), v(0.0, 0.35, 0.5), s.metal_dim), // brow keel
-        at(rbx(0.3, 0.08, 0.06, 0.02), v(0.17, 0.94, 0.49), PDARK), // eye slit R
-        at(rbx(0.3, 0.08, 0.06, 0.02), v(-0.17, 0.94, 0.49), PDARK), // eye slit L
-        at(rbx(0.05, 0.05, 0.05, 0.02), v(-0.18, 0.52, 0.52), PDARK), // breath holes
-        at(rbx(0.05, 0.05, 0.05, 0.02), v(-0.06, 0.52, 0.52), PDARK),
-        at(rbx(0.05, 0.05, 0.05, 0.02), v(0.06, 0.52, 0.52), PDARK),
-        at(rbx(0.05, 0.05, 0.05, 0.02), v(0.18, 0.52, 0.52), PDARK),
-        at(tplate(0.1, 0.8, 0.1, 0.5, 1.0, 0.03), v(0.0, 0.5, -0.46), s.metal_dk), // helm back ridge
-        at(rbx(0.06, 0.06, 0.05, 0.02), v(0.48, 0.3, 0.24), s.trim), // helm rivets
-        at(rbx(0.06, 0.06, 0.05, 0.02), v(-0.48, 0.3, 0.24), s.trim),
-        at(rbx(0.06, 0.06, 0.05, 0.02), v(0.42, 0.3, -0.3), s.trim),
-        at(rbx(0.06, 0.06, 0.05, 0.02), v(-0.42, 0.3, -0.3), s.trim),
+        part(skull, Vec3::new(1.0, 1.0, ZS), Quat::IDENTITY, v(0.0, 0.0, 0.0), s.metal),
+        at(frustum(0.41, 0.45, 0.4, 12), v(0.0, -0.1, 0.0), s.metal_dk), // dark mail neck under the rim
+        at(tplate(0.09, 0.86, 0.1, 0.7, 1.0, 0.03), v(0.0, 0.1, 0.56), s.metal_dim), // centre ridge down the face
+        // T-visor: the eye slit is three short boxes yawed to follow the curve of the brow.
+        at(rbx(0.22, 0.075, 0.08, 0.02), v(0.0, 0.76, 0.6), PDARK),
+        part(rbx(0.2, 0.075, 0.08, 0.02), Vec3::ONE, ry(0.5), v(0.21, 0.76, 0.55), PDARK),
+        part(rbx(0.2, 0.075, 0.08, 0.02), Vec3::ONE, ry(-0.5), v(-0.21, 0.76, 0.55), PDARK),
+        at(rbx(0.06, 0.3, 0.08, 0.02), v(0.0, 0.4, 0.6), PDARK), // breath slit
+        at(tplate(0.08, 0.8, 0.09, 0.5, 1.0, 0.03), v(0.0, 0.2, -0.61), s.metal_dk), // back ridge
+        at(rbx(0.06, 0.06, 0.05, 0.02), v(0.56, 0.45, 0.12), s.trim), // side rivets
+        at(rbx(0.06, 0.06, 0.05, 0.02), v(-0.56, 0.45, 0.12), s.trim),
     ];
     // Signature helm crest per armor.
     match s.style {
         ArmorStyle::Gold => {
             // A tall gilded fin crest running front-to-back over the dome.
-            parts.push(at(tplate(0.08, 0.5, 1.0, 1.0, 0.2, 0.02), v(0.0, 1.5, 0.0), s.trim));
+            parts.push(at(tplate(0.08, 0.5, 1.0, 1.0, 0.2, 0.02), v(0.0, 1.1, 0.0), s.trim));
         }
         ArmorStyle::Dragon => {
             // A row of bone horn-spikes over the crown.
             for i in 0..4 {
-                parts.push(part(cone(0.1, 0.34, 5), Vec3::ONE, rx(-0.25), v(0.0, 1.3, 0.34 - i as f32 * 0.22), s.trim));
+                parts.push(part(cone(0.1, 0.34, 5), Vec3::ONE, rx(-0.25), v(0.0, 1.0, 0.34 - i as f32 * 0.22), s.trim));
             }
         }
         _ => {}
     }
-    gk(parts).scaled_by(Vec3::splat(0.85)) // shrink the head (was reading too big)
+    gk(parts).scaled_by(Vec3::splat(0.88)).translated_by(v(0.0, HEAD_LIFT, 0.0))
 }
 
 /// Shoulder: a rounded steel pauldron cap + the upper arm (steel, tapering to the elbow). 1.3 HH.
 fn shoulder_mesh(sign: f32, s: &Skin) -> Mesh {
+    // Pauldron = a shoulder cop (dome with a flat underside) + two stepped lames that taper down over
+    // the upper arm — plates that hug the limb rather than a ball floating on it. All three share the
+    // same outward tilt about the shoulder joint.
+    let tilt = xyz(0.05, 0.0, sign * 0.12);
+    let squash = Vec3::new(0.78, 0.92, 0.78);
+    let seat = v(0.0, -0.18, 0.02);
+    let lame = |r_top: f32, r_bot: f32, h: f32, y: f32, c: u32| part(frustum(r_top, r_bot, h, 16), squash, tilt, seat + tilt * v(0.0, y, 0.0), c);
     let mut parts = vec![
-        part(lathe(&[[0.0, 0.32], [0.22, 0.29], [0.4, 0.18], [0.5, 0.03], [0.5, -0.14], [0.4, -0.22], [0.2, -0.24], [0.0, -0.24]], 16), Vec3::ONE, xyz(0.05, 0.0, sign * 0.12), v(0.0, -0.18, 0.02), s.metal_lt), // draping pauldron
-        at(tplate(0.46, 0.68, 0.5, 0.92, 0.94, 0.08), v(0.0, -0.77, 0.0), s.metal), // rerebrace (shortened)
+        part(lathe(&[[0.0, 0.3], [0.22, 0.28], [0.4, 0.19], [0.5, 0.04], [0.52, -0.1], [0.5, -0.22], [0.0, -0.22]], 16), squash, tilt, seat, s.metal_lt), // shoulder cop
+        lame(0.5, 0.45, 0.15, -0.29, s.metal), // upper lame
+        lame(0.45, 0.4, 0.15, -0.43, s.metal_dim), // lower lame
+        at(tplate(0.52, 0.68, 0.56, 0.92, 0.94, 0.08), v(0.0, -0.77, 0.0), s.metal), // rerebrace (shortened)
     ];
     // Dragon plate: two bone spikes jut out the top of each pauldron.
     if s.style == ArmorStyle::Dragon {
@@ -670,22 +691,22 @@ fn shoulder_mesh(sign: f32, s: &Skin) -> Mesh {
 fn elbow_mesh(_sign: f32, s: &Skin) -> Mesh {
     gk(vec![
         at(lathe(&[[0.0, 0.26], [0.2, 0.22], [0.28, 0.08], [0.28, 0.0], [0.0, 0.0]], 14), v(0.0, 0.0, 0.04), s.metal_lt), // couter
-        at(tplate(0.44, 0.73, 0.48, 0.78, 0.82, 0.08), v(0.0, -0.75, 0.0), s.metal), // vambrace (shortened)
-        at(tplate(0.46, 0.4, 0.52, 0.8, 0.86, 0.06), v(0.0, -1.13, 0.0), PGLOVE), // gauntlet
+        at(tplate(0.5, 0.73, 0.54, 0.78, 0.82, 0.08), v(0.0, -0.75, 0.0), s.metal), // vambrace (shortened)
+        at(tplate(0.5, 0.4, 0.56, 0.8, 0.86, 0.06), v(0.0, -1.13, 0.0), PGLOVE), // gauntlet
         at(rbx(0.42, 0.16, 0.46, 0.05), v(0.0, -1.08, 0.16), s.metal_dk), // knuckle
     ])
 }
 
 /// Thigh: a steel cuisse tapering toward the knee. 1.4 HH.
 fn hip_mesh(_sign: f32, s: &Skin) -> Mesh {
-    gk(vec![at(tplate(0.52, 1.18, 0.62, 1.18, 1.12, 0.1), v(0.0, -1.13, 0.0), s.metal)]) // cuisse
+    gk(vec![at(tplate(0.58, 1.18, 0.68, 1.18, 1.12, 0.1), v(0.0, -1.13, 0.0), s.metal)]) // cuisse
 }
 
 /// Knee + shin: a steel poleyn cap + the greave column. 1.5 HH.
 fn knee_mesh(s: &Skin) -> Mesh {
     gk(vec![
         at(lathe(&[[0.0, 0.34], [0.18, 0.3], [0.33, 0.16], [0.36, 0.0], [0.0, 0.0]], 14), v(0.0, -0.2, 0.16), s.metal_lt), // poleyn
-        at(tplate(0.5, 1.12, 0.58, 0.78, 0.84, 0.09), v(0.0, -1.14, 0.0), s.metal), // greave
+        at(tplate(0.54, 1.12, 0.62, 0.78, 0.84, 0.09), v(0.0, -1.14, 0.0), s.metal), // greave
     ])
 }
 
@@ -697,9 +718,10 @@ fn foot_mesh(s: &Skin) -> Mesh {
     ])
 }
 
-/// Triangular heater shield: dark face + a bronze rim peeking behind it (studio extrudes a curved
-/// `Shape`; we sample its quadratic outline into a polygon and [`extrude_poly`] it). Built in
-/// shield-local facing +Z.
+/// Kite/heater shield: a plain earthy-brown plank face inside a darker wooden rim — no boss, no
+/// heraldry, no metal (the reference knight carries a bare wooden shield). Three thin vertical
+/// seams break the face into planks. Studio extrudes a curved `Shape`; we sample its quadratic
+/// outline into a polygon and [`extrude_poly`] it. Built in shield-local facing +Z.
 fn shield_mesh() -> Mesh {
     // previs heater outline (CW from +Z → reverse to CCW for extrude_poly's front face).
     let mut base = vec![Vec2::new(-0.5, 0.72), Vec2::new(0.5, 0.72), Vec2::new(0.53, 0.05)];
@@ -708,14 +730,12 @@ fn shield_mesh() -> Mesh {
     base.reverse();
     let rim: Vec<Vec2> = base.iter().map(|p| *p * 1.08).collect();
     let mut parts = vec![
-        tinted(extrude_poly(&rim, 0.07).translated_by(v(0.0, 0.0, -0.03)), PGOLD), // gold border
-        tinted(extrude_poly(&base, 0.1).translated_by(v(0.0, 0.0, 0.03)), SHIELD_BASE), // brown face
-        // Central domed gold boss + encircling ring — a classic shield boss, NOT any cross.
-        part(lathe(&[[0.0, 0.15], [0.1, 0.1], [0.18, 0.02], [0.2, -0.02], [0.0, -0.05]], 16), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.1, 0.13), PGOLD), // boss dome
-        part(torus(0.29, 0.035), Vec3::ONE, rx(PI / 2.0), v(0.0, 0.1, 0.12), PGOLD), // ring around the boss
+        tinted(extrude_poly(&rim, 0.07).translated_by(v(0.0, 0.0, -0.03)), PSHIELD_RIM), // wooden rim
+        tinted(extrude_poly(&base, 0.1).translated_by(v(0.0, 0.0, 0.03)), PSHIELD_FACE), // plank face
     ];
-    for p in [[-0.4, -0.06], [0.4, -0.06], [-0.27, -0.56], [0.27, -0.56]] {
-        parts.push(part(lathe(&[[0.0, 0.04], [0.055, 0.022], [0.0, -0.018]], 6), Vec3::ONE, rx(PI / 2.0), v(p[0], p[1], 0.11), PGOLD)); // corner rivets
+    // Plank seams: (x, top y, bottom y) — the outer two stop where the kite's curved edge closes in.
+    for (x, top, bot) in [(-0.27, 0.72, -0.5), (0.0, 0.72, -0.8), (0.27, 0.72, -0.5)] {
+        parts.push(at(cuboid(0.024, top - bot, 0.016), v(x, (top + bot) * 0.5, 0.084), PSHIELD_SEAM));
     }
     // Larger heater (was ×K ⇒ too small to cover the body); ×1.4 reads as a proper kite shield.
     group(parts).scaled_by(Vec3::splat(K * 1.4))
