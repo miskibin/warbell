@@ -7,7 +7,7 @@
 //! This builds only the **meshes** (one merged, flat-shaded, vertex-coloured `Mesh` per joint,
 //! against the shared white creature material); [`super`] spawns the actual joint *hierarchy* of
 //! entities from them, and [`super::anim`] poses the joints. Authoring is in the studio's TS units
-//! (the knight stands ~1.85u tall before scale); `HERO_SCALE` brings it down to the orks' height.
+//! (the knight stands ~2.08u tall before scale); `HERO_SCALE` sets its in-world height.
 //!
 //! Geometry maps the studio's three.js primitives onto our helpers 1:1:
 //! `CylinderGeometry(rt,rb,h,seg)` → [`frustum`], `BoxGeometry` → [`cuboid`], `SphereGeometry` →
@@ -64,29 +64,20 @@ const PBLADE: u32 = 0xc3c7cd;
 const PGRIP: u32 = 0x6a4a2e;
 const PSHIELD: u32 = 0x2b2723;
 
-// ── PROPORTIONS (reference v2.0 turnaround): stylised/stocky knight, 6.5 heads tall. ──────────────
-// Unit = head height (HH). Feet on the ground (rig-local y=0); head top at 6.5·HH ≈ 1.82.
-// Vertical bands from the feet, in HH: boots 0–0.4 · calf 0.4–1.9 · thigh 1.9–3.3 · belt 3.3–3.9 ·
-// torso 3.9–5.3 · neck 5.3–5.5 · head 5.5–6.5. The hips spine-root sits at 3.75 HH (=1.05, the
-// anim-fixed value). Every pivot below is derived from these numbers — never eyeballed.
-// Rig offsets are the PREVIS joint pivots (tools/index.html, in head-units where the figure is ~5.6u
-// tall) multiplied by K so the rig lands at ~2.35u — the scale the animator's translation deltas
-// (hips bob, Y_HIPS=1.05, shield mount, landing dip) were tuned for. Per-joint meshes are likewise
-// built at previs scale and shrunk by K (see `gk`). HERO_SCALE then brings it to in-world size.
-// EXACT previs (tools/index.html) joint pivots × K — the proportions the user approved on `knight2`.
-// previs world Ys: hip-joint 2.55 · knee 1.40 · shoulder 3.84 · elbow 2.86 · neck 4.10 · waist ~2.5;
-// K lands the waist at Y_HIPS=1.05 for the animator. Per-joint meshes are likewise built at previs
-// scale and shrunk by K (see `gk`).
+// ── Hero proportions ────────────────────────────────────────────────────────────────
+// Keep the leg chain / waist height so movement, rolls and world scale stay compatible.
+// A compact helm, narrower shoulder span and balanced upper/lower arms give an adult silhouette.
+// Limb plates derive their ends from these pivots, including the gauntlet's wrist attachment.
 pub(crate) const K: f32 = 0.42; // previs-unit → rig scale
 pub(crate) const HH: f32 = 0.28; // (legacy; unused)
 pub(crate) const Y_HIPS: f32 = 1.05; // spine root = previs waist 2.5 × K
 pub(crate) const O_TORSO: f32 = 0.0; // torso pivot = hips (waist)
-pub(crate) const O_NECK: f32 = 0.60; // torso → neck (head shrunk ⇒ sits a touch lower)
+pub(crate) const O_NECK: f32 = 0.64;
 pub(crate) const O_HEAD: f32 = 0.0;
 pub(crate) const O_SHOULDER_Y: f32 = 0.563; // torso → shoulder (previs 1.34 × K)
-pub(crate) const SHOULDER_DX: f32 = 0.386; // half shoulder span (previs 0.92 × K)
-pub(crate) const O_ELBOW: f32 = -0.358; // shoulder → elbow (arms shortened ~13%)
-pub(crate) const O_HAND: f32 = -0.497; // elbow → hand (arms shortened ~13%)
+pub(crate) const SHOULDER_DX: f32 = 0.315;
+pub(crate) const O_ELBOW: f32 = -0.335;
+pub(crate) const O_HAND: f32 = -0.345;
 pub(crate) const HIP_DX: f32 = 0.193; // half hip span (previs 0.46 × K)
 pub(crate) const O_HIP_Y: f32 = 0.021; // hips → hip joint (previs 0.05 × K)
 pub(crate) const O_KNEE: f32 = -0.483; // hip → knee (previs 1.15 × K)
@@ -582,7 +573,7 @@ fn hips_mesh(s: &Skin) -> Mesh {
 /// sleeveless tabard (front + back panels — the grey sides show), per the reference.
 fn torso_mesh(s: &Skin) -> Mesh {
     let mut parts = vec![
-        at(tplate(1.12, 1.55, 1.06, 1.18, 1.12, 0.16), v(0.0, 0.0, 0.0), PLEATHER), // gambeson chest
+        at(tplate(1.04, 1.55, 0.88, 1.28, 1.08, 0.14), v(0.0, 0.0, 0.0), PLEATHER), // tapered chest, flatter abdomen
         at(tplate(0.22, 1.24, 0.12, 0.5, 1.0, 0.05), v(0.0, 0.16, 0.5), PLEATHER), // chest keel
         at(lathe(&[[0.0, 0.34], [0.5, 0.3], [0.56, 0.08], [0.5, 0.0], [0.0, 0.0]], 16), v(0.0, 1.45, 0.0), s.metal_lt), // gorget
         // ── back detail (the 3rd-person camera sees this most) ──
@@ -649,14 +640,15 @@ fn head_mesh(s: &Skin) -> Mesh {
         }
         _ => {}
     }
-    gk(parts).scaled_by(Vec3::splat(0.85)) // shrink the head (was reading too big)
+    gk(parts).scaled_by(Vec3::splat(0.62)) // ~six helmet-heights; preserves the bascinet silhouette
 }
 
 /// Shoulder: a rounded steel pauldron cap + the upper arm (steel, tapering to the elbow). 1.3 HH.
 fn shoulder_mesh(sign: f32, s: &Skin) -> Mesh {
+    let upper = -O_ELBOW / K;
     let mut parts = vec![
         part(lathe(&[[0.0, 0.32], [0.22, 0.29], [0.4, 0.18], [0.5, 0.03], [0.5, -0.14], [0.4, -0.22], [0.2, -0.24], [0.0, -0.24]], 16), Vec3::ONE, xyz(0.05, 0.0, sign * 0.12), v(0.0, -0.18, 0.02), s.metal_lt), // draping pauldron
-        at(tplate(0.46, 0.68, 0.5, 0.92, 0.94, 0.08), v(0.0, -0.77, 0.0), s.metal), // rerebrace (shortened)
+        at(tplate(0.43, upper - 0.08, 0.46, 1.08, 1.04, 0.07), v(0.0, -upper, 0.0), s.metal),
     ];
     // Dragon plate: two bone spikes jut out the top of each pauldron.
     if s.style == ArmorStyle::Dragon {
@@ -668,11 +660,12 @@ fn shoulder_mesh(sign: f32, s: &Skin) -> Mesh {
 
 /// Elbow: the forearm vambrace (steel) + a dark gauntlet fist at the wrist. Forearm 1.2 HH.
 fn elbow_mesh(_sign: f32, s: &Skin) -> Mesh {
+    let fore = -O_HAND / K;
     gk(vec![
         at(lathe(&[[0.0, 0.26], [0.2, 0.22], [0.28, 0.08], [0.28, 0.0], [0.0, 0.0]], 14), v(0.0, 0.0, 0.04), s.metal_lt), // couter
-        at(tplate(0.44, 0.73, 0.48, 0.78, 0.82, 0.08), v(0.0, -0.75, 0.0), s.metal), // vambrace (shortened)
-        at(tplate(0.46, 0.4, 0.52, 0.8, 0.86, 0.06), v(0.0, -1.13, 0.0), PGLOVE), // gauntlet
-        at(rbx(0.42, 0.16, 0.46, 0.05), v(0.0, -1.08, 0.16), s.metal_dk), // knuckle
+        at(tplate(0.36, fore - 0.10, 0.40, 1.18, 1.12, 0.07), v(0.0, -fore, 0.0), s.metal),
+        at(tplate(0.39, 0.30, 0.43, 0.90, 0.90, 0.05), v(0.0, -fore - 0.14, 0.0), PGLOVE),
+        at(rbx(0.35, 0.13, 0.39, 0.04), v(0.0, -fore + 0.015, 0.12), s.metal_dk),
     ])
 }
 

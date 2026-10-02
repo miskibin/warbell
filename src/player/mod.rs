@@ -97,6 +97,8 @@ pub struct Hero {
     /// and slides to a stop instead of snapping on/off. Transient (not saved).
     pub vel: Vec2,
     pub vel_y: f32,
+    /// Downward speed at the last touchdown, retained after physics zeroes `vel_y`.
+    pub landing_speed: f32,
     pub on_ground: bool,
     pub air_takeoff_y: f32,
     pub walk_phase: f32,
@@ -219,6 +221,7 @@ impl Hero {
             facing,
             vel: Vec2::ZERO,
             vel_y: 0.0,
+            landing_speed: 0.0,
             on_ground: true,
             air_takeoff_y: y,
             walk_phase: 0.0,
@@ -426,11 +429,12 @@ impl Plugin for PlayerPlugin {
                 (
                     camera::toggle_mode,
                     camera::toggle_first_person, // V / HUD eye button: third ⇄ first person
-                    camera::player_camera,
+                    camera::camera_input.after(camera::toggle_mode).after(camera::toggle_first_person).before(movement::player_roll),
+                    camera::player_camera.after(health::hero_death_anim).after(viewmodel::animate_viewmodel),
                     camera::fp_body_visibility, // FP: hide the whole third-person rig (the viewmodel draws the hands)
                     reskin_hero, // rebuild limb meshes when weapon/armor equip changes
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
-                    anim::hero_anim,
+                    anim::hero_anim.after(health::hero_death_anim).after(animtest),
                     combat::update_sparks,
                     combat::update_fx_fades,
                     combat::update_light_fades, // impact flashes (kill/heavy/parry) decay + despawn
@@ -446,15 +450,15 @@ impl Plugin for PlayerPlugin {
                     .run_if(crate::rts::in_campaign),
             )
             // First-person viewmodel (camera-parented hands/sword/shield) + reticle. Ungated so the
-            // frozen world still draws them; `animate_viewmodel` runs after the camera so its
-            // look-inertia reads this frame's view angles.
+            // frozen world still draws them; `animate_viewmodel` reads current look input after simulation; the camera then
+            // composes its current-frame swing lean and follows the updated hero.
             .init_resource::<viewmodel::ReticleTarget>()
             .add_systems(Startup, viewmodel::spawn_reticle)
             .add_systems(
                 Update,
                 (
                     viewmodel::spawn_viewmodel,
-                    viewmodel::animate_viewmodel.after(camera::player_camera),
+                    viewmodel::animate_viewmodel.after(camera::camera_input).after(health::hero_death_anim),
                     viewmodel::sync_reticle,
                 )
                     .run_if(crate::rts::in_campaign),

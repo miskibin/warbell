@@ -102,14 +102,11 @@ fn key_axis(keys: &ButtonInput<KeyCode>, pos: KeyCode, neg: KeyCode) -> f32 {
 /// Camera-relative WASD/arrow move direction on the ground plane (world XZ, normalized), or
 /// `None` when no move key is held. Shared by [`player_move`] and the [`player_roll`] arm so the
 /// roll dives exactly the way the player is steering.
-fn move_input(keys: &ButtonInput<KeyCode>, cam: Option<&Transform>) -> Option<Vec2> {
-    let mut fwd = cam.map(|c| *c.forward()).unwrap_or(Vec3::NEG_Z);
-    fwd.y = 0.0;
-    if fwd.length_squared() < 1e-6 {
-        fwd = Vec3::NEG_Z;
-    }
-    fwd = fwd.normalize();
-    let right = Vec3::new(-fwd.z, 0.0, fwd.x);
+fn move_input(keys: &ButtonInput<KeyCode>, azimuth: f32) -> Option<Vec2> {
+    // Input yaw is already current this frame; the rendered camera follows after simulation.
+    let yaw = azimuth + std::f32::consts::PI;
+    let fwd = Vec2::new(yaw.sin(), yaw.cos());
+    let right = Vec2::new(-fwd.y, fwd.x);
     let fwd_amt = (key_axis(keys, KeyCode::KeyW, KeyCode::KeyS)
         + key_axis(keys, KeyCode::ArrowUp, KeyCode::ArrowDown))
     .clamp(-1.0, 1.0);
@@ -117,7 +114,7 @@ fn move_input(keys: &ButtonInput<KeyCode>, cam: Option<&Transform>) -> Option<Ve
         + key_axis(keys, KeyCode::ArrowRight, KeyCode::ArrowLeft))
     .clamp(-1.0, 1.0);
     let dir = fwd * fwd_amt + right * rgt_amt;
-    (dir.length_squared() > 1e-6).then(|| Vec2::new(dir.x, dir.z).normalize())
+    (dir.length_squared() > 1e-6).then(|| dir.normalize())
 }
 
 fn obstacle_assisted_dir(pos: Vec2, input_dir: Vec2, current_vel: Vec2) -> Vec2 {
@@ -163,7 +160,6 @@ pub fn player_roll(
     mut commands: Commands,
     mut cues: MessageWriter<AudioCue>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
-    cam_q: Query<&Transform, (With<Camera3d>, Without<Hero>)>,
     mut hero_q: Query<(&mut Hero, &mut super::HeroHealth)>,
     mut next_test: Local<f32>,
 ) {
@@ -193,7 +189,7 @@ pub fn player_roll(
     // the old default backward dive was unintuitive — Alt should just roll where you're headed).
     // The backward tumble (eyes kept on the foe) fires only when the dive runs AWAY from the
     // facing while the combat stance holds you square to a target.
-    let input = move_input(&keys, cam_q.single().ok());
+    let input = move_input(&keys, orbit.azimuth);
     let facing_fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
     let dir = input.unwrap_or(facing_fwd);
     let back = hero.stance_amt > 0.5 && dir.dot(facing_fwd) < -0.3;
@@ -332,7 +328,7 @@ pub fn player_move(
     buffs: Res<crate::inventory::Buffs>,
     keys: Res<ButtonInput<KeyCode>>,
     mut hero_q: Query<(&mut Hero, &mut Transform), Without<Camera3d>>,
-    cam_q: Query<&Transform, (With<Camera3d>, Without<Hero>)>,
+    orbit: Res<super::camera::OrbitCam>,
     bodies: Bodies,
     mut state: ResMut<HeroState>,
     mut pending: ResMut<PendingHeroDamage>,
@@ -450,7 +446,7 @@ pub fn player_move(
     *was_swamp = in_swamp;
 
     // ── Camera-relative move vector, flattened to the ground plane ──
-    let input = move_input(&keys, cam_q.single().ok());
+    let input = move_input(&keys, orbit.azimuth);
     let move_dir = input.unwrap_or(Vec2::ZERO);
     let moving = input.is_some();
     hero.moving = moving;
@@ -568,7 +564,7 @@ pub fn player_move(
         // Steer the facing. Free-run: toward the INPUT direction while pressing (hold the last
         // facing through the slide). Combat stance: onto the RINGED FOE — the body stays square
         // to it while WASD circles/backpedals (the movement itself is untouched; only the yaw
-        // target changes). In first person the *view* owns facing (set in `player_camera`) so
+        // target changes). In first person the *view* owns facing (set in `camera_input`) so
         // attacks fire where you aim. This stays live DURING a swing — `player_attack` only
         // *gently* nudges facing toward the locked foe, and the steer here overpowers it.
         if moving && !fp.active {
@@ -638,6 +634,7 @@ pub fn player_move(
     if hero.y <= ground_y || snap_down {
         // Just touched down: a long drop (cliff/jump) bruises on landing.
         if !was_on_ground {
+            hero.landing_speed = (-hero.vel_y).max(0.0);
             let fall = hero.air_takeoff_y - ground_y;
             if fall > FALL_SAFE {
                 pending.0 += (((fall - FALL_SAFE) * FALL_DMG_PER_UNIT).round()).min(FALL_DMG_MAX);
@@ -667,4 +664,19 @@ pub fn player_move(
     tf.rotation = Quat::from_rotation_y(hero.facing);
 
     write_state(&mut state, &hero);
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn movement_and_roll_follow_live_look_yaw() {
+        let mut keys = ButtonInput::default();
+        keys.press(KeyCode::KeyW);
+        assert!(move_input(&keys, 0.0).unwrap().distance(Vec2::NEG_Y) < 1e-6);
+        assert!(move_input(&keys, std::f32::consts::FRAC_PI_2).unwrap().distance(Vec2::NEG_X) < 1e-6);
+        keys.press(KeyCode::KeyD);
+        assert!((move_input(&keys, 0.0).unwrap().length() - 1.0).abs() < 1e-6);
+    }
 }
