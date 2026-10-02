@@ -2,8 +2,10 @@
 //! shoulder → elbow → hand+weapon/shield; hip → knee → foot) originally ported from the user's
 //! procedural three.js "Low-Poly Knight Studio" (`knightBuilder.ts`). The default (bare) kit now
 //! follows the user's reference render: light silver-grey plate, a dark earthy-brown tunic with a
-//! lighter brown belt, big bulbous pauldrons, a bucket helm with a flared neck skirt, black
-//! gauntlets, a plain steel longsword and a plain brown plank kite shield (no gold, no heraldry).
+//! lighter brown belt, domed pauldrons with stepped lames, a rounded egg-shaped great bascinet on a
+//! short mail neck (sloped shoulder yoke, V-tapered chest — a natural human-like silhouette, not a T
+//! of ball shoulders under a tube), black gauntlets, a plain steel longsword and a plain brown plank
+//! kite shield (no gold, no heraldry).
 //! The equipped weapon rides on its own pivot.
 //!
 //! This builds only the **meshes** (one merged, flat-shaded, vertex-coloured `Mesh` per joint,
@@ -91,7 +93,7 @@ pub(crate) const O_NECK: f32 = 0.60; // torso → neck (head shrunk ⇒ sits a t
 pub(crate) const O_HEAD: f32 = 0.0;
 /// The helm mesh sits this far above the neck joint (rig units) so it rests on top of the gorget
 /// collar instead of sinking into it — that is what reads as a neck.
-const HEAD_LIFT: f32 = 0.15;
+const HEAD_LIFT: f32 = 0.08;
 pub(crate) const O_SHOULDER_Y: f32 = 0.563; // torso → shoulder (previs 1.34 × K)
 pub(crate) const SHOULDER_DX: f32 = 0.29; // half shoulder span (was previs 0.92 × K = 0.386; narrowed so the shoulders aren't a T-bar)
 pub(crate) const O_ELBOW: f32 = -0.358; // shoulder → elbow (arms shortened ~13%)
@@ -623,9 +625,9 @@ fn neck_mesh(s: &Skin) -> Mesh {
 
 /// Helm: a rounded, egg-shaped great bascinet — a smooth dome that narrows toward the jaw so the head
 /// reads as a head (not a tube) and sits straight down into the gorget collar. The face is a T-shaped
-/// visor (wide eye slit + vertical breath slit) on a low centre ridge; a thin dark mail ring shows
-/// under the rim as the neck. The skull is a touch longer front-to-back than side-to-side, like a
-/// real skull. Base at y = 0 (the neck joint); ≈1.2 previs units tall.
+/// visor (wide eye slit + vertical breath slit) on a low centre ridge; a dark mail neck shows
+/// under the rim. The skull is a touch longer front-to-back than side-to-side, like a real skull.
+/// Authored ≈1.2 previs units tall, then shrunk to 0.88 and lifted [`HEAD_LIFT`] above the neck joint.
 fn head_mesh(s: &Skin) -> Mesh {
     const ZS: f32 = 1.08; // skull depth / width
     let skull = lathe(
@@ -634,7 +636,7 @@ fn head_mesh(s: &Skin) -> Mesh {
     );
     let mut parts = vec![
         part(skull, Vec3::new(1.0, 1.0, ZS), Quat::IDENTITY, v(0.0, 0.0, 0.0), s.metal),
-        at(frustum(0.37, 0.41, 0.4, 12), v(0.0, -0.1, 0.0), s.metal_dk), // dark mail neck under the rim
+        at(frustum(0.41, 0.45, 0.4, 12), v(0.0, -0.1, 0.0), s.metal_dk), // dark mail neck under the rim
         at(tplate(0.09, 0.86, 0.1, 0.7, 1.0, 0.03), v(0.0, 0.1, 0.56), s.metal_dim), // centre ridge down the face
         // T-visor: the eye slit is three short boxes yawed to follow the curve of the brow.
         at(rbx(0.22, 0.075, 0.08, 0.02), v(0.0, 0.76, 0.6), PDARK),
@@ -659,7 +661,7 @@ fn head_mesh(s: &Skin) -> Mesh {
         }
         _ => {}
     }
-    gk(parts).scaled_by(Vec3::splat(0.76)).translated_by(v(0.0, HEAD_LIFT, 0.0))
+    gk(parts).scaled_by(Vec3::splat(0.88)).translated_by(v(0.0, HEAD_LIFT, 0.0))
 }
 
 /// Shoulder: a rounded steel pauldron cap + the upper arm (steel, tapering to the elbow). 1.3 HH.
