@@ -75,6 +75,7 @@ pub mod resource_store;
 pub mod rng;
 pub mod roads;
 pub mod shop_catalog;
+pub mod spatial;
 pub mod tilemap;
 pub mod town_store;
 pub mod upgrade_store;

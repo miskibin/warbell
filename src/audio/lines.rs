@@ -224,6 +224,8 @@ pub struct Line {
     pub concept: Concept,
     /// Transcript: the on-screen subtitle AND our in-code record of the quote.
     pub text: &'static str,
+    /// Planned lines without a bundled recording stay silent and are not preloaded.
+    pub recorded: bool,
     /// May a louder/just-as-loud new line cut this off mid-clip?
     pub interruptible: bool,
     /// Barge-in priority: a new line plays over a playing one only if `new.priority >= cur.priority`.
@@ -241,7 +243,7 @@ pub struct Line {
 /// Convenience constructor for the common case (no reply_to / no then, interruptible, prio 10).
 const fn line(id: &'static str, speaker: Speaker, concept: Concept, text: &'static str) -> Line {
     Line {
-        id, speaker, concept, text,
+        id, speaker, concept, text, recorded: true,
         interruptible: true, priority: 10, floor: 0.0, once: false,
         reply_to: None, then: None,
     }
@@ -543,8 +545,8 @@ pub const LINES: &[Line] = &[
     // Rival stronghold destroyed (hero win + rival lament, spatial for the rival).
     Line { once: true, priority: 20, ..line("rival_fell_hero_a", Speaker::Hero, Concept::RivalFell, "The rival's keep is ash. No more raids from the dunes. One less war to fight.") },
     Line { once: true, priority: 20, ..line("rival_fell_hero_b", Speaker::Hero, Concept::RivalFell, "The Pasha's men won't trouble us again. Their sand-castle's rubble.") },
-    Line { priority: 15, ..line("rival_fell_a", Speaker::Rival, Concept::RivalLament, "The stronghold... falls. The Pasha will not forgive this.") },
-    Line { priority: 15, ..line("rival_fell_b", Speaker::Rival, Concept::RivalLament, "Our walls, our gold — all sand now. Curse you, northerner.") },
+    Line { recorded: false, priority: 15, ..line("rival_fell_a", Speaker::Rival, Concept::RivalLament, "The stronghold... falls. The Pasha will not forgive this.") },
+    Line { recorded: false, priority: 15, ..line("rival_fell_b", Speaker::Rival, Concept::RivalLament, "Our walls, our gold — all sand now. Curse you, northerner.") },
     // Rune-trial begun (hero). Priority 15 (urgent tier) so the "here we go" lands; floored.
     Line { priority: 15, floor: 120.0, ..line("trial_start_a", Speaker::Hero, Concept::RuneTrialStart, "The rune wakes. Hold it, the old stories say, and it yields its gift. Let's see.") },
     Line { priority: 15, floor: 120.0, ..line("trial_start_b", Speaker::Hero, Concept::RuneTrialStart, "Guardians of the stone. Beat them, keep the rune. Simple enough.") },
@@ -581,6 +583,15 @@ pub fn candidates(concept: Concept) -> impl Iterator<Item = &'static Line> {
     LINES.iter().filter(move |l| l.concept == concept)
 }
 
+pub fn voice_clip_path(line: &Line) -> Option<String> {
+    if !line.recorded { return None; }
+    let dir = match line.speaker {
+        Speaker::Hero => "hero", Speaker::Villager => "npc",
+        Speaker::Ork => "ork", Speaker::Rival => "rival",
+    };
+    Some(format!("audio/vo/{dir}/{}.ogg", line.id))
+}
+
 /// All catalog lines that are a valid reply to a dispatched chain concept.
 pub fn replies_to(concept: Concept) -> impl Iterator<Item = &'static Line> {
     LINES.iter().filter(move |l| l.reply_to == Some(concept))
@@ -608,6 +619,7 @@ pub fn passes_gates(
     played_once: &std::collections::HashSet<&'static str>,
     now: f32,
 ) -> bool {
+    if !line.recorded { return false; }
     if line.once && played_once.contains(line.id) {
         return false;
     }
@@ -675,6 +687,20 @@ pub fn hero_window_blocks(new_priority: u8, window_priority: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_voice_catalog_has_all_recorded_clips_and_skips_planned_lines() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let last = HashMap::new();
+        let once = HashSet::new();
+        for line in LINES {
+            if let Some(path) = voice_clip_path(line) {
+                assert!(assets.join(path).is_file(), "missing recorded clip: {}", line.id);
+            } else {
+                assert!(!passes_gates(line, &last, &once, 0.0), "planned line selected: {}", line.id);
+            }
+        }
+    }
     use std::collections::{HashMap, HashSet};
 
     #[test]

@@ -496,10 +496,8 @@ fn ork_brain(
                     * slow_mul;
                 let step_target = if o.brawl_target.is_none() {
                     let now = time.elapsed_secs();
-                    if o.hunt_cursor >= o.hunt_path.len()
-                        || now >= o.hunt_replan_at
-                        || o.hunt_goal.distance(o.target) > 2.0
-                    {
+                    if tileworld_core::pathfinding::replan_due(now as f64, o.hunt_replan_at as f64,
+                        o.hunt_cursor >= o.hunt_path.len(), o.hunt_goal.distance(o.target) > 2.0, true) {
                         o.hunt_path = crate::navgrid::path_to(o.pos, o.target);
                         o.hunt_cursor = 0;
                         o.hunt_goal = o.target;

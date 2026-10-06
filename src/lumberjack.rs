@@ -398,10 +398,7 @@ fn chop_work(
             worker.at_post = false;
             let step_target = if d > 6.0 {
                 job.close = 0.0;
-                if path.cursor >= path.waypoints.len()
-                    || now >= path.next_replan
-                    || path.goal_cached.distance(tp) > 2.0
-                {
+                if path.refresh_due(now) {
                     path.waypoints = crate::navgrid::path_to(v.pos, tp);
                     path.cursor = 0;
                     path.goal_cached = tp;
@@ -527,10 +524,7 @@ fn haul_home(
         }
         // March home: A* when far, direct steer when close (same shape as chop_work's march).
         let step_target = if d > 6.0 {
-            if path.cursor >= path.waypoints.len()
-                || now >= path.next_replan
-                || path.goal_cached.distance(yard) > 2.0
-            {
+            if path.refresh_due(now) {
                 path.waypoints = crate::navgrid::path_to(v.pos, yard);
                 path.cursor = 0;
                 path.goal_cached = yard;

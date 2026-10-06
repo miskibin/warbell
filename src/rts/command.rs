@@ -220,6 +220,7 @@ fn group_goal(goal: Vec2, slot: usize, count: usize) -> Vec2 {
 /// Consume `RtsOrder`s into per-unit movement components. A fresh `NavPath` is (re)inserted so each
 /// order re-paths cleanly; conflicting order-components are cleared.
 fn rts_consume_orders(
+    time: Res<Time>,
     mut orders: MessageReader<RtsOrder>,
     mut commands: Commands,
     transforms: Query<&GlobalTransform>,
@@ -261,7 +262,7 @@ fn rts_consume_orders(
                         mslot += 1;
                         group_goal(goal, s, melee_n)
                     };
-                    commands.entity(e).try_insert((MoveTo { goal: g, fight }, NavPath::default()));
+                    commands.entity(e).try_insert((MoveTo { goal: g, fight }, NavPath::staggered(time.elapsed_secs(), e)));
                     commands.entity(e).try_remove::<AttackTarget>();
                     commands.entity(e).try_remove::<HarvestAt>();
                 }
@@ -272,7 +273,7 @@ fn rts_consume_orders(
                 let Some(tp) = transforms.get(target).ok().map(|gt| gt.translation()) else { continue };
                 let goal = Vec2::new(tp.x, tp.z);
                 for &e in &ord.units {
-                    commands.entity(e).try_insert((AttackTarget(target), MoveTo { goal, fight: true }, NavPath::default()));
+                    commands.entity(e).try_insert((AttackTarget(target), MoveTo { goal, fight: true }, NavPath::staggered(time.elapsed_secs(), e)));
                     commands.entity(e).try_remove::<HarvestAt>();
                 }
             }
@@ -285,7 +286,7 @@ fn rts_consume_orders(
                     if kinds.get(e).map(|u| u.kind) != Ok(UnitKind::Worker) {
                         continue;
                     }
-                    commands.entity(e).try_insert((HarvestAt(dep), MoveTo { goal, fight: false }, NavPath::default()));
+                    commands.entity(e).try_insert((HarvestAt(dep), MoveTo { goal, fight: false }, NavPath::staggered(time.elapsed_secs(), e)));
                     commands.entity(e).try_remove::<AttackTarget>();
                 }
             }
@@ -320,10 +321,7 @@ fn rts_move_units(
 
         // Far: follow the cached A* route (threads any blockers); close: cheap direct steer.
         let step_target = if dist > PATH_RANGE {
-            if path.cursor >= path.waypoints.len()
-                || now >= path.next_replan
-                || path.goal_cached.distance(goal) > 2.0
-            {
+            if path.refresh_due(now) {
                 path.waypoints = path_to_budget(pos, goal, RTS_NAV_BUDGET);
                 path.cursor = 0;
                 path.goal_cached = goal;

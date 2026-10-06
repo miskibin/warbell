@@ -8,7 +8,8 @@
 //! and the edge-midpoint `wall_at` test (in core) is what opens gates while blocking walls.
 
 use bevy::prelude::*;
-use tileworld_core::pathfinding::{find_path, Grid, PathPoint};
+use std::cell::RefCell;
+use tileworld_core::pathfinding::{find_path_with_workspace, Grid, PathPoint, PathWorkspace};
 
 use crate::blockers;
 use crate::worldmap::{COLS, GROUND_STEP, GX, GZ, ROWS};
@@ -105,8 +106,14 @@ pub fn path_to(from: Vec2, to: Vec2) -> Vec<Vec2> {
 /// stone miner's castle→Rocky haul (~100 tiles + river detours). On an unreachable goal A*
 /// drains the open set and exits early, so a generous budget only costs when a route exists.
 pub fn path_to_budget(from: Vec2, to: Vec2, max_nodes: u32) -> Vec<Vec2> {
+    // Each scheduler thread owns its scratch space; independent searches never share mutable
+    // buffers or hold a global navigation mutex. Search generations still query live blockers.
+    thread_local! { static WORK: RefCell<PathWorkspace> = RefCell::default(); }
     let blocks = blockers::read();
-    find_path(&ForestGrid { blocks: &blocks }, world_to_pathpoint(from.x, from.y), world_to_pathpoint(to.x, to.y), max_nodes)
+    WORK.with_borrow_mut(|work| find_path_with_workspace(
+        &ForestGrid { blocks: &blocks }, world_to_pathpoint(from.x, from.y),
+        world_to_pathpoint(to.x, to.y), max_nodes, work,
+    ))
         .into_iter()
         .map(|p| Vec2::new(p.x as f32 - GX, p.z as f32 - GZ))
         .collect()
@@ -122,4 +129,22 @@ pub struct NavPath {
     pub next_replan: f32,
     /// The goal the cached path was computed for (replan if it moves).
     pub goal_cached: Vec2,
+}
+
+impl NavPath {
+    /// Spread a large explicit group order across ~9 frames at 60fps. Local steering starts
+    /// immediately; expensive routing follows within 150ms rather than in one frame for all units.
+    pub fn staggered(now: f32, entity: Entity) -> Self {
+        Self { next_replan: now + (entity.to_bits() % 16) as f32 * 0.01, ..default() }
+    }
+
+    pub fn refresh_due(&self, now: f32) -> bool {
+        tileworld_core::pathfinding::replan_due(now as f64, self.next_replan as f64,
+            self.cursor >= self.waypoints.len(), false, true)
+    }
+
+    pub fn pursuit_due(&self, now: f32, goal: Vec2) -> bool {
+        tileworld_core::pathfinding::replan_due(now as f64, self.next_replan as f64,
+            self.cursor >= self.waypoints.len(), self.goal_cached.distance(goal) > 2.0, false)
+    }
 }

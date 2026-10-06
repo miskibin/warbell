@@ -53,7 +53,8 @@ fn separate_agents(
     // Scratch buffers kept across frames (cleared, not reallocated) — this runs every frame over the
     // whole crowd, so a fresh Vec+HashMap per call was pure churn. `.clear()` retains capacity.
     mut bodies: Local<Vec<Body>>,
-    mut grid: Local<HashMap<(i32, i32), Vec<usize>>>,
+    mut grid: Local<HashMap<(i32, i32), (usize, usize)>>,
+    mut next: Local<Vec<usize>>,
     mut push: Local<Vec<Vec2>>,
     mut pushes: Local<HashMap<Entity, Vec2>>,
 ) {
@@ -76,8 +77,14 @@ fn separate_agents(
     // 2. Bucket by 1-unit tile and resolve each overlapping pair once. Bodies overlap only within
     // `r_i + r_j` (≤ ~0.8 < 1 tile), so a 3×3 neighbour scan catches every real pair.
     grid.clear();
+    next.clear();
+    next.resize(bodies.len(), usize::MAX);
     for (i, (_, p, _)) in bodies.iter().enumerate() {
-        grid.entry((p.x.floor() as i32, p.y.floor() as i32)).or_default().push(i);
+        // Flat links keep the original per-cell order without allocating and dropping a Vec
+        // for every occupied cell on every frame of a large army.
+        grid.entry((p.x.floor() as i32, p.y.floor() as i32))
+            .and_modify(|(_, tail)| { next[*tail] = i; *tail = i; })
+            .or_insert((i, i));
     }
     push.clear();
     push.resize(bodies.len(), Vec2::ZERO);
@@ -85,8 +92,11 @@ fn separate_agents(
         let (tx, tz) = (pi.x.floor() as i32, pi.y.floor() as i32);
         for dx in -1..=1 {
             for dz in -1..=1 {
-                let Some(cell) = grid.get(&(tx + dx, tz + dz)) else { continue };
-                for &j in cell {
+                let Some(&(head, _)) = grid.get(&(tx + dx, tz + dz)) else { continue };
+                let mut cursor = head;
+                while cursor != usize::MAX {
+                    let j = cursor;
+                    cursor = next[j];
                     if j <= i {
                         continue; // each unordered pair exactly once
                     }

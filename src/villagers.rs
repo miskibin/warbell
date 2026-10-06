@@ -20,7 +20,7 @@ use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
-use crate::biped::{BipedDrive, BipedMeshes, BipedRig};
+use crate::biped::{BipedDrive, BipedHandles, BipedMeshes, BipedRig};
 use crate::castle::{self, Mats, M};
 use crate::creature::{surf, Surf};
 use crate::critters::PartKind;
@@ -389,6 +389,7 @@ impl Plugin for VillagersPlugin {
         app.init_resource::<RescuedCamps>()
             .init_resource::<NpcDamage>()
             .init_resource::<TownSpots>()
+            .init_resource::<VillagerBodyCache>()
             // `villager_drive` maps each townsperson's brain state → its `BipedDrive`; the shared
             // `biped::animate_biped` then poses the studio skeleton (locomotion/attack/work strokes).
             // `villager_limbs` no longer poses limbs (the biped does), but still runs to keep the
@@ -542,7 +543,7 @@ pub fn spawn_courtyard_guard(
     creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
     seed: u32,
 ) {
-    let mat = crate::creature::make_creature_material(creature_mats);
+    let mat = shared_body_material(creature_mats);
     let mut rng = seed | 1;
     let half = crate::castle::courtyard_half();
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
@@ -571,7 +572,7 @@ pub fn spawn_rival_soldier(
     pos: Vec2,
     seed: u32,
 ) -> Entity {
-    let mat = crate::creature::make_creature_material(creature_mats);
+    let mat = shared_body_material(creature_mats);
     // Desert ochre tunic so the rival's men read instantly as "not ours" — the distinction the
     // textured-sandstone fort no longer carries on its own.
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
@@ -594,7 +595,7 @@ pub fn spawn_rival_archer(
     pos: Vec2,
     seed: u32,
 ) -> Entity {
-    let mat = crate::creature::make_creature_material(creature_mats);
+    let mat = shared_body_material(creature_mats);
     let kind = Kind::Archer { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
     let root = spawn(commands, meshes, &mat, kind, home, pos, 2.6, 2.0, SCALE, seed, true);
     commands.entity(root).remove::<(Guard, NpcHp, Townsfolk)>();
@@ -617,7 +618,7 @@ pub fn spawn_rts_militia(
     pos: Vec2,
     seed: u32,
 ) -> Entity {
-    let mat = crate::creature::make_creature_material(creature_mats);
+    let mat = shared_body_material(creature_mats);
     let skin = SKIN[(seed as usize) % SKIN.len()];
     let kind = if archer {
         Kind::Archer { skin, tunic: TUNIC[2] }
@@ -643,7 +644,7 @@ pub fn spawn_rival_worker(
     pos: Vec2,
     seed: u32,
 ) -> Entity {
-    let mat = crate::creature::make_creature_material(creature_mats);
+    let mat = shared_body_material(creature_mats);
     let kind = Kind::Worker { trade, skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
     spawn(commands, meshes, &mat, kind, home, pos, 2.2, 1.6, SCALE, seed, true)
 }
@@ -660,7 +661,7 @@ pub fn spawn_scene_peasant(
     worker: Option<Trade>,
     seed: u32,
 ) -> Entity {
-    let mat = crate::creature::make_creature_material(creature_mats);
+    let mat = shared_body_material(creature_mats);
     let mut rng = seed | 1;
     let skin = SKIN[(seed as usize) % SKIN.len()];
     let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
@@ -727,7 +728,7 @@ pub fn spawn_cage_captive(
     key: crate::camps::CageKey,
     seed: u32,
 ) -> Entity {
-    let mat = crate::creature::make_creature_material(creature_mats);
+    let mat = shared_body_material(creature_mats);
     let skin = SKIN[(seed as usize) % SKIN.len()];
     let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
     let root = commands
@@ -829,7 +830,7 @@ fn spawn_freed_townsfolk(
     pos: Vec2,
     seed: u32,
 ) -> Entity {
-    let mat = crate::creature::make_creature_material(creature_mats);
+    let mat = shared_body_material(creature_mats);
     let mut rng = seed | 1;
     let skin = SKIN[(seed as usize) % SKIN.len()];
     let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
@@ -1102,14 +1103,11 @@ fn worker_steer(
             // Far from the post: follow the A* route (threads the wall gates). Close in:
             // cheap direct steer, no pathing churn — same split as the guard post-march.
             let step_target = if dist > GUARD_PATH_RANGE {
-                if path.cursor >= path.waypoints.len()
-                    || now >= path.next_replan
-                    || path.goal_cached.distance(work_pos) > 2.0
-                {
+                if path.refresh_due(now) {
                     path.waypoints = crate::navgrid::path_to(v.pos, work_pos);
                     path.cursor = 0;
                     path.goal_cached = work_pos;
-                    // Stagger replans so a dawn shift-change doesn't path everyone on one frame.
+                    // Periodic staggered refresh; even an empty route respects this deadline.
                     path.next_replan = now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05;
                 }
                 while path.cursor < path.waypoints.len()
@@ -1588,6 +1586,9 @@ fn guard_combat(
     time: Res<Time>,
     siege: Res<crate::siege::Siege>,
     def: Res<crate::economy::Defenses>,
+    mut inv: Local<Vec<(Entity, Vec2, bool)>>,
+    mut target_grid: Local<tileworld_core::spatial::PointGrid>,
+    mut dealt: Local<Vec<(Entity, Entity, f32)>>,
     mut commands: Commands,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut kills: MessageWriter<crate::verbs::AnimalKilled>,
@@ -1645,7 +1646,8 @@ fn guard_combat(
     let guard_leash = GUARD_LEASH + tier * 4.0;
     // Everything a guard may engage: every ork, plus the predator species only — the militia
     // doesn't slaughter the deer herds.
-    let inv: Vec<(Entity, Vec2, bool)> = hostiles
+    inv.clear();
+    inv.extend(hostiles
         .iter()
         .filter_map(|(e, tf, _, invader, animal)| {
             let hostile = match animal {
@@ -1654,8 +1656,9 @@ fn guard_combat(
             };
             hostile.then_some((e, Vec2::new(tf.translation.x, tf.translation.z), invader))
         })
-        .collect();
-    let mut dealt: Vec<(Entity, Entity, f32)> = Vec::new(); // (target, guard, dmg)
+    );
+    target_grid.rebuild(inv.iter().map(|(_, p, _)| (p.x as f64, p.y as f64)));
+    dealt.clear(); // (target, guard, dmg), preserving the reusable allocation
 
     for (self_e, mut g, mut hp, mut v, mut tf, mut path, rallied, mut archer) in &mut guards {
         g.atk_cd -= dt;
@@ -1673,7 +1676,17 @@ fn guard_combat(
         // the nearest hostile near the POST (engage inside the detect ring, finish a fight it's
         // already toe-to-toe with anywhere inside the leash).
         let mut best: Option<(Entity, Vec2, f32)> = None;
-        for (e, p, invader) in &inv {
+        let mut best_rank = usize::MAX;
+        let (centre, radius) = if rallied {
+            (v.pos, RALLY_ENGAGE_RADIUS)
+        } else if in_wave {
+            (v.pos, GUARD_HUNT_RADIUS)
+        } else {
+            (g.post, guard_detect.max(guard_leash))
+        };
+        // Broad phase only: retain the original exact range, hostility and post-leash checks.
+        for rank in target_grid.nearby_or_all(centre.x as f64, centre.y as f64, radius as f64 + 0.001) {
+            let (e, p, invader) = &inv[rank];
             let d = v.pos.distance(*p);
             if rallied {
                 // War party (mustered with `K`): fight WHATEVER is near the hero — a wave ork, the
@@ -1694,8 +1707,11 @@ fn guard_combat(
                     continue;
                 }
             }
-            if best.is_none_or(|(_, _, bd)| d < bd) {
+            // Bucket order differs from ECS order; equal distances still pick the first member
+            // of the original hostile snapshot, preserving which enemy receives this strike.
+            if best.is_none_or(|(_, _, bd)| d < bd || (d == bd && rank < best_rank)) {
                 best = Some((*e, *p, d));
+                best_rank = rank;
             }
         }
 
@@ -1763,16 +1779,10 @@ fn guard_combat(
                 // Far from the foe → A* toward it (thread walls/gates instead of wedging);
                 // close → cheap direct steer. Same pattern as the return-to-post walk.
                 let step_target = if d > GUARD_PATH_RANGE {
-                    // Replan when the path runs out, OR when the goal has drifted >2u AND this
-                    // guard's stagger window has elapsed. The stagger must gate the goal-moved
-                    // case too (AND, not OR): a moving target — a fleeing foe, or the hero's ring
-                    // post under a rallied muster — would otherwise re-fire every frame and, with
-                    // the whole war party crossing the 2u threshold together, cluster island-scale
-                    // A* onto the same frames (the "go after me" perf spike). Cursor-exhaust stays
-                    // an always-allowed replan; it's naturally spread by per-guard walk progress.
-                    if path.cursor >= path.waypoints.len()
-                        || (now >= path.next_replan && path.goal_cached.distance(tp) > 2.0)
-                    {
+                    // After the initial search, both a moved goal and an exhausted/empty route
+                    // wait for the stagger window. An unreachable target cannot trigger A*
+                    // every frame while the guard follows the existing direct-steer fallback.
+                    if path.pursuit_due(now, tp) {
                         path.waypoints = crate::navgrid::path_to(v.pos, tp);
                         path.cursor = 0;
                         path.goal_cached = tp;
@@ -1807,18 +1817,13 @@ fn guard_combat(
                 // river crossing and the castle GATE instead of wedging on the wall. Near home →
                 // cheap direct steer, no pathing churn. Mirrors the invader keep-march in `siege.rs`.
                 let step_target = if to_post.length() > GUARD_PATH_RANGE {
-                    // Goal-moved replan is AND-gated by the stagger (see the chase branch above):
-                    // a rallied guard's post tracks the running hero every frame, so an OR here
-                    // re-pathed the whole muster on the same frames → spikes. A fixed post (a freed
-                    // captive marching home) never trips goal-moved, so it replans only on
-                    // cursor-exhaust — unchanged from before.
-                    if path.cursor >= path.waypoints.len()
-                        || (now >= path.next_replan && path.goal_cached.distance(g.post) > 2.0)
-                    {
+                    // Reuse a complete route to a fixed post; moved posts and exhausted or
+                    // failed routes may refresh only after this guard's staggered deadline.
+                    if path.pursuit_due(now, g.post) {
                         path.waypoints = crate::navgrid::path_to(v.pos, g.post);
                         path.cursor = 0;
                         path.goal_cached = g.post;
-                        // Stagger replans so freed captives don't all path on one frame.
+                        // Stagger subsequent retries, including routes that failed to find a gate.
                         path.next_replan = now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05;
                     }
                     while path.cursor < path.waypoints.len()
@@ -1853,7 +1858,7 @@ fn guard_combat(
     }
 
     // Apply guard strikes to hostile Health; reap the slain, enrage struck beasts.
-    for (e, guard_e, dmg) in dealt {
+    for (e, guard_e, dmg) in dealt.drain(..) {
         if let Ok((_, ttf, mut hp, _, animal)) = hostiles.get_mut(e) {
             if hp.hp > 0.0 {
                 hp.hp -= dmg;
@@ -2244,7 +2249,7 @@ struct VSpec {
 /// COSMETIC rng stream `cr` that NEVER touches the gameplay `Villager.rng`. Every roll is drawn
 /// UP FRONT in a fixed, append-only order, so a guard and the worker they're re-skinned into (same
 /// seed, different `kind`) get the identical face. `kid` forces a child look (no beard, simple hair).
-/// (Legacy box-mesh villager builder, superseded by [`vil_biped_meshes`]; kept for reference.)
+/// (Legacy box-mesh villager builder, superseded by [`BodyMeshKey::meshes`]; kept for reference.)
 #[allow(dead_code)]
 fn spec(kind: Kind, seed: u32, kid: bool) -> VSpec {
     let (id_skin, id_tunic) = match kind {
@@ -2524,7 +2529,7 @@ pub fn populate(
             ));
         }
     };
-    let body_mat = crate::creature::make_creature_material(creature_mats);
+    let body_mat = shared_body_material(creature_mats);
     let mut rng: u32 = 0x5117_aced;
     let mut placed: Vec<Vec2> = Vec::new();
     let half = crate::castle::courtyard_half();
@@ -2876,8 +2881,9 @@ fn spawn(
 
 /// Map a villager [`Kind`] (+ cosmetic `seed`) to a studio peasant biped mesh set. The town keeps
 /// its per-villager skin/tunic variety; the trouser tone is picked deterministically from the seed.
-fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool, desert: bool) -> BipedMeshes {
-    let trouser = PANT_TONES[(seed as usize) % PANT_TONES.len()];
+fn vil_biped_key(kind: Kind, seed: u32, kid: bool, desert: bool) -> BodyMeshKey {
+    // Desert bodies use the studio's fixed DESERT_PANT, independent of this input colour.
+    let trouser = if desert { PANT } else { PANT_TONES[(seed as usize) % PANT_TONES.len()] };
     let (pk, skin, tunic) = match kind {
         Kind::Guard { skin, tunic } => (PeasantKind::Guard, skin, tunic),
         Kind::Archer { skin, tunic } => (PeasantKind::Archer, skin, tunic),
@@ -2892,7 +2898,131 @@ fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool, desert: bool) -> BipedMesh
         ),
         Kind::Peasant { skin, tunic, .. } => (PeasantKind::Unemployed, skin, tunic),
     };
-    peasant_biped_meshes(pk, skin, tunic, trouser, kid, desert)
+    BodyMeshKey { kind: pk, skin, tunic, trouser, kid, desert }
+}
+
+/// Only visible mesh inputs belong in the key: a new gait/AI seed must not upload another
+/// identical mesh set. The studio unemployed body does not currently render the legacy hat.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct BodyMeshKey {
+    kind: PeasantKind,
+    skin: u32,
+    tunic: u32,
+    trouser: u32,
+    kid: bool,
+    desert: bool,
+}
+
+impl BodyMeshKey {
+    fn meshes(self) -> BipedMeshes {
+        peasant_biped_meshes(self.kind, self.skin, self.tunic, self.trouser, self.kid, self.desert)
+    }
+}
+
+/// Owned by this World, never a process-global cache of handles from another Assets store.
+/// Outfit changes and new armies reuse immutable meshes. The LRU bound also prevents custom
+/// outfit colours from retaining unlimited GPU assets over a long run; live rigs own their clones.
+/// Typical skirmish outfits fit below 128; allow headroom for campaign worker role changes and
+/// liberated captives with varied tunics. Entries are created lazily, never eagerly allocated.
+const BODY_CACHE_LIMIT: usize = 256;
+
+#[derive(Resource, Default)]
+struct VillagerBodyCache {
+    entries: Vec<(BodyMeshKey, BipedHandles)>,
+}
+
+impl VillagerBodyCache {
+    fn get_or_upload(&mut self, key: BodyMeshKey, meshes: &mut Assets<Mesh>) -> BipedHandles {
+        if let Some(i) = self.entries.iter().position(|(cached, _)| *cached == key) {
+            let entry = self.entries.remove(i);
+            let handles = entry.1.clone();
+            self.entries.push(entry);
+            return handles;
+        }
+        let handles = key.meshes().upload(meshes);
+        if self.entries.len() == BODY_CACHE_LIMIT {
+            self.entries.remove(0);
+        }
+        self.entries.push((key, handles.clone()));
+        handles
+    }
+}
+
+/// Troops differ through vertex colours, not the base material. Reuse the exact neutral
+/// creature profile from the current asset store (no retained handles across world rebuilds).
+/// An active hurt-flash clone has emissive colour and must never become a new body's skin.
+fn shared_body_material(mats: &mut Assets<crate::creature::CreatureMaterial>) -> Handle<crate::creature::CreatureMaterial> {
+    let id = mats.iter().find_map(|(id, m)| {
+        (m.extension.params.params == Vec4::new(0.22, 0.25, 0.35, 0.0)
+            && m.base.base_color == Color::WHITE
+            && m.base.emissive == LinearRgba::BLACK
+            && m.base.perceptual_roughness == 0.7)
+            .then_some(id)
+    });
+    id.and_then(|id| mats.get_strong_handle(id))
+        .unwrap_or_else(|| crate::creature::make_creature_material(mats))
+}
+
+#[cfg(test)]
+mod body_cache_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_troops_share_meshes_and_material_with_independent_rigs() {
+        let mut world = World::new();
+        world.init_resource::<VillagerBodyCache>();
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<crate::creature::CreatureMaterial>>();
+        let mut queue = bevy::ecs::world::CommandQueue::default();
+        for seed in [5, 17] { // same skin/trousers, independent animation/AI seeds
+            world.resource_scope(|world, mut meshes: Mut<Assets<Mesh>>| {
+                world.resource_scope(|world, mut mats: Mut<Assets<crate::creature::CreatureMaterial>>| {
+                    spawn_rts_militia(&mut Commands::new(&mut queue, world), &mut meshes, &mut mats, false, Vec2::ZERO, seed);
+                });
+            });
+        }
+        // World::commands can flush on resource_scope entry. Apply only after scoped asset
+        // resources are back, just as the game's deferred system commands do.
+        queue.apply(&mut world);
+        assert_eq!(world.resource::<VillagerBodyCache>().entries.len(), 1);
+        assert_eq!(world.resource::<Assets<crate::creature::CreatureMaterial>>().len(), 1);
+        assert_eq!(world.query_filtered::<Entity, With<BipedRig>>().iter(&world).count(), 2);
+        let mesh_count = world.resource::<Assets<Mesh>>().len();
+        let leaves = world.query::<&Mesh3d>().iter(&world).count();
+        assert!(mesh_count > 10); // complete articulated outfit, not an empty cached body
+        assert_eq!(leaves, mesh_count * 2);
+    }
+
+    #[test]
+    fn outfit_cache_keeps_role_colours_size_and_desert_style_distinct() {
+        let guard = Kind::Guard { skin: SKIN[0], tunic: TUNIC[0] };
+        let key = vil_biped_key(guard, 0, false, false);
+        assert!(key == vil_biped_key(guard, 12, false, false));
+        for other in [
+            vil_biped_key(Kind::Archer { skin: SKIN[0], tunic: TUNIC[0] }, 0, false, false),
+            vil_biped_key(Kind::Worker { trade: Trade::Farmer, skin: SKIN[0], tunic: TUNIC[0] }, 0, false, false),
+            vil_biped_key(Kind::Guard { skin: SKIN[1], tunic: TUNIC[0] }, 0, false, false),
+            vil_biped_key(Kind::Guard { skin: SKIN[0], tunic: TUNIC[1] }, 0, false, false),
+            vil_biped_key(guard, 1, false, false),
+            vil_biped_key(guard, 0, true, false),
+            vil_biped_key(guard, 0, false, true),
+        ] {
+            assert!(key != other);
+        }
+    }
+
+    #[test]
+    fn hurt_flash_and_viewmodel_materials_are_not_reused_as_body_skin() {
+        let mut mats = Assets::<crate::creature::CreatureMaterial>::default();
+        let flash = crate::creature::make_creature_material(&mut mats);
+        mats.get_mut(&flash).unwrap().base.emissive = LinearRgba::rgb(0.5, 0.3, 0.2);
+        let viewmodel = crate::creature::make_viewmodel_material(&mut mats, 1000.0);
+        let body = shared_body_material(&mut mats);
+        assert_ne!(body.id(), flash.id());
+        assert_ne!(body.id(), viewmodel.id());
+        assert_eq!(body.id(), shared_body_material(&mut mats).id());
+        assert_eq!(mats.get(&flash).unwrap().base.emissive, LinearRgba::rgb(0.5, 0.3, 0.2));
+    }
 }
 
 /// Build a townsperson's body on the shared studio biped skeleton (`biped.rs`): one [`spawn_biped`]
@@ -2907,9 +3037,8 @@ fn build_biped_body(
     kid: bool,
     desert: bool,
     mat: &Handle<crate::creature::CreatureMaterial>,
-    meshes: &mut Assets<Mesh>,
+    _meshes: &mut Assets<Mesh>,
 ) {
-    let h = vil_biped_meshes(kind, seed, kid, desert).upload(meshes);
     // Kids get an oversized head on a downscaled body (chibi proportions) so they read as children,
     // not just small adults.
     let head_scale = if kid { 1.55 } else { 1.06 };
@@ -2920,7 +3049,19 @@ fn build_biped_body(
         rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
         ..default()
     };
-    crate::biped::spawn_biped(commands, root, mat, h, head_scale, 1.0, 0.15, 0.3, VIL_RIG_OFF, Some(shield_xf));
+    let key = vil_biped_key(kind, seed, kid, desert);
+    let mat = mat.clone();
+    // Resolve the shared assets when these spawn commands flush. This keeps the existing spawn
+    // API usable from campaign, RTS and rebuild callers without a global cache or extra borrows.
+    commands.queue(move |world: &mut World| {
+        if world.get_entity(root).is_err() {
+            return; // a concurrent death/rebuild already removed the parent
+        }
+        let h = world.resource_scope(|world, mut cache: Mut<VillagerBodyCache>| {
+            cache.get_or_upload(key, &mut world.resource_mut::<Assets<Mesh>>())
+        });
+        crate::biped::spawn_biped(&mut world.commands(), root, &mat, h, head_scale, 1.0, 0.15, 0.3, VIL_RIG_OFF, Some(shield_xf));
+    });
 }
 
 /// Spawn a villager's body (torso + limbs + head) as children of `root`, each tagged

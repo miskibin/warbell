@@ -149,6 +149,11 @@ fn main() {
     // captured PNG is crisp. (A small/low-res capture minifies the ground detail texture to a
     // washed-out pale mean — the real game at native res looks lush.)
     let mut window = Window { title: "Warbell".into(), ..default() };
+    // Unattended verification should not activate its window over the user's current app.
+    if std::env::var("FOREST_PERFTEST").is_ok() || std::env::var("FOREST_SHOT").is_ok()
+        || std::env::var("FOREST_RTS_ECOTEST").is_ok() {
+        window.focused = false;
+    }
     if std::env::var("FOREST_SHOT").is_ok() {
         window.resolution =
             bevy::window::WindowResolution::new(1920, 1080).with_scale_factor_override(1.0);

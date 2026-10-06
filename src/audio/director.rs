@@ -312,18 +312,13 @@ pub fn tick_chains(
     }
 }
 
-/// Preload every catalog line's clip at startup so handles are warm by the time a line fires
+/// Preload every recorded catalog line's clip at startup so handles are warm when a line fires
 /// (one-shot events won't get rejected by the not-yet-loaded guard) and a missing file is
 /// detectable (its handle's asset stays absent forever).
 pub fn preload_voice_lines(asset: Res<AssetServer>, mut mgr: ResMut<VoiceManager>) {
     for line in super::lines::LINES {
-        let dir = match line.speaker {
-            Speaker::Hero => "hero",
-            Speaker::Villager => "npc",
-            Speaker::Ork => "ork",
-            Speaker::Rival => "rival",
-        };
-        let handle = asset.load(format!("audio/vo/{dir}/{}.ogg", line.id));
+        let Some(path) = super::lines::voice_clip_path(line) else { continue };
+        let handle = asset.load(path);
         mgr.clips.insert(line.id, handle);
     }
 }

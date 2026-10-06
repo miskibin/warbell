@@ -28,6 +28,8 @@ pub struct PerftestPlugin;
 struct PerfCfg {
     duration: f32,
     speed: f32,
+    frozen: bool,
+    army: bool,
 }
 
 #[derive(Resource, Default)]
@@ -35,6 +37,12 @@ struct PerfClock {
     start: Option<f32>,
     last: f32,
 }
+
+#[derive(Resource, Default)]
+struct PerfFrames(Vec<f64>);
+
+#[derive(Resource, Default)]
+pub(crate) struct PerfArmyReady(pub bool);
 
 impl Plugin for PerftestPlugin {
     fn build(&self, app: &mut App) {
@@ -46,18 +54,22 @@ impl Plugin for PerftestPlugin {
             app.add_systems(Update, perf_spike_watch);
         }
         let Ok(raw) = std::env::var("FOREST_PERFTEST") else { return };
-        let duration = raw.trim().parse::<f32>().unwrap_or(600.0).max(10.0);
+        let duration = raw.trim().parse::<f32>().unwrap_or(600.0).max(20.0);
         let speed = std::env::var("FOREST_PERFSPEED")
             .ok()
             .and_then(|s| s.trim().parse::<f32>().ok())
             .unwrap_or(1.0)
             .clamp(0.25, 16.0);
-        app.insert_resource(PerfCfg { duration, speed })
+        let frozen = std::env::var("FOREST_PERFFREEZE").is_ok();
+        let army = std::env::var("FOREST_PERF_ARMY").is_ok();
+        app.insert_resource(PerfCfg { duration, speed, frozen, army })
             .init_resource::<PerfClock>()
+            .init_resource::<PerfFrames>()
+            .init_resource::<PerfArmyReady>()
             // FrameTime/EntityCount/SystemInformation diagnostics are all registered by `debug_stats`
             // (always present); we just read them here.
             .add_systems(Startup, perf_setup)
-            .add_systems(Update, (perf_tick, perf_exit, perf_keep_hero_alive, perf_state_watch));
+            .add_systems(Update, (perf_tick, perf_sample.before(perf_exit), perf_exit, perf_keep_hero_alive, perf_state_watch));
         // FOREST_PERFROAM=1: also drive the hero on a wide circuit so the follow-cam streams every
         // biome — exercises the position-reactive systems (groundcover/atmosphere/weather/footsteps)
         // that an idle-hero test leaves dormant. Gated to Modal::None like the rest of the sim.
@@ -213,8 +225,37 @@ fn perf_setup(cfg: Res<PerfCfg>, mut vtime: ResMut<Time<Virtual>>) {
 }
 
 /// Hard stop after the wall-clock budget so an unattended run always terminates.
-fn perf_exit(time: Res<Time<Real>>, cfg: Res<PerfCfg>, mut exit: MessageWriter<AppExit>) {
+fn perf_sample(time: Res<Time<Real>>, app: Res<State<crate::game_state::AppState>>,
+    modal: Option<Res<State<crate::game_state::Modal>>>, cfg: Res<PerfCfg>, mut frames: ResMut<PerfFrames>,
+    ready: Res<crate::biome::WorldReady>, army_ready: Res<PerfArmyReady>, mut ready_at: Local<Option<f32>>) {
+    // Exclude shader/asset warmup and frozen menus. Percentiles describe actual gameplay frames.
+    if !ready.0 || (cfg.army && !army_ready.0) {
+        *ready_at = None;
+        return;
+    }
+    let now = time.elapsed_secs();
+    let start = *ready_at.get_or_insert_with(|| { info!("PERF_READY t={now:.3}"); now });
+    if now - start >= 15.0 && *app.get() == crate::game_state::AppState::Playing
+        && (cfg.frozen || modal.is_some_and(|m| *m.get() == crate::game_state::Modal::None)) {
+        frames.0.push(time.delta_secs_f64() * 1000.0);
+    }
+}
+
+fn perf_exit(time: Res<Time<Real>>, cfg: Res<PerfCfg>, mut frames: ResMut<PerfFrames>, mut exit: MessageWriter<AppExit>,
+    app: Res<State<crate::game_state::AppState>>, modal: Option<Res<State<crate::game_state::Modal>>>) {
     if time.elapsed_secs() >= cfg.duration {
+        if frames.0.is_empty() || *app.get() != crate::game_state::AppState::Playing
+            || (!cfg.frozen && !modal.is_some_and(|m| *m.get() == crate::game_state::Modal::None)) {
+            error!("PERF_SUMMARY INVALID: no post-warmup gameplay or workload ended/froze before deadline");
+            exit.write(AppExit::error());
+            return;
+        }
+        frames.0.sort_by(f64::total_cmp);
+        let n = frames.0.len();
+        let mode = if cfg.frozen { "render_frozen" } else { "gameplay" };
+        let percentile = |p: f64| frames.0[((n - 1) as f64 * p).ceil() as usize];
+        info!("PERF_SUMMARY mode={mode} frames={n} mean_ms={:.3} p50_ms={:.3} p95_ms={:.3} p99_ms={:.3} max_ms={:.3}",
+            frames.0.iter().sum::<f64>() / n as f64, percentile(0.50), percentile(0.95), percentile(0.99), frames.0[n-1]);
         info!("PERFTEST done ({:.0}s) — exiting", time.elapsed_secs());
         exit.write(AppExit::Success);
     }
@@ -259,13 +300,14 @@ fn perf_tick(world: &mut World) {
     };
     let meshes = world.resource::<Assets<Mesh>>().len();
     let mats = world.resource::<Assets<StandardMaterial>>().len();
+    let creature_mats = world.resource::<Assets<crate::creature::CreatureMaterial>>().len();
     let imgs = world.resource::<Assets<Image>>().len();
     let (atlas_keys, atlas_pages) = world.get_resource::<FontAtlasSet>().map_or((0, 0), |fa| {
         (fa.len(), fa.values().map(|v| v.len()).sum::<usize>())
     });
 
     info!(
-        "PERF t={elapsed:>4.0} fps={fps:>4.0} ms={ms:>5.1} ent={ent:>6.0} mesh={meshes:>5} mat={mats:>4} img={imgs:>5} atlas={atlas_keys}k/{atlas_pages}p rss={rss:>5.0}MB"
+        "PERF t={elapsed:>4.0} fps={fps:>4.0} ms={ms:>5.1} ent={ent:>6.0} mesh={meshes:>5} mat={mats:>4} creature_mat={creature_mats} img={imgs:>5} atlas={atlas_keys}k/{atlas_pages}p rss={rss:>5.2}GiB"
     );
 
     // ── per-archetype histogram (top by entity count, tagged with game components) ──────

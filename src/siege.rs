@@ -348,10 +348,14 @@ fn keep_march_goal(from: Vec2) -> Vec2 {
 /// onto instead of marching the keep. Pure so the hero > guard > keep priority is unit-tested
 /// without the ECS (the invader brain maps the index back to the guard entity).
 pub fn nearest_guard_in_range(from: Vec2, guards: &[Vec2], engage: f32) -> Option<usize> {
+    nearest_guard_candidate(from, guards, engage, 0..guards.len())
+}
+
+fn nearest_guard_candidate(from: Vec2, guards: &[Vec2], engage: f32, candidates: impl Iterator<Item = usize>) -> Option<usize> {
     let mut best: Option<(usize, f32)> = None;
-    for (i, gp) in guards.iter().enumerate() {
-        let d = from.distance(*gp);
-        if d < engage && best.is_none_or(|(_, bd)| d < bd) {
+    for i in candidates {
+        let d = from.distance(guards[i]);
+        if d < engage && best.is_none_or(|(bi, bd)| d < bd || (d == bd && i < bi)) {
             best = Some((i, d));
         }
     }
@@ -577,7 +581,7 @@ impl Plugin for SiegePlugin {
             && std::env::var("FOREST_WAVE").is_ok()
         {
             app.add_sim_systems(
-                siege_clip_refill.after(invader_brain).run_if(crate::rts::in_campaign),
+                siege_clip_refill.after(invader_brain).before(run_director).run_if(crate::rts::in_campaign),
             );
         }
         app
@@ -781,10 +785,7 @@ pub fn director_march(
         } else {
             // (Re)plan the A* route to a standable point just inside the nearest gate, on a throttle.
             let goal = keep_march_goal(o.pos);
-            if path.cursor >= path.waypoints.len()
-                || now >= path.next_replan
-                || path.goal_cached.distance(goal) > 2.0
-            {
+            if path.refresh_due(now) {
                 path.waypoints = crate::navgrid::path_to(o.pos, goal);
                 path.cursor = 0;
                 path.goal_cached = goal;
@@ -981,10 +982,12 @@ pub(crate) fn invader_brain(
         ),
         Without<crate::dying::Dying>,
     >,
+    mut guard_scratch: Local<(Vec<(Entity, Vec2)>, Vec<Vec2>, tileworld_core::spatial::PointGrid)>,
 ) {
     if siege.phase != GamePhase::Wave {
         return;
     }
+    let (live_guards, guard_positions, guard_grid) = &mut *guard_scratch;
     let dt = time.delta_secs().min(0.05);
     let now = game.0; // pause-aware clock for logic (replan throttle, stuck-net)
     let rnow = time.elapsed_secs(); // raw clock for visuals/corpse-fade (matches ork_limbs & dying.rs)
@@ -992,11 +995,14 @@ pub(crate) fn invader_brain(
     let dmg_scale = night_dmg_scale(siege.wave_index);
 
     // Living guards this frame (the dying are already filtered out — death is permanent now).
-    let live_guards: Vec<(Entity, Vec2)> = guards
+    live_guards.clear();
+    live_guards.extend(guards
         .iter()
         .map(|(e, tf)| (e, Vec2::new(tf.translation.x, tf.translation.z)))
-        .collect();
-    let guard_positions: Vec<Vec2> = live_guards.iter().map(|(_, p)| *p).collect();
+    );
+    guard_positions.clear();
+    guard_positions.extend(live_guards.iter().map(|(_, p)| *p));
+    guard_grid.rebuild(guard_positions.iter().map(|p| (p.x as f64, p.y as f64)));
 
     for (e, mut o, mut inv, mut path, mut tf, hp) in &mut q {
         o.atk_cd -= dt;
@@ -1008,7 +1014,8 @@ pub(crate) fn invader_brain(
         // guards. Only with neither hero nor guard in range do they press on to the keep.
         let hero_d = if hero.alive { o.pos.distance(hero.pos) } else { f32::INFINITY };
         let see_hero = hero.alive && hero_d < orks::ORK_SIGHT;
-        let guard_near = nearest_guard_in_range(o.pos, &guard_positions, GUARD_ENGAGE);
+        let guard_near = nearest_guard_candidate(o.pos, &guard_positions, GUARD_ENGAGE,
+            guard_grid.nearby_or_all(o.pos.x as f64, o.pos.y as f64, GUARD_ENGAGE as f64 + 0.001));
         let guard_d = guard_near.map_or(f32::INFINITY, |i| o.pos.distance(guard_positions[i]));
         // Take a guard when one is in range and either no hero is near or the guard is the closer.
         let guard_tgt: Option<(Entity, Vec2)> = if guard_near.is_some() && (!see_hero || guard_d <= hero_d) {
@@ -1150,10 +1157,7 @@ pub(crate) fn invader_brain(
                 // goal threads them through the gap; the in-yard press above then closes to
                 // batter range.
                 let keep_goal = keep_march_goal(o.pos);
-                if path.cursor >= path.waypoints.len()
-                    || now >= path.next_replan
-                    || path.goal_cached.distance(keep_goal) > 2.0
-                {
+                if path.refresh_due(now) {
                     path.waypoints = crate::navgrid::path_to(o.pos, keep_goal);
                     path.cursor = 0;
                     path.goal_cached = keep_goal;
@@ -1412,9 +1416,9 @@ fn seed_demo_wave(mut siege: ResMut<Siege>, armory: Option<Res<InvaderArmory>>, 
         return;
     }
     let Some(arm) = armory.as_deref() else { return };
-    let wave_index = 0usize;
+    let wave_index = staged_wave_index();
     let mods = mods_for(siege.difficulty);
-    let count = effective_count(wave_index, mods);
+    let count = staged_count(effective_count(wave_index, mods) as usize) as u32;
     let def = &WAVES[wave_index];
     for k in 0..count {
         let variant = def.variants[k as usize % def.variants.len()];
@@ -1424,6 +1428,19 @@ fn seed_demo_wave(mut siege: ResMut<Siege>, armory: Option<Res<InvaderArmory>>, 
     siege.phase = GamePhase::Wave;
     siege.wave_index = wave_index as i32;
     siege.spawned = count;
+}
+
+/// Numeric FOREST_WAVE selects a real 1-based night; legacy nonnumeric flags still mean night 1.
+fn staged_wave_index() -> usize {
+    std::env::var("FOREST_WAVE").ok().and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1).clamp(1, WAVES.len()) - 1
+}
+
+fn staged_count(default_count: usize) -> usize {
+    // Only the performance harness can override the real wave size; cap unattended stress load.
+    if std::env::var("FOREST_PERFTEST").is_err() { return default_count; }
+    std::env::var("FOREST_PERF_COUNT").ok().and_then(|s| s.parse().ok())
+        .unwrap_or(default_count).clamp(1, 256)
 }
 
 /// Clip-capture only (`FOREST_CLIP` + `FOREST_WAVE`): hold the siege in a sustained assault so a
@@ -1440,14 +1457,19 @@ fn siege_clip_refill(
     mut commands: Commands,
     mut ring: Local<u32>,
 ) {
-    const TARGET: usize = 36;
+    let target = staged_count(36);
     let Some(arm) = armory.as_deref() else { return };
     siege.phase = GamePhase::Wave;
-    keep.hp = keep.hp.max(keep.max * 0.15);
-    let variants = [OrkVariant::Grunt, OrkVariant::Scout, OrkVariant::Berserker, OrkVariant::Shaman];
-    for _ in alive.iter().count()..TARGET {
+    // A stress-sized later wave can remove the old 15% floor in one frame. Repair after
+    // damage and before the director's defeat check so the unattended run stays live.
+    keep.hp = if std::env::var("FOREST_PERFTEST").is_ok() { keep.max }
+        else { keep.hp.max(keep.max * 0.15) };
+    let wave = &WAVES[staged_wave_index()];
+    let variants = wave.variants;
+    let mods = mods_for(siege.difficulty);
+    for _ in alive.iter().count()..target {
         let v = variants[(*ring as usize) % variants.len()];
-        let hp = (base_hp(v) * WAVES[0].hp_scale).round();
+        let hp = (base_hp(v) * wave.hp_scale * mods.hp_mul).round();
         spawn_invader(&mut commands, &arm.0, v, hp, *ring, game.0);
         *ring = ring.wrapping_add(1);
     }

@@ -7,12 +7,24 @@
 //! at tile centres (x.5, z.5); empty vec if no path or already at the goal cell.
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::BinaryHeap;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PathPoint {
     pub x: f64,
     pub z: f64,
+}
+
+/// First search is immediate; even a failed/finished route respects the retry deadline.
+/// Periodic callers refresh stationary goals (live walls); pursuit callers retain a valid path.
+pub fn replan_due(
+    now: f64,
+    next: f64,
+    exhausted: bool,
+    goal_changed: bool,
+    periodic: bool,
+) -> bool {
+    next == 0.0 || (now >= next && (periodic || exhausted || goal_changed))
 }
 
 /// Everything A* needs to know about the world. Mirrors the chokepoint queries
@@ -30,8 +42,16 @@ pub trait Grid {
     fn can_step(&self, fx: i32, fz: i32, tx: i32, tz: i32) -> bool;
 }
 
-const NEIGHBORS: [(i32, i32); 8] =
-    [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)];
+const NEIGHBORS: [(i32, i32); 8] = [
+    (1, 0),
+    (-1, 0),
+    (0, 1),
+    (0, -1),
+    (1, 1),
+    (1, -1),
+    (-1, 1),
+    (-1, -1),
+];
 
 /// Can a walker occupy tile (cx,cz) at all — terrain standable + no prop/house.
 fn is_walkable(g: &impl Grid, cx: i32, cz: i32) -> bool {
@@ -102,8 +122,56 @@ impl PartialOrd for OpenEntry {
     }
 }
 
-/// A* path on the tile grid. `max_nodes` bounds the search (default 800 in TS).
-pub fn find_path(g: &impl Grid, start: PathPoint, goal: PathPoint, max_nodes: u32) -> Vec<PathPoint> {
+#[derive(Clone, Copy, Default)]
+struct SearchNode {
+    stamp: u32,
+    closed: bool,
+    g: f64,
+    parent: i64,
+}
+
+/// Reusable A* storage. Generation stamps avoid clearing the entire map for every soldier's
+/// search. Only search bookkeeping is cached: terrain, walls and bridges are queried live.
+#[derive(Default)]
+pub struct PathWorkspace {
+    nodes: Vec<SearchNode>,
+    open: BinaryHeap<OpenEntry>,
+    stamp: u32,
+}
+
+impl PathWorkspace {
+    fn prepare(&mut self, cols: i32, rows: i32) {
+        self.nodes.resize(
+            cols.max(0) as usize * rows.max(0) as usize,
+            SearchNode::default(),
+        );
+        self.open.clear();
+        self.stamp = self.stamp.wrapping_add(1);
+        if self.stamp == 0 {
+            self.nodes.fill(SearchNode::default());
+            self.stamp = 1;
+        }
+    }
+}
+
+/// A* for an occasional search. Frequent callers should retain a [`PathWorkspace`].
+pub fn find_path(
+    g: &impl Grid,
+    start: PathPoint,
+    goal: PathPoint,
+    max_nodes: u32,
+) -> Vec<PathPoint> {
+    find_path_with_workspace(g, start, goal, max_nodes, &mut PathWorkspace::default())
+}
+
+/// A* path on the tile grid with reusable storage. `max_nodes` counts expanded (not stale) nodes.
+pub fn find_path_with_workspace(
+    g: &impl Grid,
+    start: PathPoint,
+    goal: PathPoint,
+    max_nodes: u32,
+    work: &mut PathWorkspace,
+) -> Vec<PathPoint> {
     let cols = g.cols() as i64;
     let sx0 = start.x.floor() as i32;
     let sz0 = start.z.floor() as i32;
@@ -127,33 +195,38 @@ pub fn find_path(g: &impl Grid, start: PathPoint, goal: PathPoint, max_nodes: u3
     let key = |x: i32, z: i32| -> i64 { z as i64 * cols + x as i64 };
     let h = |x: i32, z: i32| -> f64 { ((x - gx) as f64).hypot((z - gz) as f64) };
 
-    // Binary-heap open set instead of a linear scan: popping the cheapest node is O(log n) rather
-    // than O(n), so a long or unreachable search (which can grow the frontier into the thousands
-    // before hitting `max_nodes`) no longer costs O(n²). `best_g` holds the cheapest known cost to
-    // each node; the heap may carry stale duplicates (no decrease-key), so a pop whose `g` is worse
-    // than `best_g` (or already closed) is skipped — textbook lazy-deletion A*.
-    let mut open: BinaryHeap<OpenEntry> = BinaryHeap::new();
-    let mut best_g: HashMap<i64, f64> = HashMap::new();
-    let mut closed: HashSet<i64> = HashSet::new();
-    let mut came_from: HashMap<i64, i64> = HashMap::new();
+    work.prepare(g.cols(), g.rows());
+    let stamp = work.stamp;
 
     let start_key = key(sx, sz);
-    open.push(OpenEntry { f: h(sx, sz), g: 0.0, x: sx, z: sz, key: start_key });
-    best_g.insert(start_key, 0.0);
+    work.open.push(OpenEntry {
+        f: h(sx, sz),
+        g: 0.0,
+        x: sx,
+        z: sz,
+        key: start_key,
+    });
+    work.nodes[start_key as usize] = SearchNode {
+        stamp,
+        closed: false,
+        g: 0.0,
+        parent: start_key,
+    };
 
     let mut visited: u32 = 0;
-    while let Some(best) = open.pop() {
+    while let Some(best) = work.open.pop() {
         let best_key = best.key;
         // Stale heap entry — a cheaper route to this node was found (or it's already expanded)
         // after this copy was pushed. Skip without spending budget.
-        if closed.contains(&best_key) || best.g > *best_g.get(&best_key).unwrap_or(&f64::INFINITY) {
+        let node = &mut work.nodes[best_key as usize];
+        if node.closed || best.g > node.g {
             continue;
         }
         if visited >= max_nodes {
             break;
         }
         visited += 1;
-        closed.insert(best_key);
+        node.closed = true;
 
         let (cx, cz, gscore) = (best.x, best.z, best.g);
         if cx == gx && cz == gz {
@@ -164,10 +237,7 @@ pub fn find_path(g: &impl Grid, start: PathPoint, goal: PathPoint, max_nodes: u3
                 let px = (k % cols) as f64 + 0.5;
                 let pz = (k / cols) as f64 + 0.5;
                 path.push(PathPoint { x: px, z: pz });
-                match came_from.get(&k) {
-                    Some(&prev) => k = prev,
-                    None => break,
-                }
+                k = work.nodes[k as usize].parent;
             }
             path.reverse();
             return path;
@@ -180,7 +250,8 @@ pub fn find_path(g: &impl Grid, start: PathPoint, goal: PathPoint, max_nodes: u3
                 continue;
             }
             let nk = key(nx, nz);
-            if closed.contains(&nk) {
+            let node = work.nodes[nk as usize];
+            if node.stamp == stamp && node.closed {
                 continue;
             }
             if !is_walkable(g, nx, nz) {
@@ -207,16 +278,27 @@ pub fn find_path(g: &impl Grid, start: PathPoint, goal: PathPoint, max_nodes: u3
                     continue;
                 }
             }
-            let step = if dx != 0 && dz != 0 { std::f64::consts::SQRT_2 } else { 1.0 };
-            let ng = gscore + step;
-            let better = match best_g.get(&nk) {
-                Some(&existing) => ng < existing,
-                None => true,
+            let step = if dx != 0 && dz != 0 {
+                std::f64::consts::SQRT_2
+            } else {
+                1.0
             };
+            let ng = gscore + step;
+            let better = node.stamp != stamp || ng < node.g;
             if better {
-                best_g.insert(nk, ng);
-                came_from.insert(nk, best_key);
-                open.push(OpenEntry { f: ng + h(nx, nz), g: ng, x: nx, z: nz, key: nk });
+                work.nodes[nk as usize] = SearchNode {
+                    stamp,
+                    closed: false,
+                    g: ng,
+                    parent: best_key,
+                };
+                work.open.push(OpenEntry {
+                    f: ng + h(nx, nz),
+                    g: ng,
+                    x: nx,
+                    z: nz,
+                    key: nk,
+                });
             }
         }
     }
@@ -230,6 +312,64 @@ mod tests {
     //   ~  water (absent tile)    B  bridge over water (walkable)
     //   O  obstacle prop (blocked)
     use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn failed_routes_cannot_bypass_retry_cooldown() {
+        assert!(replan_due(0.0, 0.0, true, false, false));
+        assert!(!replan_due(0.1, 1.0, true, false, true));
+        assert!(!replan_due(0.1, 1.0, true, true, false));
+        assert!(replan_due(1.0, 1.0, true, false, false));
+        assert!(replan_due(1.0, 1.0, false, true, false));
+        assert!(!replan_due(1.0, 1.0, false, false, false));
+        assert!(replan_due(1.0, 1.0, false, false, true));
+        // An unreachable goal at 60fps used to issue 120 searches in this interval.
+        let mut next = 0.0;
+        let mut calls = 0;
+        for frame in 0..120 {
+            let now = frame as f64 / 60.0;
+            if replan_due(now, next, true, false, true) {
+                calls += 1;
+                next = now + 0.75;
+            }
+        }
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn reusable_search_sees_changed_blockers_and_keeps_budget_independent() {
+        let mut grid = open_grid(20);
+        let mut work = PathWorkspace::default();
+        let start = p(1.0, 1.0);
+        let goal = p(18.0, 1.0);
+        let direct = find_path_with_workspace(&grid, start, goal, 1000, &mut work);
+        assert!(!direct.is_empty());
+        let capacity = work.nodes.capacity();
+        for z in 0..20 {
+            grid.obstacles.insert((10, z));
+        }
+        assert!(find_path_with_workspace(&grid, start, goal, 1000, &mut work).is_empty());
+        grid.obstacles.clear();
+        assert!(find_path_with_workspace(&grid, start, goal, 1, &mut work).is_empty());
+        assert_eq!(
+            find_path_with_workspace(&grid, start, goal, 1000, &mut work),
+            direct
+        );
+        assert_eq!(work.nodes.capacity(), capacity);
+        work.stamp = u32::MAX;
+        assert_eq!(
+            find_path_with_workspace(&grid, start, goal, 1000, &mut work),
+            direct
+        );
+        let small = open_grid(5);
+        assert!(
+            !find_path_with_workspace(&small, p(0.0, 0.0), p(4.0, 4.0), 100, &mut work).is_empty()
+        );
+        assert_eq!(
+            find_path_with_workspace(&grid, start, goal, 1000, &mut work),
+            direct
+        );
+    }
 
     struct MockGrid {
         cols: i32,
@@ -319,7 +459,8 @@ mod tests {
         PathPoint { x, z }
     }
     fn has(path: &[PathPoint], x: i32, z: i32) -> bool {
-        path.iter().any(|q| q.x == x as f64 + 0.5 && q.z == z as f64 + 0.5)
+        path.iter()
+            .any(|q| q.x == x as f64 + 0.5 && q.z == z as f64 + 0.5)
     }
 
     #[test]
@@ -373,7 +514,11 @@ mod tests {
     fn returns_empty_at_node_budget() {
         let mut g = MockGrid::new();
         g.set_map(&[
-            "..........", "..........", "..........", "..........", "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
         ]);
         assert!(find_path(&g, p(0.0, 0.0), p(9.0, 4.0), 3).is_empty());
     }

@@ -95,7 +95,59 @@ impl Plugin for RtsUnitsPlugin {
                 .run_if(in_state(AppState::Playing))
                 .run_if(in_state(Modal::None)),
         );
+        if std::env::var("FOREST_PERFTEST").is_ok() && std::env::var("FOREST_PERF_ARMY").is_ok() {
+            app.add_systems(Update, stage_perf_army.before(index_targets)
+                .run_if(in_skirmish).run_if(in_state(AppState::Playing)).run_if(in_state(Modal::None)));
+        }
     }
+}
+
+/// Opt-in late-game staging, using the same bodies/combat/movement as trained troops.
+/// Each side stays within the real population ceiling; never registered behavior without perf flags.
+#[allow(clippy::too_many_arguments)]
+fn stage_perf_army(
+    time: Res<Time>,
+    world_ready: Res<crate::biome::WorldReady>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    mut pop: ResMut<RtsPop>,
+    mut halls: Query<(&RtsBuilding, &mut crate::player::Health)>,
+    mut staged: Local<bool>,
+) {
+    if *staged || !world_ready.0 || std::env::var("FOREST_PERFTEST").is_err() { return; }
+    let Some(count) = std::env::var("FOREST_PERF_ARMY").ok().and_then(|s| s.parse::<usize>().ok()) else { return };
+    if !halls.iter().any(|(b, _)| b.kind == BuildingKind::TownHall) { return; }
+    *staged = true;
+    // Protect bases only in this opt-in workload, so a won battle cannot silently turn
+    // the remaining measurement into a frozen game-over screen. Unit stats stay native.
+    for (b, mut hp) in &mut halls {
+        if b.kind == BuildingKind::TownHall { hp.hp = 1_000_000.0; hp.max = 1_000_000.0; }
+    }
+    info!("PERF_ARMY bases protected; unit stats unchanged");
+    let mut complete = true;
+    for side in [Side::Player, Side::Rival] {
+        let request = count.min(super::POP_HARD_CAP.saturating_sub(pop.0[side.ix()].count) as usize);
+        let centre = base_of(side) * 0.45;
+        let mut made = 0;
+        for slot in 0..1024 {
+            if made == request { break; }
+            let ring = slot as f32 * 2.399_963;
+            let radius = 2.0 + (slot as f32).sqrt() * 1.8;
+            let p = centre + Vec2::new(ring.cos(), ring.sin()) * radius;
+            if crate::steer::footing(p.x, p.y).is_none() || blockers::is_blocked(p.x, p.y) { continue; }
+            let kind = if made % 3 == 0 { UnitKind::Archer } else { UnitKind::Swordsman };
+            let e = spawn_soldier(&mut commands, &mut meshes, &mut mats, side, kind, p, made as u32);
+            commands.entity(e).try_insert((MoveTo { goal: base_of(side.foe()), fight: true },
+                crate::navgrid::NavPath::staggered(time.elapsed_secs(), e)));
+            made += 1;
+        }
+        pop.0[side.ix()].count += made as u32;
+        complete &= made == request;
+        info!("PERF_ARMY side={side:?} requested={request} spawned={made}");
+    }
+    commands.insert_resource(crate::perftest::PerfArmyReady(complete));
+    if !complete { error!("PERF_ARMY incomplete: no performance summary will be accepted"); }
 }
 
 // ── components ──────────────────────────────────────────────────────────────────────────
@@ -152,7 +204,7 @@ struct Tgt {
 /// and both combat brains read positions from a Resource instead of each holding a conflicting
 /// `&Transform` query against the brains' `&mut Transform`.
 #[derive(Resource, Default)]
-struct TargetIndex(HashMap<Entity, Tgt>);
+struct TargetIndex(HashMap<Entity, Tgt>, Vec<(Entity, Tgt)>, tileworld_core::spatial::PointGrid);
 
 fn index_targets(
     mut idx: ResMut<TargetIndex>,
@@ -167,6 +219,10 @@ fn index_targets(
         let half = building_def(b.kind).footprint as f32 * 0.5;
         idx.0.insert(e, Tgt { side: *s, pos: t.translation, half });
     }
+    let idx = &mut *idx;
+    idx.1.clear();
+    idx.1.extend(idx.0.iter().map(|(&e, &t)| (e, t)));
+    idx.2.rebuild(idx.1.iter().map(|(_, t)| (t.pos.x as f64, t.pos.z as f64)));
 }
 
 // ── training: order → convert an idle worker ─────────────────────────────────────────────
@@ -399,9 +455,11 @@ fn acquire_targets(
         let from = Vec2::new(tf.translation.x, tf.translation.z);
         let is_archer = unit.kind == UnitKind::Archer;
 
-        let mut best_unit: Option<(Entity, f32)> = None;
-        let mut best_bld: Option<(Entity, f32)> = None;
-        for (&te, t) in idx.0.iter() {
+        let mut best_unit: Option<(Entity, f32, usize)> = None;
+        let mut best_bld: Option<(Entity, f32, usize)> = None;
+        // Small margin makes this broad phase conservative for f32 distance rounding at a cell edge.
+        for rank in idx.2.nearby_or_all(from.x as f64, from.y as f64, SIGHT as f64 + 0.001) {
+            let (te, t) = idx.1[rank];
             if t.side == *side {
                 continue; // friendly
             }
@@ -416,14 +474,14 @@ fn acquire_targets(
             }
             let slot = if t.half > 0.0 { &mut best_bld } else { &mut best_unit };
             let better = match slot {
-                Some((_, bd)) => d < *bd,
+                Some((_, bd, br)) => d < *bd || (d == *bd && rank < *br),
                 None => true,
             };
             if better {
-                *slot = Some((te, d));
+                *slot = Some((te, d, rank));
             }
         }
-        let Some((target, _)) = best_unit.or(best_bld) else { continue };
+        let Some((target, _, _)) = best_unit.or(best_bld) else { continue };
         // Stash an attack-move's march goal so it resumes after the kill.
         if let Some(m) = moveto {
             if m.fight {
@@ -683,17 +741,18 @@ fn watchtower_fire(
         }
         // Nearest enemy UNIT (half == 0) in range.
         let from = Vec2::new(tf.translation.x, tf.translation.z);
-        let mut best: Option<(Entity, Vec3, f32)> = None;
-        for (&te, t) in idx.0.iter() {
+        let mut best: Option<(Entity, Vec3, f32, usize)> = None;
+        for rank in idx.2.nearby_or_all(from.x as f64, from.y as f64, TOWER_RANGE as f64 + 0.001) {
+            let (te, t) = idx.1[rank];
             if t.side == *side || t.half > 0.0 {
                 continue; // friendly, or a building
             }
             let d = from.distance(Vec2::new(t.pos.x, t.pos.z));
-            if d <= TOWER_RANGE && best.is_none_or(|bb| d < bb.2) {
-                best = Some((te, t.pos, d));
+            if d <= TOWER_RANGE && best.is_none_or(|bb| d < bb.2 || (d == bb.2 && rank < bb.3)) {
+                best = Some((te, t.pos, d, rank));
             }
         }
-        if let Some((te, tpos, _)) = best {
+        if let Some((te, tpos, _, _)) = best {
             if let Ok(mut hp) = healths.get_mut(te) {
                 if hp.hp > 0.0 {
                     hp.hp -= TOWER_DMG;
@@ -815,5 +874,49 @@ fn face(tf: &mut Transform, vil: &mut Villager, target: Vec2) {
         let yaw = to.x.atan2(to.y);
         tf.rotation = Quat::from_rotation_y(yaw);
         vil.facing = yaw;
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn acquisition_preserves_hostility_death_and_attack_move_rules() {
+        let mut world = World::new();
+        world.init_resource::<TargetIndex>();
+        world.init_resource::<Messages<crate::audio::Speak>>();
+        world.init_resource::<crate::rts::camera::RtsCamFocus>();
+        let march = Vec2::new(40.0, 0.0);
+        let soldier = world.spawn((Side::Player, RtsUnit { kind: UnitKind::Swordsman },
+            Transform::default(), MoveTo { goal: march, fight: true })).id();
+        let plain_move = world.spawn((Side::Player, RtsUnit { kind: UnitKind::Swordsman },
+            Transform::default(), MoveTo { goal: march, fight: false })).id();
+        let worker = world.spawn((Side::Player, RtsUnit { kind: UnitKind::Worker },
+            Transform::default())).id();
+        // A living hostile unit outranks a closer hostile building, friendly and corpse.
+        world.spawn((Side::Rival, RtsBuilding { kind: BuildingKind::TownHall, built: true },
+            Transform::from_xyz(1.0, 0.0, 0.0)));
+        world.spawn((Side::Player, RtsUnit { kind: UnitKind::Worker },
+            Transform::from_xyz(0.5, 0.0, 0.0)));
+        world.spawn((Side::Rival, RtsUnit { kind: UnitKind::Worker },
+            Transform::from_xyz(0.2, 0.0, 0.0),
+            Dying { since: 0.0, dir: Vec2::ZERO, power: 1.0 }));
+        let hostile = world.spawn((Side::Rival, RtsUnit { kind: UnitKind::Worker },
+            Transform::from_xyz(17.0, 0.0, 0.0))).id();
+        // Force the spatial branch with targets beyond the exact sight boundary.
+        for i in 0..128 {
+            world.spawn((Side::Rival, RtsUnit { kind: UnitKind::Worker },
+                Transform::from_xyz(100.0 + i as f32 * 20.0, 0.0, 100.0)));
+        }
+        world.run_system_once(index_targets).unwrap();
+        world.run_system_once(acquire_targets).unwrap();
+        assert_eq!(world.get::<AttackTarget>(soldier).unwrap().0, hostile);
+        assert_eq!(world.get::<ResumeMove>(soldier).unwrap().goal, march);
+        assert!(world.get::<MoveTo>(soldier).is_none());
+        assert!(world.get::<AttackTarget>(plain_move).is_none());
+        assert!(world.get::<MoveTo>(plain_move).is_some());
+        assert!(world.get::<AttackTarget>(worker).is_none());
     }
 }

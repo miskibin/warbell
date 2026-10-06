@@ -63,6 +63,9 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Test game logic and regression coverage
+        run: cargo test --workspace --release --locked
+
       # The game loads WGSL/audio/fonts from assets/ next to the exe
       # (or via BEVY_ASSET_ROOT), so ship the folder alongside the binary.
       - name: Package (Windows)
