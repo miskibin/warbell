@@ -30,6 +30,7 @@ mod viewmodel;
 
 /// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
 pub use camera::FirstPerson;
+pub(crate) use camera::fp_body_visibility;
 pub use viewmodel::ReticleTarget;
 /// Sand-Dash slide duration — re-exported so the standalone viewer (`viewer.rs`) can drive the
 /// dash-swipe preview at the real cadence. (`anim` reads it directly via `super::movement`.)
@@ -427,7 +428,9 @@ impl Plugin for PlayerPlugin {
                     camera::toggle_mode,
                     camera::toggle_first_person, // V / HUD eye button: third ⇄ first person
                     camera::player_camera,
-                    camera::fp_body_visibility, // FP: hide the whole third-person rig (the viewmodel draws the hands)
+                    camera::fp_body_visibility
+                        .after(camera::player_camera)
+                        .after(reskin_hero), // FP: hide the world rig, including freshly rebuilt equipment
                     reskin_hero, // rebuild limb meshes when weapon/armor equip changes
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
                     anim::hero_anim,

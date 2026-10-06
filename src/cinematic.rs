@@ -106,19 +106,32 @@ impl Plugin for CinematicPlugin {
         }
         app.insert_resource(state).add_systems(
             Update,
-            (sky_timelapse, track_gesture, animate_fortress_gate, weapon_visibility),
+            (
+                sky_timelapse,
+                track_gesture,
+                animate_fortress_gate,
+                weapon_visibility.after(crate::player::fp_body_visibility),
+            ),
         );
     }
 }
 
-/// Hide/show the hero's held weapon. Hidden when the panel's "hide weapon" is on OR the active
-/// gesture wants an empty hand (wave/cheer) — so those poses don't brandish a stray sword.
+/// Hide/show the world hero's held weapon. First person keeps it hidden alongside the body;
+/// the camera-parented viewmodel supplies the visible sword. Apply after the body's transition
+/// sweep so returning to third person still respects the Director's empty-hand poses.
 fn weapon_visibility(
     state: Res<DirectorState>,
+    fp: Option<Res<crate::player::FirstPerson>>,
     mut q: Query<&mut Visibility, With<crate::player::HeroWeapon>>,
 ) {
-    let hide = state.hide_weapon || state.gesture.is_some_and(|g| g.wants_empty_hand());
-    let want = if hide { Visibility::Hidden } else { Visibility::Inherited };
+    let hide = fp.is_some_and(|fp| fp.blend > 0.5)
+        || state.hide_weapon
+        || state.gesture.is_some_and(|g| g.wants_empty_hand());
+    let want = if hide {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
     for mut v in &mut q {
         if *v != want {
             *v = want;
@@ -211,5 +224,117 @@ fn track_gesture(
     if state.gesture != *prev {
         state.gesture_start = time.elapsed_secs() + PRE_ROLL;
         *prev = state.gesture;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::player::{FirstPerson, HeroMesh, HeroWeapon};
+
+    fn visibility_world() -> (World, Schedule) {
+        let mut world = World::new();
+        world.init_resource::<DirectorState>();
+        world.insert_resource(FirstPerson {
+            active: true,
+            blend: 1.0,
+            ..default()
+        });
+        let mut schedule = Schedule::default();
+        schedule.add_systems((crate::player::fp_body_visibility, weapon_visibility).chain());
+        (world, schedule)
+    }
+
+    fn update_visibility(world: &mut World, schedule: &mut Schedule) {
+        schedule.run(world);
+        world.clear_trackers();
+    }
+
+    #[test]
+    fn world_weapon_stays_hidden_after_first_person_entry_and_reskin() {
+        let (mut world, mut schedule) = visibility_world();
+        let body = world.spawn((HeroMesh, Visibility::Inherited)).id();
+        let sword = world
+            .spawn((HeroMesh, HeroWeapon, Visibility::Inherited))
+            .id();
+        // Camera-parented viewmodel leaves carry neither world-hero marker.
+        let viewmodel = world.spawn(Visibility::Inherited).id();
+        for _ in 0..3 {
+            update_visibility(&mut world, &mut schedule);
+            assert_eq!(*world.get::<Visibility>(body).unwrap(), Visibility::Hidden);
+            assert_eq!(*world.get::<Visibility>(sword).unwrap(), Visibility::Hidden);
+            assert_eq!(
+                *world.get::<Visibility>(viewmodel).unwrap(),
+                Visibility::Inherited
+            );
+        }
+        world.despawn(body);
+        world.despawn(sword);
+        let new_body = world.spawn((HeroMesh, Visibility::Inherited)).id();
+        let new_sword = world
+            .spawn((HeroMesh, HeroWeapon, Visibility::Inherited))
+            .id();
+        for _ in 0..2 {
+            update_visibility(&mut world, &mut schedule);
+            assert_eq!(
+                *world.get::<Visibility>(new_body).unwrap(),
+                Visibility::Hidden
+            );
+            assert_eq!(
+                *world.get::<Visibility>(new_sword).unwrap(),
+                Visibility::Hidden
+            );
+        }
+    }
+
+    #[test]
+    fn third_person_return_preserves_director_weapon_policy() {
+        let (mut world, mut schedule) = visibility_world();
+        let body = world.spawn((HeroMesh, Visibility::Inherited)).id();
+        let sword = world
+            .spawn((HeroMesh, HeroWeapon, Visibility::Inherited))
+            .id();
+        update_visibility(&mut world, &mut schedule);
+        world.resource_mut::<DirectorState>().hide_weapon = true;
+        world.resource_mut::<FirstPerson>().active = false;
+        // Turning FP off must keep the world sword hidden during the dolly-out.
+        world.resource_mut::<FirstPerson>().blend = 0.6;
+        update_visibility(&mut world, &mut schedule);
+        assert_eq!(*world.get::<Visibility>(sword).unwrap(), Visibility::Hidden);
+        world.resource_mut::<FirstPerson>().blend = 0.0;
+        update_visibility(&mut world, &mut schedule);
+        assert_eq!(
+            *world.get::<Visibility>(body).unwrap(),
+            Visibility::Inherited
+        );
+        assert_eq!(*world.get::<Visibility>(sword).unwrap(), Visibility::Hidden);
+        world.resource_mut::<DirectorState>().hide_weapon = false;
+        world.resource_mut::<DirectorState>().gesture = Some(HeroGesture::Wave);
+        update_visibility(&mut world, &mut schedule);
+        assert_eq!(*world.get::<Visibility>(sword).unwrap(), Visibility::Hidden);
+        world.resource_mut::<DirectorState>().gesture = None;
+        update_visibility(&mut world, &mut schedule);
+        assert_eq!(
+            *world.get::<Visibility>(sword).unwrap(),
+            Visibility::Inherited
+        );
+    }
+
+    #[test]
+    fn director_weapon_policy_also_works_without_a_player_camera() {
+        let mut world = World::new();
+        world.init_resource::<DirectorState>();
+        let sword = world.spawn((HeroWeapon, Visibility::Inherited)).id();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(weapon_visibility);
+        world.resource_mut::<DirectorState>().gesture = Some(HeroGesture::Cheer);
+        update_visibility(&mut world, &mut schedule);
+        assert_eq!(*world.get::<Visibility>(sword).unwrap(), Visibility::Hidden);
+        world.resource_mut::<DirectorState>().gesture = None;
+        update_visibility(&mut world, &mut schedule);
+        assert_eq!(
+            *world.get::<Visibility>(sword).unwrap(),
+            Visibility::Inherited
+        );
     }
 }

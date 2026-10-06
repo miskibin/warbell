@@ -6,16 +6,14 @@
 //! * **Dusk pin** — while on the start screen the sky clock is pinned to dusk (`SkyClock.t = 0.5`,
 //!   `paused`), so embers/fireflies read against a warm-dark sky regardless of the live siege
 //!   phase. Cleared on exit so time resumes in-game.
-//! * **Orbit camera** — the main `Camera3d` slowly circles the keep (origin) looking inward. Only
-//!   runs on `StartScreen`; the gameplay follow-cam (`player_camera`, gated to `Modal::None`)
-//!   never runs here, so there's no fight, and it reclaims the camera the moment we re-enter play.
-//! * **Embers + fireflies** — a self-contained CPU mote field (NOT the hero-tied `particles.rs`):
-//!   warm embers rising off the keep + emissive fireflies bobbing (→ bloom). Spawned on enter,
-//!   despawned on exit, animated by [`menu_drift`] while the menu is up.
+//! * **Backdrop** — a real in-engine castle-and-bell capture, cropped to cover the viewport
+//!   without stretching. The live camera looks at empty sky to keep menu rendering light.
+//! * **Clean title** — gameplay HUD nodes are hidden while the title is up and restored on exit.
 //! * **Credits overlay** — a small modal card toggled by [`CreditsOpen`] (the start screen's
 //!   CREDITS button flips it), mirroring the `ConfirmWipe` overlay pattern in `game_state.rs`.
 
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 use crate::game_state::AppState;
 use crate::scene::SkyClock;
@@ -39,8 +37,10 @@ impl Plugin for MainMenuPlugin {
             )
             .add_systems(
                 Update,
-                menu_park_camera.run_if(in_state(AppState::StartScreen)),
+                (menu_park_camera, fit_menu_backdrop, fit_title_column).run_if(in_state(AppState::StartScreen)),
             )
+            .add_systems(PostUpdate, reconcile_menu_hud
+                .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate))
             // Credits overlay is reconciled ungated so its open/close survives state edges.
             .add_systems(Update, (sync_credits_overlay, credits_input));
     }
@@ -89,9 +89,77 @@ fn menu_park_camera(mut cam: Query<&mut Transform, With<Camera3d>>) {
 #[derive(Component)]
 struct MenuSceneEntity;
 
-/// The pre-rendered menu backdrop: a golden-hour look across the forest to the keep — the war-bell
-/// tower and torch-lit keep silhouetted against the low sun's god rays, over baked DoF + haze. It
-/// covers the whole screen
+#[derive(Component)]
+struct MenuBackdrop;
+
+#[derive(Component)]
+pub(crate) struct MenuColumn;
+
+/// Fit the title/actions in a 720p window too, preserving their bottom-left anchor.
+fn fit_title_column(window: Query<&Window, With<PrimaryWindow>>,
+    mut columns: Query<(&ComputedNode, &mut UiTransform), With<MenuColumn>>) {
+    let Some(window) = window.iter().next() else { return };
+    for (node, mut transform) in &mut columns {
+        let size = node.size() * node.inverse_scale_factor();
+        if size.min_element() <= 0.0 { continue; }
+        let scale = ((window.height() - 160.0).max(1.0) / size.y)
+            .min((window.width() * 0.45 - 72.0).max(1.0) / size.x).min(1.0);
+        let want = UiTransform {
+            scale: Vec2::splat(scale),
+            translation: Val2::px((scale - 1.0) * size.x * 0.5, (1.0 - scale) * size.y * 0.5),
+            ..default()
+        };
+        if *transform != want { *transform = want; }
+    }
+}
+
+#[derive(Component, Clone, Copy)]
+struct MenuHiddenUi(Visibility);
+
+/// Hide only campaign UI, leaving actors and their FP/cinematic visibility policies untouched.
+/// Restore the previous state (including an intentionally hidden reticle) on leaving the title.
+fn reconcile_menu_hud(
+    mut commands: Commands,
+    app: Res<State<AppState>>,
+    mode: Res<crate::rts::GameMode>,
+    mut hud: Query<(Entity, &mut Visibility, Option<&MenuHiddenUi>),
+        (With<Node>, With<crate::game_state::CampaignOnly>)>,
+) {
+    for (e, mut vis, saved) in &mut hud {
+        if *app.get() == AppState::StartScreen {
+            if saved.is_none() { commands.entity(e).try_insert(MenuHiddenUi(*vis)); }
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+        } else if let Some(saved) = saved {
+            *vis = if matches!(*mode, crate::rts::GameMode::Skirmish) {
+                Visibility::Hidden
+            } else { saved.0 };
+            commands.entity(e).remove::<MenuHiddenUi>();
+        }
+    }
+}
+
+fn backdrop_cover_rect(source: Vec2, viewport: Vec2) -> Option<Rect> {
+    if source.min_element() <= 0.0 || viewport.min_element() <= 0.0 { return None; }
+    let aspect = viewport.x / viewport.y;
+    let size = if source.x / source.y > aspect {
+        Vec2::new(source.y * aspect, source.y)
+    } else { Vec2::new(source.x, source.x / aspect) };
+    // Keep the castle/bell at the right of the menu composition in view on narrower screens.
+    let min = (source - size) * Vec2::new(0.65, 0.5);
+    Some(Rect::from_corners(min, min + size))
+}
+
+fn fit_menu_backdrop(images: Res<Assets<Image>>,
+    mut nodes: Query<(&ComputedNode, &mut ImageNode), With<MenuBackdrop>>) {
+    for (node, mut image) in &mut nodes {
+        let Some(asset) = images.get(&image.image) else { continue };
+        let rect = backdrop_cover_rect(asset.size().as_vec2(), node.size());
+        if image.rect != rect { image.rect = rect; }
+    }
+}
+
+/// The pre-rendered menu backdrop: a close castle-and-bell composition with space at left
+/// for the title and buttons. It covers the whole screen while preserving its aspect ratio
 /// as a UI image, so the live 3D world is never seen on the menu — that's what lets
 /// [`menu_park_camera`] aim at bare sky and skip drawing the forest. `GlobalZIndex(-100)` keeps it
 /// BEHIND the start-screen title/buttons (`game_state.rs`, default z) but in front of the 3D pass
@@ -107,6 +175,7 @@ fn spawn_menu_backdrop(mut commands: Commands, asset_server: Res<AssetServer>) {
         },
         GlobalZIndex(-100),
         MenuSceneEntity,
+        MenuBackdrop,
     ));
 }
 
@@ -246,5 +315,49 @@ fn credits_input(
     }
     if close {
         open.0 = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn backdrop_covers_common_aspects_without_stretching_or_leaving_source() {
+        let source = Vec2::new(1920.0, 1080.0);
+        for viewport in [source, Vec2::new(3440.0, 1440.0), Vec2::new(1280.0, 960.0)] {
+            let rect = backdrop_cover_rect(source, viewport).unwrap();
+            assert!((rect.width() / rect.height() - viewport.x / viewport.y).abs() < 0.001);
+            assert!(rect.min.cmpge(Vec2::ZERO).all());
+            assert!(rect.max.cmple(source).all());
+            assert!(rect.width() == source.x || rect.height() == source.y);
+        }
+        assert!(backdrop_cover_rect(source, Vec2::ZERO).is_none());
+    }
+
+    #[test]
+    fn menu_hides_only_hud_and_restores_intentionally_hidden_widgets() {
+        let mut world = World::new();
+        world.insert_resource(State::new(AppState::StartScreen));
+        world.insert_resource(crate::rts::GameMode::Campaign);
+        let hud = world.spawn((Node::default(), crate::game_state::CampaignOnly, Visibility::Visible)).id();
+        let reticle = world.spawn((Node::default(), crate::game_state::CampaignOnly, Visibility::Hidden)).id();
+        let actor = world.spawn((crate::game_state::CampaignOnly, Visibility::Visible)).id();
+        world.run_system_once(reconcile_menu_hud).unwrap();
+        world.run_system_once(reconcile_menu_hud).unwrap();
+        assert_eq!(world.get::<Visibility>(hud), Some(&Visibility::Hidden));
+        assert_eq!(world.get::<Visibility>(actor), Some(&Visibility::Visible));
+        world.insert_resource(State::new(AppState::Playing));
+        world.run_system_once(reconcile_menu_hud).unwrap();
+        assert_eq!(world.get::<Visibility>(hud), Some(&Visibility::Visible));
+        assert_eq!(world.get::<Visibility>(reticle), Some(&Visibility::Hidden));
+        assert!(world.get::<MenuHiddenUi>(hud).is_none());
+        world.insert_resource(State::new(AppState::StartScreen));
+        world.run_system_once(reconcile_menu_hud).unwrap();
+        world.insert_resource(State::new(AppState::Playing));
+        world.insert_resource(crate::rts::GameMode::Skirmish);
+        world.run_system_once(reconcile_menu_hud).unwrap();
+        assert_eq!(world.get::<Visibility>(hud), Some(&Visibility::Hidden));
     }
 }

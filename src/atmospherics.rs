@@ -134,7 +134,9 @@ impl Default for Atmospherics {
             // atmospherics pass deliberately leaves SKY fragments untouched (`atmospherics.wgsl:69`
             // — cleared depth returns early), so the fog ceiling IS that seam's contrast: every
             // point of `fog_max` makes it more visible. Keep this modest.
-            fog_max: 0.66,
+            // Combined with the capped PBR distance fog, retain at least half the surface
+            // contribution in the far field instead of layering two nearly opaque pale fills.
+            fog_max: 0.24,
             fade: 0.0, // starts off; the driver raises it with daylight
             base_height: 0.0,
             _pad: 0.0,

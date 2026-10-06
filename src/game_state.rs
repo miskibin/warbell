@@ -815,7 +815,7 @@ fn spawn_start_screen(
         ))
         .with_children(|root| {
             // ── Lower-left menu column ──
-            root.spawn(Node {
+            root.spawn((Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(72.0),
                 bottom: Val::Px(80.0),
@@ -823,7 +823,7 @@ fn spawn_start_screen(
                 align_items: AlignItems::Start,
                 row_gap: Val::Px(12.0),
                 ..default()
-            })
+            }, crate::mainmenu::MenuColumn))
             .with_children(|m| {
                 m.spawn((label(&fonts.display, "DEFEND THE KEEP", 13.0, KICKER), anim(AnimKind::Rise, 0.06, 0.6)));
                 // The title — Cinzel roman capitals, gold-lit.

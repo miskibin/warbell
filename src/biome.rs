@@ -514,8 +514,8 @@ fn apply_world_atmosphere(
     ambient.brightness = amb_brightness;
     let (fog_clear, fog_full) = fog_dist();
     for mut fog in &mut fog_q {
-        fog.color = srgb(sky);
-        // Linear: fully CLEAR within `fog_clear` tiles, then ramps to the horizon by `fog_full`.
+        fog.color = crate::scene::depth_haze(srgb(sky));
+        // Linear: clear nearby, then ramp to the capped aerial haze without losing far shading.
         fog.falloff = bevy::pbr::FogFalloff::Linear { start: fog_clear, end: fog_full };
     }
     for (mut light, mut tf) in &mut sun_q {

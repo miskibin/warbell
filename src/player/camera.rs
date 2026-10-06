@@ -316,7 +316,8 @@ pub fn toggle_first_person(
 /// (the hands and weapon you see are the separate [`super::viewmodel`]). Hiding is edge-triggered on
 /// `fp.blend` plus a sweep of freshly spawned leaves (an equip reskin rebuilds the rig mid-FP), so
 /// the per-frame cost is zero and other systems' visibility writes (the Director's weapon hide) are
-/// never fought in third person.
+/// never fought in third person. The Director's weapon policy runs after this sweep and also
+/// respects `fp.blend`, keeping the world sword hidden between transition edges.
 pub fn fp_body_visibility(
     fp: Res<FirstPerson>,
     mut was_hidden: Local<bool>,

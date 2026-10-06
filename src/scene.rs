@@ -37,6 +37,12 @@ const SKY: Color = Color::srgb(0.70, 0.82, 0.93);
 /// milky white-out across the whole frame, a warm haze reads as sunlit atmosphere).
 const FOG_DAY: Color = Color::srgb(0.85, 0.80, 0.66);
 const FOG_DENSITY: f32 = 0.009;
+/// Retain the distant surface's colour and shading, including beyond the fog ramp.
+/// A second, height-aware haze pass follows tonemapping; neither may flatten the world.
+pub(crate) fn depth_haze(color: Color) -> Color {
+    color.with_alpha(0.32)
+}
+const FOG_SUN_STRENGTH: f32 = 0.14;
 const IBL_INTENSITY: f32 = 520.0;
 
 /// How strongly the hero's current biome tints the DAYTIME light's mood (0 = none, 1 = the
@@ -545,7 +551,7 @@ fn advance_sky(
         }
     });
     for mut fog in &mut fog_q {
-        fog.color = fog_col;
+        fog.color = depth_haze(fog_col);
         if let Some((start, end)) = region_fog {
             fog.falloff = bevy::pbr::FogFalloff::Linear { start, end };
         }
@@ -556,7 +562,7 @@ fn advance_sky(
             lerp_col(light_glow_color(high), fog_col, night),
             Color::srgb(1.0, 0.35, 0.12),
             surge * 0.7, // war-dusk: keep the sun-toward-camera band burning through the plunge
-        );
+        ).with_alpha(FOG_SUN_STRENGTH);
     }
 }
 
@@ -569,10 +575,9 @@ fn light_glow_color(high: f32) -> Color {
 /// camera restore (`rts::camera::rts_camera_restore`) when an in-process Skirmish → Campaign
 /// switch hands the single camera back.
 ///
-/// far=230 (was the 1000 default). The Linear fog reaches full horizon colour by 190 tiles
-/// (biome.rs), so everything past ~190 is solid fog — invisible but still drawn at full cost.
-/// Clipping the frustum at 230 (40-tile margin) lets Bevy's frustum culler drop all that far
-/// geometry for free. near=0.04 (was the 0.1 default): in first person the sword/shield are held
+/// far=230 bounds the enlarged island's render cost. Distance haze retains surface detail;
+/// it no longer paints geometry beyond the fog ramp into solid horizon colour.
+/// near=0.04 (was the 0.1 default): in first person the sword/shield are held
 /// right at the lens and the default near-plane sliced through them ("flicker" bug); safe for
 /// depth precision since `far` is only 230.
 pub fn default_projection() -> Projection {
@@ -584,8 +589,8 @@ pub fn default_projection() -> Projection {
 /// (`quality::apply_quality` doesn't own fog), so the restore re-inserts exactly this.
 pub fn default_fog() -> DistanceFog {
     DistanceFog {
-        color: SKY,
-        directional_light_color: Color::srgb(1.0, 0.93, 0.78),
+        color: depth_haze(SKY),
+        directional_light_color: Color::srgb(1.0, 0.93, 0.78).with_alpha(FOG_SUN_STRENGTH),
         // 7 (was 12): a wider sun-toward-camera in-scatter lobe — the haze catches the
         // light across a broad band of the frame instead of a tight sun-adjacent glow.
         directional_light_exponent: 7.0,
