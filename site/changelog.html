@@ -73,11 +73,38 @@
 
 <main class="log">
 
-  <!-- ── v0.22.1 ── -->
+  <!-- v0.23.0 -->
   <article class="rel latest rv">
     <div class="rel-head">
-      <span class="rel-ver">v0.22.1</span>
+      <span class="rel-ver">v0.23.0</span>
       <span class="rel-badge">Latest</span>
+      <span class="rel-date">October 6, 2026</span>
+    </div>
+    <p class="rel-sum">Lighter late-game navigation and large armies, plus the rebuilt first-person sword, shield and hands.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag perf">Performance</span></div>
+        <ul>
+          <li>Unreachable or finished routes respect their retry deadline instead of running a path search every frame. Large group orders spread route planning across several frames.</li>
+          <li>Navigation reuses its search buffers. Troops with identical outfits share meshes and materials while keeping their own animation; the outfit cache stays bounded.</li>
+          <li>Adaptive nearby-target queries, reusable crowd buckets, indexed tree sway and faster obstacle lookups reduce the work of crowded battles and developed towns.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">First-person view</span></div>
+        <ul>
+          <li>Rebuilt sword, shield, hands and rigid forearms, with camera-relative movement, blocking and attack poses. The shield counterbalances each sword swing.</li>
+          <li>A camera-relative light keeps gloves and weapons readable against the sun. At close range, the engaged enemy's health moves below the reticle.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.23.0">Release on GitHub &rarr;</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.22.1 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.22.1</span>
       <span class="rel-date">September 8, 2026</span>
     </div>
     <p class="rel-sum">A bug-fix release — including one that could quietly destroy a run: RESUME on the title screen used to reset your game back to night one.</p>
