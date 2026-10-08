@@ -21,9 +21,7 @@ try {
     $env:FOREST_FORESTSLICE = '1'
     $env:FOREST_FREEROAM = '1'
     $env:FOREST_QUALITY = $Quality
-    # Match the archived art-review captures. These overrides affect only this launcher.
-    $env:FOREST_WORLD_EXPOSURE = '9.55'
-    $env:FOREST_WORLD_SKY_LUX = '1050'
+    # Use the slice's natural-material lighting defaults from the current build.
     $env:FOREST_TIME = '0.28'
     $env:FOREST_DAY = '1000000'
     $env:FOREST_NOHUD = '1'

@@ -43,7 +43,9 @@ impl Default for LookSettings {
         // 0.98 (was 1.1) — 2026-07 cinematic pass: the filmic reference look is gently
         // desaturated; the atmospherics haze now carries the colour mood instead.
         Self {
-            saturation: if crate::blenderenv::look_enabled() { 1.10 } else { 0.98 },
+            saturation: if crate::forest_slice::enabled() {
+                crate::forest_slice::look_knob("FOREST_SLICE_SATURATION", 1.0, 0.8, 1.3)
+            } else if crate::blenderenv::look_enabled() { 1.10 } else { 0.98 },
             chromatic: 0.0,
         } // chromatic off by default (component not inserted anyway)
     }

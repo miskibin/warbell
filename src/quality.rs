@@ -662,11 +662,15 @@ fn apply_quality(
             }
         }
 
-        // Depth prepass + contact shadows ride one gate: contact shadows (0.19) read the prepass
-        // depth, so they must share the exact on/off as the prepass. Stripped together when nothing
-        // (DoF/SSAO/outline) needs depth — that's the ~3 ms `early prepass` in the F2 profiler.
+        // Contact shadows need the depth prepass, but the slice can disable their
+        // screen-space speckling independently for a matched visual comparison.
         if needs_depth {
-            e.insert((DepthPrepass, ContactShadows::default()));
+            e.insert(DepthPrepass);
+            if crate::forest_slice::contact_shadows_enabled() {
+                e.insert(ContactShadows::default());
+            } else {
+                e.remove::<ContactShadows>();
+            }
         } else {
             e.remove::<DepthPrepass>();
             e.remove::<ContactShadows>();
@@ -687,12 +691,14 @@ fn apply_quality(
     // those (which marks only them modified). Steady state: an empty list, zero GPU work.
     let stale: Vec<AssetId<TerrainMaterial>> = terrain_mats
         .iter()
-        .filter(|(_, m)| m.extension.params.params2 != want)
+        // W is the material's authored slice flag, not a graphics-quality field.
+        .filter(|(_, m)| m.extension.params.params2.truncate() != want.truncate())
         .map(|(id, _)| id)
         .collect();
     for id in stale {
         if let Some(mut m) = terrain_mats.get_mut(id) {
-            m.extension.params.params2 = want;
+            let slice_flag = m.extension.params.params2.w;
+            m.extension.params.params2 = Vec4::new(want.x, want.y, want.z, slice_flag);
         }
     }
 }

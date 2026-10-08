@@ -7,6 +7,11 @@ Source: https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky
 Exact URLs and checksums are retained in art/forest_preview/polyhaven and sky_report.json.
 The original attribution and license follow.
 
+Ground path: Poly Haven Stony Dirt Path (CC0-1.0).
+Source: https://polyhaven.com/a/stony_dirt_path
+Diffuse, OpenGL normal and roughness adapted in Blender for the isolated slice.
+Input URLs, hashes and local rust-fleck adjustment: art/forest_preview/path_report.json.
+
 The leaf silhouettes in tree_atlas.png and the embedded GLB textures derive from
 oakL.png, aspenL.png and pineL.png by Daniel Greenheck, already used by Warbell.
 Source: https://github.com/dgreenheck/ez-tree

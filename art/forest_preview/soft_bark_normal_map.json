@@ -1,0 +1,16 @@
+{
+  "schema": "warbell.forest_soft_bark_normal.v1",
+  "source": "target/world-preview/cc0-sources/tree_small_02/textures/tree_small_02_nor_gl_1k.jpg",
+  "source_sha256": "9c83be074c950ea1b94c732c0c0291b53b9ba357f932d378bafe3ca3b4418871",
+  "source_url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/tree_small_02/tree_small_02_nor_gl_1k.jpg",
+  "license": "CC0-1.0",
+  "output": "art/forest_preview/cc0_prepared/tree_small_02_trunk_nor_soft_1k.png",
+  "output_sha256": "b2d6a01dabb5d66fbcb921742ced6a016a96df0593eb127923a9e7f2551b9c05",
+  "dimensions": [
+    1024,
+    1024
+  ],
+  "tangent_xy_scale_before_renormalize": 0.6,
+  "median_xy_length_before": 0.20096,
+  "median_xy_length_after": 0.13239
+}

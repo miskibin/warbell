@@ -19,7 +19,8 @@ report={"schema":"warbell.forest_slice_source.v2",
         "closeup_camera":layout["closeup_camera"],
         "path_centerline":layout["path_centerline"],
         "linked_tree_blends":["tree_small_02_optimized.blend",
-                              "island_tree_01_optimized.blend"]}
+                              "island_tree_01_optimized.blend",
+                              "tree_small_02_backdrop.blend"]}
 (ART/"scene_report.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
 print({"instances":report["instances"],"gltf":sum(v for k,v in counts.items() if k.startswith("gltf:")),
        "scene_bytes":report["scene_bytes"],"layout_sha256":report["layout_sha256"]})

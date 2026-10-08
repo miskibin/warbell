@@ -1,0 +1,53 @@
+{
+  "schema": "warbell.forest_natural_review.v1",
+  "verification_pass": true,
+  "baseline_commit": "97118086d3e9e10239cab67b57836d7534d9c11e",
+  "main_included": "fb308c89adc993684c57773059f2c4ceadf9c17e",
+  "views": {
+    "overview": {
+      "capture": "forest-natural-v7-scanned-overview",
+      "png_sha256": "127cbd5c986fb26993dcd2849c06fa5107c24a57979ee7daa77fe625bb0c464a",
+      "source_sha256": "65c9a4cbad824b232b1ea87f5292462cf15f1e47acadce03075016693eeeace0",
+      "exe_sha256": "5a99b9c89ac3bb8872aadcac4fd599354ba92d207b0f27f68c41393a306e4d24",
+      "silent": true,
+      "errors": [],
+      "exit_code": 0
+    },
+    "detail": {
+      "capture": "forest-natural-v7-scanned-detail",
+      "png_sha256": "b298e2b78fbd3205e3c60f55caf8b1162fc5abd58fd54aaf8d6f74333302ec08",
+      "source_sha256": "65c9a4cbad824b232b1ea87f5292462cf15f1e47acadce03075016693eeeace0",
+      "exe_sha256": "5a99b9c89ac3bb8872aadcac4fd599354ba92d207b0f27f68c41393a306e4d24",
+      "silent": true,
+      "errors": [],
+      "exit_code": 0
+    }
+  },
+  "blender_source_sha256": "d3059c4a1fafebdc9d8f0b3f9fdfc272d29bd167ae59ecb28d54fbd5bae538c5",
+  "layout_sha256": "f45058489643c032bdafcd6b3879ccfaa2f20c120c3d98fdbca0d84bdc788929",
+  "source_instances": 3433,
+  "cc0_glbs": 11,
+  "camera_poses_unchanged": true,
+  "native_high_smoke_pass": true,
+  "runtime_gltf_mips": {
+    "images": 51,
+    "levels": 408,
+    "skipped": 0,
+    "maximum_alpha_coverage_deviation": 0.02
+  },
+  "replaced_legacy_groundcover_instances": 1747,
+  "performance_evaluated": false,
+  "grass_triangles_before_culling": 15579192,
+  "art_approval": "pending",
+  "reference_visual_match": "not_claimed",
+  "remaining_visual_limits": [
+    "airy/repeated tree crowns",
+    "pale bark ridges",
+    "flat foliage and horizon"
+  ],
+  "notes": [
+    "Actual unmodified Bevy screenshots.",
+    "Contact shadows retained after diagnostic comparison.",
+    "Early NOBLUR capture overlapped a path asset update; not a controlled DoF comparison."
+  ]
+}

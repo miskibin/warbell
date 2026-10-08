@@ -2,13 +2,14 @@
   "schema": "warbell.forest_slice_blender_source_audit.v1",
   "pass": true,
   "instances": 3433,
-  "indexed_scene_objects": 3515,
+  "indexed_scene_objects": 3691,
   "linked_tree_libraries": [
     "//island_tree_01_optimized.blend",
+    "//tree_small_02_backdrop.blend",
     "//tree_small_02_optimized.blend"
   ],
-  "layout_sha256": "f231b3485da342396523c88f027767b9d6093ff84f60d4bc63a32deba98e58b8",
-  "scene_sha256": "e825184435dc97f99f617739afec82d2f6611c588d03337628381e341368cd07",
-  "scene_bytes": 62895874,
+  "layout_sha256": "f45058489643c032bdafcd6b3879ccfaa2f20c120c3d98fdbca0d84bdc788929",
+  "scene_sha256": "d3059c4a1fafebdc9d8f0b3f9fdfc272d29bd167ae59ecb28d54fbd5bae538c5",
+  "scene_bytes": 46548248,
   "issues": []
 }

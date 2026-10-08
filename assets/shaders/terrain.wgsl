@@ -51,11 +51,11 @@ struct ForestParams {
 // Four columns × two rows, in blenderground::SURFACES order. Each 512² tile was baked
 // tileable in Blender; the CPU atlas builder creates mips per tile to avoid colour bleed.
 fn surface_repeat_ratio(id: u32) -> f32 {
-    // The source path photo contains real stones a few to a few dozen pixels wide.
-    // At the grass tile's 2.5u repeat they vanished into a grey mip average from the
-    // gameplay camera. One path tile now spans ~7.6u, so the same authored pebbles
-    // have visible world size without altering the road mask or its width.
-    return select(1.0, 0.33, id == 6u);
+    // The slice uses a scanned stony path at ~1.8u per tile, so the source's
+    // mineral flecks read as fine gravel, not painted spots. Campaign paths
+    // retain their old scale.
+    let path_ratio = select(0.33, 1.40, forest.params2.w > 0.5);
+    return select(1.0, path_ratio, id == 6u);
 }
 
 fn surface_uv(p: vec2<f32>, id: u32, ddx: vec2<f32>, ddy: vec2<f32>) -> vec2<f32> {
@@ -348,10 +348,9 @@ fn fragment(
         ) * 0.96 * top;
         let yard_w = smoothstep(0.20, 0.72, path.g) * 0.96 * top;
         if road_w > 0.001 {
-            // The slice has a broad sunlit path near the camera. Deepen its
-            // authored gravel photograph slightly while retaining stone detail.
-            let path_color = surface_alb(wp, 6u, grad_x, grad_y)
-                * select(vec3<f32>(1.0), vec3<f32>(0.82, 0.78, 0.74), slice_study);
+            // Use the scanned diffuse as baked; its natural earth hue and
+            // contrast should not receive another ochre tint in the shader.
+            let path_color = surface_alb(wp, 6u, grad_x, grad_y);
             baked = mix(baked, path_color, road_w);
             rough = mix(rough, surface_rough(wp, 6u, grad_x, grad_y), road_w);
             map_normal = mix(map_normal, surface_nrm(wp, 6u, grad_x, grad_y), road_w);
@@ -374,7 +373,7 @@ fn fragment(
         pbr_input.material.perceptual_roughness = mix(clamp(rough, 0.34, 1.0), 0.42, wet * 0.65);
         // The slice path is a close camera study: keep the Blender-baked
         // pebble/earth micronormal legible without sharpening the campaign.
-        let slice_path_normal = select(0.75, mix(0.75, 1.50, road_w), slice_study);
+        let slice_path_normal = select(0.75, mix(0.75, 0.90, road_w), slice_study);
         let bump = (map_normal * 2.0 - vec3<f32>(1.0))
             * vec3<f32>(slice_path_normal, slice_path_normal, 1.0);
         pbr_input.N = normalize(gn + vec3<f32>(bump.x, 0.0, bump.y) * top);

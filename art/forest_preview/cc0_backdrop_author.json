@@ -1,0 +1,24 @@
+{
+  "schema": "warbell.forest_cc0_backdrop_lod_author.v1",
+  "source_blend": "art/forest_preview/tree_small_02_optimized.blend",
+  "source_blend_sha256": "f1a6c73707c1565f4f4d14fe989a31b8c74380b7828b57f8bea23db3c36c976a",
+  "source_triangles_by_material": {
+    "tree_small_02_trunk": 19803,
+    "tree_small_02_branches": 28443,
+    "tree_small_02_leaves": 116362
+  },
+  "lod_triangles_by_material": {
+    "tree_small_02_trunk": 12276,
+    "tree_small_02_branches": 14790,
+    "tree_small_02_leaves": 44217
+  },
+  "lod_total_triangles": 71283,
+  "ratios": {
+    "tree_small_02_leaves": 0.38,
+    "tree_small_02_branches": 0.52,
+    "tree_small_02_trunk": 0.62
+  },
+  "lod_blend": "art/forest_preview/tree_small_02_backdrop.blend",
+  "lod_blend_bytes": 13330858,
+  "lod_blend_sha256": "332150868298217654c440d99b57676a1a26f652041e7f7d254b5214a4560a79"
+}

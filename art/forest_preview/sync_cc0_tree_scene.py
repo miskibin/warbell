@@ -1,7 +1,7 @@
 """Sync runtime CC0 tree instances into the editable forest Blender scene.
 
-Each optimized tree is a linked mesh library. The scene can show 29 trees
-without duplicating their geometry or packed 1K PBR textures into its .blend.
+Each optimized tree is a linked mesh library. The scene can show its full
+foreground and backdrop without duplicating packed 1K PBR tree textures.
 Run through Blender MCP with forest_scene.blend loaded.
 """
 from pathlib import Path
@@ -13,7 +13,9 @@ LAYOUT=ROOT/"assets/models/forest_slice/layout.json"
 SCENE=ART/"forest_scene.blend"
 instances=json.loads(LAYOUT.read_text(encoding="utf-8"))["instances"]
 names=sorted({r["model"][5:] for r in instances if r["model"].startswith("gltf:")
-              and r["model"][5:] in {"tree_small_02_optimized","island_tree_01_optimized"}})
+              and r["model"][5:] in {"tree_small_02_optimized",
+                                      "island_tree_01_optimized",
+                                      "tree_small_02_backdrop"}})
 sources={}
 for name in names:
     file=ART/f"{name}.blend"

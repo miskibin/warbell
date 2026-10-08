@@ -317,22 +317,14 @@
       ]
     },
     {
-      "file": "assets/models/forest_slice/cc0/tree_small_02_optimized.glb",
-      "input_sha256": "41a7f1a81291c42c9f7ab91e7240e0ce123b34b1c1badeb04446a1f7a1fd7978",
-      "output_sha256": "3138fa8cde83ca82a31ee98abf1bd7284f7b3c9bc9a5ff1850fad842c6dcc2b3",
-      "input_bytes": 25558440,
-      "output_bytes": 32261676,
-      "non_image_buffer_views_sha256": "4d6465346de66df65375d6a34c4c9e34b16ec296e90767de6c218c7f7e0a695f",
+      "file": "assets/models/forest_slice/cc0/tree_small_02_backdrop.glb",
+      "input_sha256": "0d93a82932107f38e72d43e68e48d8010caefb9ca693f6844f56d1846c292870",
+      "output_sha256": "6bcfdf51033c85b38c887b071215fb91593d6a4cb08aa0f5fd6f745ab674dc75",
+      "input_bytes": 15085976,
+      "output_bytes": 19877584,
+      "non_image_buffer_views_sha256": "b4e54ddc4ce47301bc084fd4a204939cc9cadf2394c1ebd4b8b2b8fe9a52e698",
       "geometry_unchanged": true,
       "images": [
-        {
-          "image": "tree_small_02_nor_gl_1k",
-          "dimensions": [
-            1024,
-            1024
-          ],
-          "decoded_pixel_max_delta": 0
-        },
         {
           "image": "tree_small_02_diff_1k",
           "dimensions": [
@@ -342,7 +334,58 @@
           "decoded_pixel_max_delta": 0
         },
         {
-          "image": "tree_small_02_arm_1k",
+          "image": "tree_small_02_branch_nor_gl_1k",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "decoded_pixel_max_delta": 0
+        },
+        {
+          "image": "tree_small_02_branch_diff_1k",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "decoded_pixel_max_delta": 0
+        },
+        {
+          "image": "tree_small_02_branch_arm_1k",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "decoded_pixel_max_delta": 0
+        },
+        {
+          "image": "tree_small_02_leaves_nor_gl_1k",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "decoded_pixel_max_delta": 0
+        },
+        {
+          "image": "tree_small_02_leaves_arm_1k",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "decoded_pixel_max_delta": 0
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/tree_small_02_optimized.glb",
+      "input_sha256": "30ca862ea13de714d919e13a71e21cd271e54cc3e73ea76261973a4a44d3febc",
+      "output_sha256": "537cc0f48a961378e22b4efa5dbb33bcd12d4d10e3bd38d31bebf1938e9559e8",
+      "input_bytes": 27075852,
+      "output_bytes": 31867460,
+      "non_image_buffer_views_sha256": "d4b96bd7982c27c3e36d306aee5f06e72eb866df1a543762a46bf45739561492",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "image": "tree_small_02_diff_1k",
           "dimensions": [
             1024,
             1024

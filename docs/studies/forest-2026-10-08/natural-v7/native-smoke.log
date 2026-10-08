@@ -1,0 +1,52 @@
+2026-10-08T20:09:42.658747Z  INFO bevy_diagnostic::system_information_diagnostics_plugin::internal: SystemInfo { os: "Windows 11 Pro", kernel: "26200", cpu: "12th Gen Intel(R) Core(TM) i5-12400F", core_count: "6", memory: "31.8 GiB" }
+2026-10-08T20:09:43.098218Z  INFO bevy_render::renderer: AdapterInfo { name: "NVIDIA GeForce RTX 5060 Ti", vendor: 4318, device: 11524, device_type: DiscreteGpu, device_pci_bus_id: "0000:01:00.0", driver: "NVIDIA", driver_info: "616.64", backend: Vulkan, subgroup_min_size: 32, subgroup_max_size: 32, transient_saves_memory: false }
+2026-10-08T20:09:43.432502Z  INFO tileworld_bevy_forest::audio: HARNESS_AUDIO silent: campaign playback disabled
+2026-10-08T20:09:43.461801Z  INFO bevy_pbr::cluster: GPU clustering is supported on this device.
+2026-10-08T20:09:43.462053Z  INFO bevy_render::batching::gpu_preprocessing: GPU preprocessing is fully supported on this device.
+2026-10-08T20:09:43.462634Z  INFO bevy_egui::render: Using bindless_mode_array_size 16 (Device maximum 1048576)
+2026-10-08T20:09:43.462871Z  INFO bevy_winit::system: Creating new window Warbell (65v0)
+2026-10-08T20:09:45.100834Z  INFO tileworld_bevy_forest::player::footman: footman: 233 meshes, 1.92u tall (rig scale 1.221)
+2026-10-08T20:09:49.802681Z  INFO tileworld_bevy_forest::poi: poi: planned 6 roadside clearings
+2026-10-08T20:09:54.561376Z  INFO tileworld_bevy_forest::camps: camp 0 at -173.6,6.1
+2026-10-08T20:09:54.561855Z  INFO tileworld_bevy_forest::camps: camp 1 at 5.8,-65.0
+2026-10-08T20:09:54.562326Z  INFO tileworld_bevy_forest::camps: camp 2 at -127.3,103.7
+2026-10-08T20:09:54.562644Z  INFO tileworld_bevy_forest::camps: camp 3 at -22.0,126.6
+2026-10-08T20:09:54.562963Z  INFO tileworld_bevy_forest::camps: camp 4 at 21.9,-37.6
+2026-10-08T20:09:54.568426Z  INFO tileworld_bevy_forest::chest: chests: 24 scattered (22 Relic) + 5 hoards
+2026-10-08T20:09:54.571716Z  INFO tileworld_bevy_forest::ruins: landmark Snow placed at (-118.0, -6.1)
+2026-10-08T20:09:54.571836Z  INFO tileworld_bevy_forest::ruins: landmark Desert placed at (43.6, -62.7)
+2026-10-08T20:09:54.571868Z  INFO tileworld_bevy_forest::ruins: landmark Rocky placed at (35.9, 28.7)
+2026-10-08T20:09:54.571892Z  INFO tileworld_bevy_forest::ruins: landmark Forest placed at (-105.9, 13.9)
+2026-10-08T20:09:54.571911Z  INFO tileworld_bevy_forest::ruins: landmark Swamp placed at (0.5, 43.2)
+2026-10-08T20:09:54.572330Z  INFO tileworld_bevy_forest::vignettes: vignette Forest "The Abandoned Camp" at 55.6,0.0,126.1
+2026-10-08T20:09:54.572497Z  INFO tileworld_bevy_forest::vignettes: vignette Desert "The Lost Caravan" at 131.7,0.0,-84.5
+2026-10-08T20:09:54.576603Z  INFO tileworld_bevy_forest::vignettes: vignette Rocky "The Fallen Watchtower" at 167.7,0.5,-30.0
+2026-10-08T20:09:54.576919Z  INFO tileworld_bevy_forest::vignettes: vignette Snow "The Frozen Camp" at -160.1,0.5,-17.7
+2026-10-08T20:09:54.577027Z  INFO tileworld_bevy_forest::vignettes: vignette Swamp "The Sunken Wreck" at 7.0,0.0,127.0
+2026-10-08T20:09:54.775832Z  INFO tileworld_bevy_forest::ork_fortress: ork fortress: Gnashfang Hold built at 12,162
+2026-10-08T20:09:54.786011Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 76,-114
+2026-10-08T20:09:54.786091Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 27,-44
+2026-10-08T20:09:54.786118Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -104,68
+2026-10-08T20:09:54.786169Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 0,99
+2026-10-08T20:09:54.786191Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 84,-127
+2026-10-08T20:09:54.786335Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 113,-94
+2026-10-08T20:09:54.786362Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -0,145
+2026-10-08T20:09:54.786381Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 82,-108
+2026-10-08T20:09:54.786409Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -68,22
+2026-10-08T20:09:54.786494Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 42,-65
+2026-10-08T20:09:54.786540Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 22,-37
+2026-10-08T20:09:54.786565Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -136,90
+2026-10-08T20:09:54.786645Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -118,-6
+2026-10-08T20:09:54.786860Z  INFO tileworld_bevy_forest::wayside: wayside: 7 signposts, 11 roadside pieces
+2026-10-08T20:09:54.789076Z  INFO tileworld_bevy_forest::bog: bog: drowned tower at 15.6,83.8
+2026-10-08T20:09:54.789206Z  INFO tileworld_bevy_forest::bog: bog: stilt hut at -10.6,102.8
+2026-10-08T20:09:54.789213Z  INFO tileworld_bevy_forest::bog: bog: 28 drowned trees, 18 wisps, 20 glow-mushroom clusters
+2026-10-08T20:09:54.789479Z  WARN tileworld_bevy_forest::poi: poi: no spot for the gallows on the fortress approach
+2026-10-08T20:09:54.790015Z  INFO tileworld_bevy_forest::poi: poi: 4 set-pieces, 0 fields, smoke + crows over the Hold
+2026-10-08T20:09:54.790110Z  INFO tileworld_bevy_forest::vista: vista: waterfall at 72.7,36.4 (wall 3.3u)
+2026-10-08T20:09:54.790217Z  INFO tileworld_bevy_forest::vista: vista: overlook (rock summit → castle plain) at 96.8,6.6
+2026-10-08T20:09:54.790227Z  INFO tileworld_bevy_forest::vista: vista: overlook (snow summit → western sea) at -101.2,-66.0
+2026-10-08T20:09:54.790236Z  INFO tileworld_bevy_forest::vista: vista: overlook (canyon mouth → rival dunes) at 95.0,-66.0
+2026-10-08T20:09:54.790241Z  INFO tileworld_bevy_forest::vista: vista: 3/3 overlooks
+2026-10-08T20:09:54.790246Z  INFO tileworld_bevy_forest::biome: view → world map
+2026-10-08T20:10:45.192768Z  INFO bevy_render::view::window::screenshot: Screenshot saved to C:\Users\skibi\Documents\Codex\2026-10-08\najpierw-bym-chcia-eby-zrobi-studyjn\warbell-trees\target\world-preview\forest-natural-v7-native-smoke\shot.png

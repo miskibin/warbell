@@ -1,0 +1,12 @@
+{
+  "schema": "warbell.forest_slice_path_mcp_provenance.v1",
+  "transport": "official mcp-for-blender execute_blender_code to isolated Blender 4.5.9 localhost:9878",
+  "source": "art/forest_preview/bake_path.py",
+  "source_sha256": "ab29132ec817a9cbc6be4933fddea0745dfb70259d40638dc7868fee8220322c",
+  "result": "WARBELL_FOREST_PATH success",
+  "report": "art/forest_preview/path_report.json",
+  "report_sha256": "3002e3dcdab1e30849fe5effb9bb3eff624c3f227f2fb3012caaf0e32f9fe0b0",
+  "shader": "assets/shaders/terrain.wgsl",
+  "shader_sha256": "2650fc72281a9bb6271027adf23efb9cb46378aa9874a7a241ad7e41c697110b",
+  "slice_repeat_world_units": 1.7857142857142858
+}

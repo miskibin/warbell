@@ -1,0 +1,328 @@
+   Compiling tileworld_bevy_forest v0.24.1 (C:\Users\skibi\Documents\Codex\2026-10-08\najpierw-bym-chcia-eby-zrobi-studyjn\warbell-trees)
+warning: unused import: `Path`
+ --> src\forest_slice.rs:8:17
+  |
+8 | use std::path::{Path, PathBuf};
+  |                 ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src\meadow.rs:108:9
+    |
+108 |     let mut prop = |commands: &mut Commands,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+   --> src\player\model.rs:134:9
+    |
+133 |         SKIRT | BELT | GRIP | PLUME | DARKCOAT | CHEST | TABARD | GAMBESON => Surf::Cloth,
+    |                                                  ----- matches all the relevant values
+134 |         PLEATHER | PLEATHER_DK | PTABARD | PTABARD_DK | PGLOVE | PGRIP | PDARK | PSHIELD | FP_GLOVE | FP_GLOVE_SEAM => Surf::Cloth,
+    |         ^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src\villagers.rs:2522:9
+     |
+2522 |     let mut prop = |commands: &mut Commands, meshes: &mut Assets<Mesh>, name: &str, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32| {
+     |         ----^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: type `QuadPose` is more private than the item `animate_quad`
+   --> src\quadruped.rs:553:1
+    |
+553 | / pub fn animate_quad(
+554 | |     time: Res<Time>,
+555 | |     drives: Query<(Entity, &QuadDrive)>,
+556 | |     mut parts: Query<(&QuadPart, &mut Transform)>,
+557 | |     // Reused across frames so a herd's worth of animals doesn't heap-alloc a fresh map every frame.
+558 | |     mut poses: Local<HashMap<Entity, QuadPose>>,
+559 | | ) {
+    | |_^ function `animate_quad` is reachable at visibility `pub(crate)`
+    |
+note: but type `QuadPose` is only usable at visibility `pub(self)`
+   --> src\quadruped.rs:256:1
+    |
+256 | struct QuadPose {
+    | ^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: variant `Thunder` is never constructed
+   --> src\audio\mod.rs:157:5
+    |
+ 60 | pub enum AudioCue {
+    |          -------- variant in this enum
+...
+157 |     Thunder,
+    |     ^^^^^^^
+    |
+    = note: `AudioCue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `then` is never read
+   --> src\audio\lines.rs:672:9
+    |
+665 | pub struct Active {
+    |            ------ field in this struct
+...
+672 |     pub then: Option<Chain>,
+    |         ^^^^
+    |
+    = note: `Active` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `can_play` is never used
+   --> src\audio\lines.rs:678:8
+    |
+678 | pub fn can_play(active: Option<&Active>, now: f32, new_priority: u8) -> bool {
+    |        ^^^^^^^^
+
+warning: function `centers` is never used
+   --> src\bridges.rs:350:8
+    |
+350 | pub fn centers() -> Vec<Vec2> {
+    |        ^^^^^^^
+
+warning: field `name` is never read
+  --> src\blenderenv.rs:30:9
+   |
+29 | pub struct Model {
+   |            ----- field in this struct
+30 |     pub name: String,
+   |         ^^^^
+
+warning: method `len` is never used
+  --> src\blenderenv.rs:48:12
+   |
+46 | impl BlenderEnv {
+   | --------------- method in this implementation
+47 |     pub fn model(&self, name: &str) -> Option<&Model> { self.models.get(name) }
+48 |     pub fn len(&self) -> usize { self.models.len() }
+   |            ^^^
+
+warning: constant `SLICE_SIZE` is never used
+  --> src\blenderground.rs:59:11
+   |
+59 | pub const SLICE_SIZE: f32 = 48.0;
+   |           ^^^^^^^^^^
+
+warning: associated function `pop` is never used
+  --> src\build_fx.rs:47:12
+   |
+44 | impl BuildPop {
+   | ------------- associated function in this implementation
+...
+47 |     pub fn pop() -> Self {
+   |            ^^^
+
+warning: variant `PreWalls` is never constructed
+    --> src\castle.rs:2025:5
+     |
+2021 | pub enum CastleKind {
+     |          ---------- variant in this enum
+...
+2025 |     PreWalls,
+     |     ^^^^^^^^
+     |
+     = note: `CastleKind` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Bone` is never constructed
+  --> src\creature.rs:64:5
+   |
+57 | pub enum Surf {
+   |          ---- variant in this enum
+...
+64 |     Bone,
+   |     ^^^^
+   |
+   = note: `Surf` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `turn_lean` is never used
+  --> src\creature_anim.rs:58:8
+   |
+58 | pub fn turn_lean(dyaw: f32, dt: f32, max: f32) -> f32 {
+   |        ^^^^^^^^^
+
+warning: method `spawn_rooster` is never used
+    --> src\orks.rs:1606:12
+     |
+1537 | impl Armory {
+     | ----------- method in this implementation
+...
+1606 |     pub fn spawn_rooster(
+     |            ^^^^^^^^^^^^^
+
+warning: constant `ICO` is never used
+   --> src\previs_knight.rs:154:7
+    |
+154 | const ICO: u32 = 2;
+    |       ^^^
+
+warning: function `ball` is never used
+   --> src\previs_knight.rs:155:4
+    |
+155 | fn ball(r: f32) -> Mesh {
+    |    ^^^^
+
+warning: field `walk_amp` is never read
+  --> src\quadruped.rs:83:5
+   |
+55 | pub struct QuadConfig {
+   |            ---------- field in this struct
+...
+83 |     walk_amp: f32,
+   |     ^^^^^^^^
+   |
+   = note: `QuadConfig` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: field `idx` is never read
+   --> src\rival.rs:372:9
+    |
+371 | pub struct RivalBuilding {
+    |            ------------- field in this struct
+372 |     pub idx: usize,
+    |         ^^^
+
+warning: method `add` is never used
+   --> src\rts\mod.rs:176:12
+    |
+161 | impl RtsBank {
+    | ------------ method in this implementation
+...
+176 |     pub fn add(&mut self, c: &Cost) {
+    |            ^^^
+
+warning: field `build_secs` is never read
+   --> src\rts\mod.rs:254:9
+    |
+249 | pub struct BuildingDef {
+    |            ----------- field in this struct
+...
+254 |     pub build_secs: f32,
+    |         ^^^^^^^^^^
+
+warning: fields `scaffold` and `solid` are never read
+   --> src\rts\build.rs:119:5
+    |
+115 | pub struct RtsBuildAssets {
+    |            -------------- fields in this struct
+...
+119 |     scaffold: HashMap<u32, Handle<Mesh>>,
+    |     ^^^^^^^^
+...
+124 |     solid: Handle<StandardMaterial>,
+    |     ^^^^^
+
+warning: function `pal` is never used
+   --> src\rts\build.rs:792:4
+    |
+792 | fn pal(player: u32, rival: u32, side: Side) -> [f32; 4] {
+    |    ^^^
+
+warning: field `worker` is never read
+   --> src\rts\workers.rs:102:9
+    |
+101 | pub struct Staffed {
+    |            ------- field in this struct
+102 |     pub worker: Entity,
+    |         ^^^^^^
+
+warning: function `spawn_point` is never used
+   --> src\siege.rs:265:8
+    |
+265 | pub fn spawn_point(i: u32, keep: Vec2, max_ring: f32, standable: impl Fn(f32, f32) -> bool) -> Vec2 {
+    |        ^^^^^^^^^^^
+
+warning: function `nearest_guard_in_range` is never used
+   --> src\siege.rs:355:8
+    |
+355 | pub fn nearest_guard_in_range(from: Vec2, guards: &[Vec2], engage: f32) -> Option<usize> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `step_clear` is never used
+  --> src\steer.rs:55:8
+   |
+55 | pub fn step_clear(pos: Vec2, dir: Vec2, dist: f32, body_r: f32, cur_y: f32) -> bool {
+   |        ^^^^^^^^^^
+
+warning: function `read_secs` is never used
+  --> src\subtitles.rs:51:8
+   |
+51 | pub fn read_secs(text: &str) -> f32 {
+   |        ^^^^^^^^^
+
+warning: field `corpse_pos` is never read
+  --> src\succession.rs:71:5
+   |
+61 | pub struct Succession {
+   |            ---------- field in this struct
+...
+71 |     corpse_pos: Vec3,
+   |     ^^^^^^^^^^
+
+warning: field `0` is never read
+  --> src\town.rs:52:24
+   |
+52 | pub struct PlayerBuilt(pub Option<BuildKind>);
+   |            ----------- ^^^^^^^^^^^^^^^^^^^^^
+   |            |
+   |            field in this struct
+   |
+   = help: consider removing this field
+
+warning: function `activated` is never used
+  --> src\ui\focus.rs:37:8
+   |
+37 | pub fn activated(
+   |        ^^^^^^^^^
+
+warning: constant `BLUE` is never used
+  --> src\ui\theme.rs:68:11
+   |
+68 | pub const BLUE: Color = rgb(74, 111, 200); // #4a6fc8
+   |           ^^^^
+
+warning: constant `BLUE_HI` is never used
+  --> src\ui\theme.rs:69:11
+   |
+69 | pub const BLUE_HI: Color = rgb(98, 134, 219); // #6286db
+   |           ^^^^^^^
+
+warning: constant `BLUE_BORDER` is never used
+  --> src\ui\theme.rs:70:11
+   |
+70 | pub const BLUE_BORDER: Color = rgb(130, 162, 234); // #82a2ea
+   |           ^^^^^^^^^^^
+
+warning: function `cbx` is never used
+    --> src\verbs.rs:1228:4
+     |
+1228 | fn cbx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
+     |    ^^^
+
+warning: constant `HAIR` is never used
+  --> src\villagers.rs:52:7
+   |
+52 | const HAIR: u32 = 0x3a2418; // == HAIR_TONES[0] (kept as an alias)
+   |       ^^^^
+
+warning: constant `ARENA_FOREST_R0` is never used
+    --> src\worldmap.rs:1315:7
+     |
+1315 | const ARENA_FOREST_R0: f32 = 48.0;
+     |       ^^^^^^^^^^^^^^^
+
+warning: function `build` is never used
+    --> src\worldmap.rs:2719:8
+     |
+2719 | pub fn build(
+     |        ^^^^^
+
+warning: `tileworld_bevy_forest` (bin "tileworld_bevy_forest") generated 40 warnings (run `cargo fix --bin "tileworld_bevy_forest" -p tileworld_bevy_forest` to apply 3 suggestions)
+    Finished `release` profile [optimized] target(s) in 5m 18s

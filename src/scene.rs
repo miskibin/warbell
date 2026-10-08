@@ -103,12 +103,12 @@ fn world_look() -> &'static WorldLook {
             .filter(|n| n.is_finite())
             .map(|n| n.clamp(lo, hi)).unwrap_or(fallback);
         WorldLook {
-            sky_lux: knob("FOREST_WORLD_SKY_LUX", 1800.0, 100.0, 6000.0),
+            sky_lux: knob("FOREST_WORLD_SKY_LUX", if slice { 1200.0 } else { 1800.0 }, 100.0, 6000.0),
             sky_saturation: knob("FOREST_WORLD_SKY_SAT", 1.0, 0.2, 2.5),
             sky_ramp: knob("FOREST_WORLD_SKY_RAMP", 0.35, 0.08, 1.0),
-            exposure_ev: knob("FOREST_WORLD_EXPOSURE", if slice { 10.35 } else { 10.68 }, 8.0, 14.0),
-            ambient: knob("FOREST_WORLD_AMBIENT", if slice { 2.0 } else { 1.04 }, 0.2, 2.5),
-            ibl: knob("FOREST_WORLD_IBL", if slice { 2.0 } else { 1.06 }, 0.2, 2.5),
+            exposure_ev: knob("FOREST_WORLD_EXPOSURE", if slice { 9.6 } else { 10.68 }, 8.0, 14.0),
+            ambient: knob("FOREST_WORLD_AMBIENT", if slice { 2.2 } else { 1.04 }, 0.2, 2.5),
+            ibl: knob("FOREST_WORLD_IBL", if slice { 2.5 } else { 1.06 }, 0.2, 2.5),
         }
     })
 }
@@ -500,9 +500,13 @@ fn advance_sky(
             light.color = lerp_col(light.color, Color::srgb(1.0, 0.97, 0.91), high * 0.88);
         }
         if crate::forest_slice::enabled() {
-            // Warm, oblique key for the small forest study. The sky/IBL keep the shadow
-            // side readable while leaf and branch shadow maps give it local depth.
-            light.color = Color::srgb(1.0, 0.91, 0.79);
+            // Near-neutral daylight keeps scanned bark and soil colours faithful.
+            // The earlier warmer key remains available for a matched art review.
+            light.color = if crate::forest_slice::warm_sun_enabled() {
+                Color::srgb(1.0, 0.91, 0.79)
+            } else {
+                Color::srgb(1.0, 0.97, 0.91)
+            };
             light.illuminance = 12_000.0;
         }
     }
@@ -656,10 +660,11 @@ fn advance_sky(
             surge * 0.7, // war-dusk: keep the sun-toward-camera band burning through the plunge
         ).with_alpha(if blender_world { FOG_SUN_STRENGTH * (1.0 - 0.45 * high) } else { FOG_SUN_STRENGTH });
         if crate::forest_slice::enabled() {
-            // The authored patch is only 48u across. A long, gentle ramp adds a little
-            // aerial depth to its distant edge without washing out foreground leaves.
+            // Keep the authored patch clear; a farther ramp preserves blue distance
+            // without painting the mid-ground leaves the same pale fog colour.
             fog.color = Color::srgb(0.68, 0.77, 0.82);
-            fog.falloff = FogFalloff::Linear { start: 30.0, end: 150.0 };
+            let (start, end) = crate::forest_slice::fog_range();
+            fog.falloff = FogFalloff::Linear { start, end };
             fog.directional_light_color = Color::srgb(1.0, 0.88, 0.70).with_alpha(0.12);
         }
     }
@@ -705,12 +710,18 @@ fn setup_camera(
     mut media: ResMut<Assets<ScatteringMedium>>,
 ) {
     let blender_world = crate::blenderenv::look_enabled();
-    let env = images.add(gradient_env_cubemap());
-    let world_sky = blender_world.then(|| images.add(if crate::forest_slice::enabled() {
-        crate::forest_slice::sky_cubemap()
+    let slice_sky = crate::forest_slice::enabled()
+        .then(|| images.add(crate::forest_slice::sky_cubemap()));
+    let env = if crate::forest_slice::hdr_ibl_enabled() {
+        slice_sky.as_ref().expect("slice HDR sky").clone()
     } else {
-        world_sky_cubemap()
-    }));
+        images.add(gradient_env_cubemap())
+    };
+    let world_sky = if let Some(sky) = slice_sky {
+        Some(sky)
+    } else {
+        blender_world.then(|| images.add(world_sky_cubemap()))
+    };
     let medium = (!blender_world).then(|| media.add(ScatteringMedium::default()));
 
     // Low, immersive starting pose among the trees; fly controls take over from here.
@@ -742,6 +753,12 @@ fn setup_camera(
         grading.midtones.contrast = 1.28;
         grading.shadows.gain = 1.05;
     }
+    if crate::forest_slice::enabled() {
+        // Undo the campaign's faded-black film grade for the scan-textured forest.
+        // Keep the same LUT/lighting path, with bounded capture knobs for review.
+        grading.shadows.gain = crate::forest_slice::look_knob("FOREST_SLICE_SHADOW_GAIN", 1.0, 0.85, 1.15);
+        grading.midtones.contrast = crate::forest_slice::look_knob("FOREST_SLICE_MID_CONTRAST", 1.2, 0.9, 1.5);
+    }
 
     let mut camera = commands.spawn((
         Camera3d::default(),
@@ -758,7 +775,12 @@ fn setup_camera(
         cam_tf,
         Hdr,
         Exposure { ev100: if blender_world { world_look().exposure_ev } else { 10.85 } },
-        Tonemapping::AgX,
+        if crate::forest_slice::enabled() {
+            match std::env::var("FOREST_SLICE_TONEMAP").as_deref() {
+                Ok("agx") => Tonemapping::AgX,
+                _ => Tonemapping::TonyMcMapface,
+            }
+        } else { Tonemapping::AgX },
         // SSAO + SMAA path (mutually exclusive with MSAA). Bevy's built-in DepthOfField is
         // gone — it silently no-op'd next to SSAO and only did a single focal plane. Depth
         // blur is now our own bokeh DoF post pass (`dof.rs`), which only READS the prepass

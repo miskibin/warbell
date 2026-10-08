@@ -8,7 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{AssetId, RenderAssetUsages};
+use bevy::gltf::{Gltf, GltfMaterial};
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -74,11 +75,45 @@ pub fn enabled() -> bool {
     *ON.get_or_init(|| std::env::var("FOREST_FORESTSLICE").as_deref() == Ok("1"))
 }
 
-/// Built-in temporal AA is an opt-out experiment for the isolated slice only.
-/// Its history can smooth subpixel foliage and shadow noise; it does not create
-/// missing texture mip levels, and thin leaves may blur during camera motion.
+/// Built-in temporal AA smooths the remaining subpixel foliage and shadow
+/// noise in the slice. Disable it for a matched sharpness comparison.
 pub fn taa_enabled() -> bool {
     enabled() && std::env::var("FOREST_SLICE_TAA").as_deref() != Ok("0")
+}
+
+/// Diagnostic opt-out for screen-space contact shadows on the isolated slice.
+/// The depth prepass remains active for DoF and other consumers.
+pub fn contact_shadows_enabled() -> bool {
+    !enabled() || std::env::var("FOREST_SLICE_CONTACT_SHADOWS").as_deref() != Ok("0")
+}
+
+pub fn warm_sun_enabled() -> bool {
+    static WARM: OnceLock<bool> = OnceLock::new();
+    *WARM.get_or_init(|| std::env::var("FOREST_SLICE_SUN_WARM").as_deref() == Ok("1"))
+}
+
+fn mips_enabled() -> bool {
+    std::env::var("FOREST_SLICE_MIPS").as_deref() != Ok("0")
+}
+
+pub fn hdr_ibl_enabled() -> bool {
+    enabled() && std::env::var("FOREST_SLICE_HDR_IBL").as_deref() != Ok("0")
+}
+
+pub fn look_knob(name: &str, fallback: f32, min: f32, max: f32) -> f32 {
+    std::env::var(name).ok().and_then(|s| s.parse::<f32>().ok())
+        .filter(|x| x.is_finite()).map(|x| x.clamp(min, max)).unwrap_or(fallback)
+}
+
+pub fn fog_range() -> (f32, f32) {
+    let fallback = (60.0, 190.0);
+    let Ok(value) = std::env::var("FOREST_SLICE_FOG") else { return fallback; };
+    let parts: Vec<_> = value.split(',').map(|s| s.trim().parse::<f32>().ok()).collect();
+    match parts.as_slice() {
+        [Some(start), Some(end)] if start.is_finite() && end.is_finite()
+            && *start >= 0.0 && *end > *start + 1.0 => (*start, *end),
+        _ => fallback,
+    }
 }
 
 fn layout() -> &'static Layout {
@@ -395,6 +430,200 @@ fn slice_map(name: &str, kind: SliceMap) -> Image {
     image
 }
 
+#[derive(Clone, Copy)]
+enum GltfMipKind {
+    Albedo(Option<f32>),
+    Normal,
+    Orm,
+}
+
+#[derive(Resource)]
+struct GltfMipSources {
+    pending: Vec<Handle<Gltf>>,
+    processed: HashSet<AssetId<Image>>,
+    updated: usize,
+    total_levels: u32,
+    skipped: usize,
+    max_coverage_error: f32,
+}
+
+fn srgb_linear(byte: u8) -> f32 {
+    let x = byte as f32 / 255.0;
+    if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+}
+
+fn linear_srgb(x: f32) -> u8 {
+    let x = x.clamp(0.0, 1.0);
+    let encoded = if x <= 0.0031308 { 12.92 * x } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 };
+    (encoded * 255.0).round() as u8
+}
+
+fn alpha_coverage(rgba: &[u8], cutoff: f32, scale: f32) -> f32 {
+    let threshold = cutoff.clamp(0.0, 1.0) * 255.0;
+    let count = rgba.chunks_exact(4).filter(|p| (p[3] as f32 * scale).min(255.0) >= threshold).count();
+    count as f32 / (rgba.len() / 4) as f32
+}
+
+fn restore_alpha_coverage(rgba: &mut [u8], cutoff: f32, target: f32) {
+    let pixels = rgba.len() / 4;
+    if pixels == 0 || (alpha_coverage(rgba, cutoff, 1.0) - target).abs() <= 0.5 / pixels as f32 {
+        return;
+    }
+    let (mut low, mut high) = (0.0f32, 64.0f32);
+    for _ in 0..16 {
+        let mid = (low + high) * 0.5;
+        if alpha_coverage(rgba, cutoff, mid) < target { low = mid; } else { high = mid; }
+    }
+    let scale = if (alpha_coverage(rgba, cutoff, low) - target).abs()
+        <= (alpha_coverage(rgba, cutoff, high) - target).abs() { low } else { high };
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel[3] = (pixel[3] as f32 * scale).round().min(255.0) as u8;
+    }
+}
+
+/// Build the missing mip chain for a single Bevy-loaded glTF PNG. Blender's glTF sampler
+/// requests trilinear mips, but Bevy 0.19's PNG path creates exactly one level. Work from
+/// unscaled alpha at each level so coverage correction cannot compound into solid cards.
+fn add_gltf_mips(image: &mut Image, kind: GltfMipKind) -> Option<(u32, f32)> {
+    let w = image.texture_descriptor.size.width as usize;
+    let h = image.texture_descriptor.size.height as usize;
+    if image.texture_descriptor.mip_level_count != 1
+        || image.texture_descriptor.size.depth_or_array_layers != 1
+        || w.min(h) <= 8
+    { return None; }
+    let expected_format = match kind {
+        GltfMipKind::Albedo(_) => TextureFormat::Rgba8UnormSrgb,
+        GltfMipKind::Normal | GltfMipKind::Orm => TextureFormat::Rgba8Unorm,
+    };
+    if image.texture_descriptor.format != expected_format { return None; }
+    let mut previous = image.data.as_ref()?.clone();
+    if previous.len() != w * h * 4 { return None; }
+    let target = if let GltfMipKind::Albedo(Some(cutoff)) = kind {
+        Some((cutoff, alpha_coverage(&previous, cutoff, 1.0)))
+    } else { None };
+    let mut packed = previous.clone();
+    let (mut width, mut height, mut levels) = (w, h, 1u32);
+    let srgb_table = SRGB_TO_LINEAR.get_or_init(|| std::array::from_fn(|i| srgb_linear(i as u8)));
+    let mut max_coverage_error = 0.0f32;
+    while width.min(height) > 8 {
+        let nw = (width / 2).max(1);
+        let nh = (height / 2).max(1);
+        let mut next = vec![0u8; nw * nh * 4];
+        for y in 0..nh {
+            for x in 0..nw {
+                let samples = [
+                    (2 * y * width + 2 * x) * 4,
+                    (2 * y * width + (2 * x + 1).min(width - 1)) * 4,
+                    (((2 * y + 1).min(height - 1)) * width + 2 * x) * 4,
+                    (((2 * y + 1).min(height - 1)) * width + (2 * x + 1).min(width - 1)) * 4,
+                ];
+                let out = (y * nw + x) * 4;
+                match kind {
+                    GltfMipKind::Albedo(mask) => {
+                        let alpha_sum: u32 = samples.iter().map(|&i| previous[i + 3] as u32).sum();
+                        next[out + 3] = (alpha_sum as f32 / 4.0).round() as u8;
+                        for c in 0..3 {
+                            let weighted = samples.iter().map(|&i| {
+                                let weight = if mask.is_some() { previous[i + 3] as f32 / 255.0 } else { 1.0 };
+                                srgb_table[previous[i + c] as usize] * weight
+                            }).sum::<f32>();
+                            let weight_sum = if mask.is_some() { alpha_sum as f32 / 255.0 } else { 4.0 };
+                            next[out + c] = linear_srgb(if weight_sum > 0.0 { weighted / weight_sum } else { 0.0 });
+                        }
+                    }
+                    GltfMipKind::Normal => {
+                        let mut normal = Vec3::ZERO;
+                        for &i in &samples {
+                            normal += Vec3::new(previous[i] as f32, previous[i + 1] as f32, previous[i + 2] as f32)
+                                * (2.0 / 255.0) - Vec3::ONE;
+                        }
+                        let normal = normal.try_normalize().unwrap_or(Vec3::Z);
+                        for c in 0..3 {
+                            next[out + c] = ((normal[c] * 0.5 + 0.5) * 255.0).round() as u8;
+                        }
+                        next[out + 3] = 255;
+                    }
+                    GltfMipKind::Orm => {
+                        for c in 0..4 {
+                            next[out + c] = (samples.iter().map(|&i| previous[i + c] as u32).sum::<u32>() as f32 / 4.0).round() as u8;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some((cutoff, coverage)) = target {
+            let mut corrected = next.clone();
+            restore_alpha_coverage(&mut corrected, cutoff, coverage);
+            max_coverage_error = max_coverage_error.max((alpha_coverage(&corrected, cutoff, 1.0) - coverage).abs());
+            packed.extend_from_slice(&corrected);
+        } else {
+            packed.extend_from_slice(&next);
+        }
+        previous = next;
+        width = nw;
+        height = nh;
+        levels += 1;
+    }
+    image.texture_descriptor.mip_level_count = levels;
+    image.data = Some(packed);
+    Some((levels, max_coverage_error))
+}
+
+static SRGB_TO_LINEAR: OnceLock<[f32; 256]> = OnceLock::new();
+
+fn process_gltf_image(
+    handle: Option<&Handle<Image>>,
+    kind: GltfMipKind,
+    images: &mut Assets<Image>,
+    sources: &mut GltfMipSources,
+) -> bool {
+    let Some(handle) = handle else { return true; };
+    if sources.processed.contains(&handle.id()) { return true; }
+    let Some(mut image) = images.get_mut(handle) else { return false; };
+    if let Some((levels, coverage_error)) = add_gltf_mips(&mut image, kind) {
+        sources.updated += 1;
+        sources.total_levels += levels;
+        sources.max_coverage_error = sources.max_coverage_error.max(coverage_error);
+    } else {
+        sources.skipped += 1;
+    }
+    sources.processed.insert(handle.id());
+    true
+}
+
+fn generate_gltf_mips(
+    mut sources: ResMut<GltfMipSources>,
+    gltfs: Res<Assets<Gltf>>,
+    materials: Res<Assets<GltfMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    if sources.pending.is_empty() { return; }
+    let mut remaining = Vec::new();
+    for root in std::mem::take(&mut sources.pending) {
+        let Some(gltf) = gltfs.get(&root) else { remaining.push(root); continue; };
+        let mut ready = true;
+        for material_handle in &gltf.materials {
+            let Some(material) = materials.get(material_handle) else { ready = false; continue; };
+            let cutoff = match material.alpha_mode { AlphaMode::Mask(cutoff) => Some(cutoff), _ => None };
+            for (handle, kind) in [
+                (material.base_color_texture.as_ref(), GltfMipKind::Albedo(cutoff)),
+                (material.normal_map_texture.as_ref(), GltfMipKind::Normal),
+                (material.metallic_roughness_texture.as_ref(), GltfMipKind::Orm),
+                (material.occlusion_texture.as_ref(), GltfMipKind::Orm),
+            ] {
+                ready &= process_gltf_image(handle, kind, &mut images, &mut sources);
+            }
+        }
+        if !ready { remaining.push(root); }
+    }
+    sources.pending = remaining;
+    if sources.pending.is_empty() {
+        info!("forest slice glTF mips: {} images processed, {} generated ({} total mip levels), {} skipped, max alpha-mask coverage deviation {:.3}",
+            sources.processed.len(), sources.updated, sources.total_levels, sources.skipped,
+            sources.max_coverage_error);
+    }
+}
+
 fn load_slice_models(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -514,6 +743,9 @@ impl Plugin for ForestSlicePlugin {
                 Startup,
                 (crate::blenderground::spawn_forest_slice_ground, spawn_slice),
             );
+            if mips_enabled() {
+                app.add_systems(Update, generate_gltf_mips);
+            }
         }
     }
 }
@@ -532,6 +764,7 @@ fn spawn_slice(
     let mut hero_count = 0usize;
     let mut gltf_count = 0usize;
     let mut gltf_scenes: HashMap<String, Handle<WorldAsset>> = HashMap::new();
+    let mut gltf_roots: Vec<Handle<Gltf>> = Vec::new();
     for (index, instance) in manifest.instances.iter().enumerate() {
         let transform = Transform::from_translation(origin + Vec3::from_array(instance.position))
             .with_rotation(Quat::from_rotation_y(instance.rotation_y))
@@ -556,6 +789,9 @@ fn spawn_slice(
                 "forest slice instance {index}: missing glTF {path}"
             );
             let scene = gltf_scenes.entry(name.to_owned()).or_insert_with(|| {
+                if mips_enabled() {
+                    gltf_roots.push(asset_server.load(format!("models/forest_slice/{path}")));
+                }
                 asset_server.load(
                     GltfAssetLabel::Scene(0).from_asset(format!("models/forest_slice/{path}")),
                 )
@@ -615,4 +851,14 @@ fn spawn_slice(
         manifest.bounds[1],
         origin
     );
+    if mips_enabled() {
+        commands.insert_resource(GltfMipSources {
+            pending: gltf_roots,
+            processed: HashSet::new(),
+            updated: 0,
+            total_levels: 0,
+            skipped: 0,
+            max_coverage_error: 0.0,
+        });
+    }
 }

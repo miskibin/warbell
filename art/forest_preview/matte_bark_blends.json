@@ -1,0 +1,43 @@
+{
+  "schema": "warbell.forest_matte_bark_blends.v1",
+  "models": [
+    {
+      "model": "tree_small_02_backdrop",
+      "blend": "art/forest_preview/tree_small_02_backdrop.blend",
+      "before_sha256": "332150868298217654c440d99b57676a1a26f652041e7f7d254b5214a4560a79",
+      "after_sha256": "ea7f157824cd4721f3e06d72cc464f1bdf3d64607233aac57290d58161585d6f",
+      "triangles_by_mesh": {
+        "tree_small_02_trunk": 12276,
+        "tree_small_02_branches": 14790,
+        "tree_small_02_leaves": 44217
+      },
+      "trunk_arm": "art/forest_preview/cc0_prepared/tree_small_02_trunk_arm_matte_1k.png",
+      "trunk_arm_sha256": "62a6b600f2298efdacde158a0f9f36a0d27b257c02a4cd937731e3a4923d2466",
+      "normal_map_strength": 1.0,
+      "packed": true,
+      "baked_tangent_xy_scale": 0.6,
+      "trunk_normal": "art/forest_preview/cc0_prepared/tree_small_02_trunk_nor_soft_1k.png",
+      "trunk_normal_sha256": "b2d6a01dabb5d66fbcb921742ced6a016a96df0593eb127923a9e7f2551b9c05",
+      "normal_packed": true
+    },
+    {
+      "model": "tree_small_02_optimized",
+      "blend": "art/forest_preview/tree_small_02_optimized.blend",
+      "before_sha256": "f1a6c73707c1565f4f4d14fe989a31b8c74380b7828b57f8bea23db3c36c976a",
+      "after_sha256": "849174ffca0e4a55eb92d787ae81699bfac6e8203ad9f86e6bd8a6bbc5d88476",
+      "triangles_by_mesh": {
+        "tree_small_02_trunk": 19803,
+        "tree_small_02_branches": 28443,
+        "tree_small_02_leaves": 116362
+      },
+      "trunk_arm": "art/forest_preview/cc0_prepared/tree_small_02_trunk_arm_matte_1k.png",
+      "trunk_arm_sha256": "62a6b600f2298efdacde158a0f9f36a0d27b257c02a4cd937731e3a4923d2466",
+      "normal_map_strength": 1.0,
+      "packed": true,
+      "baked_tangent_xy_scale": 0.6,
+      "trunk_normal": "art/forest_preview/cc0_prepared/tree_small_02_trunk_nor_soft_1k.png",
+      "trunk_normal_sha256": "b2d6a01dabb5d66fbcb921742ced6a016a96df0593eb127923a9e7f2551b9c05",
+      "normal_packed": true
+    }
+  ]
+}

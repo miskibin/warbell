@@ -40,7 +40,10 @@ fn ign(p: vec2<f32>) -> f32 {
 }
 
 // Eye-forward distance from reverse-z prepass depth. Sky / cleared depth → very far.
-fn dist_at(coord: vec2<i32>) -> f32 {
+fn dist_at(uv: vec2<f32>, depth_size: vec2<f32>) -> f32 {
+    // Ultra can render the prepass depth at a different resolution from this
+    // post-process target. Map by UV proportion instead of reusing screen pixels.
+    let coord = clamp(vec2<i32>(uv * depth_size), vec2<i32>(0), vec2<i32>(depth_size) - vec2<i32>(1));
     let d = textureLoad(depth_texture, coord, 0);
     if d <= 0.0 {
         return 1.0e5;
@@ -65,10 +68,10 @@ fn coc_of(dist: f32) -> f32 {
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let dims = vec2<f32>(textureDimensions(screen_texture));
-    let coord = vec2<i32>(in.position.xy);
+    let depth_size = vec2<f32>(textureDimensions(depth_texture));
     let center = textureSample(screen_texture, texture_sampler, in.uv);
 
-    let c = coc_of(dist_at(coord));
+    let c = coc_of(dist_at(in.uv, depth_size));
     if settings.debug_view > 0.5 {
         return vec4<f32>(c, c, c, 1.0); // white = fully out-of-focus per DoF; black = sharp band
     }
@@ -78,7 +81,6 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     }
 
     let texel = 1.0 / dims;
-    let max_c = vec2<i32>(dims) - vec2<i32>(1, 1);
     // Depth-aware sunflower-disc gather. Each tap is weighted by its own CoC (so a sharp,
     // in-focus tap barely bleeds into a blurred pixel) AND by a Karis luma term `1/(1+luma)`:
     // that down-weights bright outlier pixels so a hot speck on the distant horizon can't pop
@@ -104,9 +106,8 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let sa = sin(ang);
         // (ca,sa) rotated by the per-pixel angle (cr,sr).
         let off = vec2<f32>(ca * cr - sa * sr, ca * sr + sa * cr) * rad;
-        let tap_coord = clamp(coord + vec2<i32>(off), vec2<i32>(0, 0), max_c);
         let s = textureSample(screen_texture, texture_sampler, in.uv + off * texel).rgb;
-        let w = max(coc_of(dist_at(tap_coord)), 0.02) / (1.0 + luma(s));
+        let w = max(coc_of(dist_at(in.uv + off * texel, depth_size)), 0.02) / (1.0 + luma(s));
         acc += s * w;
         total += w;
     }

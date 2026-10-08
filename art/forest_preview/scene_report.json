@@ -1,23 +1,24 @@
 {
   "schema": "warbell.forest_slice_source.v2",
-  "layout_sha256": "f231b3485da342396523c88f027767b9d6093ff84f60d4bc63a32deba98e58b8",
-  "scene_sha256": "e825184435dc97f99f617739afec82d2f6611c588d03337628381e341368cd07",
-  "scene_bytes": 62895874,
+  "layout_sha256": "f45058489643c032bdafcd6b3879ccfaa2f20c120c3d98fdbca0d84bdc788929",
+  "scene_sha256": "d3059c4a1fafebdc9d8f0b3f9fdfc272d29bd167ae59ecb28d54fbd5bae538c5",
+  "scene_bytes": 46548248,
   "instances": 3433,
   "by_model": {
     "dead_tree_a": 5,
     "fern_a": 31,
     "fern_b": 31,
     "fern_c": 31,
-    "gltf:cc0_dandelion_a": 82,
-    "gltf:cc0_grass_patch_a": 456,
-    "gltf:cc0_grass_patch_b": 502,
-    "gltf:cc0_heliophila_a": 81,
+    "gltf:cc0_dandelion_a": 127,
+    "gltf:cc0_grass_patch_a": 1234,
+    "gltf:cc0_grass_patch_b": 1325,
+    "gltf:cc0_heliophila_a": 182,
     "gltf:cc0_moss_rock_a": 12,
     "gltf:cc0_moss_rock_b": 12,
     "gltf:cc0_shrub_patch_a": 104,
     "gltf:cc0_stump_a": 6,
     "gltf:island_tree_01_optimized": 3,
+    "gltf:tree_small_02_backdrop": 88,
     "gltf:tree_small_02_optimized": 38,
     "mushroom_a": 8,
     "mushroom_b": 7,
@@ -30,21 +31,12 @@
     "shrub_b": 1,
     "shrub_c": 1,
     "slice:hero_flower_purple": 32,
-    "slice:hero_flower_white": 101,
-    "slice:hero_flower_yellow": 45,
-    "slice:hero_grass_a": 778,
-    "slice:hero_grass_b": 823,
     "slice:hero_shrub_a": 26,
     "slice:hero_shrub_b": 25,
     "slice:path_pebbles_a": 18,
     "slice:path_pebbles_b": 19,
     "slice:path_pebbles_c": 17,
-    "swamp_log_a": 6,
-    "tree:birch_a": 11,
-    "tree:birch_b": 12,
-    "tree:oak_a": 31,
-    "tree:oak_b": 25,
-    "tree:pine_a": 9
+    "swamp_log_a": 6
   },
   "camera": {
     "eye": [
@@ -98,6 +90,7 @@
   ],
   "linked_tree_blends": [
     "tree_small_02_optimized.blend",
-    "island_tree_01_optimized.blend"
+    "island_tree_01_optimized.blend",
+    "tree_small_02_backdrop.blend"
   ]
 }

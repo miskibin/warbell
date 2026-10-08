@@ -1,0 +1,62 @@
+2026-10-08T20:15:04.954260Z  INFO bevy_diagnostic::system_information_diagnostics_plugin::internal: SystemInfo { os: "Windows 11 Pro", kernel: "26200", cpu: "12th Gen Intel(R) Core(TM) i5-12400F", core_count: "6", memory: "31.8 GiB" }
+2026-10-08T20:15:05.456698Z  INFO bevy_render::renderer: AdapterInfo { name: "NVIDIA GeForce RTX 5060 Ti", vendor: 4318, device: 11524, device_type: DiscreteGpu, device_pci_bus_id: "0000:01:00.0", driver: "NVIDIA", driver_info: "616.64", backend: Vulkan, subgroup_min_size: 32, subgroup_max_size: 32, transient_saves_memory: false }
+2026-10-08T20:15:05.773361Z  INFO tileworld_bevy_forest::audio: HARNESS_AUDIO silent: campaign playback disabled
+2026-10-08T20:15:05.795381Z  INFO bevy_pbr::cluster: GPU clustering is supported on this device.
+2026-10-08T20:15:05.795614Z  INFO bevy_render::batching::gpu_preprocessing: GPU preprocessing is fully supported on this device.
+2026-10-08T20:15:05.796192Z  INFO bevy_egui::render: Using bindless_mode_array_size 16 (Device maximum 1048576)
+2026-10-08T20:15:05.796455Z  INFO bevy_winit::system: Creating new window Warbell (65v0)
+2026-10-08T20:15:06.055993Z  INFO tileworld_bevy_forest::forest_slice: forest slice PBR kit: 6 shared-atlas models, 5008 source triangles
+2026-10-08T20:15:06.090572Z  INFO tileworld_bevy_forest::blendertrees: blender trees: oak_a 2402 vertices 1394 triangles
+2026-10-08T20:15:06.092713Z  INFO tileworld_bevy_forest::blendertrees: blender trees: oak_b 2402 vertices 1394 triangles
+2026-10-08T20:15:06.094237Z  INFO tileworld_bevy_forest::blendertrees: blender trees: birch_a 2088 vertices 1170 triangles
+2026-10-08T20:15:06.095699Z  INFO tileworld_bevy_forest::blendertrees: blender trees: birch_b 2088 vertices 1170 triangles
+2026-10-08T20:15:06.097525Z  INFO tileworld_bevy_forest::blendertrees: blender trees: pine_a 2726 vertices 1668 triangles
+2026-10-08T20:15:06.097547Z  INFO tileworld_bevy_forest::blendertrees: blender trees: 5 source models, 11706 source vertices, 6796 source triangles, one 1024px atlas, built in 41.483ms
+2026-10-08T20:15:06.174853Z  INFO tileworld_bevy_forest::blenderenv: Blender environment: 15 models, 4948 source triangles, 4 shared textures, built in 77.1608ms
+2026-10-08T20:15:06.315052Z  INFO tileworld_bevy_forest::forest_slice: forest slice: 3433 authored instances (0 background trees, 137 PBR JSON props, 3131 glTF scenes from 11 sources, 97 environment cutouts), 120x120u at Vec3(500.0, 0.0, 500.0)
+2026-10-08T20:15:08.064114Z  INFO tileworld_bevy_forest::player::footman: footman: 233 meshes, 1.92u tall (rig scale 1.221)
+2026-10-08T20:15:12.757502Z  INFO tileworld_bevy_forest::poi: poi: planned 6 roadside clearings
+2026-10-08T20:15:18.274363Z  INFO tileworld_bevy_forest::camps: camp 0 at -173.6,6.1
+2026-10-08T20:15:18.274964Z  INFO tileworld_bevy_forest::camps: camp 1 at 5.8,-65.0
+2026-10-08T20:15:18.275384Z  INFO tileworld_bevy_forest::camps: camp 2 at -127.3,103.7
+2026-10-08T20:15:18.275799Z  INFO tileworld_bevy_forest::camps: camp 3 at -22.0,126.6
+2026-10-08T20:15:18.276256Z  INFO tileworld_bevy_forest::camps: camp 4 at 21.9,-37.6
+2026-10-08T20:15:18.285412Z  INFO tileworld_bevy_forest::chest: chests: 24 scattered (22 Relic) + 5 hoards
+2026-10-08T20:15:18.290698Z  INFO tileworld_bevy_forest::ruins: landmark Snow placed at (-118.0, -6.1)
+2026-10-08T20:15:18.290777Z  INFO tileworld_bevy_forest::ruins: landmark Desert placed at (43.6, -62.7)
+2026-10-08T20:15:18.290804Z  INFO tileworld_bevy_forest::ruins: landmark Rocky placed at (35.9, 28.7)
+2026-10-08T20:15:18.290828Z  INFO tileworld_bevy_forest::ruins: landmark Forest placed at (-105.9, 13.9)
+2026-10-08T20:15:18.290852Z  INFO tileworld_bevy_forest::ruins: landmark Swamp placed at (0.5, 43.2)
+2026-10-08T20:15:18.291392Z  INFO tileworld_bevy_forest::vignettes: vignette Forest "The Abandoned Camp" at 55.6,0.0,126.1
+2026-10-08T20:15:18.291588Z  INFO tileworld_bevy_forest::vignettes: vignette Desert "The Lost Caravan" at 131.7,0.0,-84.5
+2026-10-08T20:15:18.291987Z  INFO tileworld_bevy_forest::vignettes: vignette Rocky "The Fallen Watchtower" at 167.7,0.5,-30.0
+2026-10-08T20:15:18.292395Z  INFO tileworld_bevy_forest::vignettes: vignette Snow "The Frozen Camp" at -160.1,0.5,-17.7
+2026-10-08T20:15:18.292638Z  INFO tileworld_bevy_forest::vignettes: vignette Swamp "The Sunken Wreck" at 7.0,0.0,127.0
+2026-10-08T20:15:18.532185Z  INFO tileworld_bevy_forest::ork_fortress: ork fortress: Gnashfang Hold built at 12,162
+2026-10-08T20:15:18.545193Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 76,-114
+2026-10-08T20:15:18.545252Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 27,-44
+2026-10-08T20:15:18.545269Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -104,68
+2026-10-08T20:15:18.545302Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 0,99
+2026-10-08T20:15:18.545320Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 84,-127
+2026-10-08T20:15:18.545404Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 113,-94
+2026-10-08T20:15:18.545431Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -0,145
+2026-10-08T20:15:18.545445Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 82,-108
+2026-10-08T20:15:18.545464Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -68,22
+2026-10-08T20:15:18.545477Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 42,-65
+2026-10-08T20:15:18.545508Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 22,-37
+2026-10-08T20:15:18.545525Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -136,90
+2026-10-08T20:15:18.545584Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -118,-6
+2026-10-08T20:15:18.545747Z  INFO tileworld_bevy_forest::wayside: wayside: 7 signposts, 11 roadside pieces
+2026-10-08T20:15:18.547592Z  INFO tileworld_bevy_forest::bog: bog: drowned tower at 15.6,83.8
+2026-10-08T20:15:18.547693Z  INFO tileworld_bevy_forest::bog: bog: stilt hut at -10.6,102.8
+2026-10-08T20:15:18.547698Z  INFO tileworld_bevy_forest::bog: bog: 28 drowned trees, 18 wisps, 20 glow-mushroom clusters
+2026-10-08T20:15:18.547929Z  WARN tileworld_bevy_forest::poi: poi: no spot for the gallows on the fortress approach
+2026-10-08T20:15:18.548414Z  INFO tileworld_bevy_forest::poi: poi: 4 set-pieces, 0 fields, smoke + crows over the Hold
+2026-10-08T20:15:18.548484Z  INFO tileworld_bevy_forest::vista: vista: waterfall at 72.7,36.4 (wall 3.3u)
+2026-10-08T20:15:18.548603Z  INFO tileworld_bevy_forest::vista: vista: overlook (rock summit → castle plain) at 96.8,6.6
+2026-10-08T20:15:18.548611Z  INFO tileworld_bevy_forest::vista: vista: overlook (snow summit → western sea) at -101.2,-66.0
+2026-10-08T20:15:18.548617Z  INFO tileworld_bevy_forest::vista: vista: overlook (canyon mouth → rival dunes) at 95.0,-66.0
+2026-10-08T20:15:18.548621Z  INFO tileworld_bevy_forest::vista: vista: 3/3 overlooks
+2026-10-08T20:15:18.548624Z  INFO tileworld_bevy_forest::biome: view → world map
+2026-10-08T20:15:19.656326Z  INFO tileworld_bevy_forest::forest_slice: forest slice glTF mips: 51 images processed, 51 generated (408 total mip levels), 0 skipped, max alpha-mask coverage deviation 0.020
+2026-10-08T20:16:08.288412Z  INFO bevy_render::view::window::screenshot: Screenshot saved to C:\Users\skibi\Documents\Codex\2026-10-08\najpierw-bym-chcia-eby-zrobi-studyjn\warbell-trees\target\world-preview\forest-natural-v7-scanned-overview\shot.png

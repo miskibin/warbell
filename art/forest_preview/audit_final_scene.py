@@ -42,11 +42,12 @@ for index, row in enumerate(rows):
 extra = sorted(set(by_prefix) - set(range(len(rows))))
 if extra:
     issues.append(f"extra indexed objects {extra[:12]}")
-tree_names = {"tree_small_02_optimized", "island_tree_01_optimized"}
+tree_names = {"tree_small_02_optimized", "island_tree_01_optimized",
+              "tree_small_02_backdrop"}
 linked = sorted({mesh.library.filepath for mesh in bpy.data.meshes
                  if mesh.library and any(name in mesh.library.filepath
                                          for name in tree_names)})
-if len(linked) != 2 or any(not p.startswith("//") for p in linked):
+if len(linked) != 3 or any(not p.startswith("//") for p in linked):
     issues.append(f"tree library paths {linked}")
 report = {
     "schema": "warbell.forest_slice_blender_source_audit.v1",

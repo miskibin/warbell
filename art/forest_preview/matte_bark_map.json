@@ -1,0 +1,18 @@
+{
+  "schema": "warbell.forest_matte_bark_arm.v1",
+  "source": "target/world-preview/cc0-sources/tree_small_02/textures/tree_small_02_arm_1k.jpg",
+  "source_sha256": "891c5a1bb124292984b01558e9f2b0302d27d2fa3ccf9dfc6c34f9ea4ca24e6c",
+  "source_url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/tree_small_02/tree_small_02_arm_1k.jpg",
+  "license": "CC0-1.0",
+  "output": "art/forest_preview/cc0_prepared/tree_small_02_trunk_arm_matte_1k.png",
+  "output_sha256": "62a6b600f2298efdacde158a0f9f36a0d27b257c02a4cd937731e3a4923d2466",
+  "dimensions": [
+    1024,
+    1024
+  ],
+  "roughness_multiplier": 1.25,
+  "roughness_median_before": 0.6902,
+  "roughness_median_after": 0.86275,
+  "ao_red_unchanged": true,
+  "metallic_blue_unchanged": true
+}

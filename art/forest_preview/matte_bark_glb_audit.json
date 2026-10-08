@@ -1,0 +1,59 @@
+{
+  "schema": "warbell.matte_bark_glb_audit.v1",
+  "models": [
+    {
+      "model": "tree_small_02_optimized",
+      "before_sha256": "3138fa8cde83ca82a31ee98abf1bd7284f7b3c9bc9a5ff1850fad842c6dcc2b3",
+      "after_sha256": "537cc0f48a961378e22b4efa5dbb33bcd12d4d10e3bd38d31bebf1938e9559e8",
+      "geometry_attribute_max_delta": {
+        "BezierCurve.002:POSITION": 0.0,
+        "BezierCurve.002:NORMAL": 0.0,
+        "BezierCurve.002:TANGENT": 0.00010001659393310547,
+        "BezierCurve.002:TEXCOORD_0": 0.0,
+        "BezierCurve.002:TEXCOORD_1": 0.0,
+        "BezierCurve.001:POSITION": 0.0,
+        "BezierCurve.001:NORMAL": 0.0,
+        "BezierCurve.001:TANGENT": 0.0,
+        "BezierCurve.001:TEXCOORD_0": 0.0,
+        "BezierCurve.001:TEXCOORD_1": 0.0,
+        "BezierCurve.003:POSITION": 0.0,
+        "BezierCurve.003:NORMAL": 0.0,
+        "BezierCurve.003:TANGENT": 0.0,
+        "BezierCurve.003:TEXCOORD_0": 0.0,
+        "BezierCurve.003:TEXCOORD_1": 0.0
+      },
+      "geometry_unchanged_except_possible_tangent_repair": true,
+      "all_seven_other_images_decoded_pixels_unchanged": true,
+      "trunk_arm_matches_derived_source": true,
+      "trunk_normal_matches_baked_0_6_source": true,
+      "normal_texture_scale": 1
+    },
+    {
+      "model": "tree_small_02_backdrop",
+      "before_sha256": "fd913710c179231a3d37ebf55d0056006766e6d5a71cb54299f3a494bbcf2f70",
+      "after_sha256": "6bcfdf51033c85b38c887b071215fb91593d6a4cb08aa0f5fd6f745ab674dc75",
+      "geometry_attribute_max_delta": {
+        "BezierCurve.002:POSITION": 0.0,
+        "BezierCurve.002:NORMAL": 0.0,
+        "BezierCurve.002:TANGENT": 0.00010001659393310547,
+        "BezierCurve.002:TEXCOORD_0": 0.0,
+        "BezierCurve.002:TEXCOORD_1": 0.0,
+        "BezierCurve.001:POSITION": 0.0,
+        "BezierCurve.001:NORMAL": 0.0,
+        "BezierCurve.001:TANGENT": 0.0,
+        "BezierCurve.001:TEXCOORD_0": 0.0,
+        "BezierCurve.001:TEXCOORD_1": 0.0,
+        "BezierCurve.003:POSITION": 0.0,
+        "BezierCurve.003:NORMAL": 0.0,
+        "BezierCurve.003:TANGENT": 0.0,
+        "BezierCurve.003:TEXCOORD_0": 0.0,
+        "BezierCurve.003:TEXCOORD_1": 0.0
+      },
+      "geometry_unchanged_except_possible_tangent_repair": true,
+      "all_seven_other_images_decoded_pixels_unchanged": true,
+      "trunk_arm_matches_derived_source": true,
+      "trunk_normal_matches_baked_0_6_source": true,
+      "normal_texture_scale": 1
+    }
+  ]
+}
