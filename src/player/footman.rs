@@ -45,6 +45,8 @@ pub(crate) struct LegRig {
     pub ankle_height: f32,
     /// Imported joint units to the gameplay world's units (including the hero root).
     pub world_scale: f32,
+    pub sole_front: f32,
+    pub sole_back: f32,
 }
 
 pub(crate) fn leg_rig() -> LegRig {
@@ -54,12 +56,26 @@ pub(crate) fn leg_rig() -> LegRig {
             let hip = pos_of(model, "HipL");
             let knee = pos_of(model, "KneeL");
             let foot = pos_of(model, "FootL");
+            let ankle_height = pos_of(model, "Hips").y + hip.y + knee.y + foot.y - model.min_y;
+            let mut sole_front = 0.0_f32;
+            let mut sole_back = 0.0_f32;
+            for mesh in model.meshes.iter().filter(|m| m.joint == "FootL") {
+                for vertex in &mesh.positions {
+                    let v = mesh.xf.transform_point(Vec3::from_array(*vertex));
+                    if v.y <= -ankle_height + 0.035 {
+                        sole_front = sole_front.max(v.z);
+                        sole_back = sole_back.max(-v.z);
+                    }
+                }
+            }
             LegRig {
                 hip,
                 knee,
                 foot,
-                ankle_height: pos_of(model, "Hips").y + hip.y + knee.y + foot.y - model.min_y,
+                ankle_height,
                 world_scale: super::HERO_SCALE * TARGET_RIG_HEIGHT / (model.max_y - model.min_y),
+                sole_front,
+                sole_back,
             }
         };
         if let Some(gpu) = GPU.get() { measure(&gpu.model) } else { measure(&parse()) }

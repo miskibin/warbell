@@ -1,5 +1,5 @@
 //! Hero locomotion — camera-relative WASD, axis-separated terrain + prop collision, jump +
-//! gravity. Ported from `Character.tsx`'s movement block; constants are the TS values.
+//! gravity. Walking and running speeds are calibrated to the current hero's scale.
 //!
 //! Footing uses `steer::can_stand` (the same rule the orks/wildlife walk by: on land, within
 //! one terrace class) + `blockers::is_blocked` for solid props — so the hero slides along
@@ -16,8 +16,10 @@ use crate::{blockers, steer, worldmap};
 
 use super::{FirstPerson, Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes};
 
-const SPEED: f32 = 3.5;
-const SPRINT_MULT: f32 = 1.75;
+// Calibrated to the 1.49-unit hero: a brisk walk and an equipped run.
+// The former 3.5/6.125 pair demanded over six planted steps per second.
+pub(crate) const SPEED: f32 = 1.3;
+pub(crate) const SPRINT_MULT: f32 = 3.5 / SPEED;
 
 // ── Combat stance (the Witcher "Alert Near") ──
 // With a soft-target near (`hero.soft_pos`, picked by `softlock`), the body stays SQUARE TO THE
@@ -311,7 +313,7 @@ fn shove_out_of(hero: &mut Hero, c: Vec2, body_r: f32, cur_y: f32) {
 /// [`SystemParam`] to keep [`player_move`] under Bevy's 16-argument ceiling now that the (huge)
 /// wardens are solid too.
 #[derive(bevy::ecs::system::SystemParam)]
-pub(super) struct Bodies<'w, 's> {
+pub(crate) struct Bodies<'w, 's> {
     // `Without<Dying>`: a crumpling corpse must NOT keep its body collision, or the hero hits an
     // invisible wall where an enemy just died (the corpse's logical `pos` lingers for the ~1.4s fade).
     orks: Query<'w, 's, &'static Ork, Without<crate::dying::Dying>>,

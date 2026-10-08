@@ -100,20 +100,20 @@ fn anim_drive(
         "walk" => {
             hero.moving = true;
             hero.moving_amt = 1.0;
-            hero.vel = Vec2::Y * 3.5;
+            hero.vel = Vec2::Y * crate::player::SPEED;
         }
         "run" => {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.vel = Vec2::Y * 6.125;
+            hero.vel = Vec2::Y * (crate::player::SPEED * crate::player::SPRINT_MULT);
         }
         "block" | "defend" => hh.blocking = true,
         "blockwalk" => {
             hh.blocking = true;
             hero.moving = true;
             hero.moving_amt = 1.0;
-            hero.vel = Vec2::Y * 3.5;
+            hero.vel = Vec2::Y * crate::player::SPEED;
         }
         "attack" | "attack1" => swing(&mut hero, 0),
         "attack2" => swing(&mut hero, 1),
@@ -131,14 +131,14 @@ fn anim_drive(
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.vel = Vec2::Y * 6.125;
+            hero.vel = Vec2::Y * (crate::player::SPEED * crate::player::SPRINT_MULT);
             swing(&mut hero, 1);
         }
         "runjump" => {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.vel = Vec2::Y * 6.125;
+            hero.vel = Vec2::Y * (crate::player::SPEED * crate::player::SPRINT_MULT);
             let air_time = now.rem_euclid(2.5) - 1.0;
             if (0.0..0.65).contains(&air_time) {
                 hero.on_ground = false;
@@ -148,18 +148,20 @@ fn anim_drive(
         }
         "locomotion" => {
             // Record the complete transition sequence from frame zero, after shader warm-up.
-            let t = if recording { now.rem_euclid(6.0) } else { 0.0 };
-            let moving = (0.4..5.5).contains(&t);
-            let running = (1.6..4.5).contains(&t);
-            let speed = if running { 6.125 } else if moving { 3.5 } else { 0.0 };
+            let t = if recording { now.rem_euclid(10.0) } else { 0.0 };
+            let moving = (1.0..9.0).contains(&t);
+            let running = (3.0..8.0).contains(&t);
+            let speed = if running { crate::player::SPEED * crate::player::SPRINT_MULT }
+                else if moving { crate::player::SPEED } else { 0.0 };
             let ramp = 1.0 - (-(if moving { 14.0 } else { 9.0 }) * dt).exp();
             hero.vel = previous_velocity.lerp(Vec2::Y * speed, ramp);
             hero.moving = moving;
             let moving_target = (hero.vel.length() / 0.65).clamp(0.0, 1.0);
             hero.moving_amt = previous_moving + (moving_target - previous_moving) * (1.0 - (-18.0 * dt).exp());
-            let run_target = ((hero.vel.length() - 3.5) / 2.625).clamp(0.0, 1.0);
+            let run_target = ((hero.vel.length() - crate::player::SPEED)
+                / (crate::player::SPEED * (crate::player::SPRINT_MULT - 1.0))).clamp(0.0, 1.0);
             hero.run_amt = previous_run + (run_target - previous_run) * (1.0 - (-10.0 * dt).exp());
-            let air_time = t - 2.6;
+            let air_time = t - 6.0;
             if recording && (0.0..0.65).contains(&air_time) {
                 hero.on_ground = false;
                 hero.vel_y = 6.5 - 20.0 * air_time;

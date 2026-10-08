@@ -36,6 +36,8 @@ pub use viewmodel::ReticleTarget;
 /// Sand-Dash slide duration — re-exported so the standalone viewer (`viewer.rs`) can drive the
 /// dash-swipe preview at the real cadence. (`anim` reads it directly via `super::movement`.)
 pub(crate) use movement::DASH_TIME;
+pub(crate) use movement::{SPEED, SPRINT_MULT, player_move};
+pub(crate) use camera::player_camera;
 
 use bevy::prelude::*;
 
@@ -511,14 +513,14 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 0.0;
-            hero.walk_phase += anim::gait_phase_delta(dt * 3.5, 0.0);
+            hero.walk_phase += anim::gait_phase_delta(dt * SPEED, 0.0);
         }
         "strafe" => {
             // Combat-stance sideways step: legs twisted toward the movement, torso on the "foe".
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 0.0;
-            hero.walk_phase += anim::gait_phase_delta(dt * 3.5, 0.0);
+            hero.walk_phase += anim::gait_phase_delta(dt * SPEED, 0.0);
             hero.stance_amt = 1.0;
             hero.strafe_twist = 0.6;
         }
@@ -527,7 +529,7 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 0.0;
-            hero.walk_phase += anim::gait_phase_delta(dt * 3.5, 0.0);
+            hero.walk_phase += anim::gait_phase_delta(dt * SPEED, 0.0);
             hero.stance_amt = 1.0;
             hero.back_amt = 1.0;
         }
@@ -535,7 +537,7 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += anim::gait_phase_delta(dt * 6.125, 1.0);
+            hero.walk_phase += anim::gait_phase_delta(dt * SPEED * SPRINT_MULT, 1.0);
         }
         "block" | "defend" => hh.blocking = true,
         "attack" | "attack1" => swing(&mut hero, 0),

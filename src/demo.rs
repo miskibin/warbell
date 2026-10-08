@@ -6,7 +6,7 @@
 //!   - `explore` — walk the hero along a scenic path behind a chase-cam; the world stays alive
 //!     (villagers, wildlife, wind, day sky). Pair with `FOREST_CLIP`.
 //!   - `locomotion` — real movement input through walk, sprint, jump, landing and stopping;
-//!     pair with `FOREST_TPS=1` and a six-second `FOREST_CLIP` to verify foot contact.
+//!     pair with `FOREST_TPS=1` and a ten-second `FOREST_CLIP` to verify foot contact.
 //!   - `defend`  — reinforce the courtyard with guards for a lively castle defence. Pair with
 //!     `FOREST_CLIP FOREST_WAVE=1 FOREST_DEFEND=1 FOREST_TOWN=1` (siege + auto-defences + the
 //!     sustained horde from `siege_clip_refill`); frame with `FOREST_CAM`/`FOREST_CLIP_ORBIT`.
@@ -37,6 +37,13 @@ impl Plugin for DemoPlugin {
                 // Do not mark this hero scripted: ordinary player_move owns all displacement.
                 app.add_systems(PreUpdate, locomotion_input.after(bevy::input::InputSystems))
                     .add_systems(PostUpdate, mute_captions);
+                if std::env::var("FOREST_DEMO_SIDE").is_ok() {
+                    // Fix input orientation before movement, then follow the resulting position.
+                    app.add_systems(Update, locomotion_side_camera
+                        .after(crate::player::player_camera).before(crate::player::player_move))
+                        .add_systems(PostUpdate, locomotion_side_camera
+                            .before(bevy::transform::TransformSystems::Propagate));
+                }
             }
             Some("defend") => {
                 app.add_systems(PostStartup, defend_setup)
@@ -71,7 +78,7 @@ impl Plugin for DemoPlugin {
 }
 
 /// Real input-driven smoke sequence. Recording frames provide a repeatable timeline;
-/// without a clip, wait for world startup before beginning the six-second sequence.
+/// without a clip, wait for world startup before beginning the ten-second sequence.
 fn locomotion_input(
     time: Res<Time>,
     progress: Option<Res<crate::capture::ClipProgress>>,
@@ -82,6 +89,8 @@ fn locomotion_input(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut started: Local<Option<f32>>,
     mut previous: Local<f32>,
+    mut staged: Local<bool>,
+    mut hero_q: Query<(&mut Hero, &mut Transform), Without<Camera3d>>,
 ) {
     for key in [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD,
         KeyCode::ShiftLeft, KeyCode::ShiftRight, KeyCode::Space] {
@@ -94,6 +103,16 @@ fn locomotion_input(
         return;
     }
     if *state.get() != crate::game_state::AppState::Playing { return; }
+    let side = std::env::var("FOREST_DEMO_SIDE").is_ok();
+    if side && !*staged {
+        let Ok((mut hero, mut root)) = hero_q.single_mut() else { return };
+        let pos = Vec2::new(-12.0, 26.0);
+        let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+        *hero = Hero::fresh(pos, y, std::f32::consts::FRAC_PI_2);
+        root.translation = Vec3::new(pos.x, y, pos.y);
+        root.rotation = Quat::from_rotation_y(hero.facing);
+        *staged = true;
+    }
     let t = if let Some(progress) = progress {
         if !progress.recording { return; }
         let fps = std::env::var("FOREST_CLIP_FPS").ok()
@@ -102,10 +121,23 @@ fn locomotion_input(
     } else {
         time.elapsed_secs() - *started.get_or_insert(time.elapsed_secs())
     };
-    if (0.4..5.5).contains(&t) { keys.press(KeyCode::KeyW); }
-    if (1.6..4.5).contains(&t) { keys.press(KeyCode::ShiftLeft); }
-    if *previous < 2.6 && t >= 2.6 { keys.press(KeyCode::Space); }
+    if (1.0..9.0).contains(&t) { keys.press(if side { KeyCode::KeyA } else { KeyCode::KeyW }); }
+    if (3.0..8.0).contains(&t) { keys.press(KeyCode::ShiftLeft); }
+    if *previous < 6.0 && t >= 6.0 { keys.press(KeyCode::Space); }
     *previous = t;
+}
+
+/// Optional profile view on the clear lawn. +Z view direction makes A travel +X.
+fn locomotion_side_camera(
+    hero_q: Query<&Hero>,
+    mut camera_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>)>,
+) {
+    let Ok(hero) = hero_q.single() else { return };
+    let Ok(mut camera) = camera_q.single_mut() else { return };
+    let ground = crate::worldmap::ground_at_world(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
+    let feet = Vec3::new(hero.pos.x, ground, hero.pos.y);
+    *camera = Transform::from_translation(feet + Vec3::new(0.0, 1.5, -4.0))
+        .looking_at(feet + Vec3::Y * 0.8, Vec3::Y);
 }
 
 // ── explore: scripted hero walk + chase-cam ──────────────────────────────────────────
@@ -119,7 +151,7 @@ const EXPLORE_PATH: [Vec2; 5] = [
     Vec2::new(-30.0, 28.0),
     Vec2::new(-36.0, 30.0),
 ];
-const EXPLORE_SPEED: f32 = 4.0; // world units / sec
+const EXPLORE_SPEED: f32 = crate::player::SPEED;
 
 /// Position + unit tangent at arc-length `d` along the polyline; `arrived` once past the end.
 fn sample_path(path: &[Vec2], d: f32) -> (Vec2, Vec2, bool) {

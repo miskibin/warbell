@@ -182,6 +182,15 @@ enum MotionClip {
     Victory,
 }
 
+#[derive(Clone, Copy)]
+struct ReleasedContact {
+    cycle: i32,
+    anchor: Vec2,
+    phase: f32,
+    height: f32,
+    rotation: Quat,
+}
+
 /// Per-hero transient state, reset with Hero::fresh on a new run. Capture the
 /// actually displayed pose on a clip change, including changes during another fade.
 #[derive(Default)]
@@ -195,7 +204,7 @@ pub(super) struct AnimationState {
     leap_right: bool,
     block_weight: f32,
     contacts: [Option<(i32, Vec2)>; 2],
-    released_contacts: [Option<(i32, Vec2, f32)>; 2],
+    released_contacts: [Option<ReleasedContact>; 2],
 }
 
 impl AnimationState {
@@ -255,15 +264,16 @@ impl AnimationState {
         for (i, right) in [false, true].into_iter().enumerate() {
             let phase = phase + if right { PI } else { 0.0 };
             let cycle = (phase / TAU).floor() as i32;
-            if let Some((released_cycle, anchor, release_phase)) = self.released_contacts[i] {
-                if released_cycle == cycle {
+            if let Some(released) = self.released_contacts[i] {
+                if released.cycle == cycle {
                     self.contacts[i] = None;
-                    let offset = anchor - pos;
-                    let from = heading.inverse() * Vec3::new(offset.x, 0.0, offset.y) / scale;
-                    let blend = smoothstep((phase - release_phase).abs());
+                    let offset = released.anchor - pos;
+                    let mut from = heading.inverse() * Vec3::new(offset.x, 0.0, offset.y) / scale;
+                    from.y = released.height;
+                    let blend = smoothstep((phase - released.phase).abs() * 3.0);
                     targets[i].0 = from.lerp(targets[i].0, blend)
                         + Vec3::Y * (0.10 * (PI * blend).sin());
-                    targets[i].1 = Quat::IDENTITY.slerp(targets[i].1, blend);
+                    targets[i].1 = (heading.inverse() * released.rotation).slerp(targets[i].1, blend);
                     continue;
                 }
             }
@@ -271,7 +281,7 @@ impl AnimationState {
                 self.contacts[i] = None;
                 continue;
             }
-            let (sole, _) = foot_transform(p, right);
+            let (sole, rotation) = foot_transform(p, right);
             let world = heading * (sole * scale);
             let anchor = match self.contacts[i] {
                 Some((last_cycle, anchor)) if last_cycle == cycle => anchor,
@@ -279,21 +289,23 @@ impl AnimationState {
             };
             let offset = anchor - pos;
             let mut target = heading.inverse() * Vec3::new(offset.x, 0.0, offset.y) / scale;
-            target.y = 0.0;
+            target.y = sole.y;
             let rig = super::footman::leg_rig();
             let hip = p.hips.t.unwrap() + p.hips.r * leg_vectors(right).0;
             let horizontal = Vec2::new(target.x - hip.x, target.z - hip.z).length();
             let reach = rig.knee.length() + rig.foot.length() - 0.012;
             // A hard turn needs a fresh step. Keeping an unreachable anchor
             // folded the body down to the ankles while IK still slid the boot.
-            if horizontal > reach * 0.82 {
+            if horizontal > reach * 0.72 {
                 self.contacts[i] = None;
-                self.released_contacts[i] = Some((cycle, anchor, phase));
-                targets[i] = (target, Quat::IDENTITY);
+                self.released_contacts[i] = Some(ReleasedContact {
+                    cycle, anchor, phase, height: target.y, rotation: heading * rotation,
+                });
+                targets[i] = (target, rotation);
                 continue;
             }
             self.contacts[i] = Some((cycle, anchor));
-            targets[i] = (target, Quat::IDENTITY);
+            targets[i] = (target, rotation);
         }
         lower_pelvis_to_reach(p, &targets);
         for (right, (target, rotation)) in [false, true].into_iter().zip(targets) {
@@ -429,7 +441,7 @@ pub(crate) fn loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
 /// must not silently change the amount of ground covered by a step.
 fn gait_dimensions(run: f32) -> (f32, f32) {
     let run = run.clamp(0.0, 1.0);
-    (lerp(0.52, 0.38, run), lerp(0.38, 0.52, run))
+    (lerp(0.58, 0.30, run), lerp(0.40, 0.44, run))
 }
 
 fn foot_in_contact(phase: f32, run: f32) -> bool {
@@ -455,8 +467,14 @@ pub(crate) fn gait_phase_delta(distance: f32, run: f32) -> f32 {
 fn foot_target(phase: f32, run: f32) -> (f32, f32, f32) {
     let (contact, stride) = gait_dimensions(run);
     let u = phase.rem_euclid(TAU) / TAU;
+    let offset = -0.10 * run;
+    let heel = lerp(-0.16, -0.08, run);
+    let toe = lerp(0.25, 0.38, run);
     if u <= contact {
-        return (stride * (1.0 - 2.0 * u / contact), 0.0, 0.0);
+        let support = u / contact;
+        let pitch = heel * (1.0 - smoothstep(support / 0.22))
+            + toe * smoothstep((support - 0.65) / 0.35);
+        return (offset + stride * (1.0 - 2.0 * support), boot_clearance(pitch), pitch);
     }
     let s = (u - contact) / (1.0 - contact);
     let tangent = -2.0 * stride * (1.0 - contact) / contact;
@@ -465,10 +483,19 @@ fn foot_target(phase: f32, run: f32) -> (f32, f32, f32) {
         + (2.0 * s.powi(3) - 3.0 * s * s + s) * tangent;
     // A runner folds the trailing leg early, clearing it before the body rises
     // into flight. Slow symmetric recovery left the leg overextended behind him.
-    let recovery = s + run * 0.30 * (PI * s).sin();
-    let lift = lerp(0.085, 0.40, run) * (PI * recovery).sin().powi(2);
-    let pitch = lerp(0.10, 0.32, run) * (TAU * s).sin() * (PI * s).sin();
-    (z, lift, pitch)
+    let recovery = s + lerp(0.12, 0.27, run) * (PI * s).sin();
+    let pitch = lerp(toe, heel, smoothstep(s));
+    let lift = lerp(boot_clearance(toe), boot_clearance(heel), smoothstep(s))
+        + lerp(0.085, 0.28, run) * (PI * recovery).sin().powi(2);
+    (z + offset, lift, pitch)
+}
+
+/// Roll from heel to toe while keeping the lowest edge of the imported boot
+/// on the floor. The ankle rises naturally during push-off.
+fn boot_clearance(pitch: f32) -> f32 {
+    let rig = super::footman::leg_rig();
+    if pitch >= 0.0 { rig.sole_front * pitch.sin() }
+    else { rig.sole_back * -pitch.sin() }
 }
 
 fn leg_vectors(right: bool) -> (Vec3, Vec3, Vec3) {
@@ -555,36 +582,50 @@ fn footman_gait(c: f32, run: f32) -> Pose {
     let run = run.clamp(0.0, 1.0);
     let mut p = rest();
     let swing = c.cos();
-    // Walking transfers weight between contacts; running has a compressed support
-    // followed by a short flight, rather than alternating two planted marching feet.
+    // One body wave per step. Walking is highest over the supporting foot;
+    // running compresses at mid-support and rises into flight. The previous
+    // two separate sine lobes caused a second bounce during every single step.
     let half = c.rem_euclid(PI) / TAU;
     let contact = gait_dimensions(run).0;
-    let base_y = lerp(0.88, 0.76, run);
-    let hips_y = if contact >= 0.5 || half <= contact {
-        base_y + lerp(0.006, 0.095, run) * (PI * half / contact).sin().powi(2)
-    } else {
-        base_y + (0.20 * (0.5 - contact) / 0.12) * (PI * (half - contact) / (0.5 - contact)).sin().powi(2)
-    };
+    let walk_y = 0.94 - 0.025 * (2.0 * c).cos();
+    let run_y = 0.88 - 0.035 * (TAU * (half - contact * 0.5) / 0.5).cos();
+    let hips_y = lerp(walk_y, run_y, run);
     p.hips = Jp {
-        t: Some(Vec3::new(-swing * 0.014, hips_y + 1.05 - super::model::HIP_REST_Y, 0.0)),
-        r: e3(0.0, swing * 0.035, swing * 0.018),
+        t: Some(Vec3::new(-swing * 0.008, hips_y + 1.05 - super::model::HIP_REST_Y, 0.0)),
+        r: e3(0.0, swing * 0.035, swing * 0.012),
     };
-    let lean = lerp(0.055, 0.18, run);
+    let lean = lerp(0.035, 0.16, run);
     p.torso = Jp::r(e3(lean, -swing * lerp(0.045, 0.085, run), -swing * 0.015));
     p.head = Jp::r(e3(-lean * 0.7, swing * 0.025, swing * 0.009));
     // An equipped knight pumps the arms opposite the legs, with soft elbows and
     // the equipment kept close. Avoid the old rigid, shoulder-high sword carry.
-    p.sh_r = Jp::r(e3(-swing * lerp(0.16, 0.32, run), 0.0, lerp(0.025, 0.075, run)));
-    p.sh_l = Jp::r(e3(swing * lerp(0.11, 0.20, run), 0.0, -lerp(0.025, 0.06, run)));
-    p.el_r = Jp::r(rx(-lerp(0.16, 0.48, run) - swing.min(0.0) * 0.06));
-    p.el_l = Jp::r(rx(-lerp(0.20, 0.40, run) + swing.max(0.0) * 0.05));
-    p.sword = Jp::r(e3(lerp(SWORD_REST_X, 1.75, run), 0.3, -0.04 * run));
+    p.sh_r = Jp::r(e3(-swing * lerp(0.20, 0.38, run), 0.0, lerp(0.025, 0.06, run)));
+    p.sh_l = Jp::r(e3(swing * lerp(0.14, 0.28, run), 0.0, -lerp(0.025, 0.06, run)));
+    p.el_r = Jp::r(rx(-lerp(0.20, 0.78, run) - swing.min(0.0) * 0.08));
+    p.el_l = Jp::r(rx(-lerp(0.25, 0.72, run) + swing.max(0.0) * 0.06));
+    // Counter the bent elbow so the blade stays angled down beside the runner,
+    // rather than flicking horizontally in front of the body on every step.
+    p.sword = Jp::r(e3(lerp(1.75, 2.20, run) + swing * 0.18 * run, 0.3, -0.04 * run));
     p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
-    let targets = [false, true].map(|right| {
+    let mut targets = [false, true].map(|right| {
         let (z, lift, pitch) = foot_target(c + if right { PI } else { 0.0 }, run);
         let (hip, knee, foot) = leg_vectors(right);
         (Vec3::new(hip.x + knee.x + foot.x, lift, z), rx(pitch))
     });
+    // A recovery foot is free to lift higher. Lowering the whole body to reach
+    // that airborne foot introduced extra dips in every running flight phase.
+    let rig = super::footman::leg_rig();
+    let reach = (rig.knee.length() + rig.foot.length()) * lerp(0.985, 0.94, run);
+    let pelvis = p.hips.t.unwrap() + Vec3::Y * (super::model::HIP_REST_Y - 1.05);
+    for (i, right) in [false, true].into_iter().enumerate() {
+        if foot_in_contact(c + if right { PI } else { 0.0 }, run) { continue; }
+        let hip = pelvis + p.hips.r * leg_vectors(right).0;
+        let ankle_offset = targets[i].1 * (Vec3::Y * rig.ankle_height);
+        let ankle = targets[i].0 + ankle_offset;
+        let horizontal = Vec2::new(ankle.x - hip.x, ankle.z - hip.z).length_squared();
+        let lowest_ankle = hip.y - (reach * reach - horizontal).max(0.0).sqrt();
+        targets[i].0.y = targets[i].0.y.max(lowest_ankle - ankle_offset.y);
+    }
     lower_pelvis_to_reach(&mut p, &targets);
     for (right, (sole, rotation)) in [false, true].into_iter().zip(targets) {
         plant_leg(&mut p, right, sole, rotation);
@@ -1475,6 +1516,32 @@ fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<(Quat, Qua
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::{SPEED, SPRINT_MULT};
+
+    #[test]
+    fn gait_cadence_and_body_motion_stay_within_human_ranges() {
+        let walk_steps = gait_phase_delta(SPEED, 0.0) / PI;
+        let run_steps = gait_phase_delta(SPEED * SPRINT_MULT, 1.0) / PI;
+        assert!((1.8..2.7).contains(&walk_steps), "walk cadence: {walk_steps}");
+        assert!((2.6..3.7).contains(&run_steps), "run cadence: {run_steps}");
+        assert!(run_steps > walk_steps);
+        for run in [0.0, 1.0] {
+            let mut heights = Vec::new();
+            for frame in 0..120 {
+                let p = footman_gait(TAU * frame as f32 / 120.0, run);
+                heights.push(p.hips.t.unwrap().y + super::super::model::HIP_REST_Y - 1.05);
+            }
+            let min = heights.iter().copied().fold(f32::INFINITY, f32::min);
+            let max = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            assert!(min > 0.83, "gait collapses into a crouch: {min}");
+            assert!(max - min < 0.09, "gait bounces too far: {}", max - min);
+            let peaks = (0..heights.len()).filter(|&i| {
+                heights[i] > heights[(i + heights.len() - 1) % heights.len()] + 0.00001
+                    && heights[i] > heights[(i + 1) % heights.len()] + 0.00001
+            }).count();
+            assert_eq!(peaks, 2, "one rise per step, without secondary bounces");
+        }
+    }
 
     #[test]
     fn reversing_direction_does_not_switch_planted_feet_mid_blend() {
@@ -1498,10 +1565,10 @@ mod tests {
             let mut state = AnimationState::default();
             let mut phase = 0.0;
             let mut pos = Vec2::ZERO;
-            let mut velocity = Vec2::Y * 6.125;
+            let mut velocity = Vec2::Y * SPEED * SPRINT_MULT;
             let mut facing = 0.0;
             let mut run = 1.0;
-            let desired = Vec2::new(turn.sin(), turn.cos()) * 6.125;
+            let desired = Vec2::new(turn.sin(), turn.cos()) * SPEED * SPRINT_MULT;
             let mut first = footman_gait(phase, run);
             state.plant_contacts(&mut first, pos, facing, phase, run);
             let mut previous_feet = [sole(&first, false).0, sole(&first, true).0];
@@ -1509,7 +1576,7 @@ mod tests {
                 velocity = velocity.lerp(desired, (dt * 14.0_f32).min(1.0));
                 facing = super::super::movement::lerp_angle(facing, turn, dt * 15.0);
                 let speed = velocity.length();
-                let target = ((speed - 3.5) / 2.625).clamp(0.0, 1.0);
+                let target = ((speed - SPEED) / (SPEED * (SPRINT_MULT - 1.0))).clamp(0.0, 1.0);
                 run += (target - run) * (1.0 - (-dt * 10.0).exp());
                 pos += velocity * dt;
                 phase += gait_phase_delta(speed * dt, run);
@@ -1519,12 +1586,15 @@ mod tests {
                 assert!(height > 0.55, "turn collapsed the pelvis: turn={turn}, height={height}");
                 for (i, right) in [false, true].into_iter().enumerate() {
                     let foot = sole(&p, right).0;
-                    if let Some((cycle, _, release_phase)) = state.released_contacts[i] {
+                    if let Some(released) = state.released_contacts[i] {
                         let foot_phase = phase + if right { PI } else { 0.0 };
-                        if cycle == (foot_phase / TAU).floor() as i32
-                            && (foot_phase - release_phase).abs() < 0.001 {
+                        if released.cycle == (foot_phase / TAU).floor() as i32
+                            && (foot_phase - released.phase).abs() < 0.001 {
                             assert!(foot.distance(previous_feet[i]) < 0.20,
                                 "early toe-off snaps the foot at a sharp turn");
+                            let mut held = footman_gait(phase, run);
+                            state.plant_contacts(&mut held, pos, facing, phase, run);
+                            assert_same_pose(&p, &held);
                         }
                     }
                     previous_feet[i] = foot;
@@ -1575,7 +1645,7 @@ mod tests {
                             let cycle = (foot_phase / TAU).floor() as i32;
                             if let Some((last_cycle, planted)) = contacts[i] {
                                 if last_cycle == cycle {
-                                    assert!(world.distance(planted) < 0.003,
+                                    assert!(Vec2::new(world.x - planted.x, world.z - planted.z).length() < 0.003,
                                         "planted foot slides: run={run}, speed={speed}, dt={dt}, displacement={:?}", world - planted);
                                     comparisons += 1;
                                 }
@@ -1596,13 +1666,13 @@ mod tests {
         for run in [0.0, 0.5, 1.0] {
             let contact = gait_dimensions(run).0 * TAU;
             for boundary in [0.0, contact, TAU] {
-                let eps = 0.0001;
+                let eps = 0.0005;
                 let a = foot_target(boundary - eps, run);
                 let b = foot_target(boundary, run);
                 let c = foot_target(boundary + eps, run);
                 assert!((a.0 - c.0).abs() < 0.001);
                 assert!((a.1 - c.1).abs() < 0.001);
-                assert!(((b.0 - a.0) / eps - (c.0 - b.0) / eps).abs() < 0.005);
+                assert!(((b.0 - a.0) / eps - (c.0 - b.0) / eps).abs() < 0.01);
             }
         }
     }
@@ -1617,8 +1687,8 @@ mod tests {
         let scale = super::super::footman::leg_rig().world_scale;
         for frame in 0..600 {
             let t = frame as f32 * dt;
-            let speed = if t < 1.0 { 3.5 } else if t < 3.0 { 6.125 } else { 3.5 };
-            let target = ((speed - 3.5_f32) / 2.625).clamp(0.0, 1.0);
+            let speed = if t < 1.0 { SPEED } else if t < 3.0 { SPEED * SPRINT_MULT } else { SPEED };
+            let target = ((speed - SPEED) / (SPEED * (SPRINT_MULT - 1.0))).clamp(0.0, 1.0);
             run += (target - run) * (1.0 - (-dt * 10.0).exp());
             let facing = if t < 2.0 { 0.0 } else { (t - 2.0).min(1.0) * 0.6 };
             pos += Vec2::new(facing.sin(), facing.cos()) * speed * dt;
@@ -1638,14 +1708,14 @@ mod tests {
 
     #[test]
     fn running_has_flight_and_a_longer_step_than_walking() {
-        let (_, walk_stride) = gait_dimensions(0.0);
-        let (_, run_stride) = gait_dimensions(1.0);
-        assert!(run_stride > walk_stride * 1.3);
+        let walk_step = PI / gait_phase_delta(1.0, 0.0);
+        let run_step = PI / gait_phase_delta(1.0, 1.0);
+        assert!(run_step > walk_step * 1.5);
         // After left toe-off, before right touchdown, both boots recover.
         let phase = 0.44 * TAU;
-        assert!(foot_target(phase, 1.0).1 > 0.0);
-        assert!(foot_target(phase + PI, 1.0).1 > 0.0);
-        assert!(foot_target(phase, 0.0).1 == 0.0 || foot_target(phase + PI, 0.0).1 == 0.0);
+        assert!(!foot_in_contact(phase, 1.0));
+        assert!(!foot_in_contact(phase + PI, 1.0));
+        assert!(foot_in_contact(phase, 0.0) || foot_in_contact(phase + PI, 0.0));
     }
 
     fn assert_same_pose(a: &Pose, b: &Pose) {
@@ -1716,13 +1786,15 @@ mod tests {
                 let p = footman_gait(phase, run);
                 for right in [false, true] {
                     let leg_phase = phase + if right { PI } else { 0.0 };
-                    let (position, normal) = sole(&p, right);
-                    assert!(position.y >= -0.025, "boot penetrates ground: run={run}, phase={leg_phase}, y={}", position.y);
-                    if foot_target(leg_phase, run).1 < 0.00001 {
-                        assert!(position.y.abs() <= 0.025, "supporting boot floats: run={run}, phase={leg_phase}, y={}", position.y);
-                    }
-                    if foot_target(leg_phase, run).1 < 0.00001 {
-                        assert!(normal.dot(Vec3::Y) > 0.995, "supporting sole must stay level");
+                    let (position, _) = sole(&p, right);
+                    let rotation = foot_transform(&p, right).1;
+                    let rig = super::super::footman::leg_rig();
+                    let heel_y = (position + rotation * Vec3::new(0.0, 0.0, -rig.sole_back)).y;
+                    let toe_y = (position + rotation * Vec3::new(0.0, 0.0, rig.sole_front)).y;
+                    let lowest = heel_y.min(toe_y);
+                    assert!(lowest >= -0.005, "boot penetrates ground: run={run}, phase={leg_phase}, y={lowest}");
+                    if foot_in_contact(leg_phase, run) {
+                        assert!(lowest.abs() <= 0.005, "supporting heel/toe floats: run={run}, phase={leg_phase}, y={lowest}");
                     }
                     max_lift = max_lift.max(position.y);
                 }
