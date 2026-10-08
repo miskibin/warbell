@@ -75,6 +75,12 @@ const EXPLORE_PATH: [Vec2; 5] = [
 ];
 const EXPLORE_SPEED: f32 = 4.0; // world units / sec
 
+/// `FOREST_DEMO_SPEED=<u/s>` overrides the explore pace (e.g. `6.125` = the Shift sprint), so a
+/// clip can film the hero's walk / jog / sprint gait — the animator picks the gait from speed.
+fn explore_speed() -> f32 {
+    std::env::var("FOREST_DEMO_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(EXPLORE_SPEED)
+}
+
 /// Position + unit tangent at arc-length `d` along the polyline; `arrived` once past the end.
 fn sample_path(path: &[Vec2], d: f32) -> (Vec2, Vec2, bool) {
     let mut rem = d;
@@ -110,7 +116,7 @@ fn explore_drive(
     let rec = prog.as_ref().map_or(true, |p| p.recording);
     if rec {
         // Only step forward onto solid land — never walk out over a river (no terrain there).
-        let next = *dist + EXPLORE_SPEED * dt;
+        let next = *dist + explore_speed() * dt;
         let (np, _, _) = sample_path(&EXPLORE_PATH, next);
         if crate::worldmap::ground_at_world(np.x, np.y).is_some() {
             *dist = next;
@@ -127,7 +133,7 @@ fn explore_drive(
     hero.moving_amt = if walking { 1.0 } else { 0.0 };
     hero.gait_speed = 0.0;
     if walking {
-        crate::player::anim::stage_gait(&mut hero, EXPLORE_SPEED, dt);
+        crate::player::anim::stage_gait(&mut hero, explore_speed(), dt);
     }
     // The rig's hips own the bob (as in `movement`); the root just tracks the ground.
     htf.translation = Vec3::new(pos.x, y, pos.y);
