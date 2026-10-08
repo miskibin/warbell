@@ -24,6 +24,7 @@ pub(crate) use combat::{
 pub use combat::ATTACK_DURATION;
 mod health;
 pub(crate) mod model;
+mod footman;
 mod movement;
 mod softlock;
 mod viewmodel;
@@ -37,8 +38,6 @@ pub use viewmodel::ReticleTarget;
 pub(crate) use movement::DASH_TIME;
 
 use bevy::prelude::*;
-
-use crate::inventory::Inventory;
 
 /// Root scale applied to the TS-unit knight. Was 0.47 (≈ ork height); now ~1.35× that (0.47 × 1.5,
 /// then dialled back 10%) so the hero reads clearly in the third-person frame without towering as a
@@ -303,12 +302,6 @@ impl Default for HeroHealth {
 #[derive(Resource, Default)]
 pub struct PlayerRes(pub tileworld_core::player::Player);
 
-/// The shared creature material every hero mesh uses (vertex colours carry the hue; the shader
-/// adds per-surface texture from the alpha-packed surf code). Stored so [`reskin_hero`] can
-/// rebuild the limb meshes against the same material on an equip change.
-#[derive(Resource)]
-pub struct HeroMaterial(pub Handle<crate::creature::CreatureMaterial>);
-
 /// Control mode. **Play** drives the knight + follow-cam; **FreeRoam** hands the camera back
 /// to `controls::FlyCam` for debugging. Toggle with the backtick key.
 #[derive(Resource, PartialEq, Eq, Clone, Copy)]
@@ -429,9 +422,7 @@ impl Plugin for PlayerPlugin {
                     camera::toggle_first_person, // V / HUD eye button: third ⇄ first person
                     camera::player_camera,
                     camera::fp_body_visibility
-                        .after(camera::player_camera)
-                        .after(reskin_hero), // FP: hide the world rig, including freshly rebuilt equipment
-                    reskin_hero, // rebuild limb meshes when weapon/armor equip changes
+                        .after(camera::player_camera), // FP: hide the world rig
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
                     anim::hero_anim,
                     combat::update_sparks,
@@ -572,14 +563,9 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
 fn spawn_hero(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<crate::creature::CreatureMaterial>>,
-    inv: Res<Inventory>,
 ) {
-    // The hero's own matte creature material; colour lives in the mesh vertex colours and surface
-    // texture comes from the alpha-packed surf code (matte plate/cloth/skin, not shiny plastic).
-    let mat = crate::creature::make_hero_material(&mut materials);
-    commands.insert_resource(HeroMaterial(mat.clone()));
-
     // Debug/screenshot hook: `FOREST_HERO="x,z"` drops the hero at a world XZ (e.g. deep in a
     // biome region) so a capture shows that biome's reactive atmosphere/weather.
     let staged = std::env::var("FOREST_HERO").ok().and_then(|s| {
@@ -605,12 +591,9 @@ fn spawn_hero(
         ))
         .id();
 
-    // Build the limb meshes reflecting whatever's equipped (bare on a fresh run).
-    let spec = model::build_knight(
-        inv.0.equipped_id.as_deref(),
-        inv.0.equipped_armor_id.as_deref(),
-    );
-    spawn_hero_meshes(&mut commands, root, spec, &mut meshes, &mat);
+    // The Royal Footman is the knight, textured through `creature.wgsl`. Gear ids no longer
+    // rebuild the body — the mesh is the footman either way.
+    spawn_hero_meshes(&mut commands, root, &mut meshes, &mut images, &mut materials);
 
     // When staged into a biome for a screenshot, mirror the pose into `HeroState` now so the
     // reactive atmosphere/weather pick up that region immediately (in FreeRoam capture mode
@@ -620,135 +603,16 @@ fn spawn_hero(
     }
 }
 
-/// Spawn a joint entity (transform-only, optionally `HeroPart`-tagged for the animator), parented
-/// under `parent`, returning it so children can nest beneath. An optional mesh `leaf` is spawned as
-/// a separate child entity (so each body mesh can be hidden on its own without hiding child joints).
-struct Leaf {
-    mesh: Handle<Mesh>,
-    weapon: bool,
-}
-fn spawn_joint(
-    commands: &mut Commands,
-    parent: Entity,
-    tag: Option<Joint>,
-    xf: Transform,
-    mat: &Handle<crate::creature::CreatureMaterial>,
-    leaf: Option<Leaf>,
-) -> Entity {
-    let mut ec = commands.spawn((xf, Visibility::Visible));
-    if let Some(j) = tag {
-        ec.insert(HeroPart { joint: j });
-    }
-    let joint = ec.id();
-    commands.entity(parent).add_child(joint);
-    if let Some(l) = leaf {
-        let mut le = commands.spawn((
-            Mesh3d(l.mesh),
-            MeshMaterial3d(mat.clone()),
-            Transform::default(),
-            HeroMesh,
-        ));
-        if l.weapon {
-            le.insert(HeroWeapon);
-        }
-        let leaf_e = le.id();
-        commands.entity(joint).add_child(leaf_e);
-    }
-    joint
-}
-
-/// Spawn the full articulated knight (hips → torso → neck → head; shoulder → elbow → hand
-/// + weapon/shield; hip → knee → foot) as children of the hero `root`, all sharing the hero
-/// material. Shared by [`spawn_hero`] and [`reskin_hero`] so an equip swap rebuilds the same tree.
+/// Spawn the Royal Footman under the hero `root`. Shared by [`spawn_hero`] and the standalone
+/// viewer. The body does not change with equipped gear — the footman is the knight.
 pub(crate) fn spawn_hero_meshes(
     commands: &mut Commands,
     root: Entity,
-    m: model::KnightMeshes,
     meshes: &mut Assets<Mesh>,
-    mat: &Handle<crate::creature::CreatureMaterial>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
-    use Joint::*;
-    let p = |t: Vec3| Transform::from_translation(t);
-    let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, weapon: false });
-
-    use model::{HIP_DX, O_ELBOW, O_FOOT, O_HAND, O_HEAD, O_HIP_Y, O_KNEE, O_NECK, O_SHOULDER_Y, O_TORSO, SHOULDER_DX, Y_HIPS};
-
-    // Rig at the feet (y=0); proportions are HH-derived (see model::PROPORTIONS). Feet rest on the
-    // ground because the boot mesh bottoms at the ankle joint's height below it.
-    let rig = commands
-        .spawn((Transform::from_xyz(0.0, 0.0, 0.0), Visibility::Visible))
-        .id();
-    commands.entity(root).add_child(rig);
-
-    // Spine: hips (anim-fixed Y_HIPS) → torso → neck → head.
-    let hips = spawn_joint(commands, rig, Some(Hips), p(Vec3::new(0.0, Y_HIPS, 0.0)), mat, body(meshes.add(m.hips)));
-    let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, O_TORSO, 0.0)), mat, body(meshes.add(m.torso)));
-    let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, O_NECK, 0.0)), mat, body(meshes.add(m.neck)));
-    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, body(meshes.add(m.head)));
-
-    // Left arm + heater shield on the hand pivot (`anim` rewrites the shield pose every frame).
-    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, body(meshes.add(m.shoulder_l)));
-    let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, body(meshes.add(m.elbow_l)));
-    let hand_l = spawn_joint(commands, el_l, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
-    let shield = spawn_joint(
-        commands,
-        hand_l,
-        Some(Shield),
-        Transform { translation: Vec3::new(-0.07, -0.08, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.12, -1.5, 0.0), scale: Vec3::ONE },
-        mat,
-        body(meshes.add(m.shield)),
-    );
-    spawn_joint(commands, shield, None, p(Vec3::new(0.0, -0.03, 0.033)), mat, body(meshes.add(m.lion)));
-
-    // Right arm + held weapon on its own `Sword` pivot (attacks sweep it).
-    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, body(meshes.add(m.shoulder_r)));
-    let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, body(meshes.add(m.elbow_r)));
-    let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
-    // Spawn at the animator's held rest (not identity) so the pre-anim first frame AND the
-    // standalone viewer (which runs no animator) show the blade carried naturally instead of
-    // sticking straight up through the arm.
-    spawn_joint(commands, hand_r, Some(Sword), Transform::from_rotation(anim::sword_rest_r()), mat, Some(Leaf { mesh: meshes.add(m.weapon), weapon: true }));
-
-    // Legs: hip joint → knee → ankle (HH-derived; feet land on the ground).
-    let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-HIP_DX, O_HIP_Y, 0.0)), mat, body(meshes.add(m.hip_l)));
-    let knee_l = spawn_joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, O_KNEE, 0.0)), mat, body(meshes.add(m.knee_l)));
-    spawn_joint(commands, knee_l, Some(FootL), p(Vec3::new(0.0, O_FOOT, 0.0)), mat, body(meshes.add(m.foot_l)));
-    let hip_r = spawn_joint(commands, hips, Some(HipR), p(Vec3::new(HIP_DX, O_HIP_Y, 0.0)), mat, body(meshes.add(m.hip_r)));
-    let knee_r = spawn_joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, O_KNEE, 0.0)), mat, body(meshes.add(m.knee_r)));
-    spawn_joint(commands, knee_r, Some(FootR), p(Vec3::new(0.0, O_FOOT, 0.0)), mat, body(meshes.add(m.foot_r)));
-}
-
-/// Rebuild the hero's limb meshes when the equipped weapon/armor changes (the satchel equips
-/// freeze the world, so this ungated render system rebuilds behind the panel and on close).
-/// Despawns the old children and re-spawns from a fresh [`model::build_knight`]; the `Hero`
-/// root + its components are untouched, and [`anim::hero_anim`] re-binds the new `HeroPart`s
-/// next frame. Change-detected + snapshot-gated so it only fires on an actual equip swap.
-fn reskin_hero(
-    mut commands: Commands,
-    inv: Res<Inventory>,
-    mat: Option<Res<HeroMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    hero_q: Query<(Entity, Option<&Children>), With<Hero>>,
-    mut last: Local<(Option<String>, Option<String>)>,
-) {
-    if !inv.is_changed() {
-        return;
-    }
-    let cur = (inv.0.equipped_id.clone(), inv.0.equipped_armor_id.clone());
-    if cur == *last {
-        return; // no equip change (some other bag mutation)
-    }
-    let Some(mat) = mat else { return };
-    let Ok((root, children)) = hero_q.single() else { return };
-    *last = cur.clone();
-
-    if let Some(children) = children {
-        for &c in children {
-            commands.entity(c).try_despawn();
-        }
-    }
-    let spec = model::build_knight(cur.0.as_deref(), cur.1.as_deref());
-    spawn_hero_meshes(&mut commands, root, spec, &mut meshes, &mat.0);
+    footman::spawn(commands, root, meshes, images, materials);
 }
 
 /// Reset the hero to a fresh run: wipe progression (`Player::reset` → full HP, 30 gold, level 1,

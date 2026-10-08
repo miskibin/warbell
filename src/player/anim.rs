@@ -192,10 +192,12 @@ fn idle_pose(t: f32) -> Pose {
     };
     p.torso = Jp::r(e3(breath * 0.01, -s11 * 0.012, -w * 0.028));
     p.head = Jp::r(e3(-breath * 0.015, s11 * 0.04, s11 * 0.006 - w * 0.012));
-    p.sh_l = Jp::r(e3(breath * 0.05 + 0.1, 0.0, -0.15 + c11 * 0.02 + w * 0.02));
-    p.el_l = Jp::r(rx(-0.5 - breath * 0.03));
-    p.sh_r = Jp::r(e3(breath * 0.05 + 0.12, 0.0, 0.15 - c11 * 0.02 + w * 0.02));
-    p.el_r = Jp::r(rx(-0.4 - breath * 0.02));
+    // The footman's bind pose IS the standing carry (arms already clear of the torso). Idle only
+    // breathes — the old +0.1 / −0.4 elbow bend was compensating for a straight-down mesh.
+    p.sh_l = Jp::r(e3(breath * 0.035, 0.0, c11 * 0.012 + w * 0.01));
+    p.el_l = Jp::r(rx(-0.05 - breath * 0.02));
+    p.sh_r = Jp::r(e3(breath * 0.035, 0.0, -c11 * 0.012 + w * 0.01));
+    p.el_r = Jp::r(rx(-0.04 - breath * 0.015));
     // Stance leg straightens, free leg softens at the knee as the weight rides across.
     p.hip_l = Jp::r(e3(0.0, 0.0, w.max(0.0) * 0.05));
     p.hip_r = Jp::r(e3(0.0, 0.0, w.min(0.0) * 0.05));
@@ -972,7 +974,7 @@ pub fn hero_anim(
         for (part, mut tf) in &mut parts {
             tf.rotation = match part.joint {
                 Joint::Hips => {
-                    tf.translation = Vec3::new(0.0, 1.05, 0.0);
+                    tf.translation = Vec3::new(0.0, super::model::HIP_REST_Y, 0.0);
                     Quat::IDENTITY
                 }
                 Joint::ShoulderL => e3(0.2, 0.0, -0.2),
@@ -1069,7 +1071,14 @@ pub fn hero_anim(
     for (part, mut tf) in &mut parts {
         let jp = pose.get(part.joint);
         if let Some(t) = jp.t {
-            tf.translation = t;
+            // Clips were authored when the hips sat at y = 1.05. The footman's hips are at
+            // `HIP_REST_Y` (0.98); shift every absolute hip height by the same delta so crouches
+            // keep their depth and the feet stay on the ground.
+            tf.translation = if part.joint == Joint::Hips {
+                Vec3::new(t.x, t.y + (super::model::HIP_REST_Y - 1.05), t.z)
+            } else {
+                t
+            };
         }
         let mut rot = jp.r;
 

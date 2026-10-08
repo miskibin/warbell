@@ -53,8 +53,8 @@ const CRIT_ZOOM_OUT: f32 = 4.5;
 /// Look-target height above the hero's feet. Aims at the knight's upper chest / shoulder line
 /// (Witcher-style — drops the horizon lower in frame so more of the world reads over his
 /// shoulder), NOT above the helm — an above-the-head target shoves the hero toward the bottom of
-/// frame. (Tracks the `HERO_SCALE` bump; shoulder sits ≈1.02 world-units up.)
-const EYE_H: f32 = 0.92;
+/// frame. (Tracks the footman: shoulder sits ≈1.14 world-units up, anchor a touch below it.)
+const EYE_H: f32 = 1.03;
 
 /// First-person eye height above the hero's feet — sits right at the helm/eye line. (Scaled ×1.5
 /// alongside the `HERO_SCALE` bump; an eye floating above the helm reads as "too tall" and pushes the

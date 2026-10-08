@@ -242,6 +242,7 @@ fn landmark_model(name: &str) -> crate::ruins::LandmarkModel {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
     mut std_mats: ResMut<Assets<StandardMaterial>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
 ) {
@@ -327,7 +328,7 @@ fn setup(
             crate::player::HeroHealth::default(),
         ))
         .id();
-    spawn_model(&mut commands, root, &mut meshes, &mat);
+    spawn_model(&mut commands, root, &mut meshes, &mut images, &mat, &mut creature_mats);
 }
 
 /// Spawn the model named by `FOREST_VIEW` under `root`. Add new models as `match` arms.
@@ -335,7 +336,9 @@ fn spawn_model(
     commands: &mut Commands,
     root: Entity,
     meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
     mat: &Handle<crate::creature::CreatureMaterial>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
     let view = std::env::var("FOREST_VIEW").unwrap_or_default();
     match view.as_str() {
@@ -460,10 +463,10 @@ fn spawn_model(
         // Isolated 1:1 transcription of the three.js previs knight (static rest pose).
         "knight2" => crate::previs_knight::spawn(commands, root, meshes, mat.clone()),
         _ => {
-            // Default: the player knight in rest pose. `FOREST_EQUIP="weapon,armor"` swaps gear.
-            let (weapon, armor) = parse_equip();
-            let m = crate::player::model::build_knight(weapon.as_deref(), armor.as_deref());
-            crate::player::spawn_hero_meshes(commands, root, m, meshes, mat);
+            // The Royal Footman, in the animator's rest pose (sword carried, shield on the arm).
+            // `FOREST_EQUIP` still restyles the first-person viewmodel, not this body.
+            let _ = parse_equip();
+            crate::player::spawn_hero_meshes(commands, root, meshes, images, creature_mats);
         }
     }
 }
