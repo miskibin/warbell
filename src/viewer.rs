@@ -66,6 +66,7 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
     hero.moving = false;
     hero.moving_amt = 0.0;
     hero.run_amt = 0.0;
+    hero.gait_speed = 0.0;
     hero.on_ground = true;
     hero.attacking = false;
     hero.victory = false;
@@ -81,22 +82,18 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
     };
     match std::env::var("FOREST_VIEW_ANIM").unwrap_or_default().as_str() {
         "walk" => {
-            hero.moving = true;
-            hero.moving_amt = 1.0;
-            hero.walk_phase += dt * 7.0; // = movement::STEP_FREQ
+            crate::player::anim::stage_gait(&mut hero, crate::player::SPEED, dt);
         }
+        // A true walk (below the base speed, which is a jog for this body — see `anim::gait_at`).
+        "stroll" => crate::player::anim::stage_gait(&mut hero, 1.4, dt),
         "run" => {
-            hero.moving = true;
-            hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += dt * 7.0 * 1.75; // STEP_FREQ * SPRINT_MULT
+            crate::player::anim::stage_gait(&mut hero, crate::player::SPEED * crate::player::SPRINT_MULT, dt);
         }
         "block" | "defend" => hh.blocking = true,
         "blockwalk" => {
             hh.blocking = true;
-            hero.moving = true;
-            hero.moving_amt = 1.0;
-            hero.walk_phase += dt * 7.0;
+            crate::player::anim::stage_gait(&mut hero, crate::player::SPEED, dt);
         }
         "attack" | "attack1" => swing(&mut hero, 0),
         "attack2" => swing(&mut hero, 1),
@@ -111,17 +108,13 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
         "charge" => hero.charge_t = (time.elapsed_secs() * 0.25).min(0.8),
         // Combined moves: a swing / a leap taken mid-run.
         "runattack" => {
-            hero.moving = true;
-            hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += dt * 7.0 * 1.75;
+            crate::player::anim::stage_gait(&mut hero, crate::player::SPEED * crate::player::SPRINT_MULT, dt);
             swing(&mut hero, 1);
         }
         "runjump" => {
-            hero.moving = true;
-            hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += dt * 7.0 * 1.75;
+            crate::player::anim::stage_gait(&mut hero, crate::player::SPEED * crate::player::SPRINT_MULT, dt);
             hero.on_ground = false;
             hero.vel_y = (time.elapsed_secs() * 1.2).cos() * 6.5;
         }

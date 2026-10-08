@@ -26,6 +26,7 @@ mod health;
 pub(crate) mod model;
 mod footman;
 mod movement;
+pub(crate) use movement::{SPEED, SPRINT_MULT};
 mod softlock;
 mod viewmodel;
 
@@ -100,9 +101,14 @@ pub struct Hero {
     pub on_ground: bool,
     pub air_takeoff_y: f32,
     pub walk_phase: f32,
+    /// Horizontal ground speed (world u/s) the gait is cut for — the animator picks walk / jog /
+    /// sprint from it and `walk_phase` advances by [`anim::gait_phase_rate`] of it, so the planted
+    /// boot stays locked to the ground. Written by movement (and the preview drivers).
+    pub gait_speed: f32,
     /// 0..1 smooth blend tracking `moving` (drives anim weight).
     pub moving_amt: f32,
-    /// 0..1 smooth blend tracking `sprinting` (drives the walk→run pose blend in [`anim`]).
+    /// 0..1 smooth blend tracking `sprinting` (sprint dust in `footstep_fx`; the hero's gait style
+    /// itself follows `gait_speed`).
     pub run_amt: f32,
     pub moving: bool,
     // ── Attack (M2) ──
@@ -222,6 +228,7 @@ impl Hero {
             on_ground: true,
             air_takeoff_y: y,
             walk_phase: 0.0,
+            gait_speed: 0.0,
             moving_amt: 0.0,
             run_amt: 0.0,
             moving: false,
@@ -505,34 +512,23 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
     };
     match mode.as_str() {
         "walk" => {
-            hero.moving = true;
-            hero.moving_amt = 1.0;
-            hero.run_amt = 0.0;
-            hero.walk_phase += dt * 7.0; // = movement::STEP_FREQ
+            anim::stage_gait(&mut hero, movement::SPEED, dt);
         }
         "strafe" => {
             // Combat-stance sideways step: legs twisted toward the movement, torso on the "foe".
-            hero.moving = true;
-            hero.moving_amt = 1.0;
-            hero.run_amt = 0.0;
-            hero.walk_phase += dt * 7.0;
+            anim::stage_gait(&mut hero, movement::SPEED, dt);
             hero.stance_amt = 1.0;
             hero.strafe_twist = 0.6;
         }
         "backpedal" => {
             // Combat-stance retreat: the walk cycle in reverse, eyes still on the "foe".
-            hero.moving = true;
-            hero.moving_amt = 1.0;
-            hero.run_amt = 0.0;
-            hero.walk_phase += dt * 7.0;
+            anim::stage_gait(&mut hero, movement::SPEED, dt);
             hero.stance_amt = 1.0;
             hero.back_amt = 1.0;
         }
         "run" => {
-            hero.moving = true;
-            hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += dt * 7.0 * 1.75; // STEP_FREQ * SPRINT_MULT
+            anim::stage_gait(&mut hero, movement::SPEED * movement::SPRINT_MULT, dt);
         }
         "block" | "defend" => hh.blocking = true,
         "attack" | "attack1" => swing(&mut hero, 0),

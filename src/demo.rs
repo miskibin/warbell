@@ -74,7 +74,6 @@ const EXPLORE_PATH: [Vec2; 5] = [
     Vec2::new(-36.0, 30.0),
 ];
 const EXPLORE_SPEED: f32 = 4.0; // world units / sec
-const STEP_FREQ: f32 = 7.0; // matches movement.rs leg cadence
 
 /// Position + unit tangent at arc-length `d` along the polyline; `arrived` once past the end.
 fn sample_path(path: &[Vec2], d: f32) -> (Vec2, Vec2, bool) {
@@ -126,11 +125,12 @@ fn explore_drive(
     hero.facing = dir.x.atan2(dir.y);
     hero.moving = walking;
     hero.moving_amt = if walking { 1.0 } else { 0.0 };
+    hero.gait_speed = 0.0;
     if walking {
-        hero.walk_phase += dt * STEP_FREQ;
+        crate::player::anim::stage_gait(&mut hero, EXPLORE_SPEED, dt);
     }
-    let bob = hero.walk_phase.sin().abs() * 0.05 * hero.moving_amt;
-    htf.translation = Vec3::new(pos.x, y + bob, pos.y);
+    // The rig's hips own the bob (as in `movement`); the root just tracks the ground.
+    htf.translation = Vec3::new(pos.x, y, pos.y);
     htf.rotation = Quat::from_rotation_y(hero.facing);
 
     // Camera: in FreeRoam (no follow-cam runs) drive a bespoke third-person chase. In Play

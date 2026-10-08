@@ -43,6 +43,12 @@ pub(crate) struct LegRig {
     pub knee: Vec3,
     pub foot: Vec3,
     pub ankle_height: f32,
+    /// Ankle → toe tip / heel back, along the foot (model metres). The gait rolls the boot over
+    /// these two edges (heel strike, toe-off) instead of skating a rigid flat sole.
+    pub toe: f32,
+    pub heel: f32,
+    /// Model metres → rig units (the `TARGET_RIG_HEIGHT` scale applied under the hero root).
+    pub scale: f32,
 }
 
 pub(crate) fn leg_rig() -> LegRig {
@@ -52,11 +58,22 @@ pub(crate) fn leg_rig() -> LegRig {
             let hip = pos_of(model, "HipL");
             let knee = pos_of(model, "KneeL");
             let foot = pos_of(model, "FootL");
+            let (mut toe, mut heel) = (0.0_f32, 0.0_f32);
+            for m in model.meshes.iter().filter(|m| m.joint == "FootL") {
+                for p in &m.positions {
+                    let v = m.xf.transform_point(Vec3::from_array(*p));
+                    toe = toe.max(v.z);
+                    heel = heel.max(-v.z);
+                }
+            }
             LegRig {
                 hip,
                 knee,
                 foot,
                 ankle_height: pos_of(model, "Hips").y + hip.y + knee.y + foot.y - model.min_y,
+                toe,
+                heel,
+                scale: TARGET_RIG_HEIGHT / (model.max_y - model.min_y).max(0.01),
             }
         };
         if let Some(gpu) = GPU.get() { measure(&gpu.model) } else { measure(&parse()) }
