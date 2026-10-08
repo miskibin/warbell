@@ -1,0 +1,46 @@
+{
+  "label": "uncapped-forest_wide-new-2",
+  "scene": "forest_wide",
+  "quality": "high",
+  "blender": true,
+  "screenshot": false,
+  "exe": "C:\\Users\\skibi\\Documents\\Codex\\2026-10-08\\najpierw-bym-chcia-eby-zrobi-studyjn\\warbell-trees\\target\\tree-study\\bin\\trees.exe",
+  "exe_sha256": "fe92afa63846d07dfe07148fea0dee2bc61d651491015908d6a2fd16f637cced",
+  "git_head": "90f8d1b1b4b780b481046e76a82c3d931b64d60b",
+  "tree_asset_sha256": {
+    "birch_a.json": "678858ef0b581456c2301c26ef301177166175763b4514c53605e7c9ca4f9139",
+    "birch_b.json": "5257fdaba041b9998f58a197479ee4ac83b5d0a8738687430251551e45d180d1",
+    "oak_a.json": "4d526ac699f594c460864954d89fd4a4857a6ac0e61556fe1aa8c49f0020a3e3",
+    "oak_b.json": "d67e059de9af8b4b9801899c0b9bf43c5329823d79cf307de97d18995cb89d22",
+    "pine_a.json": "f90f99b5339083c2920733ab1f57c27de31158700dec91228705fc31e51f11e5",
+    "tree_atlas.png": "f05675a71aa978f23d659c21fa4550f847e642c92256fedcc409913a6a34b73d"
+  },
+  "env": {
+    "APPDATA": "C:\\Users\\skibi\\Documents\\Codex\\2026-10-08\\najpierw-bym-chcia-eby-zrobi-studyjn\\warbell-trees\\target\\tree-study\\uncapped-forest_wide-new-2\\userdata",
+    "BEVY_ASSET_ROOT": "C:\\Users\\skibi\\Documents\\Codex\\2026-10-08\\najpierw-bym-chcia-eby-zrobi-studyjn\\warbell-trees",
+    "FOREST_FREEROAM": "1",
+    "FOREST_RES": "1920x1080",
+    "FOREST_QUALITY": "high",
+    "FOREST_NOVSYNC": "1",
+    "FOREST_TIME": "0.28",
+    "FOREST_DAY": "1000000",
+    "FOREST_IMMORTAL": "1",
+    "FOREST_CAM": "-82,18,90,-104,2,63",
+    "FOREST_BLENDERTREES": "1",
+    "FOREST_PERFTEST": "60",
+    "FOREST_PERF_SKY": "0.28"
+  },
+  "exit_code": 0,
+  "wall_seconds": 62.84299999999348,
+  "performance": {
+    "mode": "gameplay",
+    "frames": 4095.0,
+    "mean_ms": 8.242,
+    "p50_ms": 7.683,
+    "p95_ms": 12.272,
+    "p99_ms": 15.779,
+    "max_ms": 26.192
+  },
+  "errors": [],
+  "screenshot_saved": false
+}

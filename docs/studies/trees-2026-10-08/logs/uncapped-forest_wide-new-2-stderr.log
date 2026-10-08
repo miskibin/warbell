@@ -1,0 +1,225 @@
+2026-10-08T11:59:10.008046Z  INFO bevy_diagnostic::system_information_diagnostics_plugin::internal: SystemInfo { os: "Windows 11 Pro", kernel: "26200", cpu: "12th Gen Intel(R) Core(TM) i5-12400F", core_count: "6", memory: "31.8 GiB" }
+2026-10-08T11:59:10.393361Z  INFO bevy_render::renderer: AdapterInfo { name: "NVIDIA GeForce RTX 5060 Ti", vendor: 4318, device: 11524, device_type: DiscreteGpu, device_pci_bus_id: "0000:01:00.0", driver: "NVIDIA", driver_info: "616.64", backend: Vulkan, subgroup_min_size: 32, subgroup_max_size: 32, transient_saves_memory: false }
+2026-10-08T11:59:10.663935Z  INFO bevy_pbr::cluster: GPU clustering is supported on this device.
+2026-10-08T11:59:10.664022Z  INFO bevy_render::batching::gpu_preprocessing: GPU preprocessing is fully supported on this device.
+2026-10-08T11:59:10.664806Z  INFO bevy_egui::render: Using bindless_mode_array_size 16 (Device maximum 1048576)
+2026-10-08T11:59:10.665019Z  INFO bevy_winit::system: Creating new window Warbell (65v0)
+2026-10-08T11:59:10.727515Z  INFO tileworld_bevy_forest::blendertrees: blender trees: oak_a 2402 vertices 1394 triangles
+2026-10-08T11:59:10.730250Z  INFO tileworld_bevy_forest::blendertrees: blender trees: oak_b 2402 vertices 1394 triangles
+2026-10-08T11:59:10.731219Z  INFO tileworld_bevy_forest::blendertrees: blender trees: birch_a 2088 vertices 1170 triangles
+2026-10-08T11:59:10.732310Z  INFO tileworld_bevy_forest::blendertrees: blender trees: birch_b 2088 vertices 1170 triangles
+2026-10-08T11:59:10.733725Z  INFO tileworld_bevy_forest::blendertrees: blender trees: pine_a 2726 vertices 1668 triangles
+2026-10-08T11:59:10.733753Z  INFO tileworld_bevy_forest::blendertrees: blender trees: 5 source models, 11706 source vertices, 6796 source triangles, one 1024px atlas, built in 19.7916ms
+2026-10-08T11:59:10.735099Z  INFO tileworld_bevy_forest::perftest: PERFTEST start: duration=60s sim_speed=x1 — one PERF line every 5s, then exits
+2026-10-08T11:59:16.090075Z  INFO tileworld_bevy_forest::poi: poi: planned 6 roadside clearings
+2026-10-08T11:59:19.365434Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=7.4 app=Playing modal=None
+2026-10-08T11:59:20.432332Z  INFO tileworld_bevy_forest::perftest: PERF t=   7 fps=  25 ms= 39.5 ent=  1523 mesh= 1411 mat=  93 creature_mat=4 img=  125 atlas=16k/16p rss= 0.61GiB
+2026-10-08T11:59:20.432439Z  INFO tileworld_bevy_forest::perftest:    arch    185  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:20.432444Z  INFO tileworld_bevy_forest::perftest:    arch    184  BiomeEntity
+2026-10-08T11:59:20.432447Z  INFO tileworld_bevy_forest::perftest:    arch    167  ChopTree Sway BiomeEntity
+2026-10-08T11:59:20.432450Z  INFO tileworld_bevy_forest::perftest:    arch     81  [engine x1 comps]
+2026-10-08T11:59:20.432453Z  INFO tileworld_bevy_forest::perftest:    arch     63  BiomeEntity ForestExtension>>
+2026-10-08T11:59:20.432456Z  INFO tileworld_bevy_forest::perftest:    arch     63  BiomeEntity ForestExtension>>
+2026-10-08T11:59:20.432459Z  INFO tileworld_bevy_forest::perftest:    arch     60  Pollen
+2026-10-08T11:59:20.432461Z  INFO tileworld_bevy_forest::perftest:    arch     37  CreatureExt>>
+2026-10-08T11:59:20.432464Z  INFO tileworld_bevy_forest::perftest:    arch     32  CampaignOnly Cloud
+2026-10-08T11:59:20.432467Z  INFO tileworld_bevy_forest::perftest:    arch     30  BipedPart
+2026-10-08T11:59:20.432469Z  INFO tileworld_bevy_forest::perftest:    arch     25  CreatureExt>> BossPart
+2026-10-08T11:59:20.432472Z  INFO tileworld_bevy_forest::perftest:    arch     21  [engine x12 comps]
+2026-10-08T11:59:20.432481Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=-0.00ms  
+2026-10-08T11:59:22.543648Z  INFO tileworld_bevy_forest::camps: camp 0 at -173.6,6.1
+2026-10-08T11:59:22.544031Z  INFO tileworld_bevy_forest::camps: camp 1 at 5.8,-65.0
+2026-10-08T11:59:22.544244Z  INFO tileworld_bevy_forest::camps: camp 2 at -127.3,103.7
+2026-10-08T11:59:22.544438Z  INFO tileworld_bevy_forest::camps: camp 3 at -22.0,126.6
+2026-10-08T11:59:22.544623Z  INFO tileworld_bevy_forest::camps: camp 4 at 21.9,-37.6
+2026-10-08T11:59:22.648181Z  INFO tileworld_bevy_forest::chest: chests: 24 scattered (22 Relic) + 5 hoards
+2026-10-08T11:59:22.666302Z  INFO tileworld_bevy_forest::ruins: landmark Snow placed at (-118.0, -6.1)
+2026-10-08T11:59:22.666403Z  INFO tileworld_bevy_forest::ruins: landmark Desert placed at (43.6, -62.7)
+2026-10-08T11:59:22.666427Z  INFO tileworld_bevy_forest::ruins: landmark Rocky placed at (35.9, 28.7)
+2026-10-08T11:59:22.666444Z  INFO tileworld_bevy_forest::ruins: landmark Forest placed at (-105.9, 13.9)
+2026-10-08T11:59:22.666458Z  INFO tileworld_bevy_forest::ruins: landmark Swamp placed at (0.5, 43.2)
+2026-10-08T11:59:22.675107Z  INFO tileworld_bevy_forest::vignettes: vignette Forest "The Abandoned Camp" at 15.0,0.0,-37.1
+2026-10-08T11:59:22.675271Z  INFO tileworld_bevy_forest::vignettes: vignette Desert "The Lost Caravan" at 47.0,0.0,-44.5
+2026-10-08T11:59:22.675573Z  INFO tileworld_bevy_forest::vignettes: vignette Rocky "The Fallen Watchtower" at 172.3,0.5,24.8
+2026-10-08T11:59:22.675805Z  INFO tileworld_bevy_forest::vignettes: vignette Snow "The Frozen Camp" at -73.0,0.5,-5.4
+2026-10-08T11:59:22.675862Z  INFO tileworld_bevy_forest::vignettes: vignette Swamp "The Sunken Wreck" at 52.5,0.0,96.0
+2026-10-08T11:59:22.863215Z  INFO tileworld_bevy_forest::ork_fortress: ork fortress: Gnashfang Hold built at 12,162
+2026-10-08T11:59:22.932900Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 76,-114
+2026-10-08T11:59:22.932952Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 27,-44
+2026-10-08T11:59:22.932976Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -104,68
+2026-10-08T11:59:22.933021Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 0,99
+2026-10-08T11:59:22.933045Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 84,-127
+2026-10-08T11:59:22.933163Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 113,-94
+2026-10-08T11:59:22.933192Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -0,145
+2026-10-08T11:59:22.933213Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 82,-108
+2026-10-08T11:59:22.933238Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -68,22
+2026-10-08T11:59:22.933256Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 42,-65
+2026-10-08T11:59:22.933298Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 22,-37
+2026-10-08T11:59:22.933321Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -136,90
+2026-10-08T11:59:22.933404Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -118,-6
+2026-10-08T11:59:22.933608Z  INFO tileworld_bevy_forest::wayside: wayside: 7 signposts, 12 roadside pieces
+2026-10-08T11:59:22.943213Z  INFO tileworld_bevy_forest::bog: bog: drowned tower at 15.6,83.8
+2026-10-08T11:59:22.943339Z  INFO tileworld_bevy_forest::bog: bog: stilt hut at -10.6,102.8
+2026-10-08T11:59:22.943347Z  INFO tileworld_bevy_forest::bog: bog: 28 drowned trees, 18 wisps, 20 glow-mushroom clusters
+2026-10-08T11:59:22.949024Z  WARN tileworld_bevy_forest::poi: poi: no spot for the gallows on the fortress approach
+2026-10-08T11:59:22.949345Z  INFO tileworld_bevy_forest::poi: poi: 4 set-pieces, 0 fields, smoke + crows over the Hold
+2026-10-08T11:59:22.956869Z  INFO tileworld_bevy_forest::vista: vista: waterfall at 72.7,36.4 (wall 3.3u)
+2026-10-08T11:59:22.956981Z  INFO tileworld_bevy_forest::vista: vista: overlook (rock summit → castle plain) at 96.8,6.6
+2026-10-08T11:59:22.956989Z  INFO tileworld_bevy_forest::vista: vista: overlook (snow summit → western sea) at -101.2,-66.0
+2026-10-08T11:59:22.956994Z  INFO tileworld_bevy_forest::vista: vista: overlook (canyon mouth → rival dunes) at 95.0,-66.0
+2026-10-08T11:59:22.956998Z  INFO tileworld_bevy_forest::vista: vista: 3/3 overlooks
+2026-10-08T11:59:22.957001Z  INFO tileworld_bevy_forest::biome: view → world map
+2026-10-08T11:59:22.964074Z  INFO tileworld_bevy_forest::perftest: PERF_READY t=11.267
+2026-10-08T11:59:22.979621Z  INFO tileworld_bevy_forest::blendertrees: blender trees replacements: forest=112, meadow=6, rts=0, treeline=0; dead/stump, orchard and nonforest biome trees retain native meshes
+2026-10-08T11:59:24.091392Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=12.4 app=Playing modal=None
+2026-10-08T11:59:24.092037Z  INFO tileworld_bevy_forest::perftest: PERF t=  12 fps= 134 ms=  7.5 ent=  9875 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.55GiB
+2026-10-08T11:59:24.092253Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T11:59:24.092267Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T11:59:24.092271Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T11:59:24.092275Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T11:59:24.092279Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T11:59:24.092283Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:24.092289Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T11:59:24.092293Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T11:59:24.092297Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T11:59:24.092303Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T11:59:24.092406Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T11:59:24.092412Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T11:59:24.092472Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.02ms  main_opaque_pass_3d=3.58 early prepass=0.75 bloom=0.13 bin_unpacking=0.11 ui=0.09 smaa=0.09 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T11:59:29.091969Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=17.4 app=Playing modal=None
+2026-10-08T11:59:29.092478Z  INFO tileworld_bevy_forest::perftest: PERF t=  17 fps= 125 ms=  8.3 ent=  9873 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.58GiB
+2026-10-08T11:59:29.092640Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T11:59:29.092644Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T11:59:29.092647Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T11:59:29.092650Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T11:59:29.092653Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T11:59:29.092656Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:29.092658Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T11:59:29.092661Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T11:59:29.092664Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T11:59:29.092667Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T11:59:29.092669Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T11:59:29.092672Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T11:59:29.092686Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.02ms  main_opaque_pass_3d=3.59 early prepass=0.75 bloom=0.13 bin_unpacking=0.11 smaa=0.09 ui=0.08 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T11:59:34.096024Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=22.4 app=Playing modal=None
+2026-10-08T11:59:34.096653Z  INFO tileworld_bevy_forest::perftest: PERF t=  22 fps= 125 ms=  8.4 ent=  9873 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.64GiB
+2026-10-08T11:59:34.096826Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T11:59:34.096832Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T11:59:34.096835Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T11:59:34.096839Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T11:59:34.096843Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T11:59:34.096847Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:34.096851Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T11:59:34.096854Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T11:59:34.096858Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T11:59:34.096862Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T11:59:34.096866Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T11:59:34.096869Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T11:59:34.096888Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.03ms  main_opaque_pass_3d=3.58 early prepass=0.76 bloom=0.14 bin_unpacking=0.11 smaa=0.09 ui=0.08 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T11:59:39.103029Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=27.4 app=Playing modal=None
+2026-10-08T11:59:39.103646Z  INFO tileworld_bevy_forest::perftest: PERF t=  27 fps= 127 ms=  7.9 ent=  9873 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.70GiB
+2026-10-08T11:59:39.103788Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T11:59:39.103794Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T11:59:39.103796Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T11:59:39.103799Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T11:59:39.103802Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T11:59:39.103805Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:39.103808Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T11:59:39.103811Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T11:59:39.103813Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T11:59:39.103817Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T11:59:39.103819Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T11:59:39.103822Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T11:59:39.103840Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.02ms  main_opaque_pass_3d=3.59 early prepass=0.75 bloom=0.13 bin_unpacking=0.11 smaa=0.09 ui=0.08 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T11:59:44.105561Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=32.4 app=Playing modal=None
+2026-10-08T11:59:44.106037Z  INFO tileworld_bevy_forest::perftest: PERF t=  32 fps= 149 ms=  6.7 ent=  9874 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.77GiB
+2026-10-08T11:59:44.106199Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T11:59:44.106204Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T11:59:44.106207Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T11:59:44.106267Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T11:59:44.106274Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T11:59:44.106277Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:44.106280Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T11:59:44.106283Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T11:59:44.106288Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T11:59:44.106292Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T11:59:44.106295Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T11:59:44.106298Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T11:59:44.106313Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.03ms  main_opaque_pass_3d=3.59 early prepass=0.75 bloom=0.13 bin_unpacking=0.11 smaa=0.09 ui=0.09 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T11:59:49.109885Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=37.4 app=Playing modal=None
+2026-10-08T11:59:49.110415Z  INFO tileworld_bevy_forest::perftest: PERF t=  37 fps= 129 ms=  7.8 ent=  9873 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.81GiB
+2026-10-08T11:59:49.110590Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T11:59:49.110599Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T11:59:49.110602Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T11:59:49.110605Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T11:59:49.110608Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T11:59:49.110610Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:49.110613Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T11:59:49.110616Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T11:59:49.110618Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T11:59:49.110622Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T11:59:49.110625Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T11:59:49.110628Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T11:59:49.110647Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.03ms  main_opaque_pass_3d=3.59 early prepass=0.75 bloom=0.13 bin_unpacking=0.12 smaa=0.09 ui=0.08 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T11:59:54.113688Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=42.4 app=Playing modal=None
+2026-10-08T11:59:54.114270Z  INFO tileworld_bevy_forest::perftest: PERF t=  42 fps= 113 ms=  9.0 ent=  9873 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.84GiB
+2026-10-08T11:59:54.114527Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T11:59:54.114535Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T11:59:54.114541Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T11:59:54.114546Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T11:59:54.114552Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T11:59:54.114557Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:54.114561Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T11:59:54.114574Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T11:59:54.114580Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T11:59:54.114586Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T11:59:54.114590Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T11:59:54.114596Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T11:59:54.114621Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.05ms  main_opaque_pass_3d=3.60 early prepass=0.75 bloom=0.13 bin_unpacking=0.12 smaa=0.10 ui=0.09 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T11:59:59.118916Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=47.4 app=Playing modal=None
+2026-10-08T11:59:59.119632Z  INFO tileworld_bevy_forest::perftest: PERF t=  47 fps= 154 ms=  6.6 ent=  9873 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.88GiB
+2026-10-08T11:59:59.119872Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T11:59:59.119879Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T11:59:59.119884Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T11:59:59.119888Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T11:59:59.119893Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T11:59:59.119897Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T11:59:59.119901Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T11:59:59.119906Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T11:59:59.119910Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T11:59:59.119915Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T11:59:59.119920Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T11:59:59.119924Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T11:59:59.119951Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.03ms  main_opaque_pass_3d=3.59 early prepass=0.75 bloom=0.13 bin_unpacking=0.11 smaa=0.09 ui=0.08 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:00:04.124276Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=52.4 app=Playing modal=None
+2026-10-08T12:00:04.124797Z  INFO tileworld_bevy_forest::perftest: PERF t=  52 fps= 107 ms=  9.9 ent=  9874 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.91GiB
+2026-10-08T12:00:04.124961Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:00:04.124968Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T12:00:04.124971Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T12:00:04.124974Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:00:04.124977Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T12:00:04.124980Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:00:04.124982Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:00:04.124985Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T12:00:04.124988Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T12:00:04.124991Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T12:00:04.124994Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T12:00:04.125003Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T12:00:04.125021Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.04ms  main_opaque_pass_3d=3.59 early prepass=0.75 bloom=0.13 bin_unpacking=0.11 smaa=0.11 ui=0.08 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:00:09.126583Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=57.4 app=Playing modal=None
+2026-10-08T12:00:09.127073Z  INFO tileworld_bevy_forest::perftest: PERF t=  57 fps= 109 ms=  9.7 ent=  9873 mesh= 4148 mat= 235 creature_mat=8 img=  146 atlas=16k/16p rss= 3.94GiB
+2026-10-08T12:00:09.127226Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:00:09.127233Z  INFO tileworld_bevy_forest::perftest:    arch    973  CreatureExt>>
+2026-10-08T12:00:09.127237Z  INFO tileworld_bevy_forest::perftest:    arch    861  BipedPart
+2026-10-08T12:00:09.127242Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:00:09.127245Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T12:00:09.127249Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:00:09.127253Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:00:09.127258Z  INFO tileworld_bevy_forest::perftest:    arch    368  [engine x12 comps]
+2026-10-08T12:00:09.127262Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T12:00:09.127266Z  INFO tileworld_bevy_forest::perftest:    arch    264  ChopTree Sway BiomeEntity
+2026-10-08T12:00:09.127269Z  INFO tileworld_bevy_forest::perftest:    arch    220  BiomeEntity Beacon
+2026-10-08T12:00:09.127272Z  INFO tileworld_bevy_forest::perftest:    arch    176  BiomeEntity RevealAt Decor
+2026-10-08T12:00:09.127287Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=5.04ms  main_opaque_pass_3d=3.58 early prepass=0.76 bloom=0.14 bin_unpacking=0.12 smaa=0.09 ui=0.08 clustering=0.06 main_transparent_pass_3d=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:00:11.704892Z  INFO tileworld_bevy_forest::perftest: PERF_SUMMARY mode=gameplay frames=4095 mean_ms=8.242 p50_ms=7.683 p95_ms=12.272 p99_ms=15.779 max_ms=26.192
+2026-10-08T12:00:11.704920Z  INFO tileworld_bevy_forest::perftest: PERFTEST done (60s) — exiting

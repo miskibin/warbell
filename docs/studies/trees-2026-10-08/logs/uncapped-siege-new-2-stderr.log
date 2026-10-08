@@ -1,0 +1,269 @@
+2026-10-08T12:05:27.869303Z  INFO bevy_diagnostic::system_information_diagnostics_plugin::internal: SystemInfo { os: "Windows 11 Pro", kernel: "26200", cpu: "12th Gen Intel(R) Core(TM) i5-12400F", core_count: "6", memory: "31.8 GiB" }
+2026-10-08T12:05:28.248689Z  INFO bevy_render::renderer: AdapterInfo { name: "NVIDIA GeForce RTX 5060 Ti", vendor: 4318, device: 11524, device_type: DiscreteGpu, device_pci_bus_id: "0000:01:00.0", driver: "NVIDIA", driver_info: "616.64", backend: Vulkan, subgroup_min_size: 32, subgroup_max_size: 32, transient_saves_memory: false }
+2026-10-08T12:05:28.524535Z  INFO bevy_pbr::cluster: GPU clustering is supported on this device.
+2026-10-08T12:05:28.524644Z  INFO bevy_render::batching::gpu_preprocessing: GPU preprocessing is fully supported on this device.
+2026-10-08T12:05:28.525528Z  INFO bevy_egui::render: Using bindless_mode_array_size 16 (Device maximum 1048576)
+2026-10-08T12:05:28.525766Z  INFO bevy_winit::system: Creating new window Warbell (65v0)
+2026-10-08T12:05:28.583817Z  INFO tileworld_bevy_forest::blendertrees: blender trees: oak_a 2402 vertices 1394 triangles
+2026-10-08T12:05:28.585592Z  INFO tileworld_bevy_forest::blendertrees: blender trees: oak_b 2402 vertices 1394 triangles
+2026-10-08T12:05:28.586911Z  INFO tileworld_bevy_forest::blendertrees: blender trees: birch_a 2088 vertices 1170 triangles
+2026-10-08T12:05:28.587914Z  INFO tileworld_bevy_forest::blendertrees: blender trees: birch_b 2088 vertices 1170 triangles
+2026-10-08T12:05:28.588998Z  INFO tileworld_bevy_forest::blendertrees: blender trees: pine_a 2726 vertices 1668 triangles
+2026-10-08T12:05:28.589016Z  INFO tileworld_bevy_forest::blendertrees: blender trees: 5 source models, 11706 source vertices, 6796 source triangles, one 1024px atlas, built in 19.8215ms
+2026-10-08T12:05:28.589783Z  INFO tileworld_bevy_forest::perftest: PERFTEST start: duration=60s sim_speed=x1 — one PERF line every 5s, then exits
+2026-10-08T12:05:29.737400Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:29.986778Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:29.993910Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:32.989239Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:33.475834Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:33.899483Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:33.934459Z  INFO tileworld_bevy_forest::poi: poi: planned 6 roadside clearings
+2026-10-08T12:05:33.943130Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:35.585411Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:37.229065Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=7.3 app=Playing modal=None
+2026-10-08T12:05:37.229146Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:38.505571Z  INFO tileworld_bevy_forest::perftest: PERF t=   7 fps=  28 ms= 35.9 ent=  5612 mesh= 1619 mat=  93 creature_mat=4 img=  123 atlas=13k/13p rss= 0.66GiB
+2026-10-08T12:05:38.505697Z  INFO tileworld_bevy_forest::perftest:    arch   1653  CreatureExt>>
+2026-10-08T12:05:38.505703Z  INFO tileworld_bevy_forest::perftest:    arch   1545  BipedPart
+2026-10-08T12:05:38.505706Z  INFO tileworld_bevy_forest::perftest:    arch    314  [engine x8 comps]
+2026-10-08T12:05:38.505708Z  INFO tileworld_bevy_forest::perftest:    arch    192  OrkEye
+2026-10-08T12:05:38.505711Z  INFO tileworld_bevy_forest::perftest:    arch    185  BiomeEntity GroundCoverChunk
+2026-10-08T12:05:38.505714Z  INFO tileworld_bevy_forest::perftest:    arch    184  BiomeEntity
+2026-10-08T12:05:38.505716Z  INFO tileworld_bevy_forest::perftest:    arch    167  BiomeEntity ChopTree Sway
+2026-10-08T12:05:38.505719Z  INFO tileworld_bevy_forest::perftest:    arch    107  [engine x13 comps]
+2026-10-08T12:05:38.505771Z  INFO tileworld_bevy_forest::perftest:    arch    103  BipedRig
+2026-10-08T12:05:38.505776Z  INFO tileworld_bevy_forest::perftest:    arch    102  BiomeEntity HpBar
+2026-10-08T12:05:38.505779Z  INFO tileworld_bevy_forest::perftest:    arch    102  HpBarFg
+2026-10-08T12:05:38.505782Z  INFO tileworld_bevy_forest::perftest:    arch     96  Ork BipedDrive BiomeEntity WaveInvader NavPath Health InvaderOrders HasHpBar
+2026-10-08T12:05:38.505791Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=-0.00ms  
+2026-10-08T12:05:38.759178Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:39.470944Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:40.276285Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:40.575952Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:40.759489Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:40.833192Z  INFO tileworld_bevy_forest::camps: camp 0 at -173.6,6.1
+2026-10-08T12:05:40.833750Z  INFO tileworld_bevy_forest::camps: camp 1 at 5.8,-65.0
+2026-10-08T12:05:40.834169Z  INFO tileworld_bevy_forest::camps: camp 2 at -127.3,103.7
+2026-10-08T12:05:40.834594Z  INFO tileworld_bevy_forest::camps: camp 3 at -22.0,126.6
+2026-10-08T12:05:40.835009Z  INFO tileworld_bevy_forest::camps: camp 4 at 21.9,-37.6
+2026-10-08T12:05:40.912834Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:40.979283Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.022368Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.022883Z  INFO tileworld_bevy_forest::chest: chests: 24 scattered (22 Relic) + 5 hoards
+2026-10-08T12:05:41.039507Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.051887Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.053702Z  INFO tileworld_bevy_forest::ruins: landmark Snow placed at (-118.0, -6.1)
+2026-10-08T12:05:41.053740Z  INFO tileworld_bevy_forest::ruins: landmark Desert placed at (43.6, -62.7)
+2026-10-08T12:05:41.053754Z  INFO tileworld_bevy_forest::ruins: landmark Rocky placed at (35.9, 28.7)
+2026-10-08T12:05:41.053768Z  INFO tileworld_bevy_forest::ruins: landmark Forest placed at (-105.9, 13.9)
+2026-10-08T12:05:41.053779Z  INFO tileworld_bevy_forest::ruins: landmark Swamp placed at (0.5, 43.2)
+2026-10-08T12:05:41.067202Z  INFO tileworld_bevy_forest::vignettes: vignette Forest "The Abandoned Camp" at 15.0,0.0,-37.1
+2026-10-08T12:05:41.067455Z  INFO tileworld_bevy_forest::vignettes: vignette Desert "The Lost Caravan" at 47.0,0.0,-44.5
+2026-10-08T12:05:41.067784Z  INFO tileworld_bevy_forest::vignettes: vignette Rocky "The Fallen Watchtower" at 172.3,0.5,24.8
+2026-10-08T12:05:41.067980Z  INFO tileworld_bevy_forest::vignettes: vignette Snow "The Frozen Camp" at -73.0,0.5,-5.4
+2026-10-08T12:05:41.068093Z  INFO tileworld_bevy_forest::vignettes: vignette Swamp "The Sunken Wreck" at 52.5,0.0,96.0
+2026-10-08T12:05:41.084217Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.275123Z  INFO tileworld_bevy_forest::ork_fortress: ork fortress: Gnashfang Hold built at 12,162
+2026-10-08T12:05:41.301471Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.330526Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.375227Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 76,-114
+2026-10-08T12:05:41.375276Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 27,-44
+2026-10-08T12:05:41.375297Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -104,68
+2026-10-08T12:05:41.375400Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 0,99
+2026-10-08T12:05:41.375421Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 84,-127
+2026-10-08T12:05:41.375525Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 113,-94
+2026-10-08T12:05:41.375543Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -0,145
+2026-10-08T12:05:41.375555Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 82,-108
+2026-10-08T12:05:41.375570Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -68,22
+2026-10-08T12:05:41.375583Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 42,-65
+2026-10-08T12:05:41.375609Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction 22,-37
+2026-10-08T12:05:41.375624Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -136,90
+2026-10-08T12:05:41.375679Z  INFO tileworld_bevy_forest::wayside: wayside: no legal signpost spot at junction -118,-6
+2026-10-08T12:05:41.375807Z  INFO tileworld_bevy_forest::wayside: wayside: 7 signposts, 12 roadside pieces
+2026-10-08T12:05:41.387075Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.389127Z  INFO tileworld_bevy_forest::bog: bog: drowned tower at 15.6,83.8
+2026-10-08T12:05:41.389484Z  INFO tileworld_bevy_forest::bog: bog: stilt hut at -10.6,102.8
+2026-10-08T12:05:41.389499Z  INFO tileworld_bevy_forest::bog: bog: 28 drowned trees, 18 wisps, 20 glow-mushroom clusters
+2026-10-08T12:05:41.398146Z  WARN tileworld_bevy_forest::poi: poi: no spot for the gallows on the fortress approach
+2026-10-08T12:05:41.398460Z  INFO tileworld_bevy_forest::poi: poi: 4 set-pieces, 0 fields, smoke + crows over the Hold
+2026-10-08T12:05:41.408657Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.409015Z  INFO tileworld_bevy_forest::vista: vista: waterfall at 72.7,36.4 (wall 3.3u)
+2026-10-08T12:05:41.409144Z  INFO tileworld_bevy_forest::vista: vista: overlook (rock summit → castle plain) at 96.8,6.6
+2026-10-08T12:05:41.409154Z  INFO tileworld_bevy_forest::vista: vista: overlook (snow summit → western sea) at -101.2,-66.0
+2026-10-08T12:05:41.409162Z  INFO tileworld_bevy_forest::vista: vista: overlook (canyon mouth → rival dunes) at 95.0,-66.0
+2026-10-08T12:05:41.409168Z  INFO tileworld_bevy_forest::vista: vista: 3/3 overlooks
+2026-10-08T12:05:41.409172Z  INFO tileworld_bevy_forest::biome: view → world map
+2026-10-08T12:05:41.419697Z  INFO tileworld_bevy_forest::perftest: PERF_READY t=11.913
+2026-10-08T12:05:41.430129Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.441527Z  INFO tileworld_bevy_forest::blendertrees: blender trees replacements: forest=112, meadow=6, rts=0, treeline=0; dead/stump, orchard and nonforest biome trees retain native meshes
+2026-10-08T12:05:41.501512Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.516197Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.532005Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.546953Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.557181Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.567334Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.577587Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.589008Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.608511Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.630429Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.641698Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.650839Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.661479Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.694970Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.714491Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.725903Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.734914Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.767563Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.794236Z  INFO tileworld_bevy_forest::villagers: FOREST_ARCHERS: retrained 1 guards as archers
+2026-10-08T12:05:41.819766Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=12.3 app=Playing modal=None
+2026-10-08T12:05:41.819989Z  INFO tileworld_bevy_forest::perftest: PERF t=  12 fps=  40 ms= 25.3 ent= 16344 mesh= 5137 mat= 234 creature_mat=8 img=  145 atlas=15k/15p rss= 3.60GiB
+2026-10-08T12:05:41.820220Z  INFO tileworld_bevy_forest::perftest:    arch   3501  CreatureExt>>
+2026-10-08T12:05:41.820234Z  INFO tileworld_bevy_forest::perftest:    arch   3231  BipedPart
+2026-10-08T12:05:41.820239Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:05:41.820243Z  INFO tileworld_bevy_forest::perftest:    arch    608  [engine x8 comps]
+2026-10-08T12:05:41.820248Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:05:41.820252Z  INFO tileworld_bevy_forest::perftest:    arch    550  CreatureExt>> QuadPart
+2026-10-08T12:05:41.820256Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:05:41.820260Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:05:41.820265Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:05:41.820269Z  INFO tileworld_bevy_forest::perftest:    arch    330  CreatureExt>> QuadPart
+2026-10-08T12:05:41.820273Z  INFO tileworld_bevy_forest::perftest:    arch    289  [engine x13 comps]
+2026-10-08T12:05:41.820277Z  INFO tileworld_bevy_forest::perftest:    arch    284  BiomeEntity HpBar
+2026-10-08T12:05:41.820295Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.68ms  main_opaque_pass_3d=2.59 early prepass=0.29 bin_unpacking=0.18 ui=0.15 bloom=0.13 smaa=0.08 clustering=0.06 tonemapping=0.05 early_mesh_preprocessing=0.04 main_transparent_pass_3d=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:05:46.821098Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=17.3 app=Playing modal=None
+2026-10-08T12:05:46.821363Z  INFO tileworld_bevy_forest::perftest: PERF t=  17 fps=  85 ms= 14.8 ent= 16477 mesh= 5137 mat= 241 creature_mat=8 img=  145 atlas=15k/15p rss= 3.63GiB
+2026-10-08T12:05:46.821564Z  INFO tileworld_bevy_forest::perftest:    arch   3530  CreatureExt>>
+2026-10-08T12:05:46.821578Z  INFO tileworld_bevy_forest::perftest:    arch   3261  BipedPart
+2026-10-08T12:05:46.821582Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:05:46.821586Z  INFO tileworld_bevy_forest::perftest:    arch    614  [engine x8 comps]
+2026-10-08T12:05:46.821589Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:05:46.821593Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:05:46.821597Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:05:46.821601Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:05:46.821611Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:05:46.821618Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:05:46.821622Z  INFO tileworld_bevy_forest::perftest:    arch    287  [engine x13 comps]
+2026-10-08T12:05:46.821626Z  INFO tileworld_bevy_forest::perftest:    arch    282  BiomeEntity HpBar
+2026-10-08T12:05:46.821641Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.69ms  main_opaque_pass_3d=2.65 early prepass=0.31 bin_unpacking=0.18 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 early_mesh_preprocessing=0.05 main_transparent_pass_3d=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:05:51.825529Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=22.3 app=Playing modal=None
+2026-10-08T12:05:51.825834Z  INFO tileworld_bevy_forest::perftest: PERF t=  22 fps= 104 ms=  9.8 ent= 16370 mesh= 5137 mat= 252 creature_mat=8 img=  146 atlas=16k/16p rss= 3.68GiB
+2026-10-08T12:05:51.826046Z  INFO tileworld_bevy_forest::perftest:    arch   3450  CreatureExt>>
+2026-10-08T12:05:51.826056Z  INFO tileworld_bevy_forest::perftest:    arch   3186  BipedPart
+2026-10-08T12:05:51.826060Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:05:51.826066Z  INFO tileworld_bevy_forest::perftest:    arch    599  [engine x8 comps]
+2026-10-08T12:05:51.826070Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:05:51.826076Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:05:51.826080Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:05:51.826085Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:05:51.826089Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:05:51.826094Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:05:51.826098Z  INFO tileworld_bevy_forest::perftest:    arch    282  [engine x13 comps]
+2026-10-08T12:05:51.826103Z  INFO tileworld_bevy_forest::perftest:    arch    280  OrkEye
+2026-10-08T12:05:51.826125Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.67ms  main_opaque_pass_3d=2.61 early prepass=0.32 bin_unpacking=0.19 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 early_mesh_preprocessing=0.05 main_transparent_pass_3d=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:05:56.827988Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=27.3 app=Playing modal=None
+2026-10-08T12:05:56.828413Z  INFO tileworld_bevy_forest::perftest: PERF t=  27 fps= 121 ms=  8.3 ent= 16202 mesh= 5137 mat= 261 creature_mat=8 img=  146 atlas=16k/16p rss= 3.72GiB
+2026-10-08T12:05:56.828569Z  INFO tileworld_bevy_forest::perftest:    arch   3386  CreatureExt>>
+2026-10-08T12:05:56.828574Z  INFO tileworld_bevy_forest::perftest:    arch   3126  BipedPart
+2026-10-08T12:05:56.828577Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:05:56.828580Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:05:56.828583Z  INFO tileworld_bevy_forest::perftest:    arch    587  [engine x8 comps]
+2026-10-08T12:05:56.828586Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:05:56.828588Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:05:56.828591Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:05:56.828594Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:05:56.828596Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:05:56.828599Z  INFO tileworld_bevy_forest::perftest:    arch    282  OrkEye
+2026-10-08T12:05:56.828602Z  INFO tileworld_bevy_forest::perftest:    arch    278  [engine x13 comps]
+2026-10-08T12:05:56.828622Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.69ms  main_opaque_pass_3d=2.64 early prepass=0.31 bin_unpacking=0.18 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 early_mesh_preprocessing=0.05 main_transparent_pass_3d=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:06:01.838606Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=32.3 app=Playing modal=None
+2026-10-08T12:06:01.839080Z  INFO tileworld_bevy_forest::perftest: PERF t=  32 fps=  63 ms= 16.0 ent= 15905 mesh= 5137 mat= 271 creature_mat=8 img=  146 atlas=16k/16p rss= 3.77GiB
+2026-10-08T12:06:01.839257Z  INFO tileworld_bevy_forest::perftest:    arch   3226  CreatureExt>>
+2026-10-08T12:06:01.839266Z  INFO tileworld_bevy_forest::perftest:    arch   2976  BipedPart
+2026-10-08T12:06:01.839270Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:06:01.839275Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:06:01.839279Z  INFO tileworld_bevy_forest::perftest:    arch    557  [engine x8 comps]
+2026-10-08T12:06:01.839283Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:06:01.839287Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:06:01.839290Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:06:01.839294Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:06:01.839302Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:06:01.839306Z  INFO tileworld_bevy_forest::perftest:    arch    280  OrkEye
+2026-10-08T12:06:01.839309Z  INFO tileworld_bevy_forest::perftest:    arch    268  [engine x13 comps]
+2026-10-08T12:06:01.839331Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.65ms  main_opaque_pass_3d=2.60 early prepass=0.30 bin_unpacking=0.18 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 main_transparent_pass_3d=0.05 early_mesh_preprocessing=0.05 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:06:06.848629Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=37.3 app=Playing modal=None
+2026-10-08T12:06:06.849308Z  INFO tileworld_bevy_forest::perftest: PERF t=  37 fps= 105 ms=  9.7 ent= 15720 mesh= 5137 mat= 270 creature_mat=8 img=  146 atlas=16k/16p rss= 3.80GiB
+2026-10-08T12:06:06.849489Z  INFO tileworld_bevy_forest::perftest:    arch   3161  CreatureExt>>
+2026-10-08T12:06:06.849494Z  INFO tileworld_bevy_forest::perftest:    arch   2916  BipedPart
+2026-10-08T12:06:06.849497Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:06:06.849500Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:06:06.849503Z  INFO tileworld_bevy_forest::perftest:    arch    545  [engine x8 comps]
+2026-10-08T12:06:06.849506Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:06:06.849509Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:06:06.849511Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:06:06.849514Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:06:06.849517Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:06:06.849519Z  INFO tileworld_bevy_forest::perftest:    arch    282  OrkEye
+2026-10-08T12:06:06.849522Z  INFO tileworld_bevy_forest::perftest:    arch    264  BiomeEntity ChopTree Sway
+2026-10-08T12:06:06.849538Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.65ms  main_opaque_pass_3d=2.60 early prepass=0.31 bin_unpacking=0.18 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 main_transparent_pass_3d=0.05 early_mesh_preprocessing=0.05 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:06:11.860431Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=42.4 app=Playing modal=None
+2026-10-08T12:06:11.860628Z  INFO tileworld_bevy_forest::perftest: PERF t=  42 fps=  86 ms= 11.7 ent= 15421 mesh= 5137 mat= 264 creature_mat=8 img=  146 atlas=16k/16p rss= 3.82GiB
+2026-10-08T12:06:11.860794Z  INFO tileworld_bevy_forest::perftest:    arch   3049  CreatureExt>>
+2026-10-08T12:06:11.860801Z  INFO tileworld_bevy_forest::perftest:    arch   2811  BipedPart
+2026-10-08T12:06:11.860804Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:06:11.860806Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:06:11.860809Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:06:11.860812Z  INFO tileworld_bevy_forest::perftest:    arch    524  [engine x8 comps]
+2026-10-08T12:06:11.860814Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:06:11.860818Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:06:11.860821Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:06:11.860823Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:06:11.860826Z  INFO tileworld_bevy_forest::perftest:    arch    278  OrkEye
+2026-10-08T12:06:11.860829Z  INFO tileworld_bevy_forest::perftest:    arch    264  BiomeEntity ChopTree Sway
+2026-10-08T12:06:11.860846Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.63ms  main_opaque_pass_3d=2.59 early prepass=0.30 bin_unpacking=0.18 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 main_transparent_pass_3d=0.05 early_mesh_preprocessing=0.05 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:06:16.867309Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=47.4 app=Playing modal=None
+2026-10-08T12:06:16.867823Z  INFO tileworld_bevy_forest::perftest: PERF t=  47 fps=  77 ms= 13.1 ent= 15150 mesh= 5137 mat= 258 creature_mat=8 img=  146 atlas=16k/16p rss= 3.85GiB
+2026-10-08T12:06:16.868008Z  INFO tileworld_bevy_forest::perftest:    arch   2921  CreatureExt>>
+2026-10-08T12:06:16.868013Z  INFO tileworld_bevy_forest::perftest:    arch   2691  BipedPart
+2026-10-08T12:06:16.868016Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:06:16.868019Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:06:16.868022Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:06:16.868024Z  INFO tileworld_bevy_forest::perftest:    arch    500  [engine x8 comps]
+2026-10-08T12:06:16.868027Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:06:16.868030Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:06:16.868032Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:06:16.868035Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:06:16.868038Z  INFO tileworld_bevy_forest::perftest:    arch    280  OrkEye
+2026-10-08T12:06:16.868040Z  INFO tileworld_bevy_forest::perftest:    arch    264  BiomeEntity ChopTree Sway
+2026-10-08T12:06:16.868059Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.62ms  main_opaque_pass_3d=2.58 early prepass=0.30 bin_unpacking=0.18 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 main_transparent_pass_3d=0.05 early_mesh_preprocessing=0.05 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:06:21.876064Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=52.4 app=Playing modal=None
+2026-10-08T12:06:21.876691Z  INFO tileworld_bevy_forest::perftest: PERF t=  52 fps=  63 ms= 15.9 ent= 14911 mesh= 5137 mat= 255 creature_mat=8 img=  146 atlas=16k/16p rss= 3.88GiB
+2026-10-08T12:06:21.876918Z  INFO tileworld_bevy_forest::perftest:    arch   2841  CreatureExt>>
+2026-10-08T12:06:21.876925Z  INFO tileworld_bevy_forest::perftest:    arch   2616  BipedPart
+2026-10-08T12:06:21.876930Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:06:21.876934Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:06:21.876942Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:06:21.876949Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:06:21.876966Z  INFO tileworld_bevy_forest::perftest:    arch    485  [engine x8 comps]
+2026-10-08T12:06:21.876970Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:06:21.876974Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:06:21.876978Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:06:21.876982Z  INFO tileworld_bevy_forest::perftest:    arch    282  OrkEye
+2026-10-08T12:06:21.876986Z  INFO tileworld_bevy_forest::perftest:    arch    264  BiomeEntity ChopTree Sway
+2026-10-08T12:06:21.877007Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.64ms  main_opaque_pass_3d=2.57 early prepass=0.30 bin_unpacking=0.20 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 early_mesh_preprocessing=0.05 main_transparent_pass_3d=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:06:26.888638Z  INFO tileworld_bevy_forest::perftest: STATE_DBG t=57.4 app=Playing modal=None
+2026-10-08T12:06:26.889073Z  INFO tileworld_bevy_forest::perftest: PERF t=  57 fps= 100 ms= 10.1 ent= 14800 mesh= 5137 mat= 251 creature_mat=8 img=  146 atlas=16k/16p rss= 3.91GiB
+2026-10-08T12:06:26.889262Z  INFO tileworld_bevy_forest::perftest:    arch   2793  CreatureExt>>
+2026-10-08T12:06:26.889268Z  INFO tileworld_bevy_forest::perftest:    arch   2571  BipedPart
+2026-10-08T12:06:26.889271Z  INFO tileworld_bevy_forest::perftest:    arch   1408  BiomeEntity
+2026-10-08T12:06:26.889274Z  INFO tileworld_bevy_forest::perftest:    arch    590  BiomeEntity CastlePart RevealAt
+2026-10-08T12:06:26.889277Z  INFO tileworld_bevy_forest::perftest:    arch    540  CreatureExt>> QuadPart
+2026-10-08T12:06:26.889280Z  INFO tileworld_bevy_forest::perftest:    arch    494  [engine x12 comps]
+2026-10-08T12:06:26.889282Z  INFO tileworld_bevy_forest::perftest:    arch    476  [engine x8 comps]
+2026-10-08T12:06:26.889285Z  INFO tileworld_bevy_forest::perftest:    arch    472  BiomeEntity GroundCoverChunk
+2026-10-08T12:06:26.889288Z  INFO tileworld_bevy_forest::perftest:    arch    413  BiomeEntity
+2026-10-08T12:06:26.889290Z  INFO tileworld_bevy_forest::perftest:    arch    324  CreatureExt>> QuadPart
+2026-10-08T12:06:26.889293Z  INFO tileworld_bevy_forest::perftest:    arch    278  OrkEye
+2026-10-08T12:06:26.889296Z  INFO tileworld_bevy_forest::perftest:    arch    264  BiomeEntity ChopTree Sway
+2026-10-08T12:06:26.889311Z  INFO tileworld_bevy_forest::perftest:   GPU Σ=3.63ms  main_opaque_pass_3d=2.57 early prepass=0.31 bin_unpacking=0.19 bloom=0.13 smaa=0.08 ui=0.08 clustering=0.06 tonemapping=0.05 early_mesh_preprocessing=0.05 main_transparent_pass_3d=0.04 postprocessing=0.03 upscaling=0.02
+2026-10-08T12:06:29.512536Z  INFO tileworld_bevy_forest::perftest: PERF_SUMMARY mode=gameplay frames=2847 mean_ms=11.625 p50_ms=10.568 p95_ms=17.952 p99_ms=23.334 max_ms=89.455
+2026-10-08T12:06:29.512608Z  INFO tileworld_bevy_forest::perftest: PERFTEST done (60s) — exiting
