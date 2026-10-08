@@ -10,7 +10,7 @@ and a changed assault.
 | 2 | Torch bearers threaten the farms. | Buy a permanent upgrade at the War Table, then defend the fields. Opening the table does not complete the lesson. Arsonists visibly carry torches and prioritize farms over other producers. Dawn reports whether fields survived and explains rebuilding when needed. |
 | 3 | Shamans are staging the next assault. | The compass identifies their camp. Clearing it removes every Shaman from this night's wave, without replacement. Alternatively, buy actual ranged support and face the full assault. The report shows the raid's result during preparation and battle. |
 
-The first three preparation days have no countdown. E at the war bell always begins the
+The first three preparation days have no countdown and stay in clear daylight. E at the war bell always begins the
 night, even if the suggested action is unfinished. Early actions count, solo rescues count,
 and combat advice replaces any unfinished preparation advice immediately. The first farm
 trial also pauses a negative starvation meter until food production or the first night.
@@ -100,3 +100,6 @@ For a normal gameplay-camera UI capture, use the existing `FOREST_SHOT` harness 
 software-rendering machines, `FOREST_RENDER_SYNC=1` serializes shader pipeline compilation
 and bounds the general mesh slabs at 64 MiB to reduce upload peaks.
 It does not alter normal rendering unless explicitly set.
+For a capture after genuine New Game resets and its starting stipend, pair
+`FOREST_CAMPAIGN_VERIFY=raid` with `FOREST_CAMPAIGN_VERIFY_HOLD=1`; this stops the script at
+the first ready day while leaving the ordinary world running.
