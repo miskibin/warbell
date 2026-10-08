@@ -13,6 +13,7 @@
 //! flag on [`MusicState`]). Only this module reads them and plays sound.
 
 mod advice;
+mod campaign;
 mod ambience;
 mod animals;
 pub(crate) mod director;
@@ -342,6 +343,7 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<advice::AdviceTrigger>()
             .add_message::<AudioCue>()
             .add_message::<director::Speak>()
+            .init_resource::<campaign::CampaignVoice>()
             .add_systems(
                 Startup,
                 (
@@ -392,6 +394,7 @@ impl Plugin for GameAudioPlugin {
                     detect_gear_found,
                     advice::detect_town_advice,
                 )
+                    .before(director::speak_director)
                     .run_if(in_state(crate::game_state::Modal::None))
                     // Hero-voice triggers are campaign beats (intro, biome entry, siege…);
                     // the skirmish has no hero to speak them.
@@ -404,6 +407,7 @@ impl Plugin for GameAudioPlugin {
                 Update,
                 (npc::detect_villager_ambient, npc::detect_villager_events, ork::detect_ork_voices, rival_voice::detect_rival_voices, detect_hero_remarks)
                     .after(voice::play_voice_cues)
+                    .before(director::speak_director)
                     .run_if(in_state(crate::game_state::AppState::Playing))
                     // Campaign speakers only — skirmish bodies reuse these models but the
                     // barks reference hero/keep/siege context that doesn't exist there.
@@ -423,18 +427,26 @@ impl Plugin for GameAudioPlugin {
             )
             .add_systems(
                 Update,
-                (director::speak_director, director::tick_chains)
+                (director::speak_director, director::tick_chains).chain().after(campaign::detect)
                     .run_if(in_state(crate::game_state::AppState::Playing)),
             )
+            .add_systems(Update, campaign::detect
+                .after(crate::quest::observe_campaign).after(track_hero_threat)
+                .run_if(in_state(crate::game_state::AppState::Playing))
+                .run_if(in_state(crate::game_state::Modal::None))
+                .run_if(crate::rts::in_campaign)
+                .run_if(|ready: Res<crate::biome::WorldReady>| ready.0))
+            .add_systems(Update, campaign::on_load
+                .after(crate::savegame::RestoreRunSet).before(crate::game_state::SimulationSet))
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, rival_voice::reset_rival_trigger, advice::reset_advice)
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, rival_voice::reset_rival_trigger, advice::reset_advice, campaign::reset)
                     .run_if(crate::game_state::fresh_run_reset),
             )
             .add_systems(
                 OnExit(crate::game_state::AppState::GameOver),
-                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, rival_voice::reset_rival_trigger, advice::reset_advice),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, rival_voice::reset_rival_trigger, advice::reset_advice, campaign::reset),
             );
     }
 }
