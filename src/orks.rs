@@ -311,7 +311,7 @@ impl Plugin for OrksPlugin {
     fn build(&self, app: &mut App) {
         // The melee attack-token ring (shared with the siege invader brain — see `melee_ring`).
         app.init_resource::<crate::melee_ring::MeleeRing>();
-        app.add_systems(Update, (ork_limbs, ork_drive)); // limb anim keeps running while frozen
+        app.add_systems(Update, (ork_limbs, ork_drive, torch_flame_flicker)); // render anim keeps running while frozen
         // Ungated + before both brains: hand a slain striker's token straight back, so the horde
         // can't be frozen out of the ring for a full TOKEN_TIME (see `melee_ring`).
         app.add_systems(
@@ -842,21 +842,59 @@ pub(crate) fn ork_torch_tip() -> Vec3 {
 /// mesh — it spawns as a separate `StandardMaterial` child at [`ork_torch_tip`] (this mesh rides
 /// the shared vertex-colour skin material and flashes with the body on a hit).
 pub(crate) fn ork_torch_mesh() -> Mesh {
-    group(vec![
-        cyl(0.045, 0.18, v(0.0, 0.02, 0.0), Quat::IDENTITY, lin(0x2e1f12)), // leather-wrapped grip
-        cyl(0.032, 0.52, v(0.0, 0.32, 0.0), Quat::IDENTITY, lin(0x4a2a16)), // shaft
-        frustum(0.072, 0.045, 0.16, v(0.0, 0.60, 0.0), Quat::IDENTITY, lin(0x241408)), // pitch head
-    ])
-    .rotated_by(ork_torch_bake())
+    let wood = lin(0x69452a);
+    let iron = lin(0x545057);
+    let wrap = lin(0x987452);
+    let mut parts = vec![
+        frustum(0.043, 0.051, 0.72, v(0.0, 0.26, 0.0), Quat::IDENTITY, wood),
+        cyl(0.055, 0.18, v(0.0, 0.01, 0.0), Quat::IDENTITY, lin(0x352a21)),
+        cyl(0.059, 0.035, v(0.0, -0.075, 0.0), Quat::IDENTITY, iron),
+        // Iron cup under the pitch-soaked rag head. Chunky enough to read at game distance.
+        frustum(0.10, 0.061, 0.105, v(0.0, 0.52, 0.0), Quat::IDENTITY, iron),
+        frustum(0.084, 0.092, 0.155, v(0.0, 0.625, 0.0), Quat::IDENTITY, lin(0x2c2019)),
+    ];
+    for i in 0..5 {
+        parts.push(cyl(0.059, 0.016, v(0.0, -0.055 + i as f32 * 0.035, 0.0),
+            xyz(0.04, 0.0, 0.07), wrap));
+    }
+    for i in 0..3 {
+        parts.push(cyl(0.095 - i as f32 * 0.003, 0.02, v(0.0, 0.575 + i as f32 * 0.045, 0.0),
+            Quat::IDENTITY, lin(0x69503b)));
+    }
+    for a in [0.0_f32, 2.1, 4.2] {
+        parts.push(bxr(0.025, 0.18, 0.028, v(a.sin() * 0.086, 0.59, a.cos() * 0.086),
+            Quat::from_rotation_y(a), iron));
+    }
+    group(parts).rotated_by(ork_torch_bake())
 }
 
-/// Viewer-only flame stand-in (bright vertex-coloured blob — the real flame is an emissive
-/// `StandardMaterial` the FOREST_VIEW stage doesn't carry). Marks [`ork_torch_tip`] placement.
-pub(crate) fn tinted_flame_marker() -> Mesh {
-    tinted(
-        Mesh::from(Sphere::new(0.105).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.55, 1.0)),
-        [4.0, 2.2, 0.4, 1.0],
-    )
+/// Three asymmetrical tapered tongues with a hot inner core, shared by viewer and live flame.
+pub(crate) fn ork_torch_flame_mesh() -> Mesh {
+    let orange = [1.0, 0.20, 0.015, 1.0];
+    let amber = [1.0, 0.55, 0.07, 1.0];
+    let hot = [1.0, 0.88, 0.42, 1.0];
+    group(vec![
+        frustum(0.014, 0.084, 0.30, v(0.012, 0.135, 0.0), xyz(0.12, 0.0, -0.16), orange),
+        frustum(0.004, 0.060, 0.23, v(-0.042, 0.12, 0.01), xyz(-0.12, 0.0, 0.26), amber),
+        frustum(0.003, 0.043, 0.18, v(0.056, 0.09, -0.018), xyz(0.18, 0.0, -0.32), orange),
+        frustum(0.003, 0.052, 0.18, v(0.0, 0.075, 0.04), xyz(-0.1, 0.0, 0.07), hot),
+    ])
+}
+
+pub(crate) fn tinted_flame_marker() -> Mesh { ork_torch_flame_mesh() }
+
+#[derive(Component)]
+struct TorchFlame { phase: f32 }
+
+fn torch_flame_flicker(time: Res<Time>, mut flames: Query<(&TorchFlame, &mut Transform)>) {
+    let t = time.elapsed_secs_wrapped();
+    for (flame, mut tf) in &mut flames {
+        let p = t * 8.7 + flame.phase;
+        tf.scale = Vec3::new(1.0 + p.sin() * 0.08, 1.0 + (p * 1.37).sin() * 0.16,
+            1.0 + (p * 0.91).cos() * 0.07);
+        // Grow from the wick, never bob the whole flame away from its head.
+        tf.rotation = xyz(0.0, p.sin() * 0.08, (p * 0.73).cos() * 0.10);
+    }
 }
 
 /// Drive each (biped) ork's [`crate::biped::BipedDrive`] from its `Ork` AI, so `animate_biped` plays
@@ -1488,10 +1526,10 @@ pub struct Armory {
     tmpl: Vec<((OrkVariant, Faction), Template)>,
     eye_mesh: Handle<Mesh>,
     eye_mat: Handle<StandardMaterial>, // glowing eyes stay a plain emissive StandardMaterial
-    /// War-torch strapped over a bearer's shoulder (shaft + lashing + pitch head; vertex-coloured
+    /// War-torch held in the off hand (shaft + lashing + pitch head; vertex-coloured
     /// so it rides the shared skin material and flashes with the body on a hit).
     torch_mesh: Handle<Mesh>,
-    /// Teardrop torch flame — emissive `StandardMaterial` like the eyes, so bloom catches it.
+    /// Tapered, vertex-coloured torch tongues — emissive `StandardMaterial` like the eyes, so bloom catches it.
     flame_mesh: Handle<Mesh>,
     flame_mat: Handle<StandardMaterial>,
 }
@@ -1528,12 +1566,11 @@ impl Armory {
             ..default()
         });
         let torch_mesh = meshes.add(ork_torch_mesh());
-        let flame_mesh =
-            meshes.add(Mesh::from(Sphere::new(0.105).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.55, 1.0)));
+        let flame_mesh = meshes.add(ork_torch_flame_mesh());
         // Matches the fire family (`firelight` embers / castle flames): warm base, strong emissive.
         let flame_mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.55, 0.22),
-            emissive: LinearRgba::rgb(5.0, 1.9, 0.35),
+            base_color: Color::WHITE,
+            emissive: LinearRgba::rgb(3.2, 1.5, 0.35),
             unlit: true,
             ..default()
         });
@@ -1688,6 +1725,7 @@ impl Armory {
                     Mesh3d(self.flame_mesh.clone()),
                     MeshMaterial3d(self.flame_mat.clone()),
                     Transform::from_translation(ork_torch_tip()),
+                    TorchFlame { phase: phase * 3.7 },
                     bevy::light::NotShadowCaster,
                     crate::firelight::held_torch_light(phase * 3.7),
                 ));

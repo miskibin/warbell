@@ -146,11 +146,13 @@ impl<T> TileGrid<T> {
 struct Store {
     circles: TileGrid<(f32, f32, f32)>,
     boxes: TileGrid<[f32; 6]>,
+    // Placement-only footprints: walkable foliage still needs visible breathing room.
+    visual: TileGrid<(f32, f32, f32)>,
 }
 
 impl Store {
     fn new() -> Self {
-        Self { circles: TileGrid::new(), boxes: TileGrid::new() }
+        Self { circles: TileGrid::new(), boxes: TileGrid::new(), visual: TileGrid::new() }
     }
 }
 
@@ -215,6 +217,24 @@ impl BlockView {
                         if lx.abs() <= b[2] + margin && lz.abs() <= b[3] + margin {
                             return true;
                         }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Placement clearance includes walk-through props without changing movement or LOS.
+    pub fn any_visual_within(&self, wx: f32, wz: f32, margin: f32) -> bool {
+        if self.any_within(wx, wz, margin) { return true; }
+        let margin = margin.max(0.0);
+        let (tx, tz) = tile(wx, wz);
+        let reach = margin.ceil() as i32;
+        for dx in -reach..=reach {
+            for dz in -reach..=reach {
+                if let Some(bucket) = self.guard.visual.bucket(tx + dx, tz + dz) {
+                    for &(cx, cz, radius) in bucket {
+                        if (wx - cx).hypot(wz - cz) < radius + margin { return true; }
                     }
                 }
             }
@@ -304,6 +324,7 @@ pub fn reset() {
     write(|s| {
         s.circles.reset();
         s.boxes.reset();
+        s.visual.reset();
     });
 }
 
@@ -316,6 +337,19 @@ pub fn add(wx: f32, wz: f32, radius: f32) {
     }
     let (tx, tz) = tile(wx, wz);
     write(|s| s.circles.push(tx, tz, (wx, wz, radius)));
+}
+
+/// Reserve a whole visible footprint for later placement. Unlike a solid circle, this may
+/// have any radius: it is indexed in every covered tile. Movement and LOS ignore it.
+pub fn reserve_visual(wx: f32, wz: f32, radius: f32) {
+    if !radius.is_finite() || radius <= 0.0 { return; }
+    let (tx0, tz0) = tile(wx - radius, wz - radius);
+    let (tx1, tz1) = tile(wx + radius, wz + radius);
+    write(|s| {
+        for tx in tx0..=tx1 {
+            for tz in tz0..=tz1 { s.visual.push(tx, tz, (wx, wz, radius)); }
+        }
+    });
 }
 
 /// Remove circular obstacles centred within ~0.2 units of `(wx, wz)`. Used when a tree is
@@ -373,6 +407,11 @@ pub fn any_within(wx: f32, wz: f32, margin: f32) -> bool {
     read().any_within(wx, wz, margin)
 }
 
+/// Clearance against both actual solids and placement-only visual footprints.
+pub fn any_visual_within(wx: f32, wz: f32, margin: f32) -> bool {
+    read().any_visual_within(wx, wz, margin)
+}
+
 /// A small outward vector from nearby circular blockers (trees/cacti), weighted by how close the
 /// body is to their collision shell. This is intentionally circle-only: walls and buildings already
 /// slide well via axis-separated movement, while trunks are the snaggy case that benefits from a
@@ -411,6 +450,22 @@ pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_visual_props_reserve_space_without_blocking_movement() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset();
+        reserve_visual(-1.2, 0.4, 2.8);
+        assert!(any_visual_within(1.5, 0.4, 0.0));
+        assert!(any_visual_within(2.0, 0.4, 0.5));
+        assert!(!any_visual_within(2.2, 0.4, 0.5));
+        assert!(!is_blocked(-1.2, 0.4));
+        assert!(!wall_between(-2.0, 0.4, 2.0, 0.4));
+        add_box(6.0, 0.0, 0.6, 0.4);
+        assert!(any_visual_within(6.0, 0.0, 0.0));
+        reset();
+        assert!(!any_visual_within(-1.2, 0.4, 0.5));
+    }
 
     /// A wall between attacker and target blocks the attack line-of-sight ([`wall_between`]),
     /// while a clear diagonal past the wall's end does not, and endpoints flush against the wall

@@ -577,6 +577,9 @@ struct ClassHandles {
     /// kind's footprint derived from its own silhouette so a wide crown blocks wider than a slim
     /// pole); empty otherwise. Aligned 1:1 with `variants`/`handles`.
     block_radii: Vec<f32>,
+    /// Actual source-mesh XZ half-extents and enclosing radii, aligned with tinted variants.
+    footprints: Vec<Vec2>,
+    visual_radii: Vec<f32>,
     chance: f32,
     scale: (f32, f32),
     tree: bool,
@@ -594,6 +597,27 @@ const PROP_TINTS: [[f32; 3]; 3] = [
     [0.87, 0.92, 0.90], // cooler + darker
 ];
 
+/// Measure the full mesh, including off-centre parts and outer corners, once at upload.
+fn mesh_footprint(mesh: &Mesh) -> (Vec2, f32) {
+    let Some(bevy::mesh::VertexAttributeValues::Float32x3(vertices)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+    else { return (Vec2::ZERO, 0.0) };
+    let mut half = Vec2::ZERO;
+    let mut radius = 0.0_f32;
+    for p in vertices {
+        half = half.max(Vec2::new(p[0].abs(), p[2].abs()));
+        radius = radius.max(p[0].hypot(p[2]));
+    }
+    (half, radius)
+}
+
+/// Match the rotated solid mesh rather than a class-wide circular approximation.
+fn register_passive_blocker(x: f32, z: f32, footprint: Vec2, scale: f32, authored_radius: f32, rotation: Quat) {
+    if authored_radius * scale < 0.30 { return; }
+    let half = footprint * scale * 0.85;
+    let (yaw, _, _) = rotation.to_euler(EulerRot::YXZ);
+    crate::blockers::add_obb(x, z, half.x, half.y, yaw);
+}
+
 fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHandles> {
     src.iter()
         .map(|c| {
@@ -601,7 +625,10 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
             let mut variants = Vec::with_capacity(n);
             let mut weights = Vec::with_capacity(n);
             let mut block_radii = Vec::with_capacity(if c.tree { n } else { 0 });
+            let mut footprints = Vec::with_capacity(n);
+            let mut visual_radii = Vec::with_capacity(n);
             for (m, w) in &c.variants {
+                let (footprint, visual_radius) = mesh_footprint(m);
                 // Trees collide on a per-kind footprint sized from the source mesh silhouette
                 // (cheap, once per variant — the ×PROP_TINTS copies share the same geometry).
                 let tree_r = if c.tree {
@@ -620,6 +647,8 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
                     mesh.remove_attribute(Mesh::ATTRIBUTE_UV_0);
                     variants.push(mesh);
                     weights.push(*w / PROP_TINTS.len() as f32);
+                    footprints.push(footprint);
+                    visual_radii.push(visual_radius);
                     if c.tree {
                         block_radii.push(tree_r);
                     }
@@ -636,6 +665,8 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
                 variants,
                 handles,
                 block_radii,
+                footprints,
+                visual_radii,
                 weights,
                 chance: c.chance,
                 scale: c.scale,
@@ -939,6 +970,8 @@ pub fn scatter_region(
         dst.push(PendingProp { mesh, transform });
     };
 
+    let story_clearings = crate::poi::story_clearings();
+
     // ── Main per-tile scatter ──
     let mut gx = lo;
     while gx < hi {
@@ -982,6 +1015,7 @@ pub fn scatter_region(
                 let s = r.range(c.scale.0, c.scale.1);
                 let landmark_buffered = crate::ruins::near_landmark_collision_buffer(cx, cz);
                 let landmark_core = crate::ruins::near_landmark_visual_footprint(cx, cz);
+                let story_clearing = story_clearings.overlaps(cx, cz, c.visual_radii[vi] * s);
                 if c.tree {
                     let p = Vec2::new(cx, cz);
                     let tree_clear = cfg.tree_min_dist * TREE_BLOCKER_CLEAR_FRAC;
@@ -992,8 +1026,9 @@ pub fn scatter_region(
                     if crate::boss::in_warden_glade(cx, cz)
                         || landmark_buffered
                         || landmark_core
+                        || story_clearing
                         || tree_pts.iter().any(|q| q.distance_squared(p) < min_d2)
-                        || crate::blockers::any_within(cx, cz, tree_clear)
+                        || crate::blockers::any_visual_within(cx, cz, tree_clear)
                     {
                         // Passive non-tree prop, so it merges into the chunk's props bucket.
                         if let Some(fb) = fallback
@@ -1001,7 +1036,15 @@ pub fn scatter_region(
                         {
                             let fi = pick_weighted(&fb.weights, r.next());
                             let fs = r.range(fb.scale.0, fb.scale.1);
-                            queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), yaw(&mut r), fs);
+                            let footprint = fb.visual_radii[fi] * fs;
+                            if !crate::blockers::any_visual_within(cx, cz, footprint)
+                                && !story_clearings.overlaps(cx, cz, footprint)
+                            {
+                                let rot = yaw(&mut r);
+                                register_passive_blocker(cx, cz, fb.footprints[fi], fs, fb.block_radius, rot);
+                                crate::blockers::reserve_visual(cx, cz, footprint);
+                                queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs);
+                            }
                         }
                     } else {
                         tree_pts.push(p);
@@ -1065,28 +1108,16 @@ pub fn scatter_region(
                         gz += 1.0;
                         continue;
                     }
-                    // Big non-tree props (boulders) block, scaled with the instance and capped at
-                    // the blockers neighbour-scan bound. Small clutter has block_radius 0 → nothing.
-                    // A floor drops the small end of a mixed class — only clearly-big boulders block;
-                    // the smaller/medium rocks of a class stay walk-through (you step over them, not
-                    // bump an invisible wall around a knee-high stone).
-                    if c.block_radius > 0.0 {
-                        let rad = c.block_radius * s;
-                        if rad > 1.0 {
-                            // Too big for a ≤1.0 circle (the neighbour-scan bound), so a big boulder
-                            // used to block only a 1.0 core you could clip straight past. Register a
-                            // box hugging its footprint instead (0.85× so the square corners don't
-                            // over-block a round-ish boulder) — solid near the edges, not a thin core.
-                            let hb = rad * 0.85;
-                            crate::blockers::add_box(cx, cz, hb, hb);
-                        } else if rad >= 0.30 {
-                            crate::blockers::add(cx, cz, rad);
-                        }
+                    // Visual separation is independent of movement: low shrubs remain walkable,
+                    // but their full mesh cannot be merged through another prop.
+                    let footprint = c.visual_radii[vi] * s;
+                    if story_clearing || crate::blockers::any_visual_within(cx, cz, footprint) {
+                        gz += 1.0;
+                        continue;
                     }
-                    // Passive scatter (bushes/rocks/litter) — merge into the chunk's props
-                    // bucket. The blocker above is registered independently of the entity, so a
-                    // boulder still stops you even though its mesh now lives in a shared chunk.
                     let rot = yaw(&mut r);
+                    register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
+                    crate::blockers::reserve_visual(cx, cz, footprint);
                     queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);
                 }
             }
@@ -1116,7 +1147,7 @@ pub fn scatter_region(
                     }
                     // Keep cover off trunks, walls, and landmark footprints (blockers register
                     // during the same build; landmarks add theirs before this pass runs on Continue).
-                    if crate::blockers::any_within(x, z, 0.4) {
+                    if crate::blockers::any_within(x, z, 0.4) || story_clearings.overlaps(x, z, 0.4) {
                         continue;
                     }
                     let patch = ground_patch(x, z);
@@ -1150,6 +1181,7 @@ pub fn scatter_region(
                             if target < acc {
                                 let vi = pick_weighted(&c.weights, r.next());
                                 let s = r.range(c.scale.0, c.scale.1);
+                                if story_clearings.overlaps(x, z, c.visual_radii[vi] * s) { break; }
                                 // Ground cover → the chunk's cover bucket (NotShadowCaster +
                                 // distance-fade, applied once per merged chunk in `spawn_chunks`).
                                 let rot = yaw(&mut r);
@@ -1178,4 +1210,20 @@ fn cardinal(r: &mut Rng) -> Quat {
 
 fn yaw(r: &mut Rng) -> Quat {
     Quat::from_rotation_y(r.next() * std::f32::consts::TAU)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn passive_collision_matches_wide_rotated_variant() {
+        let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        register_passive_blocker(40.0, 40.0, Vec2::new(2.0, 0.35), 1.0, 0.4, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+        assert!(crate::blockers::is_blocked(40.0, 38.5), "rotated wide model edge must be solid");
+        assert!(!crate::blockers::is_blocked(40.5, 40.0), "thin model side must stay clear");
+        register_passive_blocker(44.0, 40.0, Vec2::ONE, 1.0, 0.2, Quat::IDENTITY);
+        assert!(!crate::blockers::is_blocked(44.0, 40.0), "small clutter remains walkable");
+        crate::blockers::reset();
+    }
 }

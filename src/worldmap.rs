@@ -2747,6 +2747,7 @@ pub fn build_step(
     state: &mut BuildState,
 ) {
     if step == 0 {
+        crate::poi::reset_plan();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
         // mid-gameplay frame hitch (e.g. the first invader A* of the run).
@@ -2997,6 +2998,7 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     crate::boats::spawn_boats_island(commands, meshes, std_mats, isle_c, isle_r, SEA_Y);
 
     crate::camps::plan();
+    crate::poi::plan_clearings();
 }
 
 /// Scatter one biome's props on its tiles (height-aware), and capture its atmosphere/weather into

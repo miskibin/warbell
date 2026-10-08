@@ -235,6 +235,33 @@ fn footprint_spread(x: f32, z: f32, radius: f32) -> Option<f32> {
     Some(hi - lo)
 }
 
+/// Keep the visual footprint off roads and authored clearings, including landmarks whose
+/// decorative edge extends beyond their solid blocker.
+fn footprint_clear(x: f32, z: f32, radius: f32) -> bool {
+    if crate::blockers::any_visual_within(x, z, radius)
+        || crate::poi::overlaps_planned_clearing(x, z, radius)
+        || crate::bridges::near_bridge(x, z, radius + 0.2)
+    {
+        return false;
+    }
+    for k in 0..=8 {
+        let a = k as f32 * (TAU / 8.0);
+        let (px, pz) = if k == 8 { (x, z) } else { (x + a.cos() * radius, z + a.sin() * radius) };
+        if crate::roads::on_road(px, pz)
+            || crate::town::near_build_plot(px, pz)
+            || crate::camps::in_clearing(px, pz)
+            || crate::castle::in_footprint(px, pz)
+            || crate::rival::near_fort(px, pz)
+            || crate::ruins::near_landmark_visual_footprint(px, pz)
+            || crate::worldmap::cliff_shelf_world(px, pz)
+            || crate::worldmap::is_pool_world(px, pz)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 struct Spec {
     biome: crate::biome::Biome,
     mesh: fn() -> Mesh,
@@ -270,11 +297,7 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
             let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
             let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
             if crate::worldmap::biome_at_world(x, z) != Some(s.biome)
-                || crate::worldmap::ground_at_world(x, z).is_none()
-                || crate::blockers::is_blocked(x, z)
-                || crate::camps::in_clearing(x, z)
-                || crate::castle::in_footprint(x, z)
-                || crate::rival::near_fort(x, z)
+                || !footprint_clear(x, z, probe)
             {
                 continue;
             }
@@ -301,6 +324,7 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
             // the wider edges); half-extent from the flatness-probe reach, floored at block_r.
             let hb = (s.foot_r * s.scale * 0.55).max(s.block_r);
             crate::blockers::add_obb(x, z, hb, hb, yaw);
+            crate::blockers::reserve_visual(x, z, probe);
             // Vignette set-pieces carry no sealed gear ("" → no Rune-Trial), only their shrine buff.
             crate::landmarks::attach_custom(commands, id, s.name, s.lore, s.buff, s.mag, s.beacon, "", Vec3::new(x, y, z), meshes, materials);
             info!("vignette {:?} \"{}\" at {:.1},{:.1},{:.1}", s.biome, s.name, x, y, z);

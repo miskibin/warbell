@@ -109,6 +109,14 @@ fn assemble(parts: Vec<Mesh>) -> Mesh {
     base
 }
 
+fn fence_rail(centre: Vec3, yaw: f32, length: f32) -> Mesh {
+    // Lay the upright cylinder along X before turning it around the world Y axis.
+    // The opposite order spins the upright cylinder in place and leaves every rail along X.
+    tint(Cylinder::new(0.03, length).mesh().resolution(6).build()
+        .rotated_by(Quat::from_rotation_y(yaw) * Quat::from_rotation_z(FRAC_PI_2))
+        .translated_by(centre), WOOD)
+}
+
 const WOOD: u32 = 0x5c4226;
 const WOOD_DK: u32 = 0x453018;
 const CHAR: u32 = 0x1f1a14;
@@ -223,10 +231,7 @@ fn shepherd_hut() -> Mesh {
         (Vec3::new(1.0, 0.42, 1.0), 0.0, 1.6),
         (Vec3::new(1.8, 0.42, 0.0), FRAC_PI_2, 2.0),
     ] {
-        v.push(tint(
-            Cylinder::new(0.03, l).mesh().resolution(6).build().rotated_by(Quat::from_rotation_z(FRAC_PI_2) * Quat::from_rotation_y(rot)).translated_by(c),
-            WOOD,
-        ));
+        v.push(fence_rail(c, rot, l));
     }
     assemble(v)
 }
@@ -253,15 +258,37 @@ fn field() -> Mesh {
         (Vec3::new(-3.2, 0.38, 0.0), FRAC_PI_2, 4.4),
         (Vec3::new(3.2, 0.38, 0.0), FRAC_PI_2, 4.4),
     ] {
-        v.push(tint(
-            Cylinder::new(0.03, l).mesh().resolution(6).build().rotated_by(Quat::from_rotation_z(FRAC_PI_2) * Quat::from_rotation_y(yaw)).translated_by(c),
-            WOOD,
-        ));
+        v.push(fence_rail(c, yaw, l));
     }
     assemble(v)
 }
 
 // ── Placement ────────────────────────────────────────────────────────────────────────
+const STORY_FOOTPRINTS: [f32; 5] = [1.9, 1.4, 3.25, 2.4, 2.3];
+
+#[derive(Clone)]
+struct StorySite { kind: usize, pos: Vec2, yaw: f32 }
+static STORY_SITES: std::sync::Mutex<Vec<StorySite>> = std::sync::Mutex::new(Vec::new());
+
+pub fn reset_plan() { STORY_SITES.lock().unwrap().clear(); }
+
+pub struct StoryClearings(Vec<(Vec2, f32)>);
+impl StoryClearings {
+    pub fn overlaps(&self, x: f32, z: f32, radius: f32) -> bool {
+        let p = Vec2::new(x, z);
+        self.0.iter().any(|(pos, foot)| p.distance_squared(*pos) < (foot + radius + 0.35).powi(2))
+    }
+}
+pub fn story_clearings() -> StoryClearings {
+    StoryClearings(STORY_SITES.lock().unwrap().iter().map(|site| (site.pos, STORY_FOOTPRINTS[site.kind])).collect())
+}
+pub fn overlaps_planned_clearing(x: f32, z: f32, radius: f32) -> bool {
+    let p = Vec2::new(x, z);
+    STORY_SITES.lock().unwrap().iter().any(|site| {
+        p.distance_squared(site.pos) < (STORY_FOOTPRINTS[site.kind] + radius + 0.35).powi(2)
+    })
+}
+
 fn rng_next(state: &mut u32) -> f32 {
     *state = state.wrapping_add(0x6d2b_79f5);
     let mut t = *state;
@@ -276,44 +303,73 @@ fn spot_ok(x: f32, z: f32, probe: f32) -> bool {
     let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
     for k in 0..6 {
         let a = k as f32 * (TAU / 6.0);
-        match crate::worldmap::ground_at_world(x + a.cos() * probe, z + a.sin() * probe) {
+        let (px, pz) = (x + a.cos() * probe, z + a.sin() * probe);
+        match crate::worldmap::ground_at_world(px, pz) {
             Some(y) if (y - y0).abs() <= 0.30 => {}
             _ => return false,
         }
+        if crate::roads::on_road(px, pz)
+            || crate::town::near_build_plot(px, pz)
+            || crate::castle::in_footprint(px, pz)
+            || crate::camps::in_clearing(px, pz)
+            || crate::ruins::near_landmark_visual_footprint(px, pz)
+        { return false; }
     }
     !crate::roads::on_road(x, z)
-        && !crate::blockers::is_blocked(x, z)
+        && !crate::blockers::any_visual_within(x, z, probe + 0.2)
         && !crate::town::near_build_plot(x, z)
         && !crate::castle::in_footprint(x, z)
         && !crate::camps::in_clearing(x, z)
         && !crate::rival::near_fort(x, z)
         && !crate::worldmap::cliff_shelf_world(x, z)
+        && !crate::ruins::near_landmark_visual_footprint(x, z)
         && !crate::worldmap::is_pool_world(x, z)
         && !crate::bridges::near_bridge(x, z, 2.0)
 }
 
-/// Build-phase 32 entry: set-pieces along the arteries + the gallows + fortress flags + fields.
-pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
-    let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 120.0..120.0, use_aabb: true };
-    let mut rng: u32 = 0x9017_44aa;
+/// Register each solid mass in model-local space, rotated together with the visible mesh.
+fn register_story_blockers(kind: usize, p: Vec2, yaw: f32) {
+    let rotation = Quat::from_rotation_y(yaw);
+    let local_box = |x: f32, z: f32, hw: f32, hd: f32, local_yaw: f32| {
+        let offset = rotation * Vec3::new(x, 0.0, z);
+        crate::blockers::add_obb(p.x + offset.x, p.y + offset.z, hw, hd, yaw + local_yaw);
+    };
+    match kind {
+        0 => local_box(0.0, 0.0, 1.3, 1.1, 0.0),
+        1 => {
+            local_box(-0.7, -0.75, 0.055, 0.055, 0.0);
+            local_box(0.7, -0.8, 0.27, 0.09, 0.0);
+        }
+        2 => {
+            for k in 0..6 {
+                let a = k as f32 * TAU / 6.0;
+                let (hw, hd, stone_yaw) = if k == 4 { (0.31, 0.81, a + 0.5) } else { (0.34, 0.2, a) };
+                local_box(a.cos() * 2.3, a.sin() * 2.3, hw, hd, stone_yaw);
+            }
+        }
+        3 => local_box(0.6, 0.0, 1.55, 0.9, 0.0),
+        4 => {
+            local_box(-1.0, 0.0, 0.83, 0.7, 0.0);
+            local_box(1.0, -1.0, 0.84, 0.055, 0.0);
+            local_box(1.0, 1.0, 0.84, 0.055, 0.0);
+            local_box(1.8, 0.0, 0.055, 1.05, 0.0);
+        }
+        _ => {}
+    }
+}
 
-    // 1. Story set-pieces along the arteries, one every ~90–130u of arc, 6–11u off the road.
-    //    (The 40s-rule gap-filler between the big POIs — camps/landmarks/vignettes — and the
-    //    small wayside furniture.)
-    let kinds: [(Mesh, f32); 5] =
-        [(burned_cabin(), 1.9), (graves(), 1.2), (standing_stones(), 2.9), (fallen_watchtower(), 1.9), (shepherd_hut(), 2.3)];
-    let handles: Vec<(Handle<Mesh>, f32)> = kinds.into_iter().map(|(m, r)| (meshes.add(m), r)).collect();
-    let mut placed: Vec<Vec2> = Vec::new();
+/// Reserve deterministic roadside story spots before biome scatter can fill their edges.
+pub fn plan_clearings() {
+    reset_plan();
+    let mut rng: u32 = 0x9017_44aa;
+    let mut planned: Vec<StorySite> = Vec::new();
     let mut ki = 0;
     for poly in crate::roads::artery_polylines() {
         let mut next_at = 45.0 + rng_next(&mut rng) * 60.0;
         let mut travelled = 0.0_f32;
         for w in poly.windows(2) {
             let seg = w[0].distance(w[1]);
-            if seg < 1e-3 {
-                continue;
-            }
+            if seg < 1e-3 { continue; }
             while travelled + seg >= next_at {
                 let t = (next_at - travelled) / seg;
                 let p = w[0].lerp(w[1], t);
@@ -321,31 +377,47 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 let perp = Vec2::new(-dir.y, dir.x);
                 next_at += 90.0 + rng_next(&mut rng) * 40.0;
                 let side = if rng_next(&mut rng) < 0.5 { 1.0 } else { -1.0 };
-                let (handle, foot) = &handles[ki % handles.len()];
-                // Try a few offsets before giving up on this interval — a single rigid probe
-                // rejected most spots (tree blockers hug the verges) and only ~3 pieces landed
-                // across the whole island.
-                let Some(q) = [(side, 6.5_f32), (-side, 6.5), (side, 9.5), (-side, 9.5)]
-                    .into_iter()
-                    .map(|(s, d)| p + perp * d * s)
-                    .find(|q| spot_ok(q.x, q.y, *foot) && placed.iter().all(|l| l.distance(*q) >= 55.0))
-                else {
-                    continue;
-                };
+                let kind = ki % STORY_FOOTPRINTS.len();
+                // A failed large circle must not suppress every later smaller story kind.
                 ki += 1;
-                let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
-                commands.spawn((
-                    Mesh3d(handle.clone()),
-                    MeshMaterial3d(mat.clone()),
-                    Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU)),
-                    BiomeEntity,
-                    range.clone(),
-                ));
-                crate::blockers::add_obb(q.x, q.y, *foot * 0.7, *foot * 0.7, 0.0);
-                placed.push(q);
+                let foot = STORY_FOOTPRINTS[kind];
+                let Some(q) = [(side, 6.5_f32), (-side, 6.5), (side, 9.5), (-side, 9.5), (side, 12.5), (-side, 12.5)]
+                    .into_iter()
+                    .flat_map(|(s, d)| [0.0_f32, -6.0, 6.0].into_iter().map(move |along| p + perp * d * s + dir * along))
+                    .find(|q| spot_ok(q.x, q.y, foot) && planned.iter().all(|site| site.pos.distance(*q) >= 55.0))
+                else { continue; };
+                planned.push(StorySite { kind, pos: q, yaw: rng_next(&mut rng) * TAU });
             }
             travelled += seg;
         }
+    }
+    info!("poi: planned {} roadside clearings", planned.len());
+    *STORY_SITES.lock().unwrap() = planned;
+}
+
+/// Build-phase 32 entry: set-pieces along the arteries + the gallows + fortress flags + fields.
+pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
+    let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 120.0..120.0, use_aabb: true };
+    // Final placement reuses the early plan, but still respects late authored solids.
+    let handles: Vec<Handle<Mesh>> = [burned_cabin(), graves(), standing_stones(), fallen_watchtower(), shepherd_hut()]
+        .into_iter().map(|mesh| meshes.add(mesh)).collect();
+    let planned = STORY_SITES.lock().unwrap().clone();
+    let mut placed = 0;
+    for site in planned {
+        let (q, foot) = (site.pos, STORY_FOOTPRINTS[site.kind]);
+        if !spot_ok(q.x, q.y, foot) { continue; }
+        let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
+        commands.spawn((
+            Mesh3d(handles[site.kind].clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(site.yaw)),
+            BiomeEntity,
+            range.clone(),
+        ));
+        register_story_blockers(site.kind, q, site.yaw);
+        crate::blockers::reserve_visual(q.x, q.y, foot);
+        placed += 1;
     }
 
     // 2. The GALLOWS on the Gnashfang approach: walk back up the fortress spur from the gate
@@ -376,7 +448,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             let perp = Vec2::new(-dir.y, dir.x);
             for (side, d) in [(1.0_f32, 4.5_f32), (-1.0, 4.5), (1.0, 6.5), (-1.0, 6.5)] {
                 let q = w[1] + perp * d * side;
-                if spot_ok(q.x, q.y, 1.2) {
+                if spot_ok(q.x, q.y, 2.0) {
                     best = Some(q);
                     break 'walk;
                 }
@@ -398,6 +470,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             range.clone(),
         ));
         crate::blockers::add_obb(q.x, q.y, 1.2, 0.9, yaw);
+        crate::blockers::reserve_visual(q.x, q.y, 2.0);
         info!("poi: gallows at {:.1},{:.1}", q.x, q.y);
     } else {
         warn!("poi: no spot for the gallows on the fortress approach");
@@ -456,7 +529,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let field_mesh = meshes.add(field());
     let mut fields = 0;
     for (fx, fz) in [(27.0_f32, 15.0_f32), (-27.0, 15.0), (27.0, -15.0), (-16.0, 27.0), (16.0, -27.0)] {
-        if !spot_ok(fx, fz, 3.4) {
+        if !spot_ok(fx, fz, 4.0) {
             continue;
         }
         let y = crate::worldmap::ground_at_world(fx, fz).unwrap_or(0.0);
@@ -468,9 +541,16 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             BiomeEntity,
             range.clone(),
         ));
+        let rotation = Quat::from_rotation_y(yaw);
+        for (x, z, hw, hd) in [(0.0, -2.2, 3.25, 0.055), (0.0, 2.2, 3.25, 0.055),
+            (-3.2, 0.0, 0.055, 2.25), (3.2, 0.0, 0.055, 2.25)] {
+            let off = rotation * Vec3::new(x, 0.0, z);
+            crate::blockers::add_obb(fx + off.x, fz + off.z, hw, hd, yaw);
+        }
+        crate::blockers::reserve_visual(fx, fz, 4.0);
         fields += 1;
     }
-    info!("poi: {} set-pieces, {fields} fields, smoke + crows over the Hold", placed.len());
+    info!("poi: {} set-pieces, {fields} fields, smoke + crows over the Hold", placed);
 }
 
 /// A tiny low-poly crow: body + swept wings (rotated so local -Z is the flight direction).
@@ -491,4 +571,76 @@ fn crow_mesh() -> Mesh {
         ));
     }
     assemble(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fence_meshes_stay_inside_their_reserved_footprints() {
+        use bevy::mesh::VertexAttributeValues;
+        let hut = shepherd_hut();
+        let field = field();
+        let Some(VertexAttributeValues::Float32x3(hut_vertices)) = hut.attribute(Mesh::ATTRIBUTE_POSITION) else {
+            panic!("hut positions must be readable");
+        };
+        for p in hut_vertices {
+            assert!(Vec2::new(p[0], p[2]).length() <= STORY_FOOTPRINTS[4],
+                "pen rail escapes the reserved hut footprint: {p:?}");
+        }
+        let Some(VertexAttributeValues::Float32x3(field_vertices)) = field.attribute(Mesh::ATTRIBUTE_POSITION) else {
+            panic!("field positions must be readable");
+        };
+        for p in field_vertices {
+            assert!(p[0].abs() <= 3.26 && p[2].abs() <= 2.26,
+                "field rail escapes its collision perimeter: {p:?}");
+        }
+    }
+
+    #[test]
+    fn fence_meshes_fit_their_registered_footprints() {
+        for (mesh, half_width, half_depth) in [
+            (field(), 3.26, 2.26),
+            (shepherd_hut(), 1.95, 1.06),
+        ] {
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(vertices)) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!("mesh positions missing") };
+            for [x, _, z] in vertices {
+                assert!(x.abs() <= half_width && z.abs() <= half_depth,
+                    "fence vertex ({x}, {z}) overhangs its collision/placement footprint");
+            }
+        }
+    }
+
+    #[test]
+    fn rotated_standing_stones_collide_but_leave_middle_walkable() {
+        let _g = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        let p = Vec2::new(40.0, 40.0);
+        register_story_blockers(2, p, FRAC_PI_2);
+        assert!(crate::blockers::is_blocked(40.0, 37.7));
+        assert!(!crate::blockers::is_blocked(40.0, 40.0));
+        crate::blockers::reset();
+    }
+    #[test]
+    fn rotated_hut_and_pen_match_model_without_filling_workspace() {
+        let _g = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        let p = Vec2::new(40.0, 40.0);
+        register_story_blockers(4, p, FRAC_PI_2);
+        assert!(crate::blockers::is_blocked(40.0, 41.0));
+        assert!(crate::blockers::is_blocked(41.0, 39.0));
+        assert!(!crate::blockers::is_blocked(40.0, 39.0));
+        crate::blockers::reset();
+    }
+    #[test]
+    fn planned_clearings_reject_overhanging_scatter_and_reset_between_maps() {
+        let _g = crate::blockers::TEST_LOCK.lock().unwrap();
+        reset_plan();
+        STORY_SITES.lock().unwrap().push(StorySite { kind: 2, pos: Vec2::new(40.0, 40.0), yaw: 0.0 });
+        assert!(overlaps_planned_clearing(44.2, 40.0, 0.9));
+        assert!(story_clearings().overlaps(44.2, 40.0, 0.9));
+        reset_plan();
+        assert!(!overlaps_planned_clearing(40.0, 40.0, 0.9));
+    }
 }

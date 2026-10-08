@@ -388,7 +388,7 @@ impl Town {
             *burning = true;
             if *hp <= 0.0 {
                 plot.state = PlotState::Rubble;
-                plot.kind = None;
+                // Remember the lost trade for rebuilding and save/load.
                 plot.staffed = false;
             }
         }
@@ -671,7 +671,7 @@ mod tests {
         t.build(0, BuildKind::Farm, &mut bank);
         t.damage(0, 1000.0);
         assert_eq!(t.plots[0].state, PlotState::Rubble);
-        assert_eq!(t.plots[0].kind, None);
+        assert_eq!(t.plots[0].kind, Some(BuildKind::Farm));
         assert!(t.plots[0].is_buildable()); // can rebuild on rubble
     }
 

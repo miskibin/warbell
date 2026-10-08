@@ -1078,7 +1078,7 @@ fn worker_steer(
         // +X side of the plot (the barn is −X). So a farmer's work spot is offset onto the field and
         // they face back across the rows toward the barn — never standing off-plot, back to the farm.
         // (Woodcutters/miners leave for trees/rocks, so their plot-centre post is fine.)
-        let is_farm = town.0.plots.get(worker.idx).and_then(|p| p.kind)
+        let is_farm = town.0.plots.get(worker.idx).filter(|p| p.is_built()).and_then(|p| p.kind)
             == Some(tileworld_core::town_store::BuildKind::Farm);
         let work_pos = if is_farm { post + Vec2::new(1.1, 0.0) } else { post };
         let reach = if is_farm { 0.8 } else { 1.6 };
@@ -3100,7 +3100,7 @@ fn reskin_townsfolk(
 ) {
     use tileworld_core::town_store::BuildKind;
     for (e, f, mut role, body_mat, children, worker, is_archer) in &mut folk {
-        let desired = match worker.and_then(|w| town.0.plots.get(w.idx)).and_then(|p| p.kind) {
+        let desired = match worker.and_then(|w| town.0.plots.get(w.idx)).filter(|p| p.is_built()).and_then(|p| p.kind) {
             Some(BuildKind::Farm) => Role::Working(Trade::Farmer),
             Some(BuildKind::Lumber) => Role::Working(Trade::Woodcutter),
             Some(BuildKind::Mine) => Role::Working(Trade::Miner),

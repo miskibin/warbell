@@ -14,8 +14,8 @@
 //! [`Upgrades`] / town state (flag-driven, so staged `FOREST_DEFEND` shots and loaded saves
 //! both show the right dressing). Chunky pieces can be **solid**: [`sync_decor`] registers a tight
 //! oriented collision box ([`DecorSolid`]) in [`crate::blockers`] the first frame such a piece is
-//! shown, so the hero (and AI) route around major props instead of walking through them — lazy +
-//! once-only because the blocker set is append-only (same model as `castle::sync_castle`). Every
+//! shown, so the hero (and AI) route around major props instead of walking through them. Collision
+//! follows visibility, so losing a house also clears its hidden furniture's footprint. Every
 //! spot is hand-picked clear of the keep, bell, gate lanes, torches, training dummies, house
 //! slots and the path network.
 
@@ -61,9 +61,9 @@ pub struct Decor {
 /// piece's `yaw`. Attached to ONE part per piece (set dressing was decorative-only before; now
 /// the chunky props are solid so the hero can't walk through the market stock, armory, shrine,
 /// benches, …). [`sync_decor`] registers a matching oriented box in [`crate::blockers`] the first
-/// time the piece is *shown*, then drops this component so it registers exactly once. A biome
-/// rebuild despawns + respawns the piece with the component fresh and `blockers::reset` wipes the
-/// boxes, so collision comes back in lock-step (same lazy-on-reveal model as `castle::sync_castle`).
+/// time the piece is *shown*. [`DecorBoxed`] tracks whether its box is registered, so hiding the
+/// piece removes collision and revealing it restores collision. A biome rebuild despawns +
+/// respawns the piece and `blockers::reset` wipes the old boxes.
 #[derive(Component, Clone, Copy)]
 struct DecorSolid {
     hw: f32,
@@ -143,19 +143,28 @@ fn sync_decor(
                 }
             }
         }
-        // Lazy, once-only collision: register the piece's oriented box the first frame it shows,
-        // then tag `DecorBoxed` so it never double-registers (the box is append-only). Independent
-        // of `live` so it also covers the day-one `Always` pieces and a loaded save that boots with
-        // gated pieces already revealed. `DecorSolid` is KEPT (not removed) so a Continue/Load that
-        // drops the tag can re-register the box (see `reconcile_decor_blockers_on_load`).
-        if show && !boxed {
-            if let (Some(solid), Some(crate::build_fx::RevealAt(pos))) = (solid, at) {
-                crate::blockers::add_obb(pos.x, pos.z, solid.hw, solid.hd, solid.yaw);
+        // Keep collision in step with visibility even when house loss hides a piece, or a save
+        // restores a different town. Independent of `live` so day-one props also register.
+        if let (Some(solid), Some(crate::build_fx::RevealAt(pos))) = (solid, at) {
+            let registered = reconcile_solid(show, boxed, *solid, *pos);
+            if registered && !boxed {
                 commands.entity(e).try_insert(DecorBoxed);
+            } else if !registered && boxed {
+                commands.entity(e).try_remove::<DecorBoxed>();
             }
         }
         *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
     }
+}
+
+/// Return the registration state after making a piece's collision match its visibility.
+fn reconcile_solid(show: bool, boxed: bool, solid: DecorSolid, pos: Vec3) -> bool {
+    if show && !boxed {
+        crate::blockers::add_obb(pos.x, pos.z, solid.hw, solid.hd, solid.yaw);
+    } else if !show && boxed {
+        crate::blockers::remove_box_near(pos.x, pos.z, 0.1);
+    }
+    show
 }
 
 /// On a Continue/Load ([`crate::savegame::GameLoaded`]), drop every registered decor box and clear
@@ -177,7 +186,7 @@ fn reconcile_decor_blockers_on_load(
         // decor centre coincides with a wall/tower box, that one too — both re-register from their
         // sync, so over-clearing is self-healing).
         crate::blockers::remove_box_near(pos.x, pos.z, 0.1);
-        commands.entity(e).remove::<DecorBoxed>();
+        commands.entity(e).try_remove::<DecorBoxed>();
     }
 }
 
@@ -188,15 +197,15 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // `foot` = local collision half-extents `(hw, hd)` for the set piece, rotated by `yaw`; a
     // non-positive extent registers no collision (decorative-only). `sync_decor` puts the box in
     // once the piece is shown. Attached to the FIRST part only so the merged piece gets one box.
-    // A prop blocks the hero only if its footprint is BOTH non-thin AND chunky by area. Two floors:
-    //  * MIN_SOLID (half-extent) drops THIN props — posts/poles/boards (lanterns, guild banner,
-    //    notice board): a 0.14-wide post snags the hero for no reason.
+    // A prop blocks the hero only if its footprint clears both a thickness and area floor:
+    //  * MIN_SOLID (half-extent) permits narrow furniture such as benches while excluding thin
+    //    poles and boards.
     //  * MIN_SOLID_AREA (hw*hd) drops SMALL-but-square standing props — the corner braziers and the
     //    weapon-display pegs. These read as furniture but are tiny; players kept walking into them
     //    in the dark for no gameplay payoff. By footprint area they now register nothing, so you
     //    slip right past. Chunky props (bench, trough, woodpile, market, shrine…) clear both floors
     //    and stay solid.
-    const MIN_SOLID: f32 = 0.2;
+    const MIN_SOLID: f32 = 0.08;
     const MIN_SOLID_AREA: f32 = 0.09;
     let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
         let vis = if matches!(gate, DecorGate::Always) { Visibility::Inherited } else { Visibility::Hidden };
@@ -222,13 +231,12 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     };
 
     // ── Day-one life (Always) ────────────────────────────────────────────────────
-    // Small furniture is visual-only so the plaza lanes stay smooth; larger upgrade structures
-    // below keep tight collision footprints where walking through them would look wrong.
+    // Furniture has tight footprints, while small posts remain visual-only so plaza lanes stay smooth.
     set(notice_board_parts(), Vec3::new(-3.3, 0.0, 4.4), 0.35, DecorGate::Always, Vec2::ZERO);
-    set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::ZERO);
+    set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::new(0.55, 0.25));
     // (The old plaza market-goods pile lived here — removed; the merchant shop by the south gate
     // (`villagers::shop_parts`) is now the town's single market focal point.)
-    set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::ZERO);
+    set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::new(0.60, 0.17));
     // A few lantern posts along the main lanes (thinned down — the bailey was getting busy).
     for (lx, lz, lyaw) in [
         (2.0, -6.6, 0.0),
@@ -240,7 +248,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
 
     // ── Filled in as the town grows (House(n): shown once houses > n) ───────────
     set(garden_parts(), Vec3::new(-4.2, 0.0, -9.4), 0.15, DecorGate::House(1), Vec2::ZERO);
-    set(woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2), Vec2::ZERO);
+    set(woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
     // Laundry line = cloth hung overhead on a string between two thin posts — you walk UNDER it.
     // No collision (a 2.6-wide box across the lane just walls off the courtyard for no reason).
     set(laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1), Vec2::ZERO);
@@ -253,7 +261,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     set(armory_veteran_parts(), Vec3::new(-8.2, 0.0, 4.9), 0.8, DecorGate::ArmsTier(2), Vec2::ZERO);
     set(axe_display_parts(), Vec3::new(-6.9, 0.0, 6.3), 0.9, DecorGate::Weapon("axe"), Vec2::new(0.32, 0.25));
     set(sword_display_parts(), Vec3::new(-7.9, 0.0, 7.6), 1.1, DecorGate::Weapon("sword_gold"), Vec2::new(0.3, 0.25));
-    set(grindstone_parts(), Vec3::new(-5.6, 0.0, 8.4), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::ZERO);
+    set(grindstone_parts(), Vec3::new(-5.6, 0.0, 8.4), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::new(0.65, 0.40));
 
     // Civic east side: the tax-collector's counting booth; the shrine the heal aura lives in.
     set(tax_booth_parts(), Vec3::new(8.5, 0.0, 2.9), -0.6, DecorGate::TaxOffice, Vec2::new(0.65, 0.45));
@@ -264,7 +272,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
 
     // Reinforced Keep: a mason's scaffold against the keep's west wall + dressed stone waiting.
     set(scaffold_parts(), Vec3::new(-3.55, 0.0, 0.0), 0.0, DecorGate::Reinforced, Vec2::ZERO);
-    set(stone_pile_parts(), Vec3::new(-4.8, 0.0, 1.3), 0.3, DecorGate::Reinforced, Vec2::ZERO);
+    set(stone_pile_parts(), Vec3::new(-4.8, 0.0, 1.3), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.65));
 
     // Tower Mastery: a standing fire basket inside each wall corner (the crews work all night).
     for (sx, sz) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
@@ -666,4 +674,31 @@ fn guild_goods_parts() -> Vec<(Mesh, M)> {
         (cyl(0.27, 0.05, 0.65, 0.42, -0.2), M::Beam),
         (log_x(0.09, 0.7, 0.97, 0.05), M::Banner), // bolt of cloth across the crates
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hidden_house_decor_removes_collision_and_reveal_restores_it() {
+        let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        let pos = Vec3::new(5.4, 0.0, -9.5);
+        let solid = DecorSolid { hw: 0.66, hd: 0.37, yaw: 0.4 };
+        let point = pos + Quat::from_rotation_y(solid.yaw) * Vec3::new(0.5, 0.0, 0.0);
+        crate::blockers::add_box(pos.x + 2.0, pos.z, 0.25, 0.25);
+
+        let boxed = reconcile_solid(true, false, solid, pos);
+        assert!(boxed);
+        assert!(crate::blockers::is_blocked(point.x, point.z));
+        let boxed = reconcile_solid(false, boxed, solid, pos);
+        assert!(!boxed);
+        assert!(!crate::blockers::is_blocked(point.x, point.z), "hidden furniture must leave no ghost collision");
+        assert!(crate::blockers::is_blocked(pos.x + 2.0, pos.z), "nearby structures must remain solid");
+        let boxed = reconcile_solid(true, boxed, solid, pos);
+        assert!(boxed);
+        assert!(crate::blockers::is_blocked(point.x, point.z), "revealed furniture must regain collision");
+        crate::blockers::reset();
+    }
 }

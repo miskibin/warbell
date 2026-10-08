@@ -266,7 +266,7 @@ fn assign_tree(
     // woodcutter with no reachable tree right now would otherwise retry the same doomed
     // `REACH_CHECK_K`-candidate A* sweep every `RETRY_SECS` indefinitely.
     let jobless_woodcutters = workers.iter().filter(|(_, worker, _, cd)| {
-        town.0.plots.get(worker.idx).and_then(|p| p.kind) == Some(BuildKind::Lumber)
+        town.0.plots.get(worker.idx).filter(|p| p.is_built()).and_then(|p| p.kind) == Some(BuildKind::Lumber)
             && cd.is_none_or(|c| now >= c.until)
     });
     for (e, _worker, v, _cd) in jobless_woodcutters.take(MAX_ASSIGN_PER_TICK) {
