@@ -215,9 +215,16 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let h_shrine = meshes.add(shrine());
     let mut rng: u32 = 0x3a5f_11d7;
     let spawn = |commands: &mut Commands, handle: &Handle<Mesh>, kind: Furniture, x: f32, y: f32, z: f32, yaw: f32, s: f32| {
+        let model = crate::blenderenv::get().map(|env| {
+            let name = match kind {
+                Furniture::Signpost => "signpost", Furniture::Cairn => "wayside_cairn",
+                Furniture::Fence => "wayside_fence", Furniture::Shrine => "wayside_shrine",
+            };
+            env.model(name).unwrap_or_else(|| panic!("missing Blender wayside model {name}"))
+        });
         commands.spawn((
-            Mesh3d(handle.clone()),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(model.map_or_else(|| handle.clone(), |m| m.mesh.clone())),
+            MeshMaterial3d(model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
             Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s)),
             BiomeEntity,
             range.clone(),

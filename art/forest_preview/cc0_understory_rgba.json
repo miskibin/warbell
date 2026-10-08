@@ -1,0 +1,53 @@
+{
+  "schema": "warbell.forest_cc0_rgba_derivatives.v1",
+  "items": [
+    {
+      "asset": "shrub_03",
+      "diffuse_source": "target/world-preview/cc0-sources/shrub_03/textures/shrub_03_diff_1k.jpg",
+      "alpha_source": "target/world-preview/cc0-sources/shrub_03/textures/shrub_03_alpha_1k.png",
+      "rgba_output": "target/world-preview/cc0-sources/shrub_03/textures/shrub_03_diff_alpha_1k.png",
+      "rgba_sha256": "e1f476554f8dabda25c4c814f958e3fa1e51dba9e2010c7c0705050644f7e118",
+      "alpha_min_max": [
+        0,
+        255
+      ],
+      "alpha_transparent_fraction": 0.749249
+    },
+    {
+      "asset": "grass_medium_01",
+      "diffuse_source": "target/world-preview/cc0-sources/grass_medium_01/textures/grass_medium_01_diff_1k.jpg",
+      "alpha_source": "target/world-preview/cc0-sources/grass_medium_01/textures/grass_medium_01_alpha_1k.png",
+      "rgba_output": "target/world-preview/cc0-sources/grass_medium_01/textures/grass_medium_01_diff_alpha_1k.png",
+      "rgba_sha256": "beb4591e0063d52d9b33d8a4b79a6d54fae38241aad60e4b232dfd2d1c6b4a41",
+      "alpha_min_max": [
+        0,
+        255
+      ],
+      "alpha_transparent_fraction": 0.840956
+    },
+    {
+      "asset": "dandelion_01",
+      "diffuse_source": "target/world-preview/cc0-sources/dandelion_01/textures/dandelion_01_diff_1k.jpg",
+      "alpha_source": "target/world-preview/cc0-sources/dandelion_01/textures/dandelion_01_alpha_1k.png",
+      "rgba_output": "target/world-preview/cc0-sources/dandelion_01/textures/dandelion_01_diff_alpha_1k.png",
+      "rgba_sha256": "09de04eeac54b775918cc2a6c05b3bedb8e4c383da58e39ead1f503ba5087cf4",
+      "alpha_min_max": [
+        0,
+        255
+      ],
+      "alpha_transparent_fraction": 0.51069
+    },
+    {
+      "asset": "flower_heliophila",
+      "diffuse_source": "target/world-preview/cc0-sources/flower_heliophila/textures/flower_heliophila_diff_1k.jpg",
+      "alpha_source": "target/world-preview/cc0-sources/flower_heliophila/textures/flower_heliophila_alpha_1k.png",
+      "rgba_output": "target/world-preview/cc0-sources/flower_heliophila/textures/flower_heliophila_diff_alpha_1k.png",
+      "rgba_sha256": "fe16d334a584147c0c9cd50ba372a5fb50c0414b4e0751cee4f5486c44a47444",
+      "alpha_min_max": [
+        0,
+        255
+      ],
+      "alpha_transparent_fraction": 0.067533
+    }
+  ]
+}

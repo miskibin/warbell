@@ -419,6 +419,15 @@ fn spawn_building(
     // Houses: sandstone (RivalMats + desert_house). Producers: the player town's textured models +
     // material set, so they're literally the same farm/saw-shed/pit-head the player builds.
     commands.entity(parent).with_children(|p| {
+        if let Some(env) = crate::blenderenv::get() {
+            let name = match kind {
+                RivalKind::House => "rival_house", RivalKind::Farm => "farm",
+                RivalKind::Lumber => "sawmill", RivalKind::Mine => "mine",
+            };
+            let model = env.model(name).unwrap_or_else(|| panic!("missing Blender rival model {name}"));
+            p.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()), Transform::default()));
+            return;
+        }
         match kind {
             RivalKind::House => {
                 for (mesh, slot) in desert_house(0.0, 0.0) {
@@ -518,8 +527,13 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut As
         ))
         .id();
     commands.entity(keep_root).with_children(|p| {
-        for (mesh, slot) in keep_parts() {
-            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+        if let Some(env) = crate::blenderenv::get() {
+            let model = env.model("rival_keep").expect("missing Blender rival_keep");
+            p.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()), Transform::default()));
+        } else {
+            for (mesh, slot) in keep_parts() {
+                p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+            }
         }
     });
 
@@ -545,8 +559,13 @@ fn raise_walls(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &RivalM
         .spawn((Transform::from_xyz(centre.x, y, centre.y), Visibility::Visible, BiomeEntity, RivalEntity, RivalWalls))
         .id();
     commands.entity(root).with_children(|p| {
-        for (mesh, slot) in wall_parts() {
-            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+        if let Some(env) = crate::blenderenv::get() {
+            let model = env.model("rival_wall_ring").expect("missing Blender rival_wall_ring");
+            p.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()), Transform::default()));
+        } else {
+            for (mesh, slot) in wall_parts() {
+                p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+            }
         }
     });
     register_wall_blockers(centre);

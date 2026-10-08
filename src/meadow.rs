@@ -107,6 +107,7 @@ pub fn build(
     // Spawn one merged prop; `solid` (hw, hd) registers a blocker box (Vec2::ZERO = walk-through).
     let mut prop = |commands: &mut Commands,
                     meshes: &mut Assets<Mesh>,
+                    name: &str,
                     mesh: Mesh,
                     x: f32,
                     z: f32,
@@ -115,9 +116,11 @@ pub fn build(
         if solid.x > 0.0 {
             crate::blockers::add_obb(x, z, solid.x, solid.y, yaw);
         }
+        let model = crate::blenderenv::get().map(|env| env.model(name)
+            .unwrap_or_else(|| panic!("missing Blender meadow model {name}")));
         commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(model.map_or_else(|| meshes.add(mesh), |m| m.mesh.clone())),
+            MeshMaterial3d(model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
             Transform::from_xyz(x, ground(x, z), z).with_rotation(Quat::from_rotation_y(yaw)),
             BiomeEntity,
         ));
@@ -125,28 +128,28 @@ pub fn build(
 
     // ── Village life ─────────────────────────────────────────────────────────────
     // Hay-making corner, NE quarter (clear of plots (10,-15.5)/(18,-17) by ≥5).
-    prop(commands, meshes, hay_cart_mesh(), 13.0, -20.5, 0.55, Vec2::new(1.1, 0.7));
-    prop(commands, meshes, hay_bale_mesh(0), 15.6, -21.8, 0.2, Vec2::new(0.55, 0.4));
-    prop(commands, meshes, hay_bale_mesh(1), 14.6, -23.0, 1.1, Vec2::new(0.55, 0.4));
-    prop(commands, meshes, scarecrow_mesh(), 17.5, -23.5, -0.4, Vec2::ZERO);
+    prop(commands, meshes, "meadow_hay_cart", hay_cart_mesh(), 13.0, -20.5, 0.55, Vec2::new(1.1, 0.7));
+    prop(commands, meshes, "meadow_hay_bale", hay_bale_mesh(0), 15.6, -21.8, 0.2, Vec2::new(0.55, 0.4));
+    prop(commands, meshes, "meadow_hay_bale", hay_bale_mesh(1), 14.6, -23.0, 1.1, Vec2::new(0.55, 0.4));
+    prop(commands, meshes, "meadow_scarecrow", scarecrow_mesh(), 17.5, -23.5, -0.4, Vec2::ZERO);
     fence_run(commands, meshes, &mat, Vec2::new(10.5, -18.5), Vec2::new(16.5, -18.0));
 
     // Beekeeper's west edge (clear of plots (-20,-8)/(-18,-17)).
     for (i, (bx_, bz)) in [(-21.0, -13.0), (-22.4, -12.2), (-21.6, -14.6)].into_iter().enumerate() {
-        prop(commands, meshes, beehive_mesh(i as u32), bx_, bz, i as f32 * 0.7, Vec2::new(0.3, 0.3));
+        prop(commands, meshes, "meadow_beehive", beehive_mesh(i as u32), bx_, bz, i as f32 * 0.7, Vec2::new(0.3, 0.3));
     }
-    prop(commands, meshes, firewood_rack_mesh(), -24.5, -11.5, FRAC_PI_2 * 0.85, Vec2::new(0.9, 0.35));
+    prop(commands, meshes, "meadow_firewood_rack", firewood_rack_mesh(), -24.5, -11.5, FRAC_PI_2 * 0.85, Vec2::new(0.9, 0.35));
 
     // Supply drop-off by the east wall (clear of plot (20,8), off the z=0 lane).
-    prop(commands, meshes, crate_stack_mesh(), 21.0, 4.6, -0.3, Vec2::new(0.75, 0.55));
+    prop(commands, meshes, "meadow_crate_stack", crate_stack_mesh(), 21.0, 4.6, -0.3, Vec2::new(0.75, 0.55));
 
     // ── The rest campfire, forest side (next to the hero spawn) ────────────────────
     let fy = ground(FIRE_POS.x, FIRE_POS.y);
-    prop(commands, meshes, fire_base_mesh(), FIRE_POS.x, FIRE_POS.y, 0.0, Vec2::new(0.45, 0.45));
+    prop(commands, meshes, "meadow_fire_base", fire_base_mesh(), FIRE_POS.x, FIRE_POS.y, 0.0, Vec2::new(0.45, 0.45));
     for i in 0..3 {
         let a = 0.6 + i as f32 / 3.0 * TAU * 0.6;
         let (sx, sz) = (FIRE_POS.x + a.cos() * 1.15, FIRE_POS.y + a.sin() * 1.15);
-        prop(commands, meshes, sit_stump_mesh(i * 37 + 5), sx, sz, a, Vec2::ZERO);
+        prop(commands, meshes, "meadow_sit_stump", sit_stump_mesh(i * 37 + 5), sx, sz, a, Vec2::ZERO);
     }
     // Emissive flame + pooled flicker light + the audio anchor (`camps::Flicker` carries the
     // spatial campfire-crackle loop) + the rest marker.
@@ -187,22 +190,22 @@ pub fn build(
     // NE corner clump.
     tree(commands, meshes, TK::Broadleaf, 24.0, -24.0, 1.15, 0.4);
     tree(commands, meshes, TK::Birch, 26.5, -21.5, 1.0, 2.1);
-    prop(commands, meshes, boulder_mesh(11), 22.3, -21.9, 0.9, Vec2::new(0.55, 0.5));
+    prop(commands, meshes, "rock_a", boulder_mesh(11), 22.3, -21.9, 0.9, Vec2::new(0.55, 0.5));
     // NW pine corner.
     tree(commands, meshes, TK::Pine, -26.0, -18.0, 1.1, 1.2);
-    prop(commands, meshes, boulder_mesh(23), -24.0, -20.3, 2.3, Vec2::new(0.5, 0.45));
+    prop(commands, meshes, "rock_a", boulder_mesh(23), -24.0, -20.3, 2.3, Vec2::new(0.5, 0.45));
     // SE autumn accent.
     tree(commands, meshes, TK::Autumn, 26.0, 18.0, 1.1, 3.6);
-    prop(commands, meshes, bush_mesh(7), 23.4, 20.2, 0.0, Vec2::ZERO);
+    prop(commands, meshes, "shrub_a", bush_mesh(7), 23.4, 20.2, 0.0, Vec2::ZERO);
     // Forest-side birches framing the spawn walk-in.
     tree(commands, meshes, TK::Birch, -29.0, 21.5, 1.05, 0.9);
     tree(commands, meshes, TK::Broadleaf, -26.0, 25.5, 1.1, 4.2);
-    prop(commands, meshes, bush_mesh(19), -24.6, 18.4, 0.6, Vec2::ZERO);
+    prop(commands, meshes, "shrub_a", bush_mesh(19), -24.6, 18.4, 0.6, Vec2::ZERO);
     // Loose boulders + bushes breaking the remaining sightlines (all off-lane, off-plot).
-    prop(commands, meshes, boulder_mesh(41), 8.0, 21.0, 1.4, Vec2::new(0.5, 0.45));
-    prop(commands, meshes, bush_mesh(31), 6.8, 22.6, 0.0, Vec2::ZERO);
-    prop(commands, meshes, boulder_mesh(57), -7.0, -23.0, 0.4, Vec2::new(0.45, 0.4));
-    prop(commands, meshes, bush_mesh(43), -9.0, -21.4, 1.8, Vec2::ZERO);
+    prop(commands, meshes, "rock_a", boulder_mesh(41), 8.0, 21.0, 1.4, Vec2::new(0.5, 0.45));
+    prop(commands, meshes, "shrub_a", bush_mesh(31), 6.8, 22.6, 0.0, Vec2::ZERO);
+    prop(commands, meshes, "rock_a", boulder_mesh(57), -7.0, -23.0, 0.4, Vec2::new(0.45, 0.4));
+    prop(commands, meshes, "shrub_a", bush_mesh(43), -9.0, -21.4, 1.8, Vec2::ZERO);
 }
 
 /// A short two-rail paddock fence between `a` and `b` (posts every ~1.5). Decorative-only —
@@ -229,10 +232,14 @@ fn fence_run(
     parts.push(bx(0.055, 0.07, len, Vec3::new(0.0, 0.62, len * 0.5), WOOD));
     parts.push(bx(0.055, 0.07, len, Vec3::new(0.0, 0.34, len * 0.5), WOOD));
     let y = crate::worldmap::ground_at_world(a.x, a.y).unwrap_or(0.0);
+    let model = crate::blenderenv::get().map(|env| env.model("meadow_fence")
+        .expect("missing Blender meadow_fence"));
+    let scale_z = model.map_or(1.0, |m| len / (m.bounds_max.z - m.bounds_min.z).max(0.01));
     commands.spawn((
-        Mesh3d(meshes.add(merged(parts))),
-        MeshMaterial3d(mat.clone()),
-        Transform::from_xyz(a.x, y, a.y).with_rotation(Quat::from_rotation_y(yaw)),
+        Mesh3d(model.map_or_else(|| meshes.add(merged(parts)), |m| m.mesh.clone())),
+        MeshMaterial3d(model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
+        Transform::from_xyz(a.x, y, a.y).with_rotation(Quat::from_rotation_y(yaw))
+            .with_scale(Vec3::new(1.0, 1.0, scale_z)),
         BiomeEntity,
     ));
 }

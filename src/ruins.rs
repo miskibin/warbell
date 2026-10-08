@@ -350,8 +350,27 @@ pub fn spawn_landmark_model(
     model: LandmarkModel,
     xf: Transform,
 ) -> Entity {
+    spawn_landmark_model_with_asset(commands, meshes, materials, white, model, xf, None)
+}
+
+fn spawn_landmark_model_with_asset(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    white: &Handle<StandardMaterial>,
+    model: LandmarkModel,
+    xf: Transform,
+    blender_name: Option<&str>,
+) -> Entity {
+    let visual = blender_name.and_then(|name| crate::blenderenv::get().map(|env| {
+        env.model(name).unwrap_or_else(|| panic!("missing Blender landmark model {name}"))
+    }));
     let root = commands
-        .spawn((Mesh3d(meshes.add(model.base)), MeshMaterial3d(white.clone()), xf, Visibility::Inherited))
+        .spawn((
+            Mesh3d(visual.map_or_else(|| meshes.add(model.base), |m| m.mesh.clone())),
+            MeshMaterial3d(visual.map_or_else(|| white.clone(), |m| m.mat.clone())),
+            xf, Visibility::Inherited,
+        ))
         .id();
     for part in model.parts {
         // Material: glow → own unlit emissive (beacon recipe); translucent → own blend
@@ -597,15 +616,15 @@ pub fn populate_landmarks(
     // MODEL-LOCAL units (rotated into place with the placed yaw, scaled to world): most landmarks
     // block one box hugging the built mass, but the standing stones block PER-STONE so the circle
     // itself stays walkable (the rune trial plays out inside it).
-    let specs: [(Biome, LandmarkModel, f32, Vec<(f32, f32, f32, f32)>); 5] = [
-        (Biome::Snow, crate::landmark_models::frozen_spire(), 1.5, vec![(0.0, 0.0, 1.0, 1.0)]),
-        (Biome::Desert, crate::landmark_models::sunken_pyramid(), 1.5, vec![(0.0, 0.0, 2.1, 2.1)]),
-        (Biome::Rocky, crate::landmark_models::standing_stones(), 1.45, crate::landmark_models::stone_blockers()),
-        (Biome::Forest, crate::landmark_models::old_mill(), 1.45, vec![(0.0, 0.0, 1.5, 1.5)]),
-        (Biome::Swamp, crate::landmark_models::witch_hut(), 1.4, vec![(0.0, 0.3, 1.25, 1.1), (1.7, 1.2, 0.55, 0.55)]),
+    let specs: [(Biome, &str, LandmarkModel, f32, Vec<(f32, f32, f32, f32)>); 5] = [
+        (Biome::Snow, "ruin_frozen_spire", crate::landmark_models::frozen_spire(), 1.5, vec![(0.0, 0.0, 1.0, 1.0)]),
+        (Biome::Desert, "ruin_sunken_pyramid", crate::landmark_models::sunken_pyramid(), 1.5, vec![(0.0, 0.0, 2.1, 2.1)]),
+        (Biome::Rocky, "ruin_standing_stones", crate::landmark_models::standing_stones(), 1.45, crate::landmark_models::stone_blockers()),
+        (Biome::Forest, "ruin_old_mill", crate::landmark_models::old_mill(), 1.45, vec![(0.0, 0.0, 1.5, 1.5)]),
+        (Biome::Swamp, "ruin_witch_hut", crate::landmark_models::witch_hut(), 1.4, vec![(0.0, 0.3, 1.25, 1.1), (1.7, 1.2, 0.55, 0.55)]),
     ];
     // Spots are pre-chosen from the terrain (see `landmark_sites`); here we just plant the model.
-    for (biome, model, scale, obbs) in specs {
+    for (biome, blender_name, model, scale, obbs) in specs {
         let Some(s) = landmark_sites().iter().find(|s| s.biome == biome) else {
             continue; // `landmark_sites` already logged the miss.
         };
@@ -615,7 +634,7 @@ pub fn populate_landmarks(
         let xf = Transform::from_xyz(x, y, z)
             .with_rotation(Quat::from_rotation_y(yaw))
             .with_scale(Vec3::splat(scale));
-        let id = spawn_landmark_model(commands, meshes, materials, &white, model, xf);
+        let id = spawn_landmark_model_with_asset(commands, meshes, materials, &white, model, xf, Some(blender_name));
         commands.entity(id).insert(BiomeEntity);
         // Solid oriented boxes, offsets rotated by the placed yaw + scaled into world units.
         let (sin, cos) = yaw.sin_cos();

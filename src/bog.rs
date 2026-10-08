@@ -165,6 +165,9 @@ fn stilt_hut() -> Mesh {
 /// phase 31 — after roads/bridges (boardwalk spans known → keep-out) and camps.
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     use crate::worldmap::{ground_at_world, pool_sd_world};
+    let studio = if crate::blenderground::enabled() && !crate::worldmap::is_arena() {
+        crate::blenderenv::get()
+    } else { None };
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
     let wisp_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.75, 1.0, 0.8),
@@ -214,16 +217,17 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 continue;
             }
             let deep = rng_next(&mut rng);
-            let (handle, scale, sink) = if deep < 0.30 {
-                (&dead_tree, 0.9 + rng_next(&mut rng) * 0.5, 0.55)
+            let (handle, scale, sink, authored) = if deep < 0.30 {
+                (&dead_tree, 0.9 + rng_next(&mut rng) * 0.5, 0.55, "dead_tree_a")
             } else if deep < 0.72 {
-                (&mangroves[(rng_next(&mut rng) * 3.0) as usize % 3], 1.15 + rng_next(&mut rng) * 0.6, 0.5)
+                (&mangroves[(rng_next(&mut rng) * 3.0) as usize % 3], 1.15 + rng_next(&mut rng) * 0.6, 0.5, "swamp_tree_a")
             } else {
-                (&stumps[(rng_next(&mut rng) * 2.0) as usize % 2], 1.3 + rng_next(&mut rng) * 0.8, 0.35)
+                (&stumps[(rng_next(&mut rng) * 2.0) as usize % 2], 1.3 + rng_next(&mut rng) * 0.8, 0.35, "stump_a")
             };
+            let authored = studio.and_then(|env| env.model(authored));
             commands.spawn((
-                Mesh3d(handle.clone()),
-                MeshMaterial3d(mat.clone()),
+                Mesh3d(authored.map_or_else(|| handle.clone(), |model| model.mesh.clone())),
+                MeshMaterial3d(authored.map_or_else(|| mat.clone(), |model| model.mat.clone())),
                 Transform::from_xyz(x, WATER_Y - sink, z)
                     .with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU))
                     .with_scale(Vec3::splat(scale)),
@@ -277,15 +281,24 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             let tf = Transform::from_xyz(x, y, z)
                 .with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU))
                 .with_scale(Vec3::splat(0.9 + rng_next(&mut rng) * 0.6));
-            commands.spawn((Mesh3d(mush_stems.clone()), MeshMaterial3d(mat.clone()), tf, BiomeEntity, range.clone()));
+            let mushroom = studio.and_then(|env| env.model("mushroom_a"));
             commands.spawn((
-                Mesh3d(mush_caps.clone()),
-                MeshMaterial3d(glow_mat.clone()),
+                Mesh3d(mushroom.map_or_else(|| mush_stems.clone(), |model| model.mesh.clone())),
+                MeshMaterial3d(mushroom.map_or_else(|| mat.clone(), |model| model.mat.clone())),
                 tf,
-                NotShadowCaster,
                 BiomeEntity,
                 range.clone(),
             ));
+            if mushroom.is_none() {
+                commands.spawn((
+                    Mesh3d(mush_caps.clone()),
+                    MeshMaterial3d(glow_mat.clone()),
+                    tf,
+                    NotShadowCaster,
+                    BiomeEntity,
+                    range.clone(),
+                ));
+            }
             placed_mush += 1;
             mush += 1;
         }
@@ -307,12 +320,17 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         warn!("bog: NO spot deep enough for the drowned tower (pool_sd never < -1.1) — check POOL_T/sd scaling");
     }
     if let Some((_, x, z)) = best {
+        let authored = studio.and_then(|env| env.model("bog_tower_a"));
         commands.spawn((
-            Mesh3d(meshes.add(drowned_tower())),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(authored.map_or_else(|| meshes.add(drowned_tower()), |model| model.mesh.clone())),
+            MeshMaterial3d(authored.map_or_else(|| mat.clone(), |model| model.mat.clone())),
             Transform::from_xyz(x, WATER_Y - 1.7, z)
                 .with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU) * Quat::from_rotation_z(0.16))
-                .with_scale(Vec3::splat(1.15)),
+                .with_scale(if authored.is_some() {
+                    Vec3::new(1.0, 2.8, 1.0)
+                } else {
+                    Vec3::splat(1.15)
+                }),
             BiomeEntity,
         ));
         crate::blockers::add_obb(x, z, 1.4, 1.4, 0.0);
@@ -336,10 +354,17 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         warn!("bog: no shoreline spot for the stilt hut");
     }
     if let Some((_, x, z)) = hut {
+        let authored = studio.and_then(|env| env.model("bog_hut_a"));
         commands.spawn((
-            Mesh3d(meshes.add(stilt_hut())),
-            MeshMaterial3d(mat),
-            Transform::from_xyz(x, WATER_Y - 0.1, z).with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU)),
+            Mesh3d(authored.map_or_else(|| meshes.add(stilt_hut()), |model| model.mesh.clone())),
+            MeshMaterial3d(authored.map_or_else(|| mat.clone(), |model| model.mat.clone())),
+            Transform::from_xyz(x, WATER_Y - 0.1, z)
+                .with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU))
+                .with_scale(if authored.is_some() {
+                    Vec3::new(0.9, 1.7, 0.9)
+                } else {
+                    Vec3::ONE
+                }),
             BiomeEntity,
         ));
         crate::blockers::add_obb(x, z, 1.2, 1.0, 0.0);

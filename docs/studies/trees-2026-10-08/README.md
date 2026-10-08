@@ -1,9 +1,14 @@
 # Warbell: first Blender tree study
 
-The Blender MCP pipeline works end to end, but this first tree set exceeds the
-predeclared 10% GPU-cost budget. It remains optional. The next step requested by
-the user is a broader environment preview so the trees can be judged alongside
-matching terrain, plants and architecture; that preview is a separate iteration.
+This is a historical measurement on main `90f8d1b`, before the sparse-vegetation
+fix in `fb308c8` (v0.24.1). That old build incorrectly let soft undergrowth exclude
+later trees. These timings describe that sparse layout and must not be used as
+the performance verdict for the repaired campaign or the new forest prototype.
+
+The Blender MCP pipeline works end to end, but this first tree set exceeded its
+predeclared 10% GPU-cost budget. It remains optional. Current work is limited to
+one forest art slice for visual approval; broader environment rollout and new
+campaign performance evaluation are deferred until the art direction is accepted.
 
 Open [the visual report](index.html) for three real-game before/after comparisons,
 repeat ranges, p99, memory and raw measurements. These images were inspected after

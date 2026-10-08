@@ -573,7 +573,23 @@ pub fn build(
         if a == Vec2::new(9.0, FRONT_Z) && b == Vec2::new(15.0, FRONT_Z) {
             continue; // the gate fills this gap
         }
-        spawn_solid(commands, meshes, &timber_mat, palisade_segment(a, b, &mut rng), Vec3::ZERO, Quat::IDENTITY);
+        let native = palisade_segment(a, b, &mut rng); // retain deterministic RNG for later props
+        if let Some(env) = crate::blenderenv::get() {
+            let model = env.model("ork_palisade_run").expect("missing Blender ork_palisade_run");
+            let d = b - a;
+            let count = (d.length() / 6.0).ceil().max(1.0) as usize;
+            let scale_x = d.length() / count as f32
+                / (model.bounds_max.x - model.bounds_min.x).max(0.01);
+            for i in 0..count {
+                let mid = a + d * ((i as f32 + 0.5) / count as f32);
+                commands.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()),
+                    Transform::from_xyz(mid.x, ground_y(mid.x, mid.y).unwrap_or(0.0), mid.y)
+                        .with_rotation(ry((-d.y).atan2(d.x)))
+                        .with_scale(Vec3::new(scale_x, 1.0, 1.0)), BiomeEntity));
+            }
+        } else {
+            spawn_solid(commands, meshes, &timber_mat, native, Vec3::ZERO, Quat::IDENTITY);
+        }
         let mid = (a + b) / 2.0;
         let d = b - a;
         crate::blockers::add_obb(mid.x, mid.y, d.length() / 2.0 + 0.25, 0.45, (-d.y).atan2(d.x));
@@ -583,13 +599,16 @@ pub fn build(
     // ── The gate ── static frame (posts/lintel/skulls) + two hinged door leaves. The leaves are
     // their own entities tagged `FortressGate` so the Director (and, later, the live game) can
     // swing them open; the frame is fixed scenery.
-    spawn_solid(commands, meshes, &timber_mat, gate_frame_mesh(), at(GATE), Quat::IDENTITY);
+    spawn_model_solid(commands, meshes, &timber_mat, "ork_gate", gate_frame_mesh(), at(GATE), Quat::IDENTITY, Vec3::ONE);
     for sign in [-1.0f32, 1.0] {
         // Hinge post sits ~3u out from the gate centre; the leaf reaches inward to the gap middle.
         let hinge = Vec2::new(GATE.x + sign * 3.0, GATE.y);
+        let door_name = if sign < 0.0 { "ork_gate_door_left" } else { "ork_gate_door_right" };
+        let door_model = crate::blenderenv::get().map(|env| env.model(door_name)
+            .unwrap_or_else(|| panic!("missing Blender fortress door {door_name}")));
         commands.spawn((
-            Mesh3d(meshes.add(gate_door_mesh(sign))),
-            MeshMaterial3d(timber_mat.clone()),
+            Mesh3d(door_model.map_or_else(|| meshes.add(gate_door_mesh(sign)), |m| m.mesh.clone())),
+            MeshMaterial3d(door_model.map_or_else(|| timber_mat.clone(), |m| m.mat.clone())),
             Transform::from_translation(at(hinge)),
             FortressGate { sign, open: 0.0 },
             BiomeEntity,
@@ -623,7 +642,7 @@ pub fn build(
             * if next_u32(&mut rng) % 2 == 0 { 1.0 } else { -1.0 };
         let pos = at(*t);
         let rot = ry(yaw) * Quat::from_rotation_z(lean);
-        spawn_solid(commands, meshes, &timber_mat, tower_mesh(&mut rng), pos, rot);
+        spawn_model_solid(commands, meshes, &timber_mat, "ork_tower", tower_mesh(&mut rng), pos, rot, Vec3::ONE);
         // Box, not circle: radius 1.2 > the ≤1.0 bound `blockers::is_blocked`'s neighbour-only scan
         // assumes for circles, so a circle here could be missed a tile out. A box has no such bound.
         crate::blockers::add_box(t.x, t.y, 1.2, 1.2);
@@ -654,12 +673,8 @@ pub fn build(
 
     // ── Great hall (on the terrace, scaled up for the enlarged hold) ──
     let hall_pos = at(HALL_AT);
-    commands.spawn((
-        Mesh3d(meshes.add(hall_mesh(&mut rng))),
-        MeshMaterial3d(timber_mat.clone()),
-        Transform::from_translation(hall_pos).with_scale(Vec3::splat(HALL_SCALE)),
-        BiomeEntity,
-    ));
+    spawn_model_solid(commands, meshes, &timber_mat, "ork_hall", hall_mesh(&mut rng),
+        hall_pos, Quat::IDENTITY, Vec3::splat(HALL_SCALE));
     crate::blockers::add_obb(HALL_AT.x, HALL_AT.y, 5.8 * HALL_SCALE, 4.3 * HALL_SCALE, 0.0);
     // Doorway glow + flanking torches (warm light pooling out of the dark hall mouth).
     commands.spawn((
@@ -685,13 +700,15 @@ pub fn build(
             BiomeEntity,
         ));
         // The torch's bracket pole.
-        spawn_solid(
+        spawn_model_solid(
             commands,
             meshes,
             &mat,
+            "ork_torch_bracket",
             cyl(0.05, 0.9, v(0.0, -0.45, 0.0), Quat::IDENTITY, lin(0x3a2a1a)),
             tp,
             Quat::IDENTITY,
+            Vec3::ONE,
         );
     }
     let hall_flag = crate::banner::spawn_flag(
@@ -709,12 +726,8 @@ pub fn build(
     // ── Crooked spire (on the pad) + iron crown + green warp brazier ──
     let spire_pos = at(SPIRE_AT);
     let spire_rot = ry(0.2);
-    commands.spawn((
-        Mesh3d(meshes.add(spire_mesh(&mut rng))),
-        MeshMaterial3d(timber_mat.clone()),
-        Transform { translation: spire_pos, rotation: spire_rot, scale: Vec3::splat(SPIRE_SCALE) },
-        BiomeEntity,
-    ));
+    spawn_model_solid(commands, meshes, &timber_mat, "ork_spire", spire_mesh(&mut rng),
+        spire_pos, spire_rot, Vec3::splat(SPIRE_SCALE));
     // Box, not circle: this footprint (~2.07) far exceeds the ≤1.0 circle bound, so a plain circle
     // would be silently missed by `is_blocked` two-plus tiles out. A box is tested directly.
     crate::blockers::add_box(SPIRE_AT.x, SPIRE_AT.y, 1.8 * SPIRE_SCALE, 1.8 * SPIRE_SCALE);
@@ -752,7 +765,7 @@ pub fn build(
     //    attaches its spatial campfire loop + war-drum sink here (the drums that carry
     //    across the strait at dusk ARE the fortress's voice). ──
     let fire = at(BONFIRE_AT);
-    spawn_solid(commands, meshes, &mat, bonfire_base_mesh(), fire, Quat::IDENTITY);
+    spawn_model_solid(commands, meshes, &mat, "ork_bonfire_base", bonfire_base_mesh(), fire, Quat::IDENTITY, Vec3::ONE);
     // Box, not circle: radius 1.1 > the ≤1.0 circle bound the neighbour-only scan assumes.
     crate::blockers::add_box(BONFIRE_AT.x, BONFIRE_AT.y, 1.1, 1.1);
     commands.spawn((
@@ -796,19 +809,19 @@ pub fn build(
     // ── Hide tents (the warband's sprawl — each its own size, yaw and patchwork) ──
     for (p, s) in TENTS {
         let yaw = rng_range(&mut rng, 0.0, TAU);
-        spawn_solid(commands, meshes, &hide_mat, tent_mesh(s, &mut rng), at(p), ry(yaw));
+        spawn_model_solid(commands, meshes, &hide_mat, "ork_tent", tent_mesh(s, &mut rng), at(p), ry(yaw), Vec3::splat(s));
         crate::blockers::add_obb(p.x, p.y, 2.0 * s, 1.7 * s, yaw);
     }
 
     // ── Longhouses (timber barracks with hide roofs) ──
     for (p, yaw) in LONGHOUSES {
-        spawn_solid(commands, meshes, &timber_mat, longhouse_mesh(&mut rng), at(p), ry(yaw));
+        spawn_model_solid(commands, meshes, &timber_mat, "ork_longhouse", longhouse_mesh(&mut rng), at(p), ry(yaw), Vec3::ONE);
         crate::blockers::add_obb(p.x, p.y, 2.1, 3.1, yaw);
     }
 
     // ── The forge (hall terrace): hearth + anvil + quench barrel, ember + smoke alive ──
     let forge_pos = at(FORGE_AT);
-    spawn_solid(commands, meshes, &timber_mat, forge_mesh(&mut rng), forge_pos, ry(-0.9));
+    spawn_model_solid(commands, meshes, &timber_mat, "ork_forge", forge_mesh(&mut rng), forge_pos, ry(-0.9), Vec3::ONE);
     crate::blockers::add_obb(FORGE_AT.x, FORGE_AT.y, 1.9, 1.5, -0.9);
     let ember = forge_pos + Vec3::new(0.0, 0.75, -0.35);
     commands.spawn((
@@ -837,39 +850,41 @@ pub fn build(
     ));
 
     // ── The boar pen (west yard): post-and-rail fence, churned mud, a feed trough ──
-    spawn_solid(commands, meshes, &timber_mat, pen_mesh(&mut rng), at(PEN_AT), ry(0.25));
+    spawn_model_solid(commands, meshes, &timber_mat, "ork_pen", pen_mesh(&mut rng), at(PEN_AT), ry(0.25), Vec3::ONE);
     crate::blockers::add_obb(PEN_AT.x, PEN_AT.y, 2.5, 2.5, 0.25);
 
     // ── War drums + the spit roast on the bonfire plaza ──
     for (i, p) in DRUMS.iter().enumerate() {
-        spawn_solid(commands, meshes, &hide_mat, drum_mesh(&mut rng), at(*p), ry(i as f32 * 1.7));
+        spawn_model_solid(commands, meshes, &hide_mat, "ork_drum", drum_mesh(&mut rng), at(*p), ry(i as f32 * 1.7), Vec3::ONE);
         crate::blockers::add(p.x, p.y, 0.7);
     }
-    spawn_solid(commands, meshes, &mat, spit_mesh(&mut rng), at(Vec2::new(11.5, 97.0 + BLIGHT_DZ)), ry(0.5));
+    spawn_model_solid(commands, meshes, &mat, "ork_spit", spit_mesh(&mut rng), at(Vec2::new(11.5, 97.0 + BLIGHT_DZ)), ry(0.5), Vec3::ONE);
 
     // ── Weapon racks + spoils piles (plunder stacked where it was dropped) ──
     for p in RACKS {
-        spawn_solid(commands, meshes, &timber_mat, rack_mesh(&mut rng), at(p), ry(rng_range(&mut rng, 0.0, TAU)));
+        spawn_model_solid(commands, meshes, &timber_mat, "ork_rack", rack_mesh(&mut rng), at(p), ry(rng_range(&mut rng, 0.0, TAU)), Vec3::ONE);
         crate::blockers::add(p.x, p.y, 0.6);
     }
     for p in PILES {
-        spawn_solid(commands, meshes, &mat, pile_mesh(&mut rng), at(p), ry(rng_range(&mut rng, 0.0, TAU)));
+        spawn_model_solid(commands, meshes, &mat, "ork_pile", pile_mesh(&mut rng), at(p), ry(rng_range(&mut rng, 0.0, TAU)), Vec3::ONE);
         crate::blockers::add(p.x, p.y, 0.8);
     }
 
     // ── Free-standing plaza banners (pole mesh + cloth entity) ──
     for p in PLAZA_BANNERS {
         let base = at(p);
-        spawn_solid(
+        spawn_model_solid(
             commands,
             meshes,
             &timber_mat,
+            "ork_banner_pole",
             group(vec![
                 cyl(0.07, 4.4, v(0.0, 2.2, 0.0), Quat::IDENTITY, lin(TIMBER_DARK)),
                 bx(0.2, 0.18, 0.18, v(0.0, 4.5, 0.0), lin(BONE)),
             ]),
             base,
             Quat::IDENTITY,
+            Vec3::ONE,
         );
         crate::blockers::add(p.x, p.y, 0.3);
         let flag = crate::banner::spawn_flag(
@@ -908,7 +923,7 @@ pub fn build(
         Vec2::new(0.0, 118.0 + BLIGHT_DZ),
     ] {
         let yaw = (-tp.x).atan2(-tp.y);
-        spawn_solid(commands, meshes, &timber_mat, totem_mesh(&mut rng), at(tp), ry(yaw));
+        spawn_model_solid(commands, meshes, &timber_mat, "ork_totem", totem_mesh(&mut rng), at(tp), ry(yaw), Vec3::ONE);
         crate::blockers::add(tp.x, tp.y, 0.45);
     }
 
@@ -919,7 +934,7 @@ pub fn build(
         Vec2::new(9.5, 75.5 + BLIGHT_DZ),
         Vec2::new(15.0, 75.8 + BLIGHT_DZ),
     ] {
-        spawn_solid(commands, meshes, &mat, spikes_mesh(&mut rng), at(sp), ry(rng_range(&mut rng, 0.0, TAU)));
+        spawn_model_solid(commands, meshes, &mat, "ork_spikes", spikes_mesh(&mut rng), at(sp), ry(rng_range(&mut rng, 0.0, TAU)), Vec3::ONE);
     }
 
     // ── Trampled-ground dressing: bones, stumps, mud pools inside the walls ──
@@ -953,13 +968,13 @@ pub fn build(
         {
             continue;
         }
-        let m = match next_u32(&mut rng) % 4 {
-            0 => bone_pile_mesh(&mut rng),
-            1 => stump_mesh(&mut rng),
-            2 => mud_pool_mesh(&mut rng),
-            _ => spikes_mesh(&mut rng),
+        let (name, m) = match next_u32(&mut rng) % 4 {
+            0 => ("blight_bone_pile", bone_pile_mesh(&mut rng)),
+            1 => ("blight_stump", stump_mesh(&mut rng)),
+            2 => ("blight_mud_pool", mud_pool_mesh(&mut rng)),
+            _ => ("blight_spikes", spikes_mesh(&mut rng)),
         };
-        spawn_solid(commands, meshes, &mat, m, at(p), ry(rng_range(&mut rng, 0.0, TAU)));
+        spawn_model_solid(commands, meshes, &mat, name, m, at(p), ry(rng_range(&mut rng, 0.0, TAU)), Vec3::ONE);
         placed += 1;
     }
 
@@ -1054,28 +1069,30 @@ pub fn build(
             // ate the forest, the mire should read open and littered, not wooded.
             let trees = 0.075 * f;
             if roll < 0.04 * f {
-                spawn_stand(commands, &tree_meshes, &mat, at(p), 0.9, 2.1, &mut s);
+                spawn_stand(commands, &tree_meshes, &mat, "blight_dead_tree", at(p), 0.9, 2.1, &mut s);
                 crate::blockers::add(p.x, p.y, 0.3);
             } else if roll < 0.06 * f {
-                spawn_stand(commands, &claw_meshes, &mat, at(p), 0.85, 1.7, &mut s);
+                spawn_stand(commands, &claw_meshes, &mat, "blight_claw_tree", at(p), 0.85, 1.7, &mut s);
                 crate::blockers::add(p.x, p.y, 0.3);
             } else if roll < trees {
-                spawn_stand(commands, &snag_meshes, &mat, at(p), 0.9, 1.5, &mut s);
+                spawn_stand(commands, &snag_meshes, &mat, "blight_snag", at(p), 0.9, 1.5, &mut s);
                 crate::blockers::add(p.x, p.y, 0.3);
             } else if roll < trees + 0.06 {
-                let m = match next_u32(&mut s) % 4 {
-                    0 => bone_pile_mesh(&mut s),
-                    1 => spikes_mesh(&mut s),
-                    2 => stump_mesh(&mut s),
-                    _ => mud_pool_mesh(&mut s),
+                let (name, m) = match next_u32(&mut s) % 4 {
+                    0 => ("blight_bone_pile", bone_pile_mesh(&mut s)),
+                    1 => ("blight_spikes", spikes_mesh(&mut s)),
+                    2 => ("blight_stump", stump_mesh(&mut s)),
+                    _ => ("blight_mud_pool", mud_pool_mesh(&mut s)),
                 };
-                spawn_solid(commands, meshes, &mat, m, at(p), ry(rng_range(&mut s, 0.0, TAU)));
+                spawn_model_solid(commands, meshes, &mat, name, m, at(p), ry(rng_range(&mut s, 0.0, TAU)), Vec3::ONE);
             } else if roll < trees + 0.08 {
-                spawn_stand(commands, &shroom_meshes, &mat, at(p), 0.8, 1.5, &mut s);
+                spawn_stand(commands, &shroom_meshes, &mat, "blight_shroom", at(p), 0.8, 1.5, &mut s);
             } else if roll < trees + 0.088 {
+                let model = crate::blenderenv::get().map(|env| env.model("blight_warp_pool")
+                    .expect("missing Blender blight_warp_pool"));
                 commands.spawn((
-                    Mesh3d(pool_mesh.clone()),
-                    MeshMaterial3d(pool_mat.clone()),
+                    Mesh3d(model.map_or_else(|| pool_mesh.clone(), |m| m.mesh.clone())),
+                    MeshMaterial3d(model.map_or_else(|| pool_mat.clone(), |m| m.mat.clone())),
                     Transform {
                         translation: at(p) + Vec3::Y * 0.02,
                         rotation: Quat::IDENTITY,
@@ -1084,25 +1101,25 @@ pub fn build(
                     BiomeEntity,
                 ));
             } else if roll < trees + 0.094 {
-                spawn_solid(commands, meshes, &mat, tar_pit_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                spawn_model_solid(commands, meshes, &mat, "blight_tar_pit", tar_pit_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU), Vec3::ONE);
             } else if roll < trees + 0.104 {
-                spawn_solid(commands, meshes, &mat, scrap_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                spawn_model_solid(commands, meshes, &mat, "blight_scrap", scrap_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU), Vec3::ONE);
             } else if roll < trees + 0.109 {
-                spawn_solid(commands, meshes, &mat, impale_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                spawn_model_solid(commands, meshes, &mat, "blight_impale", impale_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU), Vec3::ONE);
                 crate::blockers::add(p.x, p.y, 0.25);
             } else if roll < trees + 0.1125 {
-                spawn_solid(commands, meshes, &mat, ribcage_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                spawn_model_solid(commands, meshes, &mat, "blight_ribcage", ribcage_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU), Vec3::ONE);
                 crate::blockers::add(p.x, p.y, 0.45);
             } else if roll < trees + 0.1155 {
-                spawn_solid(commands, meshes, &timber_mat, gibbet_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                spawn_model_solid(commands, meshes, &timber_mat, "blight_gibbet", gibbet_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU), Vec3::ONE);
                 crate::blockers::add(p.x, p.y, 0.25);
             } else if roll < trees + 0.1185 {
-                spawn_solid(commands, meshes, &hide_mat, effigy_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                spawn_model_solid(commands, meshes, &hide_mat, "blight_effigy", effigy_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU), Vec3::ONE);
                 crate::blockers::add(p.x, p.y, 0.25);
             } else if roll < trees + 0.1245 && fumes < 20 {
                 fumes += 1;
                 let base = at(p);
-                spawn_solid(commands, meshes, &mat, vent_mesh(&mut s), base, ry(rng01(&mut s)));
+                spawn_model_solid(commands, meshes, &mat, "blight_vent", vent_mesh(&mut s), base, ry(rng01(&mut s)), Vec3::ONE);
                 for k in 0..2 {
                     commands.spawn((
                         Mesh3d(smoke_puff.clone()),
@@ -1130,7 +1147,7 @@ pub fn build(
     .into_iter()
     .enumerate()
     {
-        spawn_solid(commands, meshes, &timber_mat, waypost_mesh(&mut rng), at(wp), ry(i as f32 * 1.4));
+        spawn_model_solid(commands, meshes, &timber_mat, "blight_waypost", waypost_mesh(&mut rng), at(wp), ry(i as f32 * 1.4), Vec3::ONE);
         crate::blockers::add(wp.x, wp.y, 0.3);
     }
 
@@ -1445,21 +1462,48 @@ fn spawn_solid(
     ));
 }
 
+/// Preserve the native prop's random draws, transform, and blocker call at the caller; replace
+/// only its rendered mesh and material when the Blender world is enabled.
+fn spawn_model_solid(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mat: &Handle<StandardMaterial>,
+    name: &str,
+    native: Mesh,
+    pos: Vec3,
+    rot: Quat,
+    scale: Vec3,
+) {
+    if let Some(env) = crate::blenderenv::get() {
+        let model = env.model(name).unwrap_or_else(|| panic!("missing Blender fortress model {name}"));
+        commands.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()),
+            Transform { translation: pos, rotation: rot, scale }, BiomeEntity));
+    } else {
+        // The procedural tent constructor already bakes its per-site size into vertices.
+        let native_scale = if name == "ork_tent" { Vec3::ONE } else { scale };
+        commands.spawn((Mesh3d(meshes.add(native)), MeshMaterial3d(mat.clone()),
+            Transform { translation: pos, rotation: rot, scale: native_scale }, BiomeEntity));
+    }
+}
+
 /// Spawn one instance of a pre-baked shared-mesh variant set (random pick / yaw / scale) —
 /// the scatter's batching path: a whole stand of these costs one draw per variant.
 fn spawn_stand(
     commands: &mut Commands,
     handles: &[Handle<Mesh>],
     mat: &Handle<StandardMaterial>,
+    name: &str,
     pos: Vec3,
     lo: f32,
     hi: f32,
     s: &mut u32,
 ) {
     let v = (next_u32(s) as usize) % handles.len();
+    let model = crate::blenderenv::get().map(|env| env.model(name)
+        .unwrap_or_else(|| panic!("missing Blender Blight model {name}")));
     commands.spawn((
-        Mesh3d(handles[v].clone()),
-        MeshMaterial3d(mat.clone()),
+        Mesh3d(model.map_or_else(|| handles[v].clone(), |m| m.mesh.clone())),
+        MeshMaterial3d(model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
         Transform {
             translation: pos,
             rotation: ry(rng_range(s, 0.0, TAU)),

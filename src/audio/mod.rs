@@ -35,6 +35,16 @@ use bevy::prelude::*;
 
 use crate::biome::Biome;
 
+/// Capture and profiling runs stay silent without changing the player's saved preferences.
+pub(crate) fn harness_muted() -> bool {
+    static MUTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *MUTED.get_or_init(|| {
+        std::env::var("FOREST_MUTE").as_deref() == Ok("1")
+            || ["FOREST_SHOT", "FOREST_CLIP", "FOREST_PERFTEST"]
+                .iter().any(|key| std::env::var_os(key).is_some())
+    })
+}
+
 /// Ground surface under the hero — selects which footstep clip plays.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
@@ -343,8 +353,15 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<advice::AdviceTrigger>()
             .add_message::<AudioCue>()
             .add_message::<director::Speak>()
-            .init_resource::<campaign::CampaignVoice>()
-            .add_systems(
+            .init_resource::<campaign::CampaignVoice>();
+        // A volume-only mute can race the audio thread when a new source is appended.
+        // Unattended campaign captures keep the gameplay-facing messages/resources, but
+        // never enqueue playback. Both sides of a profiling comparison use this same mode.
+        if harness_muted() {
+            info!("HARNESS_AUDIO silent: campaign playback disabled");
+            return;
+        }
+        app.add_systems(
                 Startup,
                 (
                     animals::load_voices,

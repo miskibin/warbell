@@ -64,8 +64,11 @@ pub fn populate(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let mesh = meshes.add(dummy_mesh());
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
+    let (mesh, mat) = crate::blenderenv::get().and_then(|assets| assets.model("training_dummy"))
+        .map(|model| (model.mesh.clone(), model.mat.clone()))
+        .unwrap_or_else(|| (meshes.add(dummy_mesh()), materials.add(StandardMaterial {
+            base_color: Color::WHITE, perceptual_roughness: 0.95, ..default()
+        })));
     // One pell off to the side of the keep's southern courtyard (the muster yard), plus one by
     // the meadow rest-campfire next to the hero spawn (2026-07) — the first thing a new player
     // can whack, three steps from where they wake up. Both clear of the gate lanes.

@@ -42,7 +42,10 @@ impl Default for LookSettings {
     fn default() -> Self {
         // 0.98 (was 1.1) — 2026-07 cinematic pass: the filmic reference look is gently
         // desaturated; the atmospherics haze now carries the colour mood instead.
-        Self { saturation: 0.98, chromatic: 0.0 } // chromatic off by default (component not inserted anyway)
+        Self {
+            saturation: if crate::blenderenv::look_enabled() { 1.10 } else { 0.98 },
+            chromatic: 0.0,
+        } // chromatic off by default (component not inserted anyway)
     }
 }
 

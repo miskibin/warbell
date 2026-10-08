@@ -106,10 +106,15 @@ pub fn spawn_cage(
 ) -> Entity {
     use crate::ork_fortress::{cage_door_mesh, cage_mesh, CAGE_SEATS, CAGE_W};
     let mut rng = seed | 1;
+    // Keep the original random draws, including those that seed captive placement/appearance.
+    let native_frame = cage_mesh(&mut rng);
+    let native_door = cage_door_mesh(&mut rng);
+    let cage_model = crate::blenderenv::get().map(|env| env.model("camp_cage")
+        .expect("missing Blender camp_cage"));
     let root = commands
         .spawn((
-            Mesh3d(meshes.add(cage_mesh(&mut rng))),
-            MeshMaterial3d(prop_mat.clone()),
+            Mesh3d(cage_model.map_or_else(|| meshes.add(native_frame), |m| m.mesh.clone())),
+            MeshMaterial3d(cage_model.map_or_else(|| prop_mat.clone(), |m| m.mat.clone())),
             tf,
             Cage { key },
             BiomeEntity,
@@ -117,10 +122,12 @@ pub fn spawn_cage(
         .id();
     // The door hangs just proud of the (+X, +Z) corner post. No BiomeEntity of its own — it
     // despawns with the frame (child cascade), and a second tag would double-despawn.
+    let door_model = crate::blenderenv::get().map(|env| env.model("camp_cage_door")
+        .expect("missing Blender camp_cage_door"));
     let door = commands
         .spawn((
-            Mesh3d(meshes.add(cage_door_mesh(&mut rng))),
-            MeshMaterial3d(prop_mat.clone()),
+            Mesh3d(door_model.map_or_else(|| meshes.add(native_door), |m| m.mesh.clone())),
+            MeshMaterial3d(door_model.map_or_else(|| prop_mat.clone(), |m| m.mat.clone())),
             Transform::from_translation(v(CAGE_W / 2.0 + 0.07, 0.0, CAGE_W / 2.0)),
             // `open` pre-opens the door (the `FOREST_CAGETEST` after-state cage) — it eases
             // from shut on the first frames, which is invisible during boot.
@@ -510,17 +517,19 @@ pub fn build(
         // (they did at the old −2.4/+2.2 spots). Tent at 0.7× the fortress size to fit the camp.
         let mut prop_rng = site.seed | 1;
         let solids = vec![
-            (crate::ork_fortress::tent_mesh(0.7, &mut prop_rng), v(-2.3, 0.0, -2.1), 0.0_f32, (1.05_f32, 0.85_f32)),
-            (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
-            (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
-            (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.32, 0.32)),
+            ("camp_tent", crate::ork_fortress::tent_mesh(0.7, &mut prop_rng), v(-2.3, 0.0, -2.1), 0.0_f32, (1.05_f32, 0.85_f32)),
+            ("camp_banner", banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
+            ("camp_spikes", spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
+            ("camp_firepit", fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.32, 0.32)),
         ];
-        for (m, local, lyaw, (hw, hd)) in solids {
-            let h = meshes.add(m);
+        for (name, m, local, lyaw, (hw, hd)) in solids {
+            let model = crate::blenderenv::get().map(|env| env.model(name)
+                .unwrap_or_else(|| panic!("missing Blender camp model {name}")));
+            let h = model.map_or_else(|| meshes.add(m), |asset| asset.mesh.clone());
             let world = place(local);
             commands.spawn((
                 Mesh3d(h),
-                MeshMaterial3d(prop_mat.clone()),
+                MeshMaterial3d(model.map_or_else(|| prop_mat.clone(), |asset| asset.mat.clone())),
                 Transform { translation: world, rotation: rot_q * ry(lyaw), scale: Vec3::ONE },
                 BiomeEntity,
             ));
@@ -553,9 +562,11 @@ pub fn build(
         for (i, local) in [v(1.25, 0.0, 0.5), v(-0.5, 0.0, 0.95), v(0.45, 0.0, -1.05)].into_iter().enumerate() {
             let w = place(local);
             let seed = site.seed.wrapping_add(i as u32 * 37).wrapping_add(7) | 1;
+            let model = crate::blenderenv::get().map(|env| env.model("meadow_sit_stump")
+                .expect("missing Blender meadow_sit_stump"));
             commands.spawn((
-                Mesh3d(meshes.add(sit_stump_mesh(seed))),
-                MeshMaterial3d(prop_mat.clone()),
+                Mesh3d(model.map_or_else(|| meshes.add(sit_stump_mesh(seed)), |m| m.mesh.clone())),
+                MeshMaterial3d(model.map_or_else(|| prop_mat.clone(), |m| m.mat.clone())),
                 Transform { translation: w, rotation: ry((seed % 628) as f32 / 100.0), scale: Vec3::ONE },
                 BiomeEntity,
             ));

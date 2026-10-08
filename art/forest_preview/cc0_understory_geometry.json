@@ -1,0 +1,995 @@
+{
+  "schema": "warbell.forest_cc0_understory_geometry.v1",
+  "assets": [
+    {
+      "asset": "shrub_03",
+      "meshes": 4,
+      "mesh_instances": 4,
+      "primitives": 4,
+      "unique_triangles": 8287,
+      "scene_triangles": 8287,
+      "materials": [
+        {
+          "name": "shrub_03",
+          "alpha_mode": "MASK",
+          "alpha_cutoff": 0.5,
+          "double_sided": true,
+          "base_color_texture": 1,
+          "orm_texture": 2,
+          "normal_texture": 0
+        }
+      ],
+      "objects": [
+        {
+          "node": "shrub_03_a",
+          "mesh": "Plane.002",
+          "triangles": 2385,
+          "bounds_min_xyz_m": [
+            -0.07354,
+            -0.00183,
+            -0.07271
+          ],
+          "bounds_max_xyz_m": [
+            0.12708,
+            0.40096,
+            0.0785
+          ],
+          "extent_xyz_m": [
+            0.20062,
+            0.40278,
+            0.1512
+          ]
+        },
+        {
+          "node": "shrub_03_b",
+          "mesh": "Plane.054",
+          "triangles": 2134,
+          "bounds_min_xyz_m": [
+            0.36502,
+            -0.00085,
+            -0.06211
+          ],
+          "bounds_max_xyz_m": [
+            0.54933,
+            0.35166,
+            0.06045
+          ],
+          "extent_xyz_m": [
+            0.1843,
+            0.3525,
+            0.12256
+          ]
+        },
+        {
+          "node": "shrub_03_c",
+          "mesh": "Plane.128",
+          "triangles": 1790,
+          "bounds_min_xyz_m": [
+            0.81608,
+            -0.00083,
+            -0.05274
+          ],
+          "bounds_max_xyz_m": [
+            0.9119,
+            0.30356,
+            0.06041
+          ],
+          "extent_xyz_m": [
+            0.09581,
+            0.30439,
+            0.11316
+          ]
+        },
+        {
+          "node": "shrub_03_d",
+          "mesh": "Plane.090",
+          "triangles": 1978,
+          "bounds_min_xyz_m": [
+            1.1806,
+            -0.00095,
+            -0.03509
+          ],
+          "bounds_max_xyz_m": [
+            1.29338,
+            0.2546,
+            0.05419
+          ],
+          "extent_xyz_m": [
+            0.11277,
+            0.25555,
+            0.08928
+          ]
+        }
+      ],
+      "image_uris": [
+        "textures/shrub_03_nor_gl_1k.jpg",
+        "textures/shrub_03_diff_1k.jpg",
+        "textures/shrub_03_arm_1k.jpg"
+      ],
+      "bounds_min_xyz_m": [
+        -0.07354,
+        -0.00183,
+        -0.07271
+      ],
+      "bounds_max_xyz_m": [
+        1.29338,
+        0.40096,
+        0.0785
+      ],
+      "extent_xyz_m": [
+        1.36692,
+        0.40278,
+        0.1512
+      ],
+      "footprint_xz_m": [
+        1.36692,
+        0.1512
+      ]
+    },
+    {
+      "asset": "tree_stump_01",
+      "meshes": 1,
+      "mesh_instances": 1,
+      "primitives": 1,
+      "unique_triangles": 41046,
+      "scene_triangles": 41046,
+      "materials": [
+        {
+          "name": "tree_stump_01",
+          "alpha_mode": "OPAQUE",
+          "alpha_cutoff": null,
+          "double_sided": true,
+          "base_color_texture": 1,
+          "orm_texture": 2,
+          "normal_texture": 0
+        }
+      ],
+      "objects": [
+        {
+          "node": "tree_stump_01",
+          "mesh": "tt_01_rep.001",
+          "triangles": 41046,
+          "bounds_min_xyz_m": [
+            -0.78442,
+            -0.19298,
+            -0.76044
+          ],
+          "bounds_max_xyz_m": [
+            0.64113,
+            0.37969,
+            0.82987
+          ],
+          "extent_xyz_m": [
+            1.42555,
+            0.57267,
+            1.59031
+          ]
+        }
+      ],
+      "image_uris": [
+        "textures/tree_stump_01_nor_gl_1k.jpg",
+        "textures/tree_stump_01_diff_1k.jpg",
+        "textures/tree_stump_01_arm_1k.jpg"
+      ],
+      "bounds_min_xyz_m": [
+        -0.78442,
+        -0.19298,
+        -0.76044
+      ],
+      "bounds_max_xyz_m": [
+        0.64113,
+        0.37969,
+        0.82987
+      ],
+      "extent_xyz_m": [
+        1.42555,
+        0.57267,
+        1.59031
+      ],
+      "footprint_xz_m": [
+        1.42555,
+        1.59031
+      ]
+    },
+    {
+      "asset": "grass_medium_01",
+      "meshes": 17,
+      "mesh_instances": 17,
+      "primitives": 17,
+      "unique_triangles": 24730,
+      "scene_triangles": 24730,
+      "materials": [
+        {
+          "name": "grass_medium_01",
+          "alpha_mode": "BLEND",
+          "alpha_cutoff": null,
+          "double_sided": true,
+          "base_color_texture": 1,
+          "orm_texture": 2,
+          "normal_texture": 0
+        }
+      ],
+      "objects": [
+        {
+          "node": "grass_medium_01_small_a_LOD0",
+          "mesh": "Plane.037",
+          "triangles": 833,
+          "bounds_min_xyz_m": [
+            -0.07993,
+            -0.00248,
+            -0.08258
+          ],
+          "bounds_max_xyz_m": [
+            0.10491,
+            0.13795,
+            0.07973
+          ],
+          "extent_xyz_m": [
+            0.18484,
+            0.14043,
+            0.16231
+          ]
+        },
+        {
+          "node": "grass_medium_01_large_b_LOD0",
+          "mesh": "Plane.038",
+          "triangles": 4626,
+          "bounds_min_xyz_m": [
+            -2.14601,
+            -0.02561,
+            -0.13384
+          ],
+          "bounds_max_xyz_m": [
+            -1.86191,
+            0.14365,
+            0.1419
+          ],
+          "extent_xyz_m": [
+            0.2841,
+            0.16926,
+            0.27574
+          ]
+        },
+        {
+          "node": "grass_medium_01_mid_b_LOD0",
+          "mesh": "Plane.039",
+          "triangles": 1257,
+          "bounds_min_xyz_m": [
+            -0.87645,
+            -0.00334,
+            -0.08768
+          ],
+          "bounds_max_xyz_m": [
+            -0.68867,
+            0.17438,
+            0.11334
+          ],
+          "extent_xyz_m": [
+            0.18779,
+            0.17772,
+            0.20103
+          ]
+        },
+        {
+          "node": "grass_medium_01_tall_b_LOD0",
+          "mesh": "Plane.042",
+          "triangles": 310,
+          "bounds_min_xyz_m": [
+            1.11608,
+            -0.0019,
+            -0.0603
+          ],
+          "bounds_max_xyz_m": [
+            1.26603,
+            0.28376,
+            0.07449
+          ],
+          "extent_xyz_m": [
+            0.14995,
+            0.28566,
+            0.13479
+          ]
+        },
+        {
+          "node": "grass_medium_01_tall_a_LOD0",
+          "mesh": "Plane.043",
+          "triangles": 290,
+          "bounds_min_xyz_m": [
+            0.72042,
+            -0.00558,
+            -0.0745
+          ],
+          "bounds_max_xyz_m": [
+            0.88137,
+            0.31697,
+            0.08403
+          ],
+          "extent_xyz_m": [
+            0.16096,
+            0.32255,
+            0.15853
+          ]
+        },
+        {
+          "node": "grass_medium_01_tall_c_LOD0",
+          "mesh": "Plane.045",
+          "triangles": 340,
+          "bounds_min_xyz_m": [
+            1.53337,
+            -0.00573,
+            -0.05056
+          ],
+          "bounds_max_xyz_m": [
+            1.6864,
+            0.23052,
+            0.07759
+          ],
+          "extent_xyz_m": [
+            0.15303,
+            0.23626,
+            0.12816
+          ]
+        },
+        {
+          "node": "grass_medium_01_small_b_LOD0",
+          "mesh": "Plane.047",
+          "triangles": 653,
+          "bounds_min_xyz_m": [
+            0.30784,
+            -0.00766,
+            -0.09784
+          ],
+          "bounds_max_xyz_m": [
+            0.4738,
+            0.09224,
+            0.09205
+          ],
+          "extent_xyz_m": [
+            0.16596,
+            0.0999,
+            0.18989
+          ]
+        },
+        {
+          "node": "grass_medium_01_mid_c_LOD0",
+          "mesh": "Plane.048",
+          "triangles": 1466,
+          "bounds_min_xyz_m": [
+            -0.48016,
+            -0.02141,
+            -0.10802
+          ],
+          "bounds_max_xyz_m": [
+            -0.28783,
+            0.12323,
+            0.09483
+          ],
+          "extent_xyz_m": [
+            0.19233,
+            0.14464,
+            0.20286
+          ]
+        },
+        {
+          "node": "grass_medium_01_mid_a_LOD0",
+          "mesh": "Plane.050",
+          "triangles": 2287,
+          "bounds_min_xyz_m": [
+            -1.31185,
+            -0.02294,
+            -0.11236
+          ],
+          "bounds_max_xyz_m": [
+            -1.09623,
+            0.1948,
+            0.10902
+          ],
+          "extent_xyz_m": [
+            0.21562,
+            0.21774,
+            0.22138
+          ]
+        },
+        {
+          "node": "grass_medium_01_large_a_LOD0",
+          "mesh": "Plane.051",
+          "triangles": 6422,
+          "bounds_min_xyz_m": [
+            -2.55279,
+            -0.0075,
+            -0.15771
+          ],
+          "bounds_max_xyz_m": [
+            -2.23579,
+            0.13918,
+            0.16885
+          ],
+          "extent_xyz_m": [
+            0.31701,
+            0.14669,
+            0.32656
+          ]
+        },
+        {
+          "node": "grass_medium_01_large_c_LOD0",
+          "mesh": "Plane.053",
+          "triangles": 5945,
+          "bounds_min_xyz_m": [
+            -1.7452,
+            -0.02148,
+            -0.13537
+          ],
+          "bounds_max_xyz_m": [
+            -1.46641,
+            0.12087,
+            0.1197
+          ],
+          "extent_xyz_m": [
+            0.27879,
+            0.14235,
+            0.25507
+          ]
+        },
+        {
+          "node": "grass_medium_01_tiny_c_LOD0",
+          "mesh": "Plane.054",
+          "triangles": 40,
+          "bounds_min_xyz_m": [
+            2.39797,
+            -0.00153,
+            -0.00066
+          ],
+          "bounds_max_xyz_m": [
+            2.414,
+            0.08086,
+            0.02834
+          ],
+          "extent_xyz_m": [
+            0.01603,
+            0.08239,
+            0.029
+          ]
+        },
+        {
+          "node": "grass_medium_01_tiny_a_LOD0",
+          "mesh": "Plane.055",
+          "triangles": 79,
+          "bounds_min_xyz_m": [
+            1.9767,
+            -0.00265,
+            -0.05101
+          ],
+          "bounds_max_xyz_m": [
+            2.04405,
+            0.1098,
+            0.02276
+          ],
+          "extent_xyz_m": [
+            0.06735,
+            0.11245,
+            0.07377
+          ]
+        },
+        {
+          "node": "grass_medium_01_tiny_b_LOD0",
+          "mesh": "Plane.056",
+          "triangles": 28,
+          "bounds_min_xyz_m": [
+            2.19583,
+            -0.0023,
+            -0.03413
+          ],
+          "bounds_max_xyz_m": [
+            2.2194,
+            0.05791,
+            0.00026
+          ],
+          "extent_xyz_m": [
+            0.02357,
+            0.06021,
+            0.0344
+          ]
+        },
+        {
+          "node": "grass_medium_01_tiny_d_LOD0",
+          "mesh": "Plane.057",
+          "triangles": 32,
+          "bounds_min_xyz_m": [
+            2.59902,
+            -0.00267,
+            -0.05434
+          ],
+          "bounds_max_xyz_m": [
+            2.64206,
+            0.04516,
+            0.03424
+          ],
+          "extent_xyz_m": [
+            0.04304,
+            0.04783,
+            0.08858
+          ]
+        },
+        {
+          "node": "grass_medium_01_tiny_e_LOD0",
+          "mesh": "Plane.058",
+          "triangles": 62,
+          "bounds_min_xyz_m": [
+            2.77325,
+            -0.00462,
+            -0.02234
+          ],
+          "bounds_max_xyz_m": [
+            2.85851,
+            0.04483,
+            0.05181
+          ],
+          "extent_xyz_m": [
+            0.08527,
+            0.04945,
+            0.07415
+          ]
+        },
+        {
+          "node": "grass_medium_01_tiny_f_LOD0",
+          "mesh": "Plane.059",
+          "triangles": 60,
+          "bounds_min_xyz_m": [
+            2.99699,
+            -0.00291,
+            -0.04551
+          ],
+          "bounds_max_xyz_m": [
+            3.05219,
+            0.04416,
+            0.02338
+          ],
+          "extent_xyz_m": [
+            0.0552,
+            0.04707,
+            0.06889
+          ]
+        }
+      ],
+      "image_uris": [
+        "textures/grass_medium_01_nor_gl_1k.jpg",
+        "textures/grass_medium_01_diff_1k.jpg",
+        "textures/grass_medium_01_arm_1k.jpg"
+      ],
+      "bounds_min_xyz_m": [
+        -2.55279,
+        -0.02561,
+        -0.15771
+      ],
+      "bounds_max_xyz_m": [
+        3.05219,
+        0.31697,
+        0.16885
+      ],
+      "extent_xyz_m": [
+        5.60498,
+        0.34258,
+        0.32656
+      ],
+      "footprint_xz_m": [
+        5.60498,
+        0.32656
+      ]
+    },
+    {
+      "asset": "rock_moss_set_01",
+      "meshes": 6,
+      "mesh_instances": 6,
+      "primitives": 6,
+      "unique_triangles": 63127,
+      "scene_triangles": 63127,
+      "materials": [
+        {
+          "name": "rock_moss_set_01",
+          "alpha_mode": "OPAQUE",
+          "alpha_cutoff": null,
+          "double_sided": true,
+          "base_color_texture": 1,
+          "orm_texture": 2,
+          "normal_texture": 0
+        }
+      ],
+      "objects": [
+        {
+          "node": "rock_moss_set_01_rock01",
+          "mesh": "modelShape.005",
+          "triangles": 11000,
+          "bounds_min_xyz_m": [
+            -3.91402,
+            -0.65657,
+            -3.82382
+          ],
+          "bounds_max_xyz_m": [
+            -1.67639,
+            0.81613,
+            -0.45502
+          ],
+          "extent_xyz_m": [
+            2.23763,
+            1.4727,
+            3.3688
+          ]
+        },
+        {
+          "node": "rock_moss_set_01_rock02",
+          "mesh": "modelShape.002",
+          "triangles": 10996,
+          "bounds_min_xyz_m": [
+            -1.27305,
+            -0.46562,
+            -3.7672
+          ],
+          "bounds_max_xyz_m": [
+            1.38233,
+            0.79637,
+            -0.50348
+          ],
+          "extent_xyz_m": [
+            2.65538,
+            1.26199,
+            3.26372
+          ]
+        },
+        {
+          "node": "rock_moss_set_01_rock03",
+          "mesh": "modelShape",
+          "triangles": 5000,
+          "bounds_min_xyz_m": [
+            1.982,
+            -0.41087,
+            -3.1464
+          ],
+          "bounds_max_xyz_m": [
+            4.09058,
+            0.68882,
+            -1.06682
+          ],
+          "extent_xyz_m": [
+            2.10858,
+            1.09969,
+            2.07959
+          ]
+        },
+        {
+          "node": "rock_moss_set_01_rock04",
+          "mesh": "medium.001",
+          "triangles": 10589,
+          "bounds_min_xyz_m": [
+            -3.65028,
+            -0.66097,
+            0.6898
+          ],
+          "bounds_max_xyz_m": [
+            -1.52265,
+            1.10735,
+            2.65454
+          ],
+          "extent_xyz_m": [
+            2.12763,
+            1.76832,
+            1.96474
+          ]
+        },
+        {
+          "node": "rock_moss_set_01_rock05",
+          "mesh": "modelShape.003",
+          "triangles": 16548,
+          "bounds_min_xyz_m": [
+            -0.71067,
+            -0.57255,
+            0.12628
+          ],
+          "bounds_max_xyz_m": [
+            1.10666,
+            0.6329,
+            3.12494
+          ],
+          "extent_xyz_m": [
+            1.81732,
+            1.20545,
+            2.99866
+          ]
+        },
+        {
+          "node": "rock_moss_set_01_rock06",
+          "mesh": "mesh1-geometry.003",
+          "triangles": 8994,
+          "bounds_min_xyz_m": [
+            1.59922,
+            -0.52806,
+            0.09707
+          ],
+          "bounds_max_xyz_m": [
+            3.72521,
+            0.7338,
+            2.85438
+          ],
+          "extent_xyz_m": [
+            2.12598,
+            1.26185,
+            2.7573
+          ]
+        }
+      ],
+      "image_uris": [
+        "textures/rock_moss_set_01_nor_gl_1k.jpg",
+        "textures/rock_moss_set_01_diff_1k.jpg",
+        "textures/rock_moss_set_01_rough_1k.jpg"
+      ],
+      "bounds_min_xyz_m": [
+        -3.91402,
+        -0.66097,
+        -3.82382
+      ],
+      "bounds_max_xyz_m": [
+        4.09058,
+        1.10735,
+        3.12494
+      ],
+      "extent_xyz_m": [
+        8.0046,
+        1.76832,
+        6.94876
+      ],
+      "footprint_xz_m": [
+        8.0046,
+        6.94876
+      ]
+    },
+    {
+      "asset": "dandelion_01",
+      "meshes": 5,
+      "mesh_instances": 5,
+      "primitives": 5,
+      "unique_triangles": 54764,
+      "scene_triangles": 54764,
+      "materials": [
+        {
+          "name": "dandelion_01",
+          "alpha_mode": "MASK",
+          "alpha_cutoff": 0.5,
+          "double_sided": true,
+          "base_color_texture": 1,
+          "orm_texture": 2,
+          "normal_texture": 0
+        }
+      ],
+      "objects": [
+        {
+          "node": "dandelion_01_a_LOD0",
+          "mesh": "Plane.023",
+          "triangles": 23542,
+          "bounds_min_xyz_m": [
+            -0.1262,
+            -0.00244,
+            -0.13673
+          ],
+          "bounds_max_xyz_m": [
+            0.09414,
+            0.1618,
+            0.12093
+          ],
+          "extent_xyz_m": [
+            0.22035,
+            0.16423,
+            0.25766
+          ]
+        },
+        {
+          "node": "dandelion_01_b_LOD0",
+          "mesh": "Plane.095",
+          "triangles": 23358,
+          "bounds_min_xyz_m": [
+            -1.1263,
+            -0.00216,
+            -0.10233
+          ],
+          "bounds_max_xyz_m": [
+            -0.9245,
+            0.11171,
+            0.11563
+          ],
+          "extent_xyz_m": [
+            0.2018,
+            0.11387,
+            0.21796
+          ]
+        },
+        {
+          "node": "dandelion_01_c_LOD0",
+          "mesh": "Plane.041",
+          "triangles": 3180,
+          "bounds_min_xyz_m": [
+            -2.07892,
+            -0.00211,
+            -0.0877
+          ],
+          "bounds_max_xyz_m": [
+            -1.90905,
+            0.09883,
+            0.07943
+          ],
+          "extent_xyz_m": [
+            0.16987,
+            0.10094,
+            0.16713
+          ]
+        },
+        {
+          "node": "dandelion_01_d_LOD0",
+          "mesh": "Plane.066",
+          "triangles": 2604,
+          "bounds_min_xyz_m": [
+            -3.05237,
+            -0.00185,
+            -0.08776
+          ],
+          "bounds_max_xyz_m": [
+            -2.93026,
+            0.05359,
+            0.05578
+          ],
+          "extent_xyz_m": [
+            0.12211,
+            0.05544,
+            0.14354
+          ]
+        },
+        {
+          "node": "dandelion_01_e_LOD0",
+          "mesh": "Plane.113",
+          "triangles": 2080,
+          "bounds_min_xyz_m": [
+            -4.12015,
+            -0.00838,
+            -0.08965
+          ],
+          "bounds_max_xyz_m": [
+            -3.90628,
+            0.0391,
+            0.11564
+          ],
+          "extent_xyz_m": [
+            0.21387,
+            0.04747,
+            0.20529
+          ]
+        }
+      ],
+      "image_uris": [
+        "textures/dandelion_01_nor_gl_1k.jpg",
+        "textures/dandelion_01_diff_1k.jpg",
+        "textures/dandelion_01_arm_1k.jpg"
+      ],
+      "bounds_min_xyz_m": [
+        -4.12015,
+        -0.00838,
+        -0.13673
+      ],
+      "bounds_max_xyz_m": [
+        0.09414,
+        0.1618,
+        0.12093
+      ],
+      "extent_xyz_m": [
+        4.21429,
+        0.17017,
+        0.25766
+      ],
+      "footprint_xz_m": [
+        4.21429,
+        0.25766
+      ]
+    },
+    {
+      "asset": "flower_heliophila",
+      "meshes": 3,
+      "mesh_instances": 3,
+      "primitives": 3,
+      "unique_triangles": 101621,
+      "scene_triangles": 101621,
+      "materials": [
+        {
+          "name": "flower_heliophila",
+          "alpha_mode": "BLEND",
+          "alpha_cutoff": null,
+          "double_sided": true,
+          "base_color_texture": 1,
+          "orm_texture": 2,
+          "normal_texture": 0
+        }
+      ],
+      "objects": [
+        {
+          "node": "flower_heliophila_large",
+          "mesh": "Plane.5122",
+          "triangles": 51517,
+          "bounds_min_xyz_m": [
+            -1.41971,
+            -0.0046,
+            -0.62307
+          ],
+          "bounds_max_xyz_m": [
+            0.24299,
+            0.39437,
+            0.79432
+          ],
+          "extent_xyz_m": [
+            1.6627,
+            0.39896,
+            1.4174
+          ]
+        },
+        {
+          "node": "flower_heliophila_medium",
+          "mesh": "Plane.5143",
+          "triangles": 32511,
+          "bounds_min_xyz_m": [
+            0.16973,
+            -0.00491,
+            -0.30208
+          ],
+          "bounds_max_xyz_m": [
+            0.84404,
+            0.37001,
+            0.29953
+          ],
+          "extent_xyz_m": [
+            0.67431,
+            0.37492,
+            0.60161
+          ]
+        },
+        {
+          "node": "flower_heliophila_small",
+          "mesh": "Plane.2197",
+          "triangles": 17593,
+          "bounds_min_xyz_m": [
+            0.99086,
+            -0.00091,
+            -0.15669
+          ],
+          "bounds_max_xyz_m": [
+            1.33435,
+            0.26881,
+            0.11743
+          ],
+          "extent_xyz_m": [
+            0.34349,
+            0.26972,
+            0.27413
+          ]
+        }
+      ],
+      "image_uris": [
+        "textures/flower_heliophila_nor_gl_1k.jpg",
+        "textures/flower_heliophila_diff_1k.jpg",
+        "textures/flower_heliophila_arm_1k.jpg"
+      ],
+      "bounds_min_xyz_m": [
+        -1.41971,
+        -0.00491,
+        -0.62307
+      ],
+      "bounds_max_xyz_m": [
+        1.33435,
+        0.39437,
+        0.79432
+      ],
+      "extent_xyz_m": [
+        2.75406,
+        0.39928,
+        1.4174
+      ],
+      "footprint_xz_m": [
+        2.75406,
+        1.4174
+      ]
+    }
+  ]
+}

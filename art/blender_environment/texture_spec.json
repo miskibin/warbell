@@ -1,0 +1,144 @@
+{
+  "schema": "warbell.blender_environment_textures.v1",
+  "surface_atlas": {
+    "size": [
+      1024,
+      1024
+    ],
+    "grid": [
+      4,
+      4
+    ],
+    "cells": [
+      "limestone",
+      "fieldstone",
+      "plaster",
+      "plank",
+      "beam",
+      "clay_roof",
+      "slate",
+      "thatch",
+      "cobble",
+      "earth",
+      "straw",
+      "iron",
+      "bronze",
+      "granite",
+      "burgundy_cloth",
+      "wattle"
+    ],
+    "uv_origin": "top-left",
+    "orm_channels": {
+      "R": "AO",
+      "G": "roughness",
+      "B": "metallic"
+    },
+    "emissive": "restrained"
+  },
+  "vegetation_atlas": {
+    "size": [
+      1024,
+      1024
+    ],
+    "grid": [
+      4,
+      4
+    ],
+    "cells": [
+      "leaf",
+      "grass",
+      "fern",
+      "shrub",
+      "flower",
+      "reed",
+      "snow_twig",
+      "crop",
+      "oak_bark",
+      "pine_bark",
+      "birch_bark",
+      "snow_needles",
+      "wood",
+      "stone",
+      "bone",
+      "mud"
+    ],
+    "alpha_cutoff": 0.5
+  },
+  "ground": {
+    "size": [
+      512,
+      512
+    ],
+    "tileable": true,
+    "tile_world_units": 2.5,
+    "names": [
+      "grass",
+      "forest",
+      "rocky",
+      "swamp",
+      "desert",
+      "snow",
+      "path",
+      "cobble"
+    ],
+    "normal": "OpenGL +Y",
+    "imagegen_sources": {
+      "grass": {
+        "source": "art/blender_environment/imagegen/grass-albedo-v2.png",
+        "sha256": "4caebfed9d8ffd6bc108c88a4a26044cedaa1b33ef0befe13371a81bbd60351f",
+        "edge_mean_rgb_255": {
+          "x": 1.0142685150094088e-07,
+          "y": 4.329194898400335e-08
+        }
+      },
+      "path": {
+        "source": "art/blender_environment/imagegen/path-albedo-v2.png",
+        "sha256": "d16eba179e7f46ca8aad0dba76afab4f3985bf51895ffe9b98a0a903cafb1b6b",
+        "edge_mean_rgb_255": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      }
+    },
+    "polyhaven_sources": {
+      "forest": {
+        "asset": "leafy_grass",
+        "source_page": "https://polyhaven.com/a/leafy_grass",
+        "license": "CC0-1.0",
+        "channels": {
+          "albedo": {
+            "source": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/leafy_grass/leafy_grass_diff_1k.png",
+            "sha256": "2a4356e6aef5db70bb803a31fa265321b733b1f77c7c80ac26ae9aa0552f345d"
+          },
+          "normal": {
+            "source": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/leafy_grass/leafy_grass_nor_gl_1k.png",
+            "sha256": "7cba8d8a3cbd14663fd974b73ecebcbb42e0cc258d912867e9dd67a5582ca4d9"
+          },
+          "roughness": {
+            "source": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/leafy_grass/leafy_grass_rough_1k.png",
+            "sha256": "3b2e89d11950b1ea33731514eff86ed211f4e2e7af3b4be4a2deb6bb8a1cba84"
+          }
+        }
+      },
+      "stony_dirt_path_alternate": {
+        "asset": "stony_dirt_path",
+        "source_page": "https://polyhaven.com/a/stony_dirt_path",
+        "license": "CC0-1.0",
+        "channels": {
+          "albedo": {
+            "source": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/stony_dirt_path/stony_dirt_path_diff_1k.png",
+            "sha256": "a06614fbca9109d8dad2ccc68c4b4a4ddec4a0eedca851628b256044b51dd819"
+          },
+          "normal": {
+            "source": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/stony_dirt_path/stony_dirt_path_nor_gl_1k.png",
+            "sha256": "c3a508ccb665ab9ba4dc93a7ce565b44c2e9cd276ae4d60c7885bd1de860aed7"
+          },
+          "roughness": {
+            "source": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/stony_dirt_path/stony_dirt_path_rough_1k.png",
+            "sha256": "08903323679b6ecae4ce32f8b189a5c064d25225305f73e1019b5d3df187e6f1"
+          }
+        }
+      }
+    }
+  }
+}

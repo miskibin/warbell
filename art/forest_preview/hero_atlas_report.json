@@ -1,0 +1,31 @@
+{
+  "schema": "warbell.forest_slice_hero_atlas.v1",
+  "size": [
+    2048,
+    2048
+  ],
+  "grid": [
+    4,
+    4
+  ],
+  "bark_cells": [
+    0,
+    4
+  ],
+  "sources": {
+    "bark": "https://polyhaven.com/a/jolcham_oak_bark_01 (CC0, Charlotte Baglioni)",
+    "oak_leaves": "assets/textures/leaves/oakL.png (project MIT attribution)",
+    "grass": "https://polyhaven.com/a/grass_medium_01 (CC0)"
+  },
+  "source_sha256": {
+    "art\\forest_preview\\polyhaven\\jolcham_oak_bark_01\\jolcham_oak_bark_01_diff_1k.png": "81aa2de68497e471516ae6c64331638f57e44eba73387772ba486fd62c2b6ba5",
+    "art\\forest_preview\\polyhaven\\jolcham_oak_bark_01\\jolcham_oak_bark_01_nor_gl_1k.png": "0b054cfd8db2cf6a4821877587ac79868e149fa0a0d3731c9208b6fd8188633e",
+    "art\\forest_preview\\polyhaven\\jolcham_oak_bark_01\\jolcham_oak_bark_01_rough_1k.png": "3c57119f21d218613bbc122ecf61567c6a0f29f3d5f9a1468ac71527558bba96",
+    "assets\\textures\\leaves\\oakL.png": "24451223cf396d22910a4932b8bb996a7274e63d81e24128c96a430ab67822b1"
+  },
+  "output_sha256": {
+    "hero_tree_atlas.png": "fa408776b49224ef0433785bee466628e980a79ac2905d7431a868ce9477972a",
+    "hero_tree_normal.png": "7aafe679acb12c971705d65ba884b76c0d0e93ed7b2e8ee69dfa78779c5571c7",
+    "hero_tree_orm.png": "7eb817942134b4430115408d8e48e035551cff93be55edd0d95fd13faef0d636"
+  }
+}

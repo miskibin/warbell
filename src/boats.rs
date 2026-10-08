@@ -97,6 +97,17 @@ fn fleet_assets(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) -> (Handle<StandardMaterial>, Vec<Handle<Mesh>>) {
+    if let Some(assets) = crate::blenderenv::get() {
+        if let Some(first) = assets.model("sailboat_a") {
+            // The export rests its keel at zero; Boat's animated origin is the waterline.
+            // Preserve the existing +X bow convention and drift/bobbing system.
+            let variants = ["sailboat_a", "sailboat_b", "sailboat_c"].into_iter().map(|name| {
+                let model = assets.model(name).unwrap_or(first);
+                meshes.add(model.source.clone().translated_by(Vec3::new(0.0, -0.28, 0.0)))
+            }).collect();
+            return (first.mat.clone(), variants);
+        }
+    }
     let mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.7,

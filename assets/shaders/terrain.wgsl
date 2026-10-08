@@ -21,10 +21,15 @@
 struct ForestParams {
     // x=detailScale, y=detailStrength, z=variation, w=meanLuminance
     params: vec4<f32>,
-    // x=bump_strength, y=quality (0=Low,1=High,2=Ultra), z=macro_variety, w=reserved
+    // x=bump_strength, y=quality (0=Low,1=High,2=Ultra), z=macro_variety,
+    // w=isolated forest slice (so its path treatment cannot change campaign roads)
     params2: vec4<f32>,
     // Wheel-rut mask world→UV mapping: xy = world min corner, zw = 1/extent (0 = disabled).
     rut_region: vec4<f32>,
+    // x=Blender surface toggle, y=surface repeat per world unit, z=built paving, w=sheet kind.
+    surface: vec4<f32>,
+    // World→UV mapping of the authored road/courtyard surface mask.
+    path_region: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> forest: ForestParams;
@@ -34,6 +39,51 @@ struct ForestParams {
 // Fragment-resolution because ~0.5u grooves are far below the 1u vertex-colour grid.
 @group(#{MATERIAL_BIND_GROUP}) @binding(103) var rut_tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(104) var rut_samp: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(105) var surface_albedo: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(106) var surface_albedo_samp: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(107) var surface_normal: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(108) var surface_normal_samp: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(109) var surface_roughness: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(110) var surface_roughness_samp: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(111) var path_tex: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(112) var path_samp: sampler;
+
+// Four columns × two rows, in blenderground::SURFACES order. Each 512² tile was baked
+// tileable in Blender; the CPU atlas builder creates mips per tile to avoid colour bleed.
+fn surface_repeat_ratio(id: u32) -> f32 {
+    // The source path photo contains real stones a few to a few dozen pixels wide.
+    // At the grass tile's 2.5u repeat they vanished into a grey mip average from the
+    // gameplay camera. One path tile now spans ~7.6u, so the same authored pebbles
+    // have visible world size without altering the road mask or its width.
+    return select(1.0, 0.33, id == 6u);
+}
+
+fn surface_uv(p: vec2<f32>, id: u32, ddx: vec2<f32>, ddy: vec2<f32>) -> vec2<f32> {
+    let ratio = surface_repeat_ratio(id);
+    let tile = fract(p * forest.surface.y * ratio);
+    let cell = vec2<f32>(f32(id % 4u), f32(id / 4u));
+    // Keep bilinear/trilinear footprints inside this cell at the selected mip level.
+    let atlas_px = vec2<f32>(2048.0, 1024.0);
+    let footprint = max(length(ddx * ratio * atlas_px), length(ddy * ratio * atlas_px));
+    let lod = clamp(log2(max(footprint, 1.0)), 0.0, 7.0);
+    let inset = vec2<f32>(min(0.125, 0.5 * exp2(lod) / 512.0));
+    return (cell + clamp(tile, inset, vec2<f32>(1.0) - inset)) / vec2<f32>(4.0, 2.0);
+}
+
+fn surface_alb(p: vec2<f32>, id: u32, ddx: vec2<f32>, ddy: vec2<f32>) -> vec3<f32> {
+    let ratio = surface_repeat_ratio(id);
+    return textureSampleGrad(surface_albedo, surface_albedo_samp, surface_uv(p, id, ddx, ddy), ddx * ratio, ddy * ratio).rgb;
+}
+
+fn surface_nrm(p: vec2<f32>, id: u32, ddx: vec2<f32>, ddy: vec2<f32>) -> vec3<f32> {
+    let ratio = surface_repeat_ratio(id);
+    return textureSampleGrad(surface_normal, surface_normal_samp, surface_uv(p, id, ddx, ddy), ddx * ratio, ddy * ratio).rgb;
+}
+
+fn surface_rough(p: vec2<f32>, id: u32, ddx: vec2<f32>, ddy: vec2<f32>) -> f32 {
+    let ratio = surface_repeat_ratio(id);
+    return textureSampleGrad(surface_roughness, surface_roughness_samp, surface_uv(p, id, ddx, ddy), ddx * ratio, ddy * ratio).r;
+}
 
 // 2D value-noise hash. The original `fract(sin(p.x*127.1 + p.y*311.7)*43758)` is effectively
 // a 1D hash of the dot product `p·(127.1,311.7)`, so cells along that fixed diagonal get
@@ -207,6 +257,138 @@ fn fragment(
     // (`worldmap::build_terrain_chunk::cliff_wall`); flat ground stays 0 and marsh wetness
     // stays positive, so `-a` cleanly isolates the crag faces for the rock layers below.
     let cliff = clamp(-pbr_input.material.base_color.a, 0.0, 1.0);
+
+    if forest.surface.x > 0.5 {
+        let gn = normalize(in.world_normal);
+        let wet = clamp(pbr_input.material.base_color.a, 0.0, 1.0);
+        let top = smoothstep(0.30, 0.78, abs(gn.y));
+        // Triplanar-like projection for terrace sides; top UVs remain stable in world XZ.
+        var plane = wp;
+        if abs(gn.x) > abs(gn.z) && top < 0.5 {
+            plane = vec2<f32>(wp.y, in.world_position.y);
+        } else if top < 0.5 {
+            plane = vec2<f32>(wp.x, in.world_position.y);
+        }
+        let grad_x = dpdx(plane * forest.surface.y) / vec2<f32>(4.0, 2.0);
+        let grad_y = dpdy(plane * forest.surface.y) / vec2<f32>(4.0, 2.0);
+        let path_uv = (wp - forest.path_region.xy) * forest.path_region.zw;
+        let path_inside = f32(path_uv.x >= 0.0 && path_uv.x <= 1.0
+            && path_uv.y >= 0.0 && path_uv.y <= 1.0);
+        let path = textureSample(path_tex, path_samp, clamp(path_uv, vec2<f32>(0.0), vec2<f32>(1.0)))
+            * path_inside;
+        let is_green = clamp((rgb.g - max(rgb.r, rgb.b)) * 6.0 + 0.30, 0.0, 1.0);
+        let snow = smoothstep(0.46, 0.68, min(rgb.r, min(rgb.g, rgb.b)));
+        let desert = smoothstep(0.05, 0.17, rgb.r - rgb.g)
+                   * smoothstep(0.17, 0.40, rgb.g) * (1.0 - snow);
+        let grey = 1.0 - smoothstep(0.05, 0.17, abs(rgb.r - rgb.g) + abs(rgb.g - rgb.b));
+        let stone = grey * (1.0 - is_green) * (1.0 - snow) * (1.0 - desert);
+        // Habitat selection comes from the campaign's actual biome tiles (B channel),
+        // feathered over the boundary. Dark meadow vertex colours otherwise looked
+        // like "forest" everywhere and washed the grass photo in brown leaf loam.
+        // The distant backdrop is outside this mask and falls back to its palette.
+        let forest_palette = is_green * (1.0 - smoothstep(0.20, 0.41, rgb.g));
+        let forest_region = mix(forest_palette, path.b, path_inside) * is_green;
+        let habitat = ter_noise_rot(wp * 0.07, 0.946, 0.326) * 0.65
+                    + ter_noise_rot(wp * 0.16, 0.682, 0.731) * 0.35;
+        // A forest is still predominantly living groundcover. Restrict the leaf-loam
+        // photograph to broad habitat pockets; a continuous 15–88% mix made every
+        // forest tile read as dry brown soil even beside dense green vegetation.
+        let forest_floor = smoothstep(0.06, 0.94, forest_region)
+                         * mix(0.01, 0.35, smoothstep(0.47, 0.74, habitat));
+
+        var first = 0u; // meadow grass
+        var second = 1u; // leaf loam
+        var blend = forest_floor;
+        if forest.surface.w > 1.5 {
+            first = 6u; // Blight: beaten, baked earth
+            second = 2u;
+            blend = 0.18;
+        } else if forest.surface.w > 0.5 {
+            first = 0u;
+            second = 3u; // bog surface fades with the existing per-vertex wetness band
+            blend = smoothstep(0.02, 0.80, wet);
+        } else if snow > 0.01 {
+            second = 5u;
+            blend = snow;
+        } else if desert > 0.01 {
+            second = 4u;
+            blend = desert;
+        } else if stone > 0.01 {
+            second = 2u;
+            blend = stone;
+        }
+        if cliff > 0.01 {
+            // The same Blender rock bake wraps the eroded terrace faces. Snowy caps still
+            // retain some frost; grass/road colour no longer paints vertical cliff walls.
+            first = 2u;
+            second = 5u;
+            blend = snow * 0.28;
+        }
+
+        var baked = mix(
+            surface_alb(plane, first, grad_x, grad_y),
+            surface_alb(plane, second, grad_x, grad_y), blend,
+        );
+        var rough = mix(
+            surface_rough(plane, first, grad_x, grad_y),
+            surface_rough(plane, second, grad_x, grad_y), blend,
+        );
+        var map_normal = mix(
+            surface_nrm(plane, first, grad_x, grad_y),
+            surface_nrm(plane, second, grad_x, grad_y), blend,
+        );
+
+        // The road field clears a generous verge for vegetation. Texture only its
+        // packed-earth core; the source albedo provides gravel and worn detail.
+        let slice_study = forest.params2.w > 0.5;
+        let road_w = select(
+            smoothstep(0.28, 0.58, path.r),
+            smoothstep(0.05, 0.86, path.r),
+            slice_study,
+        ) * 0.96 * top;
+        let yard_w = smoothstep(0.20, 0.72, path.g) * 0.96 * top;
+        if road_w > 0.001 {
+            // The slice has a broad sunlit path near the camera. Deepen its
+            // authored gravel photograph slightly while retaining stone detail.
+            let path_color = surface_alb(wp, 6u, grad_x, grad_y)
+                * select(vec3<f32>(1.0), vec3<f32>(0.82, 0.78, 0.74), slice_study);
+            baked = mix(baked, path_color, road_w);
+            rough = mix(rough, surface_rough(wp, 6u, grad_x, grad_y), road_w);
+            map_normal = mix(map_normal, surface_nrm(wp, 6u, grad_x, grad_y), road_w);
+        }
+        if yard_w > 0.001 {
+            let yard_id = select(6u, 7u, forest.surface.z > 0.5);
+            baked = mix(baked, surface_alb(wp, yard_id, grad_x, grad_y), yard_w);
+            rough = mix(rough, surface_rough(wp, yard_id, grad_x, grad_y), yard_w);
+            map_normal = mix(map_normal, surface_nrm(wp, yard_id, grad_x, grad_y), yard_w);
+        }
+        // Preserve the Blender-baked albedo. Vertex paint is used to select and blend
+        // biomes, not mixed into the final RGB: its ochre road tint flattened and yellowed
+        // the natural soil source, especially once mipmapped at the gameplay camera.
+        let rut_uv = (wp - forest.rut_region.xy) * forest.rut_region.zw;
+        let rut_in = f32(forest.rut_region.z > 0.0
+            && rut_uv.x > 0.0 && rut_uv.x < 1.0 && rut_uv.y > 0.0 && rut_uv.y < 1.0);
+        let rut = textureSample(rut_tex, rut_samp, clamp(rut_uv, vec2<f32>(0.0), vec2<f32>(1.0))).r * rut_in;
+        baked *= 1.0 - 0.34 * rut * road_w;
+        pbr_input.material.base_color = vec4<f32>(max(baked, vec3<f32>(0.0)), 1.0);
+        pbr_input.material.perceptual_roughness = mix(clamp(rough, 0.34, 1.0), 0.42, wet * 0.65);
+        // The slice path is a close camera study: keep the Blender-baked
+        // pebble/earth micronormal legible without sharpening the campaign.
+        let slice_path_normal = select(0.75, mix(0.75, 1.50, road_w), slice_study);
+        let bump = (map_normal * 2.0 - vec3<f32>(1.0))
+            * vec3<f32>(slice_path_normal, slice_path_normal, 1.0);
+        pbr_input.N = normalize(gn + vec3<f32>(bump.x, 0.0, bump.y) * top);
+
+        var result: FragmentOutput;
+        if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
+            result.color = apply_pbr_lighting(pbr_input);
+        } else {
+            result.color = pbr_input.material.base_color;
+        }
+        result.color = main_pass_post_lighting_processing(pbr_input, result.color);
+        result.color.a = 1.0;
+        return result;
+    }
 
     // How green-dominant the base ground is (1 = grass/forest floor, 0 = snow / sand /
     // dirt cliff). The world island runs ONE of these materials over every biome's

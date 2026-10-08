@@ -1,0 +1,234 @@
+{
+  "schema": "warbell.forest_slice_hero_manifest.v1",
+  "kit_glb": "hero_forest_kit.glb",
+  "models": [
+    {
+      "name": "hero_oak_a",
+      "material": "cutout",
+      "triangles": 13340,
+      "bounds": {
+        "min": [
+          -3.3972954750061035,
+          0.0,
+          -3.301754951477051
+        ],
+        "max": [
+          3.3376126289367676,
+          6.066473007202148,
+          2.9996988773345947
+        ]
+      }
+    },
+    {
+      "name": "hero_oak_b",
+      "material": "cutout",
+      "triangles": 12640,
+      "bounds": {
+        "min": [
+          -3.5148093700408936,
+          0.0,
+          -3.52392315864563
+        ],
+        "max": [
+          3.6524240970611572,
+          6.113322734832764,
+          3.5009806156158447
+        ]
+      }
+    },
+    {
+      "name": "hero_grass_a",
+      "material": "cutout",
+      "triangles": 336,
+      "bounds": {
+        "min": [
+          -0.4035317897796631,
+          0.0,
+          -0.3822755217552185
+        ],
+        "max": [
+          0.47781845927238464,
+          0.5366147756576538,
+          0.4507858157157898
+        ]
+      }
+    },
+    {
+      "name": "hero_grass_b",
+      "material": "cutout",
+      "triangles": 288,
+      "bounds": {
+        "min": [
+          -0.38127297163009644,
+          0.0,
+          -0.46709734201431274
+        ],
+        "max": [
+          0.4448726177215576,
+          0.5393295288085938,
+          0.3738747239112854
+        ]
+      }
+    },
+    {
+      "name": "hero_shrub_a",
+      "material": "cutout",
+      "triangles": 1292,
+      "bounds": {
+        "min": [
+          -0.6701295971870422,
+          0.0,
+          -0.633903443813324
+        ],
+        "max": [
+          0.7499265074729919,
+          0.9848853945732117,
+          0.6798384189605713
+        ]
+      }
+    },
+    {
+      "name": "hero_shrub_b",
+      "material": "cutout",
+      "triangles": 1292,
+      "bounds": {
+        "min": [
+          -0.8000932931900024,
+          0.0,
+          -0.7712972164154053
+        ],
+        "max": [
+          0.6120339632034302,
+          1.0249534845352173,
+          0.6907300353050232
+        ]
+      }
+    },
+    {
+      "name": "hero_flower_white",
+      "material": "cutout",
+      "triangles": 288,
+      "bounds": {
+        "min": [
+          -0.13611888885498047,
+          0.0,
+          -0.3222942054271698
+        ],
+        "max": [
+          0.40170690417289734,
+          0.5867763161659241,
+          0.27948617935180664
+        ]
+      }
+    },
+    {
+      "name": "hero_flower_yellow",
+      "material": "cutout",
+      "triangles": 276,
+      "bounds": {
+        "min": [
+          -0.3124809265136719,
+          0.0,
+          -0.24003198742866516
+        ],
+        "max": [
+          0.4339112639427185,
+          0.5973153710365295,
+          0.4131574332714081
+        ]
+      }
+    },
+    {
+      "name": "hero_flower_purple",
+      "material": "cutout",
+      "triangles": 480,
+      "bounds": {
+        "min": [
+          -0.27162015438079834,
+          0.0,
+          -0.3261277973651886
+        ],
+        "max": [
+          0.18805426359176636,
+          0.581902027130127,
+          0.2311123013496399
+        ]
+      }
+    },
+    {
+      "name": "path_pebbles_a",
+      "material": "opaque",
+      "triangles": 792,
+      "bounds": {
+        "min": [
+          -0.27511855959892273,
+          0.0,
+          -0.33582207560539246
+        ],
+        "max": [
+          0.34335362911224365,
+          0.13251574337482452,
+          0.37039828300476074
+        ]
+      }
+    },
+    {
+      "name": "path_pebbles_b",
+      "material": "opaque",
+      "triangles": 576,
+      "bounds": {
+        "min": [
+          -0.22516770660877228,
+          0.0,
+          -0.21943621337413788
+        ],
+        "max": [
+          0.15363606810569763,
+          0.13437849283218384,
+          0.2995116710662842
+        ]
+      }
+    },
+    {
+      "name": "path_pebbles_c",
+      "material": "opaque",
+      "triangles": 576,
+      "bounds": {
+        "min": [
+          -0.3053207993507385,
+          0.0,
+          -0.22661446034908295
+        ],
+        "max": [
+          0.18929149210453033,
+          0.11420284956693649,
+          0.25495612621307373
+        ]
+      }
+    }
+  ],
+  "sources": {
+    "art\\forest_preview\\hero_kit.py": "d381b81021bf51cb7f1f93d9acdb8c3bc7a7646ea2080263132059ae518ebe29",
+    "art\\forest_preview\\bake_hero_atlas.py": "803f538c079d392daf8d71895709ae614dd7c3949cad818a643a9b81d00f1bf4",
+    "assets\\textures\\leaves\\oakL.png": "24451223cf396d22910a4932b8bb996a7274e63d81e24128c96a430ab67822b1"
+  },
+  "outputs": {
+    "assets\\models\\forest_slice\\hero_tree_atlas.png": "fa408776b49224ef0433785bee466628e980a79ac2905d7431a868ce9477972a",
+    "assets\\models\\forest_slice\\hero_tree_normal.png": "7aafe679acb12c971705d65ba884b76c0d0e93ed7b2e8ee69dfa78779c5571c7",
+    "assets\\models\\forest_slice\\hero_tree_orm.png": "7eb817942134b4430115408d8e48e035551cff93be55edd0d95fd13faef0d636",
+    "assets\\models\\forest_slice\\hero_forest_kit.glb": "9ed73313347f7fc03704a04f0018fafd61db4ff95e9eeb13078f812ac861c0a6",
+    "art\\forest_preview\\hero_models.blend": "1fba21ccfaa6d5e945f8dff91ff2036bef0269f370830bf134abc7fa196291e4",
+    "assets\\models\\forest_slice\\hero_oak_a.json": "d7c7b1e7467f2d5458a84dc5fbed6b35ceac31b389532df6e37dc032bc037be0",
+    "assets\\models\\forest_slice\\hero_oak_b.json": "c2f28e31d917303d8db602b9b1cd755406b4b6ad7fcabf1e65918a1eed4c4e2c",
+    "assets\\models\\forest_slice\\hero_grass_a.json": "2fa4538276c991e33ca60caf5192c56d584f0146cedc882b55d2fb036aa6b073",
+    "assets\\models\\forest_slice\\hero_grass_b.json": "7008c513b44c65ebf9783b4a70bf70be9f59b0244fa8757af0b6767fc2a29101",
+    "assets\\models\\forest_slice\\hero_shrub_a.json": "288ba1e08e06f8e2e732bb1f0a87531a6cb8f2e96cde7e871392a97d186b45ec",
+    "assets\\models\\forest_slice\\hero_shrub_b.json": "1cac3d152eaa95810d87cd26ba8b8eefa3ce86ba7432e99b95c66c14c87581a3",
+    "assets\\models\\forest_slice\\hero_flower_white.json": "bacab66fa3c1ae5611ac9eafa181f7cc1c2c2ee498c99e40905b01fd48aba2fc",
+    "assets\\models\\forest_slice\\hero_flower_yellow.json": "41400ec7129993a8edc41ea2747519b242bcdbe8d47fae0e68564a78285815c4",
+    "assets\\models\\forest_slice\\hero_flower_purple.json": "dd9877003db4adb516aff81cf283fe63c560c6bebb9f486c8ba6cfd35f29db4a",
+    "assets\\models\\forest_slice\\path_pebbles_a.json": "d563b95cf5fe6ecd828ddda39c7392a9e3df5a4d5278457841b53b54e6369537",
+    "assets\\models\\forest_slice\\path_pebbles_b.json": "d6c9a2575125e04bc5c02d0e1c28e9d0491bd5961ac3d182aabd1ddb2b45e34f",
+    "assets\\models\\forest_slice\\path_pebbles_c.json": "b6ba67f2098f84d1b41a766dcce1e24025d6da73b7bb928d998fc153f83d73c0"
+  }
+}

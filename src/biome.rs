@@ -706,6 +706,9 @@ pub struct GroundCoverChunk;
 struct PendingProp {
     mesh: Mesh,
     transform: Transform,
+    // Blender-authored passive props preserve UVs and use their atlas material. Legacy
+    // vertex-colour props leave this empty and keep the shared white material.
+    material: Option<Handle<StandardMaterial>>,
 }
 
 /// One spatial chunk's two merge buckets, keyed by integer chunk coords.
@@ -715,6 +718,10 @@ struct ChunkBucket {
     cover: Vec<PendingProp>,
     /// Larger passive scatter (bushes/rocks/litter): casts shadows, no distance fade.
     props: Vec<PendingProp>,
+    cover_env_opaque: Vec<PendingProp>,
+    cover_env_cutout: Vec<PendingProp>,
+    props_env_opaque: Vec<PendingProp>,
+    props_env_cutout: Vec<PendingProp>,
 }
 
 /// World-XZ → integer chunk coordinate.
@@ -813,6 +820,42 @@ fn spawn_chunks(
                 ));
             }
         }
+        // UV-bearing Blender meshes cannot be folded into the white vertex-colour bucket.
+        // The loader shares one atlas material per kind, so these four buckets retain the
+        // existing ~chunk-sized draw/cull granularity without one entity per grass blade.
+        spawn_env_chunk(commands, meshes, bucket.cover_env_opaque, center, true);
+        spawn_env_chunk(commands, meshes, bucket.cover_env_cutout, center, true);
+        spawn_env_chunk(commands, meshes, bucket.props_env_opaque, center, false);
+        spawn_env_chunk(commands, meshes, bucket.props_env_cutout, center, false);
+    }
+}
+
+fn spawn_env_chunk(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    props: Vec<PendingProp>,
+    center: Vec3,
+    cover: bool,
+) {
+    if cover && no_grass() { return; }
+    let Some(mat) = props.first().and_then(|p| p.material.clone()) else { return; };
+    let Some(mesh) = merge_props(props) else { return; };
+    let mut e = commands.spawn((
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(mat),
+        Transform::from_translation(center),
+        BiomeEntity,
+    ));
+    if cover {
+        e.insert((bevy::light::NotShadowCaster, GroundCoverChunk));
+    }
+    if scatter_cull_enabled() {
+        e.insert(bevy::camera::visibility::VisibilityRange {
+            start_margin: 0.0..0.0,
+            end_margin: if cover { 62.0..62.0 } else { 75.0..75.0 },
+            use_aabb: true,
+        });
+        if !cover { e.insert(bevy::light::NotShadowCaster); }
     }
 }
 
@@ -957,7 +1000,7 @@ pub fn scatter_region(
     let cover = upload_classes(&cfg.cover, meshes);
 
     // First non-tree class → the "too close" fallback for trees (forest drops a bush).
-    let fallback: Option<&ClassHandles> = classes.iter().find(|c| !c.tree);
+    let fallback: Option<(usize, &ClassHandles)> = classes.iter().enumerate().find(|(_, c)| !c.tree);
 
     let mut r = Rng(cfg.seed);
     let mut tree_pts: Vec<Vec2> = Vec::new();
@@ -970,7 +1013,8 @@ pub fn scatter_region(
     // transform is rebased onto its chunk centre so the merged vertices stay local.
     let mut chunks: std::collections::HashMap<(i32, i32), ChunkBucket> = std::collections::HashMap::new();
     // Queue a passive prop into a chunk bucket: stash mesh + chunk-relative transform.
-    let mut queue = |cover_bucket: bool, mesh: Mesh, world: Vec3, rot: Quat, scale: f32| {
+    let mut queue = |cover_bucket: bool, mesh: Mesh, world: Vec3, rot: Quat, scale: f32,
+                     env_mat: Option<(crate::blenderenv::MaterialKind, Handle<StandardMaterial>)>| {
         let key = chunk_key(world.x, world.z);
         let transform = Transform {
             translation: world - chunk_center(key),
@@ -978,8 +1022,15 @@ pub fn scatter_region(
             scale: Vec3::splat(scale),
         };
         let bucket = chunks.entry(key).or_default();
-        let dst = if cover_bucket { &mut bucket.cover } else { &mut bucket.props };
-        dst.push(PendingProp { mesh, transform });
+        let dst = match (cover_bucket, env_mat.as_ref().map(|(kind, _)| *kind)) {
+            (true, Some(crate::blenderenv::MaterialKind::Opaque)) => &mut bucket.cover_env_opaque,
+            (true, Some(crate::blenderenv::MaterialKind::Cutout)) => &mut bucket.cover_env_cutout,
+            (false, Some(crate::blenderenv::MaterialKind::Opaque)) => &mut bucket.props_env_opaque,
+            (false, Some(crate::blenderenv::MaterialKind::Cutout)) => &mut bucket.props_env_cutout,
+            (true, None) => &mut bucket.cover,
+            (false, None) => &mut bucket.props,
+        };
+        dst.push(PendingProp { mesh, transform, material: env_mat.map(|(_, mat)| mat) });
     };
 
     let story_clearings = crate::poi::story_clearings();
@@ -1045,8 +1096,8 @@ pub fn scatter_region(
                         || crate::blockers::any_within(cx, cz, tree_clear)
                     {
                         // Passive non-tree prop, so it merges into the chunk's props bucket.
-                        if let Some(fb) = fallback
-                            .filter(|fb| !landmark_core && (fb.block_radius <= 0.0 || !landmark_buffered))
+                        if let Some((fb_class, fb)) = fallback
+                            .filter(|(_, fb)| !landmark_core && (fb.block_radius <= 0.0 || !landmark_buffered))
                         {
                             let fi = pick_weighted(&fb.weights, r.next());
                             let fs = r.range(fb.scale.0, fb.scale.1);
@@ -1057,7 +1108,13 @@ pub fn scatter_region(
                                 let rot = yaw(&mut r);
                                 register_passive_blocker(cx, cz, fb.footprints[fi], fs, fb.block_radius, rot);
                                 crate::blockers::reserve_visual(cx, cz, footprint);
-                                queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs);
+                                if let Some(model) = crate::blenderground::scatter_model(cfg, false, fb_class, fi) {
+                                    let fit = crate::blenderground::fit_radius(model, fb.visual_radii[fi]);
+                                    queue(false, crate::blenderground::tinted_source(model, cfg, false, fb_class, fi), Vec3::new(cx, py, cz), rot, fs * fit,
+                                        Some((model.material_kind, model.mat.clone())));
+                                } else {
+                                    queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs, None);
+                                }
                             }
                         }
                     } else {
@@ -1086,28 +1143,31 @@ pub fn scatter_region(
                         let blender = if cfg.biome == Biome::Forest {
                             crate::blendertrees::get().and_then(|a| a.pick_forest(class_idx, vi, cx, cz))
                         } else { None };
+                        let env_tree = crate::blenderground::tree_model(cfg.biome, class_idx, vi);
                         let photo = if blender.is_none() {
                             crate::phototrees::get().map(|p| p.pick(r.next()))
                         } else { None };
+                        let (visual_mesh, visual_mat, visual_scale) = if let Some(b) = blender.as_ref() {
+                            (b.mesh.clone(), b.mat.clone(), b.shape * s)
+                        } else if let Some(e) = env_tree {
+                            let fit = crate::blenderground::fit_radius(e, c.visual_radii[vi]);
+                            (e.mesh.clone(), e.mat.clone(), Vec3::splat(s * fit))
+                        } else if let Some(p) = photo.as_ref() {
+                            (p.0.clone(), p.1.clone(), Vec3::splat(s))
+                        } else {
+                            (c.handles[vi].clone(), tree_mat.clone(), Vec3::splat(s))
+                        };
                         // Trees stay individual entities (chop HP + wind sway) sharing one
                         // uploaded handle per variant — the renderer auto-batches the instances.
                         let mut tree = commands.spawn((
-                            Mesh3d(blender.as_ref().map_or_else(
-                                || photo.as_ref().map_or_else(|| c.handles[vi].clone(), |p| p.0.clone()),
-                                |b| b.mesh.clone(),
-                            )),
+                            Mesh3d(visual_mesh),
                             // Translucent-foliage material, NOT the shared prop `mat`.
-                            MeshMaterial3d(
-                                blender.as_ref().map_or_else(
-                                    || photo.as_ref().map_or_else(|| tree_mat.clone(), |p| p.1.clone()),
-                                    |b| b.mat.clone(),
-                                ),
-                            ),
+                            MeshMaterial3d(visual_mat),
                             // Identity rotation — wind `Sway` overwrites it each frame.
                             Transform {
                                 translation: Vec3::new(cx, py, cz),
                                 rotation: Quat::IDENTITY,
-                                scale: blender.as_ref().map_or(Vec3::splat(s), |b| b.shape * s),
+                                scale: visual_scale,
                             },
                             crate::wind::sway_for(cx, cz, base),
                             // Every scattered tree is choppable for wood (1 tree = 1 wood). The
@@ -1147,7 +1207,13 @@ pub fn scatter_region(
                     let rot = yaw(&mut r);
                     register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
                     crate::blockers::reserve_visual(cx, cz, footprint);
-                    queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);
+                    if let Some(model) = crate::blenderground::scatter_model(cfg, false, class_idx, vi) {
+                        let fit = crate::blenderground::fit_radius(model, c.visual_radii[vi]);
+                        queue(false, crate::blenderground::tinted_source(model, cfg, false, class_idx, vi), Vec3::new(cx, py, cz), rot, s * fit,
+                            Some((model.material_kind, model.mat.clone())));
+                    } else {
+                        queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s, None);
+                    }
                 }
             }
             gz += 1.0;
@@ -1214,7 +1280,13 @@ pub fn scatter_region(
                                 // Ground cover → the chunk's cover bucket (NotShadowCaster +
                                 // distance-fade, applied once per merged chunk in `spawn_chunks`).
                                 let rot = yaw(&mut r);
-                                queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
+                                if let Some(model) = crate::blenderground::scatter_model(cfg, true, i, vi) {
+                                    let fit = crate::blenderground::fit_radius(model, c.visual_radii[vi]);
+                                    queue(true, crate::blenderground::tinted_source(model, cfg, true, i, vi), Vec3::new(x, py, z), rot, s * fit,
+                                        Some((model.material_kind, model.mat.clone())));
+                                } else {
+                                    queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s, None);
+                                }
                                 break;
                             }
                         }

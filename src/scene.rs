@@ -4,6 +4,7 @@
 //! (both adapted from the working tileworld-bevy port's `lighting.rs`).
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
+use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::{Exposure, Hdr};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass, NormalPrepass};
@@ -13,7 +14,7 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::atmosphere::ScatteringMedium; // only re-exported from the submodule, not the root
 use bevy::light::{
     Atmosphere, CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod,
-    SunDisk,
+    Skybox, SunDisk,
 };
 use bevy::pbr::{
     AtmosphereSettings, ContactShadows, DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion,
@@ -40,7 +41,7 @@ const FOG_DENSITY: f32 = 0.009;
 /// Retain the distant surface's colour and shading, including beyond the fog ramp.
 /// A second, height-aware haze pass follows tonemapping; neither may flatten the world.
 pub(crate) fn depth_haze(color: Color) -> Color {
-    color.with_alpha(0.32)
+    color.with_alpha(if crate::blenderenv::look_enabled() { 0.16 } else { 0.32 })
 }
 const FOG_SUN_STRENGTH: f32 = 0.14;
 const IBL_INTENSITY: f32 = 520.0;
@@ -80,6 +81,37 @@ const FOG_PULL_END: f32 = 40.0;
 const FOG_CLEAR_PUSH_START: f32 = 95.0;
 const FOG_CLEAR_PUSH_END: f32 = 150.0;
 const FOG_CLEAR_GAIN: f32 = 5.0;
+
+// WORLD-only capture knobs. Each is read once, so the normal frame loop has no environment
+// lookup cost. They let matched screenshots distinguish sky gamut, exposure and shadow fill
+// without a release rebuild between every trial.
+struct WorldLook {
+    sky_lux: f32,
+    sky_saturation: f32,
+    sky_ramp: f32,
+    exposure_ev: f32,
+    ambient: f32,
+    ibl: f32,
+}
+
+fn world_look() -> &'static WorldLook {
+    static LOOK: std::sync::OnceLock<WorldLook> = std::sync::OnceLock::new();
+    LOOK.get_or_init(|| {
+        let slice = crate::forest_slice::enabled();
+        let knob = |name, fallback, lo, hi| std::env::var(name).ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|n| n.is_finite())
+            .map(|n| n.clamp(lo, hi)).unwrap_or(fallback);
+        WorldLook {
+            sky_lux: knob("FOREST_WORLD_SKY_LUX", 1800.0, 100.0, 6000.0),
+            sky_saturation: knob("FOREST_WORLD_SKY_SAT", 1.0, 0.2, 2.5),
+            sky_ramp: knob("FOREST_WORLD_SKY_RAMP", 0.35, 0.08, 1.0),
+            exposure_ev: knob("FOREST_WORLD_EXPOSURE", if slice { 10.35 } else { 10.68 }, 8.0, 14.0),
+            ambient: knob("FOREST_WORLD_AMBIENT", if slice { 2.0 } else { 1.04 }, 0.2, 2.5),
+            ibl: knob("FOREST_WORLD_IBL", if slice { 2.0 } else { 1.06 }, 0.2, 2.5),
+        }
+    })
+}
 
 pub struct ScenePlugin;
 
@@ -258,7 +290,11 @@ fn track_biome_atmo(
     // World-space lookup: the Blight (ork castle) eases toward its own red-ember mood; every other
     // region eases toward its biome's atmosphere. (`sample_world`, not `sample`, is what stops the
     // ork castle inheriting swamp's grey-green sky.)
-    let target = ambiences.sample_world(hero.pos.x, hero.pos.y).atmo;
+    let target = if crate::forest_slice::enabled() {
+        ambiences.sample(Some(crate::biome::Biome::Forest)).atmo
+    } else {
+        ambiences.sample_world(hero.pos.x, hero.pos.y).atmo
+    };
     let k = 1.0 - (-time.delta_secs() * BIOME_ATMO_LERP).exp();
     match &mut state.0 {
         None => state.0 = Some(target), // snap on the first frame the world exists
@@ -294,12 +330,13 @@ fn advance_sky(
     mut env_q: Query<&mut EnvironmentMapLight>,
     // ColorGrading + Exposure + Bloom all ride the single camera entity — combined into one query
     // to stay under Bevy's 16-param system cap.
-    mut cam_fx_q: Query<(&mut ColorGrading, &mut Exposure, &mut Bloom)>,
+    mut cam_fx_q: Query<(&mut ColorGrading, &mut Exposure, &mut Bloom, Option<&mut Skybox>)>,
     biome: Option<Res<SmoothBiomeAtmo>>,
     settings: Option<Res<crate::quality::GraphicsSettings>>,
     visual: Res<crate::visual::VisualSettings>,
 ) {
     let dt = time.delta_secs();
+    let blender_world = crate::blenderenv::look_enabled();
     if keys.just_pressed(KeyCode::KeyP) {
         clock.paused = !clock.paused;
     }
@@ -377,7 +414,12 @@ fn advance_sky(
     // light stays slanted and every tree keeps a visible cast shadow (flat-noon light was a
     // big part of the washed "no depth" look).
     let a = clock.t * std::f32::consts::TAU;
-    let sun_dir = Vec3::new(a.cos(), a.sin(), 0.55).normalize();
+    let sun_dir = if crate::forest_slice::enabled() {
+        // Match the actual sun in the CC0 forest-slice HDR sky (baked cubemap yaw).
+        Vec3::new(-0.650797, 0.741980, -0.161022)
+    } else {
+        Vec3::new(a.cos(), a.sin(), 0.55).normalize()
+    };
     let elev = sun_dir.y; // −1 (midnight) .. 1 (noon)
 
     let day = smoothstep(-0.02, 0.22, elev); // 0 deep night → 1 full day
@@ -412,7 +454,9 @@ fn advance_sky(
 
     // Per-biome mood tint, only in daylight (night stays the tuned moonlit look).
     let tint = biome.and_then(|b| b.0);
-    let bw = day * BIOME_TINT_W;
+    // The WORLD materials carry their own biome colour. Keep a smaller lighting tint so a
+    // green forest does not turn the whole sky and shadow fill beige/olive at high noon.
+    let bw = day * if blender_world { 0.38 } else { BIOME_TINT_W };
 
     for (mut light, mut tf) in &mut sun_q {
         *tf = Transform::from_translation(sun_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
@@ -450,6 +494,17 @@ fn advance_sky(
             light.color = lerp_col(light.color, t.sun_color, bw);
             light.illuminance *= 1.0 + (t.sun_illuminance / BASE_SUN_LUX - 1.0) * bw;
         }
+        if blender_world {
+            // Near-neutral daylight is essential for the blue sky and natural green ground;
+            // retain the warm horizon and all night/war-dusk lighting by gating with high.
+            light.color = lerp_col(light.color, Color::srgb(1.0, 0.97, 0.91), high * 0.88);
+        }
+        if crate::forest_slice::enabled() {
+            // Warm, oblique key for the small forest study. The sky/IBL keep the shadow
+            // side readable while leaf and branch shadow maps give it local depth.
+            light.color = Color::srgb(1.0, 0.91, 0.79);
+            light.illuminance = 12_000.0;
+        }
     }
 
     // The MOON: night's real key light, parked at the anti-solar point (so it rises as the sun
@@ -476,7 +531,11 @@ fn advance_sky(
     if let Some(t) = tint {
         ambient.brightness *= 1.0 + (t.ambient_scale - 1.0) * day;
     }
+    if blender_world { ambient.brightness *= world_look().ambient; }
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
+    if blender_world {
+        ambient.color = lerp_col(ambient.color, Color::srgb(0.88, 0.93, 1.0), high * 0.88);
+    }
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.
     ambient.color = lerp_col(ambient.color, Color::srgb(1.0, 0.80, 0.62), horizon * 0.40);
@@ -498,6 +557,7 @@ fn advance_sky(
     // the sun's shadow contrast.
     for mut env in &mut env_q {
         env.intensity = 360.0 + (IBL_INTENSITY - 360.0) * day;
+        if blender_world { env.intensity *= world_look().ibl; }
     }
 
     // Darken night at the GRADE stage. Camera `Exposure` only scales PBR lighting, but
@@ -512,12 +572,20 @@ fn advance_sky(
         .unwrap_or(0.15);
     // Grade cut + camera exposure eased day 10.85 → night 10.4 (higher ev100 = darker, so this
     // lifts the PBR-lit scene slightly after dark — the moody read still comes from the grade cut).
-    for (mut g, mut e, _) in &mut cam_fx_q {
+    for (mut g, mut e, _, skybox) in &mut cam_fx_q {
         g.global.exposure = -night * night_stops;
         // Day base 10.85 (was 11.0) — 2026-07 cinematic pass: the airy high-key reference read
         // needed the day scene lifted ~0.15 stop (the atmospherics haze eats a little light).
         // Night ev100 10.3 → 10.4 (higher ev100 = darker): night read a touch too light.
-        e.ev100 = 10.85 - night * (10.85 - 10.4);
+        let day_ev = if blender_world { world_look().exposure_ev } else { 10.85 };
+        e.ev100 = day_ev - night * (day_ev - 10.4);
+        if let Some(mut skybox) = skybox {
+            // Bevy's physical Atmosphere rendered almost neutral grey at this camera
+            // elevation even after reducing aerosols. The WORLD sky uses the authored
+            // blue cubemap instead; keep the sky dim through dusk and night as the
+            // existing clock drives the directional lights and cloud tint.
+            skybox.brightness = world_look().sky_lux * (65.0 / 1800.0 + (1735.0 / 1800.0) * day);
+        }
     }
 
     // Bloom: the camera's halo/glow, driven per-region + per-time so emissive things (fire,
@@ -534,13 +602,16 @@ fn advance_sky(
         * (1.0 + surge * 0.9) // war-dusk: everything bright haloes as the night falls
         * visual.bloom)
         .clamp(0.0, 0.45);
-    for (_, _, mut b) in &mut cam_fx_q {
+    for (_, _, mut b, _) in &mut cam_fx_q {
         b.intensity = bloom;
     }
 
     // Fog: night navy → day warm-cream haze, warmed orange at sunrise/sunset. The night navy
     // is lifted off near-black so the world isn't swallowed by black fog after dark.
     let mut fog_col = lerp_col(Color::srgb(0.06, 0.08, 0.15), FOG_DAY, day);
+    if blender_world {
+        fog_col = lerp_col(fog_col, Color::srgb(0.70, 0.82, 0.93), high * 0.95);
+    }
     fog_col = lerp_col(fog_col, Color::srgb(1.0, 0.5, 0.3), horizon * 0.6);
     // War-dusk surge: the haze itself goes deep ember while the sun dives, then drains to navy.
     fog_col = lerp_col(fog_col, Color::srgb(0.55, 0.16, 0.07), surge * 0.55);
@@ -561,10 +632,14 @@ fn advance_sky(
         let dn = (d - FOG_REF_DENSITY) / (FOG_MAX_DENSITY - FOG_REF_DENSITY);
         if dn >= 0.0 {
             let t = dn.min(1.0) * day;
-            (FOG_BASE_START - FOG_PULL_START * t, FOG_BASE_END - FOG_PULL_END * t)
+            let start = FOG_BASE_START - FOG_PULL_START * t;
+            let end = FOG_BASE_END - FOG_PULL_END * t;
+            if blender_world { (start + 16.0 * day, end + 18.0 * day) } else { (start, end) }
         } else {
             let t = ((-dn) * FOG_CLEAR_GAIN).min(1.0) * day;
-            (FOG_BASE_START + FOG_CLEAR_PUSH_START * t, FOG_BASE_END + FOG_CLEAR_PUSH_END * t)
+            let start = FOG_BASE_START + FOG_CLEAR_PUSH_START * t;
+            let end = FOG_BASE_END + FOG_CLEAR_PUSH_END * t;
+            if blender_world { (start + 16.0 * day, end + 18.0 * day) } else { (start, end) }
         }
     });
     for mut fog in &mut fog_q {
@@ -579,7 +654,14 @@ fn advance_sky(
             lerp_col(light_glow_color(high), fog_col, night),
             Color::srgb(1.0, 0.35, 0.12),
             surge * 0.7, // war-dusk: keep the sun-toward-camera band burning through the plunge
-        ).with_alpha(FOG_SUN_STRENGTH);
+        ).with_alpha(if blender_world { FOG_SUN_STRENGTH * (1.0 - 0.45 * high) } else { FOG_SUN_STRENGTH });
+        if crate::forest_slice::enabled() {
+            // The authored patch is only 48u across. A long, gentle ramp adds a little
+            // aerial depth to its distant edge without washing out foreground leaves.
+            fog.color = Color::srgb(0.68, 0.77, 0.82);
+            fog.falloff = FogFalloff::Linear { start: 30.0, end: 150.0 };
+            fog.directional_light_color = Color::srgb(1.0, 0.88, 0.70).with_alpha(0.12);
+        }
     }
 }
 
@@ -607,7 +689,9 @@ pub fn default_projection() -> Projection {
 pub fn default_fog() -> DistanceFog {
     DistanceFog {
         color: depth_haze(SKY),
-        directional_light_color: Color::srgb(1.0, 0.93, 0.78).with_alpha(FOG_SUN_STRENGTH),
+        directional_light_color: Color::srgb(1.0, 0.93, 0.78).with_alpha(
+            if crate::blenderenv::look_enabled() { FOG_SUN_STRENGTH * 0.55 } else { FOG_SUN_STRENGTH }
+        ),
         // 7 (was 12): a wider sun-toward-camera in-scatter lobe — the haze catches the
         // light across a broad band of the frame instead of a tight sun-adjacent glow.
         directional_light_exponent: 7.0,
@@ -620,8 +704,14 @@ fn setup_camera(
     mut images: ResMut<Assets<Image>>,
     mut media: ResMut<Assets<ScatteringMedium>>,
 ) {
+    let blender_world = crate::blenderenv::look_enabled();
     let env = images.add(gradient_env_cubemap());
-    let medium = media.add(ScatteringMedium::default());
+    let world_sky = blender_world.then(|| images.add(if crate::forest_slice::enabled() {
+        crate::forest_slice::sky_cubemap()
+    } else {
+        world_sky_cubemap()
+    }));
+    let medium = (!blender_world).then(|| media.add(ScatteringMedium::default()));
 
     // Low, immersive starting pose among the trees; fly controls take over from here.
     // `FOREST_CAM="x,y,z,tx,ty,tz"` overrides it (handy for framing diagnostics).
@@ -644,8 +734,16 @@ fn setup_camera(
     // Gentle shadow lift (film-style faded blacks): the cinematic reference keeps its shadow
     // side airy — crushed blacks were a big part of the old "harsh" read.
     grading.shadows.gain = 1.05;
+    if blender_world {
+        grading.global.temperature = 0.0;
+        // The WORLD cards already contain dark texture detail; extra shadow contrast
+        // crushed the near pine into black in the v3 capture.
+        grading.shadows.contrast = 1.02;
+        grading.midtones.contrast = 1.28;
+        grading.shadows.gain = 1.05;
+    }
 
-    commands.spawn((
+    let mut camera = commands.spawn((
         Camera3d::default(),
         // far=230 (was the 1000 default). The Linear fog reaches full horizon colour by 190
         // tiles (biome.rs), so everything past ~190 is solid fog — invisible but still drawn at
@@ -659,7 +757,7 @@ fn setup_camera(
         default_projection(),
         cam_tf,
         Hdr,
-        Exposure { ev100: 10.85 },
+        Exposure { ev100: if blender_world { world_look().exposure_ev } else { 10.85 } },
         Tonemapping::AgX,
         // SSAO + SMAA path (mutually exclusive with MSAA). Bevy's built-in DepthOfField is
         // gone — it silently no-op'd next to SSAO and only did a single focal plane. Depth
@@ -698,13 +796,8 @@ fn setup_camera(
         crate::dof::default_dof(),
         default_fog(),
         GeneratedEnvironmentMapLight { environment_map: env, intensity: IBL_INTENSITY, ..default() },
-    ))
-    // Procedural sky — real blue sky + sun disk + horizon glow, using the DirectionalLight as the
-    // sun. `AtmosphereSettings` is the per-camera opt-in (0.19): the sky itself is the standalone
-    // `Atmosphere` entity spawned below. Plus a saturation grade to richen the AgX look toward the
-    // TS palette.
-    .insert((
-        AtmosphereSettings::default(),
+    ));
+    camera.insert((
         grading,
         // God rays are the screen-space scatter pass in `godrays.rs` (a PostProcess ping-pong pass
         // alongside outline/dof) — NOT Bevy's volumetric fog, which was retired (imperceptible at
@@ -719,22 +812,35 @@ fn setup_camera(
         SpatialListener::new(4.0),
     ));
 
-    // 0.19: the procedural sky is its own entity (was a camera component). Its `on_add` hook parks
-    // it at -Y·inner_radius so the planet sits under the world; the camera opts in via
-    // `AtmosphereSettings` above. The sun (DirectionalLight) drives the gradient + sun disk, so
-    // moving it through the day still slides the sky — no per-frame Atmosphere mutation needed.
-    commands.spawn(Atmosphere::earth(medium));
+    if crate::forest_slice::taa_enabled() {
+        // Slice-only trial against its existing SMAA capture. The camera already has
+        // Msaa::Off, depth and motion-vector prepasses; quality.rs removes SMAA here.
+        camera.insert(TemporalAntiAliasing::default());
+    }
+
+    if let Some(image) = world_sky {
+        // The physical sky was measured nearly neutral grey in the WORLD capture despite a
+        // clear blue authored ClearColor; Atmosphere replaces ClearColor in the camera pass.
+        // A blue/cyan cubemap is an actual sky render with a horizon gradient, independent of
+        // the fog and cloud draw, and is lit/dimmed by the same day-night clock above.
+        camera.insert(Skybox { image: Some(image), brightness: 1800.0, ..default() });
+    } else {
+        camera.insert(AtmosphereSettings::default());
+        // Native campaign sky remains the Earth atmosphere with its animated sun disk.
+        commands.spawn(Atmosphere::earth(medium.expect("native atmosphere medium")));
+    }
 }
 
 /// Parse `FOREST_CAM="x,y,z,tx,ty,tz"` into a camera transform, if set.
 fn env_cam() -> Option<Transform> {
-    let s = std::env::var("FOREST_CAM").ok()?;
-    let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
-    if v.len() == 6 {
-        Some(Transform::from_xyz(v[0], v[1], v[2]).looking_at(Vec3::new(v[3], v[4], v[5]), Vec3::Y))
-    } else {
-        None
+    if let Ok(s) = std::env::var("FOREST_CAM") {
+        let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        if v.len() == 6 {
+            return Some(Transform::from_xyz(v[0], v[1], v[2])
+                .looking_at(Vec3::new(v[3], v[4], v[5]), Vec3::Y));
+        }
     }
+    crate::forest_slice::camera_transform()
 }
 
 /// Auto-focus the bokeh DoF on the player (Play mode) or a fixed mid-ground plane
@@ -774,7 +880,9 @@ fn drive_dof_focus(
         dof.focal = f;
         return;
     }
-    let target = if *mode == crate::player::PlayMode::Play {
+    let target = if let Some(distance) = crate::forest_slice::camera_focus_distance() {
+        distance
+    } else if *mode == crate::player::PlayMode::Play {
         let hero_d = hero_q
             .single()
             .map(|h| cam_tf.translation().distance(Vec3::new(h.pos.x, h.y + 1.0, h.pos.y)))
@@ -877,11 +985,39 @@ fn setup_sun(mut commands: Commands) {
 // ── Procedural gradient-cubemap IBL (adapted from tileworld-bevy lighting.rs) ──
 
 fn gradient_env_cubemap() -> Image {
-    const FACE: u32 = 64;
-    let sky = Color::srgb_u8(0xe7, 0xee, 0xf8).to_linear();
+    let blender_world = crate::blenderenv::look_enabled();
+    let sky = Color::srgb_u8(if blender_world { 0xa9 } else { 0xe7 },
+                             if blender_world { 0xce } else { 0xee },
+                             if blender_world { 0xf3 } else { 0xf8 }).to_linear();
     let ground = Color::srgb_u8(0x5a, 0x6a, 0x44).to_linear();
-    let horizon = Color::srgb_u8(0xc6, 0xcb, 0xc8).to_linear();
+    let horizon = Color::srgb_u8(if blender_world { 0xd1 } else { 0xc6 },
+                                 if blender_world { 0xe0 } else { 0xcb },
+                                 if blender_world { 0xee } else { 0xc8 }).to_linear();
+    gradient_cubemap(sky, horizon, ground, 1.0)
+}
 
+/// Camera background for the opt-in WORLD look. Unlike the IBL above, these colours are
+/// deliberately saturated: the physical atmosphere showed neutral grey at this scene's
+/// exposure and camera elevation, even though the authored ClearColor was blue.
+fn world_sky_cubemap() -> Image {
+    let look = world_look();
+    gradient_cubemap(
+        saturate_linear(Color::srgb_u8(0x3d, 0x9c, 0xeb).to_linear(), look.sky_saturation),
+        saturate_linear(Color::srgb_u8(0xa4, 0xd9, 0xf5).to_linear(), look.sky_saturation),
+        Color::srgb_u8(0x86, 0xb6, 0xcd).to_linear(),
+        look.sky_ramp,
+    )
+}
+
+fn saturate_linear(color: LinearRgba, saturation: f32) -> LinearRgba {
+    let grey = color.red * 0.2126 + color.green * 0.7152 + color.blue * 0.0722;
+    LinearRgba { red: (grey + (color.red - grey) * saturation).max(0.0),
+        green: (grey + (color.green - grey) * saturation).max(0.0),
+        blue: (grey + (color.blue - grey) * saturation).max(0.0), alpha: color.alpha }
+}
+
+fn gradient_cubemap(sky: LinearRgba, horizon: LinearRgba, ground: LinearRgba, sky_ramp: f32) -> Image {
+    const FACE: u32 = 64;
     let mut data: Vec<u8> = Vec::with_capacity((FACE * FACE * 6 * 8) as usize);
     for face in 0..6u32 {
         for y in 0..FACE {
@@ -899,7 +1035,10 @@ fn gradient_env_cubemap() -> Image {
                 .normalize();
                 let h = dir.y;
                 let lin = if h >= 0.0 {
-                    let s = h.clamp(0.0, 1.0);
+                    // With the forest camera pitched down, even the top pixel looks only
+                    // ~14 degrees above the horizon. A 90-degree blend kept the entire
+                    // visible sky near the pale horizon colour (measured cyan-grey in v3).
+                    let s = (h / sky_ramp).clamp(0.0, 1.0);
                     let s = s * s * (3.0 - 2.0 * s);
                     mix_linear(horizon, sky, s)
                 } else {

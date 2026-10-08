@@ -45,12 +45,27 @@ struct ExportMesh {
 impl ExportMesh {
     fn validate(&self, name: &str) {
         let n = self.positions.len();
-        assert_eq!(self.schema, "warbell.blender_tree_mesh.v1", "{name}: schema");
-        assert!(n > 0 && self.normals.len() == n && self.uvs.len() == n && self.colors.len() == n,
-            "{name}: vertex attributes must have equal nonzero length");
-        assert_eq!(self.indices.len(), self.triangles * 3, "{name}: triangle count");
-        assert!(self.indices.iter().all(|&i| (i as usize) < n), "{name}: index out of range");
-        assert!(self.positions.iter().flatten().all(|v| v.is_finite()), "{name}: nonfinite position");
+        assert_eq!(
+            self.schema, "warbell.blender_tree_mesh.v1",
+            "{name}: schema"
+        );
+        assert!(
+            n > 0 && self.normals.len() == n && self.uvs.len() == n && self.colors.len() == n,
+            "{name}: vertex attributes must have equal nonzero length"
+        );
+        assert_eq!(
+            self.indices.len(),
+            self.triangles * 3,
+            "{name}: triangle count"
+        );
+        assert!(
+            self.indices.iter().all(|&i| (i as usize) < n),
+            "{name}: index out of range"
+        );
+        assert!(
+            self.positions.iter().flatten().all(|v| v.is_finite()),
+            "{name}: nonfinite position"
+        );
     }
 
     fn mesh(&self, tint: [f32; 3], autumn: bool) -> Mesh {
@@ -61,13 +76,20 @@ impl ExportMesh {
             if leaf {
                 if autumn {
                     let shade = (color[0] + color[1] + color[2]) / 3.0;
-                    for i in 0..3 { color[i] = shade * tint[i]; }
+                    for i in 0..3 {
+                        color[i] = shade * tint[i];
+                    }
                 } else {
-                    for i in 0..3 { color[i] *= tint[i]; }
+                    for i in 0..3 {
+                        color[i] *= tint[i];
+                    }
                 }
             }
         }
-        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::RENDER_WORLD,
+        );
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions.clone());
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals.clone());
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs.clone());
@@ -79,18 +101,26 @@ impl ExportMesh {
 
 fn resolve(rel: &str) -> PathBuf {
     let mut roots = Vec::new();
-    if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") { roots.push(PathBuf::from(root)); }
+    if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {
+        roots.push(PathBuf::from(root));
+    }
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() { roots.push(dir.to_path_buf()); }
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
+        }
     }
     roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
     roots.push(PathBuf::new());
-    roots.into_iter().map(|root| root.join(rel)).find(|p| p.exists())
+    roots
+        .into_iter()
+        .map(|root| root.join(rel))
+        .find(|p| p.exists())
         .unwrap_or_else(|| PathBuf::from(rel))
 }
 
 fn atlas(path: &Path) -> Image {
-    let raw = std::fs::read(path).unwrap_or_else(|e| panic!("blender trees atlas {}: {e}", path.display()));
+    let raw = std::fs::read(path)
+        .unwrap_or_else(|e| panic!("blender trees atlas {}: {e}", path.display()));
     let rgba = image::load_from_memory(&raw)
         .unwrap_or_else(|e| panic!("blender trees atlas decode {}: {e}", path.display()))
         .into_rgba8();
@@ -111,19 +141,27 @@ fn atlas(path: &Path) -> Image {
             for x in 0..nw {
                 let (mut rgb, mut alpha) = ([0u32; 3], 0u32);
                 for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let sx = (2*x + dx).min(w-1);
-                    let sy = (2*y + dy).min(h-1);
-                    let i = ((sy*w + sx)*4) as usize;
-                    let a = level[i+3] as u32;
+                    let sx = (2 * x + dx).min(w - 1);
+                    let sy = (2 * y + dy).min(h - 1);
+                    let i = ((sy * w + sx) * 4) as usize;
+                    let a = level[i + 3] as u32;
                     alpha += a;
-                    for c in 0..3 { rgb[c] += level[i+c] as u32 * a; }
+                    for c in 0..3 {
+                        rgb[c] += level[i + c] as u32 * a;
+                    }
                 }
-                let o = ((y*nw + x)*4) as usize;
-                if alpha > 0 { for c in 0..3 { next[o+c] = (rgb[c]/alpha) as u8; } }
+                let o = ((y * nw + x) * 4) as usize;
+                if alpha > 0 {
+                    for c in 0..3 {
+                        next[o + c] = (rgb[c] / alpha) as u8;
+                    }
+                }
                 let alpha_scale = if mips <= 3 { 1.3 } else { 0.8 };
                 // Bark owns the bottom-right quadrant and is fully opaque in the source.
                 // Fading its alpha through deep mips would erase distant trunks under Mask.
-                next[o+3] = if x >= nw / 2 && y >= nh / 2 { 255 } else {
+                next[o + 3] = if x >= nw / 2 && y >= nh / 2 {
+                    255
+                } else {
                     ((alpha as f32 / 4.0 * alpha_scale).round() as u32).min(255) as u8
                 };
             }
@@ -135,7 +173,11 @@ fn atlas(path: &Path) -> Image {
         mips += 1;
     }
     let mut img = Image::new_uninit(
-        Extent3d { width, height, depth_or_array_layers: 1 },
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
@@ -154,15 +196,31 @@ fn atlas(path: &Path) -> Image {
 
 pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("FOREST_BLENDERTREES").as_deref() == Ok("1"))
+    *ON.get_or_init(|| {
+        std::env::var("FOREST_BLENDERTREES").as_deref() == Ok("1")
+            || std::env::var("FOREST_BLENDERWORLD").as_deref() == Ok("1")
+    })
 }
 
 static ASSETS: OnceLock<BlenderTrees> = OnceLock::new();
 
-pub fn get() -> Option<&'static BlenderTrees> { ASSETS.get() }
+/// Only the tree/world experiments replace the existing campaign forest. The isolated
+/// slice can load these same meshes without changing campaign tree call sites.
+pub fn get() -> Option<&'static BlenderTrees> {
+    enabled().then(|| ASSETS.get()).flatten()
+}
+
+pub fn get_for_slice() -> Option<&'static BlenderTrees> {
+    ASSETS.get()
+}
 
 #[derive(Clone, Copy)]
-pub enum Source { Forest, Meadow, Rts, Treeline }
+pub enum Source {
+    Forest,
+    Meadow,
+    Rts,
+    Treeline,
+}
 
 pub struct TreeVisual {
     pub mesh: Handle<Mesh>,
@@ -176,6 +234,9 @@ pub struct BlenderTrees {
     green: Vec<Vec<Handle<Mesh>>>,
     autumn: Vec<Vec<Handle<Mesh>>>,
     mat: Handle<StandardMaterial>,
+    /// Green-grade atlas used only by the isolated forest composition. The original
+    /// tree-study/campaign material and frozen atlas remain byte-for-byte unchanged.
+    slice_mat: Option<Handle<StandardMaterial>>,
     forest: AtomicUsize,
     meadow: AtomicUsize,
     rts: AtomicUsize,
@@ -183,7 +244,25 @@ pub struct BlenderTrees {
 }
 
 impl BlenderTrees {
-    pub fn pick(&self, kind: TreeKind, x: f32, z: f32, tint: usize, source: Source) -> Option<TreeVisual> {
+    /// Exact authored variant for the isolated forest study; no tint hash or gameplay
+    /// counter is involved, so the layout JSON names map one-to-one onto Blender meshes.
+    pub fn model(&self, name: &str) -> Option<TreeVisual> {
+        let index = NAMES.iter().position(|candidate| *candidate == name)?;
+        Some(TreeVisual {
+            mesh: self.green[index][0].clone(),
+            mat: self.slice_mat.as_ref().unwrap_or(&self.mat).clone(),
+            shape: Vec3::ONE,
+        })
+    }
+
+    pub fn pick(
+        &self,
+        kind: TreeKind,
+        x: f32,
+        z: f32,
+        tint: usize,
+        source: Source,
+    ) -> Option<TreeVisual> {
         let hash = x.to_bits().wrapping_mul(0x9e37_79b1)
             ^ z.to_bits().rotate_left(13).wrapping_mul(0x85eb_ca6b);
         let variant = (hash as usize) & 1;
@@ -191,7 +270,10 @@ impl BlenderTrees {
             TreeKind::Broadleaf => (&self.green[variant][tint % 5], Vec3::ONE),
             TreeKind::Birch => (&self.green[2 + variant][tint % 5], Vec3::ONE),
             TreeKind::Pine => (&self.green[4][tint % 5], Vec3::ONE),
-            TreeKind::Poplar => (&self.green[2 + variant][tint % 5], Vec3::new(0.72, 1.23, 0.72)),
+            TreeKind::Poplar => (
+                &self.green[2 + variant][tint % 5],
+                Vec3::new(0.72, 1.23, 0.72),
+            ),
             TreeKind::Autumn => (&self.autumn[variant][tint % 5], Vec3::ONE),
             TreeKind::Dead | TreeKind::Stump => return None,
         };
@@ -200,8 +282,13 @@ impl BlenderTrees {
             Source::Meadow => &self.meadow,
             Source::Rts => &self.rts,
             Source::Treeline => &self.treeline,
-        }.fetch_add(1, Ordering::Relaxed);
-        Some(TreeVisual { mesh: mesh.clone(), mat: self.mat.clone(), shape })
+        }
+        .fetch_add(1, Ordering::Relaxed);
+        Some(TreeVisual {
+            mesh: mesh.clone(),
+            mat: self.mat.clone(),
+            shape,
+        })
     }
 
     /// Forest config class 0 is five living kinds × five tints, then Dead; upload_classes
@@ -227,7 +314,7 @@ pub struct BlenderTreesPlugin;
 
 impl Plugin for BlenderTreesPlugin {
     fn build(&self, app: &mut App) {
-        if enabled() {
+        if enabled() || crate::forest_slice::enabled() {
             app.add_systems(PreStartup, build_assets);
             app.add_systems(Update, log_counts);
         }
@@ -241,7 +328,7 @@ fn build_assets(
 ) {
     let t0 = std::time::Instant::now();
     let texture = images.add(atlas(&resolve(&format!("{DIR}/tree_atlas.png"))));
-    let mat = mats.add(StandardMaterial {
+    let material = StandardMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(texture),
         alpha_mode: AlphaMode::Mask(0.35),
@@ -252,7 +339,16 @@ fn build_assets(
         double_sided: true,
         cull_mode: None,
         ..default()
+    };
+    let slice_mat = crate::forest_slice::enabled().then(|| {
+        let path = resolve("assets/models/forest_slice/tree_atlas_forest.png");
+        let texture = images.add(atlas(&path));
+        mats.add(StandardMaterial {
+            base_color_texture: Some(texture),
+            ..material.clone()
+        })
     });
+    let mat = mats.add(material);
     let mut green = Vec::new();
     let mut autumn = Vec::new();
     let (mut triangles, mut vertices) = (0usize, 0usize);
@@ -265,28 +361,58 @@ fn build_assets(
         export.validate(name);
         triangles += export.triangles;
         vertices += export.positions.len();
-        green.push(TINTS.into_iter().map(|tint| meshes.add(export.mesh(tint, false))).collect());
+        green.push(
+            TINTS
+                .into_iter()
+                .map(|tint| meshes.add(export.mesh(tint, false)))
+                .collect(),
+        );
         if model_idx < 2 {
-            autumn.push(AUTUMN.into_iter().map(|tint| meshes.add(export.mesh(tint, true))).collect());
+            autumn.push(
+                AUTUMN
+                    .into_iter()
+                    .map(|tint| meshes.add(export.mesh(tint, true)))
+                    .collect(),
+            );
         }
-        info!("blender trees: {name} {} vertices {} triangles", export.positions.len(), export.triangles);
+        info!(
+            "blender trees: {name} {} vertices {} triangles",
+            export.positions.len(),
+            export.triangles
+        );
     }
-    info!("blender trees: 5 source models, {vertices} source vertices, {triangles} source triangles, one 1024px atlas, built in {:?}", t0.elapsed());
-    ASSETS.set(BlenderTrees {
-        green, autumn, mat,
-        forest: AtomicUsize::new(0), meadow: AtomicUsize::new(0),
-        rts: AtomicUsize::new(0), treeline: AtomicUsize::new(0),
-    }).unwrap_or_else(|_| panic!("blender tree assets initialized twice"));
+    info!(
+        "blender trees: 5 source models, {vertices} source vertices, {triangles} source triangles, one 1024px atlas, built in {:?}",
+        t0.elapsed()
+    );
+    ASSETS
+        .set(BlenderTrees {
+            green,
+            autumn,
+            mat,
+            slice_mat,
+            forest: AtomicUsize::new(0),
+            meadow: AtomicUsize::new(0),
+            rts: AtomicUsize::new(0),
+            treeline: AtomicUsize::new(0),
+        })
+        .unwrap_or_else(|_| panic!("blender tree assets initialized twice"));
 }
 
 fn log_counts(ready: Option<Res<crate::biome::WorldReady>>, mut frames: Local<u8>) {
-    if *frames >= 3 || !ready.is_some_and(|r| r.0) { return; }
+    if *frames >= 3 || !ready.is_some_and(|r| r.0) {
+        return;
+    }
     *frames += 1;
     if *frames == 3 {
         if let Some(a) = get() {
-            info!("blender trees replacements: forest={}, meadow={}, rts={}, treeline={}; dead/stump, orchard and nonforest biome trees retain native meshes",
-                a.forest.load(Ordering::Relaxed), a.meadow.load(Ordering::Relaxed),
-                a.rts.load(Ordering::Relaxed), a.treeline.load(Ordering::Relaxed));
+            info!(
+                "blender trees replacements: forest={}, meadow={}, rts={}, treeline={}; dead/stump, orchard and nonforest biome trees retain native meshes",
+                a.forest.load(Ordering::Relaxed),
+                a.meadow.load(Ordering::Relaxed),
+                a.rts.load(Ordering::Relaxed),
+                a.treeline.load(Ordering::Relaxed)
+            );
         }
     }
 }

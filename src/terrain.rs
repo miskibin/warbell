@@ -39,6 +39,11 @@ pub struct ForestParams {
     /// corner, `zw` = 1/extent. `zw == 0` disables the lookup (single-biome viewer ground /
     /// ground test have no roads).
     pub rut_region: Vec4,
+    /// x=Blender surface toggle, y=tile repeats per world unit,
+    /// z=castle paving built, w=sheet kind (0=main, 1=swamp, 2=Blight).
+    pub surface: Vec4,
+    /// World→UV mapping for the Blender road/yard mask.
+    pub path_region: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Clone, TypePath, Debug)]
@@ -53,6 +58,18 @@ pub struct ForestExtension {
     #[texture(103)]
     #[sampler(104)]
     pub rut: Handle<Image>,
+    #[texture(105)]
+    #[sampler(106)]
+    pub surface_albedo: Handle<Image>,
+    #[texture(107)]
+    #[sampler(108)]
+    pub surface_normal: Handle<Image>,
+    #[texture(109)]
+    #[sampler(110)]
+    pub surface_roughness: Handle<Image>,
+    #[texture(111)]
+    #[sampler(112)]
+    pub path_mask: Handle<Image>,
 }
 
 impl MaterialExtension for ForestExtension {
@@ -99,6 +116,25 @@ pub fn make_material(
         );
         (images.add(img), Vec4::ZERO)
     });
+    let blender = crate::blenderground::enabled() && !crate::worldmap::is_arena();
+    let (albedo_h, normal_h, roughness_h, path_h, path_region) = if blender {
+        let atlases = crate::blenderground::atlases(images).expect("Blender surfaces enabled");
+        let albedo_h = atlases.albedo.clone();
+        let normal_h = atlases.normal.clone();
+        let roughness_h = atlases.roughness.clone();
+        let (path_h, path_region) = crate::blenderground::path_mask(images)
+            .expect("Blender campaign path mask");
+        (albedo_h, normal_h, roughness_h, path_h, path_region)
+    } else {
+        let dummy = images.add(Image::new(
+            Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            TextureDimension::D2,
+            vec![128, 128, 128, 255],
+            TextureFormat::Rgba8Unorm,
+            RenderAssetUsages::default(),
+        ));
+        (dummy.clone(), dummy.clone(), dummy.clone(), dummy, Vec4::ZERO)
+    };
     mats.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE, // vertex colour carries the hue
@@ -113,9 +149,20 @@ pub fn make_material(
                 // (after the Startup world build) and on every preset toggle.
                 params2: Vec4::new(1.0, 1.0, 1.0, 0.0),
                 rut_region,
+                surface: Vec4::new(
+                    if blender { 1.0 } else { 0.0 },
+                    1.0 / crate::blenderground::TILE_WORLD,
+                    0.0,
+                    if detail.seed == 11.0 { 1.0 } else if detail.seed == 7.0 { 2.0 } else { 0.0 },
+                ),
+                path_region,
             },
             detail: detail_h,
             rut: rut_h,
+            surface_albedo: albedo_h,
+            surface_normal: normal_h,
+            surface_roughness: roughness_h,
+            path_mask: path_h,
         },
     })
 }

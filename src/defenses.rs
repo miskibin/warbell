@@ -536,12 +536,13 @@ pub fn populate_defenders(
     // A real low-poly ballista (vertex-coloured): wheeled sled, A-frame, stock, bow limbs +
     // string and a loaded bolt — aimed outward (−Z) away from the gate. One white material so the
     // mesh's vertex colours show. Yaw it slightly so it points out along its placement radius.
-    let mesh = meshes.add(ballista_mesh());
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.82,
-        ..default()
-    });
+    let (mesh, mat) = crate::blenderenv::get().and_then(|assets| assets.model("ballista"))
+        .map(|model| (model.mesh.clone(), model.mat.clone()))
+        .unwrap_or_else(|| (meshes.add(ballista_mesh()), materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.82,
+            ..default()
+        })));
     commands.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(mat),

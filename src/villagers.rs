@@ -2519,7 +2519,13 @@ pub fn populate(
     // exactly like `castle_decor` (auto-batched), so they read as mature as the rest of the bailey.
     // `body_mat` is the textured creature material the villager BODIES draw against.
     // `prop` bakes a multi-part prop to a world spot + yaw and spawns each material slot.
-    let mut prop = |commands: &mut Commands, meshes: &mut Assets<Mesh>, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32| {
+    let mut prop = |commands: &mut Commands, meshes: &mut Assets<Mesh>, name: &str, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32| {
+        if let Some(env) = crate::blenderenv::get() {
+            let model = env.model(name).unwrap_or_else(|| panic!("missing Blender village prop {name}"));
+            commands.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()),
+                Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)), BiomeEntity));
+            return;
+        }
         for (m, slot) in parts {
             commands.spawn((
                 Mesh3d(meshes.add(castle::bake(m, pos, yaw, Vec3::ONE))),
@@ -2544,7 +2550,7 @@ pub fn populate(
     // Face the open front toward the castle (origin): from_rotation_y(yaw)*(+Z) points that way.
     let to_castle = (Vec2::ZERO - market).normalize_or_zero();
     let shop_yaw = to_castle.x.atan2(to_castle.y);
-    prop(commands, meshes, shop_parts(), Vec3::new(market.x, my, market.y), shop_yaw);
+    prop(commands, meshes, "merchant_shop", shop_parts(), Vec3::new(market.x, my, market.y), shop_yaw);
     // Solid shopfront — counter + posts + back wall block; the hero routes around and stops at the
     // interaction range to browse. Oriented box (yaw) so it hugs the rotated booth.
     crate::blockers::add_obb(market.x, market.y, 1.6, 1.05, shop_yaw);
@@ -2588,14 +2594,14 @@ pub fn populate(
     let mut spots: Vec<Vec2> = vec![market, Vec2::new(0.0, 3.4)]; // market stall + keep steps
     if let Some(well) = courtyard_spot(&mut rng, half, &placed) {
         let wy = worldmap::ground_at_world(well.x, well.y).unwrap_or(0.0);
-        prop(commands, meshes, well_parts(), Vec3::new(well.x, wy, well.y), 0.0);
+        prop(commands, meshes, "well", well_parts(), Vec3::new(well.x, wy, well.y), 0.0);
         crate::blockers::add_box(well.x, well.y, 0.5, 0.5);
         placed.push(well);
         spots.push(well);
     }
     if let Some(pile) = courtyard_spot(&mut rng, half, &placed) {
         let py = worldmap::ground_at_world(pile.x, pile.y).unwrap_or(0.0);
-        prop(commands, meshes, woodpile_parts(), Vec3::new(pile.x, py, pile.y), 0.4);
+        prop(commands, meshes, "woodpile", woodpile_parts(), Vec3::new(pile.x, py, pile.y), 0.4);
         crate::blockers::add_box(pile.x, pile.y, 0.6, 0.5);
         placed.push(pile);
         spots.push(pile);

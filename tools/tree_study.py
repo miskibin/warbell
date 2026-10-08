@@ -28,7 +28,7 @@ def run(args):
                RUST_LOG="info", NO_COLOR="1", FOREST_FREEROAM="1",
                FOREST_RES="1920x1080", FOREST_QUALITY=args.quality,
                FOREST_NOVSYNC="1", FOREST_TIME="0.28", FOREST_DAY="1000000",
-               FOREST_IMMORTAL="1")
+               FOREST_IMMORTAL="1", FOREST_MUTE="1")
     env.update(SCENES[args.scene])
     if args.scene == "siege":
         env["FOREST_TIME"] = "0.75"

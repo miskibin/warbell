@@ -402,15 +402,19 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     // Final placement reuses the early plan, but still respects late authored solids.
     let handles: Vec<Handle<Mesh>> = [burned_cabin(), graves(), standing_stones(), fallen_watchtower(), shepherd_hut()]
         .into_iter().map(|mesh| meshes.add(mesh)).collect();
+    let blender_names = ["poi_burned_cabin", "poi_graves", "poi_standing_stones",
+        "poi_fallen_watchtower", "poi_shepherd_hut"];
     let planned = STORY_SITES.lock().unwrap().clone();
     let mut placed = 0;
     for site in planned {
         let (q, foot) = (site.pos, STORY_FOOTPRINTS[site.kind]);
         if !spot_ok(q.x, q.y, foot) { continue; }
         let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
+        let model = crate::blenderenv::get().map(|env| env.model(blender_names[site.kind])
+            .unwrap_or_else(|| panic!("missing Blender POI {}", blender_names[site.kind])));
         commands.spawn((
-            Mesh3d(handles[site.kind].clone()),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(model.map_or_else(|| handles[site.kind].clone(), |m| m.mesh.clone())),
+            MeshMaterial3d(model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
             Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(site.yaw)),
             BiomeEntity,
             range.clone(),
@@ -462,9 +466,11 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
         // Face the frame across the road (rotation roughly toward the gate).
         let yaw = (gate.x - q.x).atan2(gate.y - q.y);
+        let model = crate::blenderenv::get().map(|env| env.model("poi_gallows")
+            .expect("missing Blender poi_gallows"));
         commands.spawn((
-            Mesh3d(meshes.add(gallows())),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(model.map_or_else(|| meshes.add(gallows()), |m| m.mesh.clone())),
+            MeshMaterial3d(model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
             Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(yaw)),
             BiomeEntity,
             range.clone(),
@@ -527,6 +533,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     // 4. Farmland around the castle: tilled fields in the diagonal gaps outside the build-plot
     //    corner ring (still on the forced-flat grass apron), so the meadow reads worked.
     let field_mesh = meshes.add(field());
+    let field_model = crate::blenderenv::get().map(|env| env.model("poi_field")
+        .expect("missing Blender poi_field"));
     let mut fields = 0;
     for (fx, fz) in [(27.0_f32, 15.0_f32), (-27.0, 15.0), (27.0, -15.0), (-16.0, 27.0), (16.0, -27.0)] {
         if !spot_ok(fx, fz, 4.0) {
@@ -535,8 +543,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         let y = crate::worldmap::ground_at_world(fx, fz).unwrap_or(0.0);
         let yaw = if fx.abs() > fz.abs() { 0.0 } else { FRAC_PI_2 };
         commands.spawn((
-            Mesh3d(field_mesh.clone()),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(field_model.map_or_else(|| field_mesh.clone(), |m| m.mesh.clone())),
+            MeshMaterial3d(field_model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
             Transform::from_xyz(fx, y + 0.01, fz).with_rotation(Quat::from_rotation_y(yaw)),
             BiomeEntity,
             range.clone(),

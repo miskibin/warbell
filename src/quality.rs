@@ -653,7 +653,7 @@ fn apply_quality(
         // SMAA: `Off` removes the component so the resolve pass is skipped; otherwise (re)insert at
         // the chosen preset. Managed per-camera (rather than mutating an always-present component) so
         // "off" is a real pass removal.
-        match smaa {
+        match if crate::forest_slice::taa_enabled() { None } else { smaa } {
             Some(preset) => {
                 e.insert(Smaa { preset });
             }

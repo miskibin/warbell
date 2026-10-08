@@ -1,0 +1,67 @@
+{
+  "schema": "warbell.forest_slice_tree_atlas.v1",
+  "source": "assets/models/blender_trees/tree_atlas.png",
+  "source_sha256": "f05675a71aa978f23d659c21fa4550f847e642c92256fedcc409913a6a34b73d",
+  "output_sha256": "e3591c93a113e59f22f77f791ec6751549c736c5138b357ffe6a74138bf5ae5f",
+  "size": [
+    1024,
+    1024
+  ],
+  "bark_quadrant_memory_exact": true,
+  "families": {
+    "oak": {
+      "mean_srgb_before_255": [
+        115.61697387695312,
+        125.70991516113281,
+        108.03658294677734
+      ],
+      "mean_srgb_after_255": [
+        71.66752624511719,
+        150.8368682861328,
+        58.322044372558594
+      ],
+      "rgb_factors": [
+        0.62,
+        1.2,
+        0.54
+      ],
+      "alpha_coverage": 0.24026870727539062
+    },
+    "birch": {
+      "mean_srgb_before_255": [
+        170.58627319335938,
+        183.44491577148438,
+        161.3909912109375
+      ],
+      "mean_srgb_after_255": [
+        122.85562896728516,
+        177.94110107421875,
+        88.79076385498047
+      ],
+      "rgb_factors": [
+        0.72,
+        0.97,
+        0.55
+      ],
+      "alpha_coverage": 0.14375686645507812
+    },
+    "pine": {
+      "mean_srgb_before_255": [
+        61.65302658081055,
+        100.57389068603516,
+        52.31072235107422
+      ],
+      "mean_srgb_after_255": [
+        91.22862243652344,
+        140.75433349609375,
+        81.04766845703125
+      ],
+      "rgb_factors": [
+        1.48,
+        1.4,
+        1.55
+      ],
+      "alpha_coverage": 0.2160186767578125
+    }
+  }
+}

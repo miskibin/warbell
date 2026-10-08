@@ -1,6 +1,9 @@
 # Blender trees: feasibility protocol, 2026-10-08
 
-Baseline: latest fetched origin/main `90f8d1b1b4b780b481046e76a82c3d931b64d60b`.
+Historical baseline at the time of the experiment: origin/main `90f8d1b1b4b780b481046e76a82c3d931b64d60b`.
+This predates the forest-density fix in `fb308c8`; the measured sparse layout is
+not representative of the repaired campaign. Preserve the raw study unchanged,
+and establish a fresh baseline after forest art approval before comparing performance.
 Machine: Intel i5-12400F, RTX 5060 Ti 16 GiB, driver 616.64, Windows.
 Build: release, locked dependencies. Preserve a pristine baseline executable.
 

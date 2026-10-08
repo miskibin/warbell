@@ -1,0 +1,20 @@
+{
+  "schema": "warbell.blender_environment_grass_proto.v1",
+  "source_page": "https://polyhaven.com/a/grass_medium_01",
+  "license": "CC0-1.0",
+  "source_diff_sha256": "420dfd0fe7392244360b6f9ae1ada8893512941f73091d94718c8409e8658106",
+  "source_alpha_sha256": "711a8e49af758d6a6ce1f610db858899a27be19da6d1866bd35c13bc7b8ffeff",
+  "crop_xyxy": [
+    193,
+    786,
+    480,
+    915
+  ],
+  "alpha_coverage_0p5": 0.2533111572265625,
+  "top_middle_bottom_coverage": [
+    0.0,
+    0.4609375,
+    0.078125
+  ],
+  "prototype_sha256": "db4f29e4f29d4497f5c6de8fce0eea29ed68dd5be6ec6dd9a6cb11d0f027f028"
+}

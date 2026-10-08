@@ -76,7 +76,7 @@ const ROCK_WET: u32 = 0x3c4448;
 
 /// The cascade: overlapping streaked water sheets down the wall face (local −Z faces the lake,
 /// base at y=0 = the plunge pool), wet rocks flanking it, a foam apron at the base.
-fn cascade(height: f32) -> Mesh {
+fn cascade(height: f32, include_basin: bool) -> Mesh {
     let mut v = Vec::new();
     // Main sheets: alternating bright/dark vertical strips, slightly staggered in Z and X.
     for (i, (w, dx, dz, col)) in [
@@ -95,18 +95,20 @@ fn cascade(height: f32) -> Mesh {
             col,
         ));
     }
-    // Wet flanking rocks so the water reads as pouring THROUGH a notch.
-    for (sx, r) in [(-1.7_f32, 0.55_f32), (2.3, 0.7)] {
+    if include_basin {
+        // In Blender mode, the rock basin is an authored textured asset instead.
+        for (sx, r) in [(-1.7_f32, 0.55_f32), (2.3, 0.7)] {
+            v.push(tint(
+                Sphere::new(r).mesh().ico(1).unwrap().scaled_by(Vec3::new(1.0, 1.5, 1.0)).translated_by(Vec3::new(sx, r * 0.9, 0.1)),
+                ROCK_WET,
+            ));
+        }
+        // Plunge-pool foam apron.
         v.push(tint(
-            Sphere::new(r).mesh().ico(1).unwrap().scaled_by(Vec3::new(1.0, 1.5, 1.0)).translated_by(Vec3::new(sx, r * 0.9, 0.1)),
-            ROCK_WET,
+            Sphere::new(1.9).mesh().ico(1).unwrap().scaled_by(Vec3::new(1.3, 0.16, 1.0)).translated_by(Vec3::new(0.3, 0.06, -0.9)),
+            FOAM,
         ));
     }
-    // Plunge-pool foam apron.
-    v.push(tint(
-        Sphere::new(1.9).mesh().ico(1).unwrap().scaled_by(Vec3::new(1.3, 0.16, 1.0)).translated_by(Vec3::new(0.3, 0.06, -0.9)),
-        FOAM,
-    ));
     assemble(v)
 }
 
@@ -190,8 +192,15 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     if let Some((p, top_y, base_y, dir)) = fall {
         let h = (top_y - base_y) + 0.6;
         let yaw = dir.x.atan2(dir.y); // local −Z faces back toward the lake
+        let blender_basin = crate::blenderenv::get().map(|env| env.model("vista_cascade")
+            .expect("missing Blender vista_cascade"));
+        if let Some(model) = blender_basin {
+            commands.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()),
+                Transform::from_xyz(p.x, base_y - 0.15, p.y).with_rotation(Quat::from_rotation_y(yaw)),
+                BiomeEntity, NotShadowCaster));
+        }
         commands.spawn((
-            Mesh3d(meshes.add(cascade(h))),
+            Mesh3d(meshes.add(cascade(h, blender_basin.is_none()))),
             MeshMaterial3d(mat.clone()),
             Transform::from_xyz(p.x, base_y - 0.15, p.y).with_rotation(Quat::from_rotation_y(yaw)),
             BiomeEntity,
@@ -241,6 +250,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
 
     // 2. OVERLOOKS — ring-search a flat legal spot near each authored anchor, face the view.
     let prop = meshes.add(overlook_prop());
+    let overlook_model = crate::blenderenv::get().map(|env| env.model("vista_overlook")
+        .expect("missing Blender vista_overlook"));
     let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 130.0..130.0, use_aabb: true };
     let anchors: [(Vec2, Vec2, &str); 3] = [
         // (anchor, what the view looks AT, label)
@@ -279,8 +290,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         let v = (view_at - q).normalize_or_zero();
         let yaw = v.y.atan2(v.x) + std::f32::consts::PI;
         commands.spawn((
-            Mesh3d(prop.clone()),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(overlook_model.map_or_else(|| prop.clone(), |m| m.mesh.clone())),
+            MeshMaterial3d(overlook_model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
             Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(-yaw)),
             BiomeEntity,
             range.clone(),

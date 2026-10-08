@@ -1,0 +1,47 @@
+{
+  "schema": "warbell.blender_environment_validation.v1",
+  "model_count": 246,
+  "max_attribute_delta": 0,
+  "max_normal_length_error": 1.3194895664980777e-07,
+  "total_triangles": 81588,
+  "images": [
+    {
+      "name": "surface_emissive",
+      "sha256": "76abe82e853d5fde87bf6acbec08e076f37c0381c1c796233116ff291f42cda8",
+      "size": 20653
+    },
+    {
+      "name": "surface_atlas",
+      "sha256": "1940db668a9a1e0069b179ba5bc5f620297c273c41b3435a758362c2ab3859f2",
+      "size": 1463347
+    },
+    {
+      "name": "surface_orm",
+      "sha256": "018bcd6dfc02d96b5336294b7018549ae78c1216e773f9fbcb1b03086d5f73a0",
+      "size": 971571
+    },
+    {
+      "name": "vegetation_atlas",
+      "sha256": "398e484bd6a0182e8e990ee57acfa9f928bc8735966a50671a6fdbfe3ad4a81d",
+      "size": 1070900
+    }
+  ],
+  "flower_petals": {
+    "meadow_flowers_yellow": [
+      0.95265583276112,
+      0.8641115434500648,
+      0.30300373846036466
+    ],
+    "meadow_flowers_white": [
+      0.9593324177920195,
+      0.9364591439688716,
+      0.9012443732356756
+    ],
+    "meadow_flowers_purple": [
+      0.7354863813229572,
+      0.49872358281834134,
+      0.937339589532311
+    ]
+  },
+  "issues": []
+}

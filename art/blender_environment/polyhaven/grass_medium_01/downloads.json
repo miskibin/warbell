@@ -1,0 +1,42 @@
+[
+  {
+    "asset": "grass_medium_01",
+    "channel": "Diffuse",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Models/png/1k/grass_medium_01/grass_medium_01_diff_1k.png",
+    "license": "CC0-1.0",
+    "source_page": "https://polyhaven.com/a/grass_medium_01",
+    "path": "C:\\Users\\skibi\\Documents\\Codex\\2026-10-08\\najpierw-bym-chcia-eby-zrobi-studyjn\\warbell-trees\\art\\blender_environment\\polyhaven\\grass_medium_01\\grass_medium_01_diff_1k.png",
+    "md5": "7f7937f857b908087c7684b892b8e93e",
+    "sha256": "420dfd0fe7392244360b6f9ae1ada8893512941f73091d94718c8409e8658106"
+  },
+  {
+    "asset": "grass_medium_01",
+    "channel": "Alpha",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Models/png/1k/grass_medium_01/grass_medium_01_alpha_1k.png",
+    "license": "CC0-1.0",
+    "source_page": "https://polyhaven.com/a/grass_medium_01",
+    "path": "C:\\Users\\skibi\\Documents\\Codex\\2026-10-08\\najpierw-bym-chcia-eby-zrobi-studyjn\\warbell-trees\\art\\blender_environment\\polyhaven\\grass_medium_01\\grass_medium_01_alpha_1k.png",
+    "md5": "6b5b251ef1ca9a69ab9f49def66d758a",
+    "sha256": "711a8e49af758d6a6ce1f610db858899a27be19da6d1866bd35c13bc7b8ffeff"
+  },
+  {
+    "asset": "grass_medium_01",
+    "channel": "nor_gl",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Models/png/1k/grass_medium_01/grass_medium_01_nor_gl_1k.png",
+    "license": "CC0-1.0",
+    "source_page": "https://polyhaven.com/a/grass_medium_01",
+    "path": "C:\\Users\\skibi\\Documents\\Codex\\2026-10-08\\najpierw-bym-chcia-eby-zrobi-studyjn\\warbell-trees\\art\\blender_environment\\polyhaven\\grass_medium_01\\grass_medium_01_nor_gl_1k.png",
+    "md5": "d5ef0db60918d8b9cf352eaf18989080",
+    "sha256": "33caffef5ef221202d9d3b79198093c9f53a5389ecb48e6bac98ce0faa1a2b65"
+  },
+  {
+    "asset": "grass_medium_01",
+    "channel": "Rough",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Models/png/1k/grass_medium_01/grass_medium_01_rough_1k.png",
+    "license": "CC0-1.0",
+    "source_page": "https://polyhaven.com/a/grass_medium_01",
+    "path": "C:\\Users\\skibi\\Documents\\Codex\\2026-10-08\\najpierw-bym-chcia-eby-zrobi-studyjn\\warbell-trees\\art\\blender_environment\\polyhaven\\grass_medium_01\\grass_medium_01_rough_1k.png",
+    "md5": "5aaa05d7168fe45514d5de1de0f0b472",
+    "sha256": "f3daf51e960f8a5d253d4dd01904922ee73ae9a26f3a80f87646ea6c278942ec"
+  }
+]

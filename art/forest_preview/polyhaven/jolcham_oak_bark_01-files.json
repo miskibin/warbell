@@ -1,0 +1,846 @@
+{
+  "gltf": {
+    "1k": {
+      "gltf": {
+        "include": {
+          "textures/jolcham_oak_bark_01_diff_1k.jpg": {
+            "md5": "a74acddb27c17674d94498c1be7f0495",
+            "size": 1936622,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_1k.jpg"
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_1k.jpg": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_1k.jpg",
+            "size": 2691523,
+            "md5": "3a61a7a22aeee8482e915eab7810b64d"
+          },
+          "jolcham_oak_bark_01.bin": {
+            "md5": "347a6aa4940bbadf78b877d10b8344f3",
+            "size": 2369620,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/jolcham_oak_bark_01/jolcham_oak_bark_01.bin"
+          },
+          "textures/jolcham_oak_bark_01_arm_1k.jpg": {
+            "md5": "0edea92614a13c42a37f7a9b9f798b82",
+            "size": 1901069,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_1k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_1k.gltf",
+        "size": 2837,
+        "md5": "50d9eec80b5420f1a918b673bfb0d60c"
+      }
+    },
+    "8k": {
+      "gltf": {
+        "size": 2837,
+        "md5": "6720ec522a69fdd3750d62be172858c3",
+        "include": {
+          "jolcham_oak_bark_01.bin": {
+            "md5": "347a6aa4940bbadf78b877d10b8344f3",
+            "size": 2369620,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/jolcham_oak_bark_01/jolcham_oak_bark_01.bin"
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_8k.jpg": {
+            "size": 125800084,
+            "md5": "1c2f40b781a250d322b796925f60910d",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_8k.jpg"
+          },
+          "textures/jolcham_oak_bark_01_arm_8k.jpg": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_8k.jpg",
+            "size": 79470910,
+            "md5": "1488f4206ca8222e38a4274fc9048008"
+          },
+          "textures/jolcham_oak_bark_01_diff_8k.jpg": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_8k.jpg",
+            "md5": "006924e2e01aa251d8cae08625fb228e",
+            "size": 100716167
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_8k.gltf"
+      }
+    },
+    "4k": {
+      "gltf": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_4k.gltf",
+        "include": {
+          "textures/jolcham_oak_bark_01_arm_4k.jpg": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_4k.jpg",
+            "size": 24701019,
+            "md5": "926890c9ae6c247b671da517f2efd0a6"
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_4k.jpg": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_4k.jpg",
+            "md5": "f36904392858c5673e51b5215d2bdab2",
+            "size": 37209709
+          },
+          "textures/jolcham_oak_bark_01_diff_4k.jpg": {
+            "size": 28356845,
+            "md5": "6eb170f2ae0c20040570522b3cbb2933",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_4k.jpg"
+          },
+          "jolcham_oak_bark_01.bin": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/jolcham_oak_bark_01/jolcham_oak_bark_01.bin",
+            "md5": "347a6aa4940bbadf78b877d10b8344f3",
+            "size": 2369620
+          }
+        },
+        "md5": "fc8622ffb5265d510348afb5ac1aeb8f",
+        "size": 2837
+      }
+    },
+    "2k": {
+      "gltf": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_2k.gltf",
+        "include": {
+          "textures/jolcham_oak_bark_01_diff_2k.jpg": {
+            "size": 7512396,
+            "md5": "2836557140894ed530aed39818b79f57",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_2k.jpg"
+          },
+          "jolcham_oak_bark_01.bin": {
+            "md5": "347a6aa4940bbadf78b877d10b8344f3",
+            "size": 2369620,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/jolcham_oak_bark_01/jolcham_oak_bark_01.bin"
+          },
+          "textures/jolcham_oak_bark_01_arm_2k.jpg": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_2k.jpg",
+            "md5": "4f3edff0161c288917ed7cf7bedb960e",
+            "size": 7074922
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_2k.jpg": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_2k.jpg",
+            "size": 10334471,
+            "md5": "c5daadd598c38113271ea14480b09cc9"
+          }
+        },
+        "md5": "6d1826d2b8599373aa08c98090abdf0c",
+        "size": 2837
+      }
+    }
+  },
+  "Diffuse": {
+    "8k": {
+      "exr": {
+        "size": 183090120,
+        "md5": "e59a003c065d23092650bfe622f7c4a7",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_8k.exr"
+      },
+      "jpg": {
+        "md5": "006924e2e01aa251d8cae08625fb228e",
+        "size": 100716167,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_8k.jpg"
+      },
+      "png": {
+        "size": 706707247,
+        "md5": "1c06d5e1b582d3d94403de93fddbaac5",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_8k.png"
+      }
+    },
+    "4k": {
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_4k.exr",
+        "size": 54831466,
+        "md5": "b9cde36e5334708a49eadfae4dd4d48d"
+      },
+      "jpg": {
+        "md5": "6eb170f2ae0c20040570522b3cbb2933",
+        "size": 28356845,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_4k.jpg"
+      },
+      "png": {
+        "size": 181079883,
+        "md5": "c02627fe9665751b91b79ab97b5a395d",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_4k.png"
+      }
+    },
+    "2k": {
+      "exr": {
+        "size": 15205085,
+        "md5": "e16b0ca07dbf2675e48fdf876370b1eb",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_2k.exr"
+      },
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_2k.jpg",
+        "size": 7512396,
+        "md5": "2836557140894ed530aed39818b79f57"
+      },
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_2k.png",
+        "md5": "41a7c8f5eea59e65a183db8252cc3635",
+        "size": 45900614
+      }
+    },
+    "1k": {
+      "png": {
+        "md5": "1b75132cb45a6aa7e2e4728764a8defa",
+        "size": 11573509,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_1k.png"
+      },
+      "jpg": {
+        "size": 1936622,
+        "md5": "a74acddb27c17674d94498c1be7f0495",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_1k.jpg"
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_1k.exr",
+        "md5": "0f30e3d7094081f26c8d496eca3a0929",
+        "size": 4016536
+      }
+    }
+  },
+  "mtlx": {
+    "8k": {
+      "mtlx": {
+        "include": {
+          "textures/jolcham_oak_bark_01_diff_8k.jpg": {
+            "md5": "006924e2e01aa251d8cae08625fb228e",
+            "size": 100716167,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_8k.jpg"
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_8k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_8k.exr",
+            "md5": "b645c3fd423c1d1f5c643b4eaf3af97f",
+            "size": 249941007
+          },
+          "textures/jolcham_oak_bark_01_disp_8k.png": {
+            "size": 177871370,
+            "md5": "fedf17dc746c60601c24a252afd3d1b5",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_8k.png"
+          },
+          "textures/jolcham_oak_bark_01_rough_8k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_8k.exr",
+            "size": 34917523,
+            "md5": "7b5bbd25df1108bda865e88d080bd286"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_8k.mtlx",
+        "size": 4713,
+        "md5": "8a779d60e6c799c086d2f11f4f0fecc9"
+      }
+    },
+    "4k": {
+      "mtlx": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_4k.mtlx",
+        "include": {
+          "textures/jolcham_oak_bark_01_diff_4k.jpg": {
+            "md5": "6eb170f2ae0c20040570522b3cbb2933",
+            "size": 28356845,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_4k.jpg"
+          },
+          "textures/jolcham_oak_bark_01_disp_4k.png": {
+            "size": 49557936,
+            "md5": "48443b7397d031d8f5a1e5b932b90fcf",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_4k.png"
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_4k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_4k.exr",
+            "md5": "f42a7d82bc6167cb88ea1009478fb4f0",
+            "size": 73901157
+          },
+          "textures/jolcham_oak_bark_01_rough_4k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_4k.exr",
+            "md5": "4a3af359cf18a9f6cd813803a89ce8b3",
+            "size": 11369381
+          }
+        },
+        "md5": "7c476236639d17ceb7762621c29c6020",
+        "size": 4713
+      }
+    },
+    "2k": {
+      "mtlx": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_2k.mtlx",
+        "include": {
+          "textures/jolcham_oak_bark_01_disp_2k.png": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_2k.png",
+            "size": 13160340,
+            "md5": "97d578319a7e27fc2d6f4e2a38ba2eab"
+          },
+          "textures/jolcham_oak_bark_01_rough_2k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_2k.exr",
+            "md5": "480b2af4508c424353fe499bc4adade0",
+            "size": 3074392
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_2k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_2k.exr",
+            "size": 20233851,
+            "md5": "a37713d24530933f417e9212dc45aab4"
+          },
+          "textures/jolcham_oak_bark_01_diff_2k.jpg": {
+            "md5": "2836557140894ed530aed39818b79f57",
+            "size": 7512396,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_2k.jpg"
+          }
+        },
+        "md5": "480018793a4d5c6d21b6dd6cc6f7c084",
+        "size": 4713
+      }
+    },
+    "1k": {
+      "mtlx": {
+        "size": 4713,
+        "md5": "8abdde3ed2f7146ee1f7ea34cd1cbe80",
+        "include": {
+          "textures/jolcham_oak_bark_01_disp_1k.png": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_1k.png",
+            "size": 3467899,
+            "md5": "38ca9c1c2023f7b2a1ba7bf3bc7d0e3b"
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_1k.exr": {
+            "size": 5261761,
+            "md5": "ef945d68c12f95e105920476f7259d07",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_1k.exr"
+          },
+          "textures/jolcham_oak_bark_01_rough_1k.exr": {
+            "md5": "ac596aef1494a049e45f3f469aa4e16f",
+            "size": 739815,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_1k.exr"
+          },
+          "textures/jolcham_oak_bark_01_diff_1k.jpg": {
+            "md5": "a74acddb27c17674d94498c1be7f0495",
+            "size": 1936622,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_1k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_1k.mtlx"
+      }
+    }
+  },
+  "Displacement": {
+    "1k": {
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_1k.exr",
+        "md5": "22537cfb8c99d022de9543e1c2283495",
+        "size": 1021406
+      },
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_1k.jpg",
+        "size": 880643,
+        "md5": "dc3a2b176ed98286cb8e603370632f68"
+      },
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_1k.png",
+        "size": 3467899,
+        "md5": "38ca9c1c2023f7b2a1ba7bf3bc7d0e3b"
+      }
+    },
+    "8k": {
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_8k.jpg",
+        "md5": "7c70ddfe3e7aba4fbda28bb09be98427",
+        "size": 22847580
+      },
+      "exr": {
+        "size": 21202241,
+        "md5": "5224023da08cc09a8e5cf0f33e9bcb91",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_8k.exr"
+      },
+      "png": {
+        "size": 177871370,
+        "md5": "fedf17dc746c60601c24a252afd3d1b5",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_8k.png"
+      }
+    },
+    "4k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_4k.png",
+        "md5": "48443b7397d031d8f5a1e5b932b90fcf",
+        "size": 49557936
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_4k.exr",
+        "md5": "264ecb724cf1c5bd568b2fb2bbf2e7eb",
+        "size": 7972003
+      },
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_4k.jpg",
+        "size": 7764398,
+        "md5": "3f161c3ff32887883fb43bb8168aef8c"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_2k.jpg",
+        "md5": "0c92bf4fb113f9f64a81ed4f47ad7ba9",
+        "size": 2652494
+      },
+      "exr": {
+        "size": 2927740,
+        "md5": "3bb2c4224b964e4a5e1fb27c1b791334",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_2k.exr"
+      },
+      "png": {
+        "size": 13160340,
+        "md5": "97d578319a7e27fc2d6f4e2a38ba2eab",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_2k.png"
+      }
+    }
+  },
+  "nor_gl": {
+    "8k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_8k.png",
+        "md5": "855dda2628fe322abf99921f429abe26",
+        "size": 715634185
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_8k.exr",
+        "md5": "b645c3fd423c1d1f5c643b4eaf3af97f",
+        "size": 249941007
+      },
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_8k.jpg",
+        "size": 125800084,
+        "md5": "1c2f40b781a250d322b796925f60910d"
+      }
+    },
+    "4k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_4k.png",
+        "size": 186151551,
+        "md5": "fb812da48b82dcb0c036702d71ea34aa"
+      },
+      "jpg": {
+        "size": 37209709,
+        "md5": "f36904392858c5673e51b5215d2bdab2",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_4k.jpg"
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_4k.exr",
+        "size": 73901157,
+        "md5": "f42a7d82bc6167cb88ea1009478fb4f0"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_2k.jpg",
+        "md5": "c5daadd598c38113271ea14480b09cc9",
+        "size": 10334471
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_2k.exr",
+        "md5": "a37713d24530933f417e9212dc45aab4",
+        "size": 20233851
+      },
+      "png": {
+        "size": 47511738,
+        "md5": "a5ff3c5dda95f40d42babdbdb534af4d",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_2k.png"
+      }
+    },
+    "1k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_1k.png",
+        "size": 12010462,
+        "md5": "26b8214dd4dd93cf2b30d7267a584625"
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_1k.exr",
+        "md5": "ef945d68c12f95e105920476f7259d07",
+        "size": 5261761
+      },
+      "jpg": {
+        "size": 2691523,
+        "md5": "3a61a7a22aeee8482e915eab7810b64d",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_1k.jpg"
+      }
+    }
+  },
+  "blend": {
+    "8k": {
+      "blend": {
+        "size": 214607,
+        "md5": "135af93b06b071aabda1276ed17bd7e1",
+        "include": {
+          "textures/jolcham_oak_bark_01_diff_8k.jpg": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_8k.jpg",
+            "md5": "006924e2e01aa251d8cae08625fb228e",
+            "size": 100716167
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_8k.exr": {
+            "size": 249941007,
+            "md5": "b645c3fd423c1d1f5c643b4eaf3af97f",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_8k.exr"
+          },
+          "textures/jolcham_oak_bark_01_rough_8k.exr": {
+            "md5": "7b5bbd25df1108bda865e88d080bd286",
+            "size": 34917523,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_8k.exr"
+          },
+          "textures/jolcham_oak_bark_01_disp_8k.png": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_8k.png",
+            "size": 177871370,
+            "md5": "fedf17dc746c60601c24a252afd3d1b5"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_8k.blend"
+      }
+    },
+    "4k": {
+      "blend": {
+        "md5": "aed6cef1d46e4d295c07c269eebe6868",
+        "size": 214607,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_4k.blend",
+        "include": {
+          "textures/jolcham_oak_bark_01_rough_4k.exr": {
+            "size": 11369381,
+            "md5": "4a3af359cf18a9f6cd813803a89ce8b3",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_4k.exr"
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_4k.exr": {
+            "md5": "f42a7d82bc6167cb88ea1009478fb4f0",
+            "size": 73901157,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_4k.exr"
+          },
+          "textures/jolcham_oak_bark_01_disp_4k.png": {
+            "size": 49557936,
+            "md5": "48443b7397d031d8f5a1e5b932b90fcf",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_4k.png"
+          },
+          "textures/jolcham_oak_bark_01_diff_4k.jpg": {
+            "md5": "6eb170f2ae0c20040570522b3cbb2933",
+            "size": 28356845,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_4k.jpg"
+          }
+        }
+      }
+    },
+    "2k": {
+      "blend": {
+        "md5": "96e0bb148dfe6fe4183ab0193f35a3cc",
+        "size": 214607,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_2k.blend",
+        "include": {
+          "textures/jolcham_oak_bark_01_nor_gl_2k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_2k.exr",
+            "size": 20233851,
+            "md5": "a37713d24530933f417e9212dc45aab4"
+          },
+          "textures/jolcham_oak_bark_01_diff_2k.jpg": {
+            "size": 7512396,
+            "md5": "2836557140894ed530aed39818b79f57",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_2k.jpg"
+          },
+          "textures/jolcham_oak_bark_01_rough_2k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_2k.exr",
+            "size": 3074392,
+            "md5": "480b2af4508c424353fe499bc4adade0"
+          },
+          "textures/jolcham_oak_bark_01_disp_2k.png": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_2k.png",
+            "size": 13160340,
+            "md5": "97d578319a7e27fc2d6f4e2a38ba2eab"
+          }
+        }
+      }
+    },
+    "1k": {
+      "blend": {
+        "md5": "5e73a8185feb492d7ed0c0696873051a",
+        "size": 214608,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_1k.blend",
+        "include": {
+          "textures/jolcham_oak_bark_01_rough_1k.exr": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_1k.exr",
+            "md5": "ac596aef1494a049e45f3f469aa4e16f",
+            "size": 739815
+          },
+          "textures/jolcham_oak_bark_01_nor_gl_1k.exr": {
+            "size": 5261761,
+            "md5": "ef945d68c12f95e105920476f7259d07",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_1k.exr"
+          },
+          "textures/jolcham_oak_bark_01_disp_1k.png": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_1k.png",
+            "md5": "38ca9c1c2023f7b2a1ba7bf3bc7d0e3b",
+            "size": 3467899
+          },
+          "textures/jolcham_oak_bark_01_diff_1k.jpg": {
+            "md5": "a74acddb27c17674d94498c1be7f0495",
+            "size": 1936622,
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_1k.jpg"
+          }
+        }
+      }
+    }
+  },
+  "nor_dx": {
+    "8k": {
+      "exr": {
+        "md5": "47242c6f7b1c14a30292c4afce62a982",
+        "size": 250364139,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_8k.exr"
+      },
+      "jpg": {
+        "size": 125659081,
+        "md5": "cda956e00aeca07b0ebe7065d9f584cd",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_8k.jpg"
+      },
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_8k.png",
+        "md5": "c150a367ea72389b0e77dbc0d878e403",
+        "size": 714156806
+      }
+    },
+    "4k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_4k.png",
+        "size": 186150645,
+        "md5": "5c94808c426be8c07eabfa4d212af794"
+      },
+      "exr": {
+        "md5": "6887d00cb1fa3aca2d9d6eb7c042a36f",
+        "size": 73966925,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_4k.exr"
+      },
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_4k.jpg",
+        "size": 37168736,
+        "md5": "a65faaf3dce1ac64054e2f71e79d868f"
+      }
+    },
+    "2k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_2k.png",
+        "size": 47511421,
+        "md5": "1b487b25663479ae57a1bbf397a74719"
+      },
+      "jpg": {
+        "size": 10325810,
+        "md5": "9d56cec9dfc11cd632fac2dc1647d55c",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_2k.jpg"
+      },
+      "exr": {
+        "md5": "a3949087c708911d67a383a727618892",
+        "size": 20241679,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_2k.exr"
+      }
+    },
+    "1k": {
+      "exr": {
+        "size": 5264478,
+        "md5": "10a2e83e4e564f392401056154a62d6c",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_1k.exr"
+      },
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_1k.jpg",
+        "size": 2690494,
+        "md5": "c77540777dad0563575751329c53e02b"
+      },
+      "png": {
+        "size": 12010570,
+        "md5": "dc92253338431b88776e00bbf17e9367",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_dx_1k.png"
+      }
+    }
+  },
+  "Rough": {
+    "1k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_1k.png",
+        "size": 3416259,
+        "md5": "0eef0070e6c139acd233b0a4da58063c"
+      },
+      "exr": {
+        "md5": "ac596aef1494a049e45f3f469aa4e16f",
+        "size": 739815,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_1k.exr"
+      },
+      "jpg": {
+        "size": 799081,
+        "md5": "24680673158b325898d67ded4116c5f5",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_1k.jpg"
+      }
+    },
+    "8k": {
+      "jpg": {
+        "md5": "557ddcaaa97c46ba51b27ad894ff38cd",
+        "size": 40127583,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_8k.jpg"
+      },
+      "exr": {
+        "md5": "7b5bbd25df1108bda865e88d080bd286",
+        "size": 34917523,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_8k.exr"
+      },
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_8k.png",
+        "size": 211136818,
+        "md5": "af6e92c803879654d99e79cd07b92a92"
+      }
+    },
+    "4k": {
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_4k.exr",
+        "size": 11369381,
+        "md5": "4a3af359cf18a9f6cd813803a89ce8b3"
+      },
+      "jpg": {
+        "md5": "02bdeb2e63c7a99f84f7ae7bc58a7f84",
+        "size": 12642405,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_4k.jpg"
+      },
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_4k.png",
+        "md5": "a8c31c3e63e6230c78acd4d46e58452f",
+        "size": 54701471
+      }
+    },
+    "2k": {
+      "png": {
+        "size": 13797179,
+        "md5": "8d0746cfbeda9cad1e80b9f144fe9f98",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_2k.png"
+      },
+      "jpg": {
+        "size": 3347715,
+        "md5": "32379d55c2811647bbd8cc0b3089af41",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_2k.jpg"
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_2k.exr",
+        "size": 3074392,
+        "md5": "480b2af4508c424353fe499bc4adade0"
+      }
+    }
+  },
+  "AO": {
+    "8k": {
+      "png": {
+        "size": 227212149,
+        "md5": "d86d557415325b6c0c34889abdb88438",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_8k.png"
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_8k.exr",
+        "size": 71025225,
+        "md5": "bff4f2add90cca36622ad0130f8a0aa5"
+      },
+      "jpg": {
+        "md5": "3c690afe19e2895b20851b44a153c46e",
+        "size": 72011678,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_8k.jpg"
+      }
+    },
+    "4k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_4k.png",
+        "md5": "6fbee2ae2ae82712db315a49087be4ed",
+        "size": 59857803
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_4k.exr",
+        "size": 22042062,
+        "md5": "e231b03e1d9f52d0f3349eaa66925d5d"
+      },
+      "jpg": {
+        "md5": "a248f75efa6dd4228bf733d6568004c3",
+        "size": 22413221,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_4k.jpg"
+      }
+    },
+    "2k": {
+      "png": {
+        "size": 15469311,
+        "md5": "f3e8bd3d0930c5fc03c69cd5bcef9120",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_2k.png"
+      },
+      "exr": {
+        "size": 6551375,
+        "md5": "a2cfc7dda7ede6d986bad32316ebe04d",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_2k.exr"
+      },
+      "jpg": {
+        "md5": "8e19fe46d0bcab9b2578c012808fc451",
+        "size": 6712248,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_2k.jpg"
+      }
+    },
+    "1k": {
+      "exr": {
+        "size": 1845152,
+        "md5": "1d811e4040deb62d305d420da6040589",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_1k.exr"
+      },
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_1k.jpg",
+        "size": 1888787,
+        "md5": "6281bf698cde0a38f3aaff132d72bbce"
+      },
+      "png": {
+        "size": 3955616,
+        "md5": "9cf0dc271bb7cc6fcfdedba051fbb843",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_1k.png"
+      }
+    }
+  },
+  "arm": {
+    "1k": {
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_1k.png",
+        "size": 8666679,
+        "md5": "3bc9f2a47eded7dd3e3527f924f1c309"
+      },
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_1k.jpg",
+        "size": 1901069,
+        "md5": "0edea92614a13c42a37f7a9b9f798b82"
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_1k.exr",
+        "size": 3626404,
+        "md5": "07acae87fa20afa30dfa0fb7fc3b563a"
+      }
+    },
+    "8k": {
+      "jpg": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_8k.jpg",
+        "size": 79470910,
+        "md5": "1488f4206ca8222e38a4274fc9048008"
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_8k.exr",
+        "md5": "4e1de7986f33725a26e4fa160306f448",
+        "size": 129437020
+      },
+      "png": {
+        "md5": "94a256ea08bb7a0cea988113a6190370",
+        "size": 492061033,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_8k.png"
+      }
+    },
+    "4k": {
+      "exr": {
+        "size": 43242398,
+        "md5": "6f5306995bc585628d417c36fb12d733",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_4k.exr"
+      },
+      "jpg": {
+        "md5": "926890c9ae6c247b671da517f2efd0a6",
+        "size": 24701019,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_4k.jpg"
+      },
+      "png": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_4k.png",
+        "md5": "a6d3d84445afbf79898b9aac2e7db379",
+        "size": 133930981
+      }
+    },
+    "2k": {
+      "jpg": {
+        "md5": "4f3edff0161c288917ed7cf7bedb960e",
+        "size": 7074922,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_2k.jpg"
+      },
+      "exr": {
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_2k.exr",
+        "size": 13043955,
+        "md5": "10cb5651729cc48a2f8d3ddf49cca225"
+      },
+      "png": {
+        "md5": "94f7188026aa3ca0cdeeac88efff4c1c",
+        "size": 34362746,
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/jolcham_oak_bark_01/jolcham_oak_bark_01_arm_2k.png"
+      }
+    }
+  }
+}

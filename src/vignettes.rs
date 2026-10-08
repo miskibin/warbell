@@ -265,6 +265,7 @@ fn footprint_clear(x: f32, z: f32, radius: f32) -> bool {
 struct Spec {
     biome: crate::biome::Biome,
     mesh: fn() -> Mesh,
+    blender_name: &'static str,
     scale: f32,
     block_r: f32,
     foot_r: f32,
@@ -282,15 +283,18 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
     use crate::biome::{Biome, BiomeEntity};
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
     let specs = [
-        Spec { biome: Biome::Forest, mesh: abandoned_camp, scale: 1.0, block_r: 0.9, foot_r: 1.6, name: "The Abandoned Camp", lore: "Cold ashes, and a meal left half-eaten.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(1.0, 0.62, 0.2) },
-        Spec { biome: Biome::Desert, mesh: lost_caravan, scale: 1.0, block_r: 1.0, foot_r: 1.5, name: "The Lost Caravan", lore: "The sand keeps its dead — and their gold.", buff: BuffKind::Power, mag: 1.4, beacon: Color::srgb(0.95, 0.55, 1.0) },
-        Spec { biome: Biome::Rocky, mesh: fallen_tower, scale: 1.0, block_r: 1.0, foot_r: 1.8, name: "The Fallen Watchtower", lore: "It guarded the pass once. The pass forgot.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(1.0, 0.8, 0.35) },
-        Spec { biome: Biome::Snow, mesh: frozen_camp, scale: 1.0, block_r: 0.9, foot_r: 1.5, name: "The Frozen Camp", lore: "The expedition that never came home.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(0.3, 0.92, 1.0) },
-        Spec { biome: Biome::Swamp, mesh: sunken_wreck, scale: 1.0, block_r: 1.0, foot_r: 1.7, name: "The Sunken Wreck", lore: "The bog swallowed her whole, crew and all.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(0.4, 0.95, 0.82) },
+        Spec { biome: Biome::Forest, mesh: abandoned_camp, blender_name: "vignette_abandoned_camp", scale: 1.0, block_r: 0.9, foot_r: 1.6, name: "The Abandoned Camp", lore: "Cold ashes, and a meal left half-eaten.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(1.0, 0.62, 0.2) },
+        Spec { biome: Biome::Desert, mesh: lost_caravan, blender_name: "vignette_lost_caravan", scale: 1.0, block_r: 1.0, foot_r: 1.5, name: "The Lost Caravan", lore: "The sand keeps its dead — and their gold.", buff: BuffKind::Power, mag: 1.4, beacon: Color::srgb(0.95, 0.55, 1.0) },
+        Spec { biome: Biome::Rocky, mesh: fallen_tower, blender_name: "vignette_fallen_tower", scale: 1.0, block_r: 1.0, foot_r: 1.8, name: "The Fallen Watchtower", lore: "It guarded the pass once. The pass forgot.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(1.0, 0.8, 0.35) },
+        Spec { biome: Biome::Snow, mesh: frozen_camp, blender_name: "vignette_frozen_camp", scale: 1.0, block_r: 0.9, foot_r: 1.5, name: "The Frozen Camp", lore: "The expedition that never came home.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(0.3, 0.92, 1.0) },
+        Spec { biome: Biome::Swamp, mesh: sunken_wreck, blender_name: "vignette_sunken_wreck", scale: 1.0, block_r: 1.0, foot_r: 1.7, name: "The Sunken Wreck", lore: "The bog swallowed her whole, crew and all.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(0.4, 0.95, 0.82) },
     ];
     let mut rng: u32 = 0x51a9_e3b7;
     for s in specs {
-        let handle = meshes.add((s.mesh)());
+        let model = crate::blenderenv::get().map(|env| env.model(s.blender_name)
+            .unwrap_or_else(|| panic!("missing Blender vignette {}", s.blender_name)));
+        let handle = model.map_or_else(|| meshes.add((s.mesh)()), |m| m.mesh.clone());
+        let vignette_mat = model.map_or_else(|| mat.clone(), |m| m.mat.clone());
         let probe = s.foot_r * s.scale;
         let mut best: Option<(f32, f32, f32, f32, f32)> = None; // (spread, x, z, y, yaw)
         for _ in 0..4000 {
@@ -315,7 +319,7 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
             let id = commands
                 .spawn((
                     Mesh3d(handle.clone()),
-                    MeshMaterial3d(mat.clone()),
+                    MeshMaterial3d(vignette_mat.clone()),
                     Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s.scale)),
                     BiomeEntity,
                 ))

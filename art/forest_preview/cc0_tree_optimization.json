@@ -1,0 +1,470 @@
+{
+  "schema": "warbell.forest_cc0_optimization.v1",
+  "models": [
+    {
+      "id": "tree_small_02_optimized",
+      "source_page": "https://polyhaven.com/a/tree_small_02",
+      "license": "CC0-1.0",
+      "source_api_manifest": {
+        "path": "art/forest_preview/polyhaven_api/tree_small_02-files.json",
+        "bytes": 109466,
+        "sha256": "7c0e6eb0a72ba73056a25f587fa2442bc9d7e5db0d42c6d77c6182c8a5563c65"
+      },
+      "source_gltf": {
+        "path": "target/world-preview/cc0-sources/tree_small_02/tree_small_02_1k.gltf",
+        "bytes": 9075,
+        "sha256": "3062a709614c05b80fdc1e56583998bc3cb1027b0d52f956c8ecfb882ff8ca6d"
+      },
+      "source_download_manifest": {
+        "path": "art/forest_preview/cc0_tree_small_02_downloads.json",
+        "bytes": 5001,
+        "sha256": "dbaaa8464ef446eb72c60d9cb81f7b96a018648abf9175e826b7e758bcb6cd15"
+      },
+      "prepared_leaf_rgba": {
+        "path": "art/forest_preview/cc0_prepared/tree_small_02_leaves_rgba_1k.png",
+        "bytes": 851945,
+        "sha256": "57e138ddc4bdcc59a07dba9aac258d9a91f0110b1fa37a6be58c5cc940f243e2"
+      },
+      "original_triangles": 2062487,
+      "output_triangles": 164608,
+      "output_bounds_y_up": {
+        "min": [
+          -2.303753137588501,
+          0.0,
+          -2.416120767593384
+        ],
+        "max": [
+          2.817439317703247,
+          8.0,
+          5.0880842208862305
+        ]
+      },
+      "runtime_glb": {
+        "path": "assets/models/forest_slice/cc0/tree_small_02_optimized.glb",
+        "bytes": 32261676,
+        "sha256": "3138fa8cde83ca82a31ee98abf1bd7284f7b3c9bc9a5ff1850fad842c6dcc2b3"
+      },
+      "editable_blend": {
+        "path": "art/forest_preview/tree_small_02_optimized.blend",
+        "bytes": 18197708,
+        "sha256": "f1a6c73707c1565f4f4d14fe989a31b8c74380b7828b57f8bea23db3c36c976a"
+      },
+      "material_modes": [
+        "tree_small_02_trunk:OPAQUE",
+        "tree_small_02_branches:OPAQUE",
+        "tree_small_02_leaves:MASK"
+      ],
+      "embedded_images": [
+        {
+          "name": "tree_small_02_nor_gl_1k",
+          "bytes": 2301379,
+          "sha256": "5db0a7ef1b5c31a5effac2f49da137be7d409638c88d38182b4b48dd1552b22f",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_diff_1k",
+          "bytes": 1849511,
+          "sha256": "8099fc8ba0ca97d9c58b896c548b2bb99e5d9766d3dcf9487091af4e47e793b9",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_arm_1k",
+          "bytes": 1547139,
+          "sha256": "e054ac1fc2cc0d1bb44c03905c342917b20401e2d5ef23d7053ea29cb3be1489",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_branch_nor_gl_1k",
+          "bytes": 1422442,
+          "sha256": "a5f80035bf6396b474fa90fc12973369f1f396767ec8ba96a642d968f41ba00a",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_branch_diff_1k",
+          "bytes": 1139930,
+          "sha256": "593510cb3ed2944c5c771fac3faf916e96acb1bce2f918722ddc19344cfd045f",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_branch_arm_1k",
+          "bytes": 1009595,
+          "sha256": "2f5b9e61f063db4cebbae5722d983a6aa30ec5f4d8d4da56e1e2469b8f4b9f9e",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_leaves_nor_gl_1k",
+          "bytes": 1540599,
+          "sha256": "afebbbe75c001b311126874f96cb5095b9352b22defa9a2c025aca4f53333eb1",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_leaves_rgba_1k",
+          "bytes": 851945,
+          "sha256": "57e138ddc4bdcc59a07dba9aac258d9a91f0110b1fa37a6be58c5cc940f243e2",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.46498775482177734
+        },
+        {
+          "name": "tree_small_02_leaves_arm_1k",
+          "bytes": 1415380,
+          "sha256": "4160f1664ec3700189b4f454ae1787c433265b9e95e47a1f884caedc3ca0a3d1",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "post_export_tangent_repairs": 0
+    },
+    {
+      "id": "island_tree_01_optimized",
+      "source_page": "https://polyhaven.com/a/island_tree_01",
+      "license": "CC0-1.0",
+      "source_api_manifest": {
+        "path": "art/forest_preview/polyhaven_api/island_tree_01-files.json",
+        "bytes": 110892,
+        "sha256": "56169b6dabc5addcc71d203251cadf4b526e1a2d2d507ea56db8fea754b437c0"
+      },
+      "source_gltf": {
+        "path": "target/world-preview/cc0-sources/island_tree_01/island_tree_01_1k.gltf",
+        "bytes": 8576,
+        "sha256": "78e905a40670bfabb2760601d4d9a6c17193a50d68e6271c66893eb7bd75906d"
+      },
+      "source_download_manifest": {
+        "path": "art/forest_preview/cc0_island_tree_01_downloads.json",
+        "bytes": 5062,
+        "sha256": "d22b5480b643f5bcafd1591161fa894bc384d11542fc9ce4461c787aa951ae54"
+      },
+      "prepared_leaf_rgba": {
+        "path": "art/forest_preview/cc0_prepared/island_tree_01_leaves_rgba_1k.png",
+        "bytes": 437307,
+        "sha256": "512199b980d6d1d3110d66342fe856fcdd699bfdd3e5fbcd62a8762ac07a44c5"
+      },
+      "original_triangles": 1599403,
+      "output_triangles": 439378,
+      "output_bounds_y_up": {
+        "min": [
+          -4.057509899139404,
+          0.0,
+          -4.471019744873047
+        ],
+        "max": [
+          4.172025203704834,
+          8.700000762939453,
+          3.86739182472229
+        ]
+      },
+      "runtime_glb": {
+        "path": "assets/models/forest_slice/cc0/island_tree_01_optimized.glb",
+        "bytes": 40956300,
+        "sha256": "3513eecacf1b339faee2c8b73d475b3300f0b44201dbfe4ccc28a71cbc74823d"
+      },
+      "editable_blend": {
+        "path": "art/forest_preview/island_tree_01_optimized.blend",
+        "bytes": 27381679,
+        "sha256": "ca754fa33427df43d0701594e3b2bb6720449cf1c485e579e296e362698caec1"
+      },
+      "material_modes": [
+        "island_tree_01_branches:OPAQUE",
+        "island_tree_01:OPAQUE",
+        "island_tree_01_leaves:MASK"
+      ],
+      "embedded_images": [
+        {
+          "name": "island_tree_01_branches_nor_gl_1k",
+          "bytes": 1750428,
+          "sha256": "d922a23ab255f6ba2516beee87028f9f1406162dcbf0a5070f51cbb6aa2b03f3",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_branches_diff_1k",
+          "bytes": 1178677,
+          "sha256": "b2e0876ee36c0e1899e802ea594b7c0de97f0d662041519aeefec0f863f70916",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_branches_arm_1k",
+          "bytes": 1185335,
+          "sha256": "5b7df9cc93b89ee4d1d1161f13c3ef1e5d8a6c07ba44a6e05065969f29d71334",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_nor_gl_1k",
+          "bytes": 2246610,
+          "sha256": "afe3bfd6f362b08532fc8b991072a247ce52741ca3d8557c66460e6be39c30e9",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_diff_1k",
+          "bytes": 1700518,
+          "sha256": "96c745e18678d7f34db9dcb61f32af0033b8d2749efa73b777831c25d35e1e90",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_arm_1k",
+          "bytes": 1500105,
+          "sha256": "5dc5be614f86d06bb56e505626dbf8eb97fc4766229ada6aa941f8e2b6e66673",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_leaves_nor_gl_1k",
+          "bytes": 1022409,
+          "sha256": "6c68c366666cf9a48f8d35cf7db479b2d664b01d7ea9b1eef50884a203fbbe76",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_leaves_rgba_1k",
+          "bytes": 437307,
+          "sha256": "512199b980d6d1d3110d66342fe856fcdd699bfdd3e5fbcd62a8762ac07a44c5",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.7493991851806641
+        },
+        {
+          "name": "island_tree_01_leaves_arm_1k",
+          "bytes": 1037043,
+          "sha256": "8dd201f1379e0ec798d400aef7c2e6e77b4117a7fb9020aadb02e3f049e34e95",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "post_export_tangent_repairs": 404
+    }
+  ],
+  "layout": {
+    "path": "assets/models/forest_slice/layout.json",
+    "bytes": 860749,
+    "sha256": "f231b3485da342396523c88f027767b9d6093ff84f60d4bc63a32deba98e58b8"
+  },
+  "layout_v5_input_snapshot": {
+    "path": "art/forest_preview/layout_v5_before_final_tune.json",
+    "bytes": 808817,
+    "sha256": "925d411f3b8ba6faa61635ccaa6e5ad2645bb9ddf31cfc2528105569b3843e61"
+  },
+  "forest_scene_blend": {
+    "path": "art/forest_preview/forest_scene.blend",
+    "bytes": 62895874,
+    "sha256": "e825184435dc97f99f617739afec82d2f6611c588d03337628381e341368cd07"
+  },
+  "scene_report": {
+    "path": "art/forest_preview/scene_report.json",
+    "bytes": 2055,
+    "sha256": "377169c9f6d4b7a8f0fcb54ad6ef3000cc053ff255f61ad37296c346aa031014"
+  },
+  "blender_source_audit": {
+    "path": "art/forest_preview/final_scene_audit.json",
+    "bytes": 473,
+    "sha256": "e09016f70f23ded5a36a655646b82e35ade0052614e276dcf337d90ef70940cc"
+  },
+  "png_runtime_repack": {
+    "path": "art/forest_preview/cc0_png_repack.json",
+    "bytes": 11728,
+    "sha256": "8004b90ceb5d0df276c19146ef5a16fbc58d9eb2337e4d9d6a1483233e186c73"
+  },
+  "png_runtime_repack_script": {
+    "path": "tools/transcode_forest_glb_textures.py",
+    "bytes": 3768,
+    "sha256": "355a392fe55c152ad523f71a963e1bbcf610dc7057fb54d075774a8bd0e0ae33"
+  },
+  "independent_glb_validation": {
+    "path": "art/forest_preview/cc0_validation.json",
+    "bytes": 27604,
+    "sha256": "30bf28d9f527d6a9c52215ef708aebf19fdb7a0e0a6c5f8b0af98eeea15f8f4d"
+  },
+  "runtime_gltf_instance_counts": {
+    "gltf:cc0_dandelion_a": 82,
+    "gltf:cc0_grass_patch_a": 456,
+    "gltf:cc0_grass_patch_b": 502,
+    "gltf:cc0_heliophila_a": 81,
+    "gltf:cc0_moss_rock_a": 12,
+    "gltf:cc0_moss_rock_b": 12,
+    "gltf:cc0_shrub_patch_a": 104,
+    "gltf:cc0_stump_a": 6,
+    "gltf:island_tree_01_optimized": 3,
+    "gltf:tree_small_02_optimized": 38
+  },
+  "authoring_scripts": [
+    {
+      "path": "art/forest_preview/download_cc0.py",
+      "bytes": 2444,
+      "sha256": "97bfbc8301f7947923844ac6168d7f7dd90d9c730881d370afb0187053e632b6"
+    },
+    {
+      "path": "art/forest_preview/prepare_cc0_leaf_alpha.py",
+      "bytes": 1186,
+      "sha256": "152725cbbda33c8ee02899da24a62dfe50a40d3a356c064a89a53d2025a6c3e5"
+    },
+    {
+      "path": "art/forest_preview/preview_cc0.py",
+      "bytes": 1445,
+      "sha256": "ae96a750beec088e07eb5887d2c855a935d89db3d4cf961957c5526d80bd22fe"
+    },
+    {
+      "path": "art/forest_preview/separate_cc0.py",
+      "bytes": 942,
+      "sha256": "914476fcdb54603e0b6741003b47d8a7224540df479db0b6739e8543426a8576"
+    },
+    {
+      "path": "art/forest_preview/optimize_cc0_tree.py",
+      "bytes": 6047,
+      "sha256": "3149446ee0dc15880ae7b7e5e3d5de111eeef593743cae8d85e18712b6a0537a"
+    },
+    {
+      "path": "art/forest_preview/preview_cc0_island.py",
+      "bytes": 2778,
+      "sha256": "08a8471711ee5436200aa2f990d0cfcd35588ab930bb9fd9364e70dd6e8c4393"
+    },
+    {
+      "path": "art/forest_preview/optimize_cc0_island.py",
+      "bytes": 4959,
+      "sha256": "78b91750e81e80eb7ea40235e55d0df5987ec419053f0c86ae5dfdebc86fd544"
+    },
+    {
+      "path": "art/forest_preview/repair_cc0_tangents.py",
+      "bytes": 2439,
+      "sha256": "8885d366a91d32685bb393d22a0259ee0c01737e93c8e920417f1a42ede36ab3"
+    },
+    {
+      "path": "art/forest_preview/pack_cc0_blend_sources.py",
+      "bytes": 1185,
+      "sha256": "69cfd8bfe56379f4c739dc82bc5ac9066e6d323887da23a99273a92b806df4a0"
+    },
+    {
+      "path": "art/forest_preview/apply_cc0_layout.py",
+      "bytes": 1974,
+      "sha256": "5450c7de067f57f224e685932e2fc404b37fc059d7dcad1306ee72325ad55b66"
+    },
+    {
+      "path": "art/forest_preview/apply_cc0_understory_layout.py",
+      "bytes": 3244,
+      "sha256": "a9b1897d611ee5f826adf7581253925eee5d1f40448ce6cf7fdce8b367130d43"
+    },
+    {
+      "path": "art/forest_preview/apply_final_forest_tune.py",
+      "bytes": 6935,
+      "sha256": "0c5dba19ffc2c5d6c442cdcec0d5aebcf341e532642e866907a05e972984ef53"
+    },
+    {
+      "path": "art/forest_preview/sync_cc0_tree_scene.py",
+      "bytes": 2133,
+      "sha256": "602e3449971c559292daacb39fd19e8bea8901fe11c2acd97d20934c7ed1d1d3"
+    },
+    {
+      "path": "art/forest_preview/sync_cc0_understory_scene.py",
+      "bytes": 3108,
+      "sha256": "6760090bc8f4af296cc94e0c9d0795ae58faa762314ca2ecbf5f2488c3b2c206"
+    },
+    {
+      "path": "art/forest_preview/audit_final_scene.py",
+      "bytes": 2888,
+      "sha256": "1e47c3f1d817bed6b001c2b155f446a0c268e77fe35919daada021adf43bc61a"
+    },
+    {
+      "path": "art/forest_preview/refresh_scene_report.py",
+      "bytes": 1302,
+      "sha256": "ffcfb3d8a1a5d2605fff55d3ffe920f1dd188b8863f9ef2ed3b1e8225589b8ca"
+    }
+  ],
+  "validation": "tools/validate_forest_cc0.py PASS for every layout-referenced GLB"
+}

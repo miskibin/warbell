@@ -369,6 +369,7 @@ impl Plugin for PlayerPlugin {
         } else if std::env::var("FOREST_SHOT").is_ok()
             || std::env::var("FOREST_CLIP").is_ok()
             || std::env::var("FOREST_FREEROAM").is_ok()
+            || crate::forest_slice::enabled()
         {
             PlayMode::FreeRoam
         } else {

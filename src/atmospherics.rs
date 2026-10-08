@@ -149,6 +149,17 @@ impl Default for Atmospherics {
 /// startup override for the screenshot harness (no rebuild while hunting the look).
 pub fn default_atmospherics() -> Atmospherics {
     let mut a = Atmospherics::default();
+    if crate::blenderenv::look_enabled() {
+        // The WORLD's textured terrain and dense vegetation supply the small-scale depth.
+        // A lighter, cooler aerial layer keeps distant ridges shaded instead of blending
+        // them into the same warm-grey veil as the sky. The shader still follows the live
+        // fog colour and the existing day/night fade.
+        a.density = 0.004;
+        a.fog_start = 55.0;
+        a.fog_max = 0.14;
+        a.noise_strength = 0.20;
+        a.cloud_strength = 0.08;
+    }
     if let Ok(s) = std::env::var("FOREST_ATMO") {
         let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
         if v.len() == 8 {

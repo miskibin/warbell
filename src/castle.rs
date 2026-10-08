@@ -1580,7 +1580,7 @@ pub fn build(
     // Each part is tagged with the upgrade that reveals it (`CastleKind`); gated parts start
     // hidden so the castle BUILDS UP as you buy (a deliberate change from the old always-full
     // render). `Always` parts (keep core, courtyard, bell, keep-door torches) show from the start.
-    let mut spawn = |parts: Vec<(Mesh, M)>, pos: Vec3, rot: f32, scale: Vec3, kind: CastleKind| {
+    let mut spawn = |asset: Option<&str>, parts: Vec<(Mesh, M)>, pos: Vec3, rot: f32, scale: Vec3, kind: CastleKind| {
         // `Always` and `PreWalls` are present on a fresh, wall-less keep; the rest start hidden and
         // `sync_castle` reveals them as you buy upgrades (and flips PreWalls off once Walls go up).
         let vis = if matches!(kind, CastleKind::Always | CastleKind::PreWalls) {
@@ -1588,6 +1588,18 @@ pub fn build(
         } else {
             Visibility::Hidden
         };
+        if let (Some(env), Some(name)) = (crate::blenderenv::get(), asset) {
+            let model = env.model(name).unwrap_or_else(|| panic!("missing Blender castle model {name}"));
+            // The lifecycle tag stays on an identity root: BuildPop::rise only scales its Y axis.
+            // A single shared mesh child carries the authored local transform and atlas material.
+            let root = commands.spawn((Transform::default(), vis, CastlePart { kind },
+                crate::build_fx::RevealAt(pos), BiomeEntity)).id();
+            commands.entity(root).with_children(|p| {
+                p.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()),
+                    Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(rot)).with_scale(scale)));
+            });
+            return;
+        }
         for (m, slot) in parts {
             let mesh = meshes.add(bake(m, pos, rot, scale));
             commands.spawn((
@@ -1614,8 +1626,10 @@ pub fn build(
     // raised `worn_slab` (a genuine built pavement), sitting 1.5cm above the ground; its frayed rim
     // overlaps at the junctions sit slightly higher so they can't z-fight.
     for (i, (px, pz, w, d)) in PATH_RECTS.into_iter().enumerate() {
+        if crate::blenderenv::get().is_some() { break; } // Blender ground shader paints the upgraded cobble route.
         let y = if i == 0 { 0.02 } else { 0.035 };
         spawn(
+            None,
             vec![(worn_slab(w, d, y + 0.005, 0.7, 0.12, 0.04), M::Cobble)],
             Vec3::new(px, 0.0, pz),
             0.0,
@@ -1627,22 +1641,27 @@ pub fn build(
     // Keep (centre) — always present, then two grandeur tiers that reveal as you fortify (corner
     // turrets with the Walls, the grand spire + banners with the Reinforced Keep). Same transform as
     // the keep so the parts sit exactly on it.
-    spawn(keep_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::Always);
-    spawn(keep_tier1_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::KeepTier1);
-    spawn(keep_tier2_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::KeepTier2);
+    spawn(Some("keep_core"), keep_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::Always);
+    spawn(Some("keep_tier1"), keep_tier1_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::KeepTier1);
+    spawn(Some("keep_tier2"), keep_tier2_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::KeepTier2);
     for (x, z, rot, len) in wall_segments() {
-        spawn(wall_parts(len), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.78, 1.0), CastleKind::Walls);
+        let name = if len > 12.0 { "wall_15" } else { "wall_10" };
+        spawn(Some(name), wall_parts(len), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.78, 1.0), CastleKind::Walls);
     }
     for (x, z) in towers() {
-        spawn(tower_parts(), Vec3::new(x, 0.0, z), 0.0, TOWER_SCALE, CastleKind::Towers);
+        spawn(Some("tower"), tower_parts(), Vec3::new(x, 0.0, z), 0.0, TOWER_SCALE, CastleKind::Towers);
     }
     for (x, z, rot) in gates() {
-        spawn(gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.8, 1.0), CastleKind::Gate);
+        spawn(Some("gate"), gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.8, 1.0), CastleKind::Gate);
     }
     for (i, (x, z)) in houses().into_iter().enumerate() {
-        spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_center(x, z), HOUSE_SCALE, CastleKind::House(i as u8));
+        let name = match HOUSE_STYLES[i] {
+            HouseStyle::Hut => "hut", HouseStyle::Cottage => "cottage",
+            HouseStyle::Townhouse => "townhouse", HouseStyle::Longhouse => "longhouse",
+        };
+        spawn(Some(name), house_parts_for(i), Vec3::new(x, 0.0, z), face_center(x, z), HOUSE_SCALE, CastleKind::House(i as u8));
     }
-    spawn(bell_frame_parts(), Vec3::new(BELL_POS.x, 0.0, BELL_POS.y), BELL_YAW, Vec3::ONE, CastleKind::Always);
+    spawn(Some("bell_frame"), bell_frame_parts(), Vec3::new(BELL_POS.x, 0.0, BELL_POS.y), BELL_YAW, Vec3::ONE, CastleKind::Always);
 
     // Torches temporarily removed (read as unnatural) — only the war-braziers light the gates for now.
     for (x, z, _rot) in gates() {
@@ -1655,16 +1674,16 @@ pub fn build(
         let perp = Vec3::new(-out.z, 0.0, out.x);
         for s in [-(half + 1.4), half + 1.4] {
             let p = Vec3::new(x, 0.0, z) + out * 3.2 + perp * s;
-            spawn(brazier_parts(), p, 0.0, Vec3::ONE, CastleKind::Gate);
+            spawn(Some("brazier"), brazier_parts(), p, 0.0, Vec3::ONE, CastleKind::Gate);
         }
     }
     // The settlement's working corners: woodpile, hay store, cart, draw-well. Permanent (`Always`)
     // — the courtyard never goes blank, walls or no walls. Tucked into the four courtyard corners
     // (±10, ±6), clear of the gates, the bell, the paths and every house slot.
-    spawn(wood_yard_parts(), Vec3::new(-10.0, 0.0, 6.0), 0.6, Vec3::ONE, CastleKind::Always);
-    spawn(hay_corner_parts(), Vec3::new(10.0, 0.0, 6.0), -0.5, Vec3::ONE, CastleKind::Always);
-    spawn(cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::Always);
-    spawn(well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::Always);
+    spawn(Some("wood_yard"), wood_yard_parts(), Vec3::new(-10.0, 0.0, 6.0), 0.6, Vec3::ONE, CastleKind::Always);
+    spawn(Some("hay_corner"), hay_corner_parts(), Vec3::new(10.0, 0.0, 6.0), -0.5, Vec3::ONE, CastleKind::Always);
+    spawn(Some("cart_corner"), cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::Always);
+    spawn(Some("well"), well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::Always);
 
     // The bell's live swinging half (bronze + clapper/rope) — separate hinged entities, after the
     // last `spawn` closure call so the `commands`/`meshes` borrows are free again.
@@ -1751,9 +1770,14 @@ pub fn build(
             set[((r.f() * set.len() as f32) as usize).min(set.len() - 1)].clone()
         };
         let sprig = |x: f32, z: f32, mesh: Handle<Mesh>, s: f32, r: &mut Rng, commands: &mut Commands| {
+            let model = crate::blenderenv::get().map(|env| {
+                let v = (x.to_bits() ^ z.to_bits().rotate_left(7)) % 3;
+                let name = match v { 0 => "grass_a", 1 => "grass_b", _ => "grass_c" };
+                env.model(name).unwrap_or_else(|| panic!("missing Blender courtyard grass {name}"))
+            });
             commands.spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(cover_mat.clone()),
+                Mesh3d(model.map_or(mesh, |m| m.mesh.clone())),
+                MeshMaterial3d(model.map_or_else(|| cover_mat.clone(), |m| m.mat.clone())),
                 Transform {
                     translation: Vec3::new(x, 0.02, z),
                     rotation: Quat::from_rotation_y(r.f() * std::f32::consts::TAU),

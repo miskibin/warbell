@@ -31,6 +31,9 @@ mod biome_rocky;
 mod biome_snow;
 mod biome_swamp;
 mod blendertrees; // FOREST_BLENDERTREES=1: Blender-authored forest tree A/B study
+mod blenderenv; // FOREST_BLENDERWORLD=1: shared Blender campaign architecture and props
+mod blenderground; // Blender-authored surface textures and natural scatter
+mod forest_slice; // FOREST_FORESTSLICE=1: isolated Blender-composed forest art study
 mod blockers;
 mod boats;
 mod boss;
@@ -136,7 +139,7 @@ mod wind;
 mod window_icon;
 mod worldmap;
 
-use bevy::audio::{AudioPlugin, SpatialScale};
+use bevy::audio::{AudioPlugin, GlobalVolume, SpatialScale, Volume};
 use bevy::prelude::*;
 
 fn main() {
@@ -202,7 +205,10 @@ fn main() {
                 // Shrink the world→audio distance scale so spatial falloff is gentle enough
                 // that animals within `audio::AUDIBLE_RANGE` are actually audible (at scale
                 // 1.0 a 30-unit distance is near-silent). Tune alongside per-species volume.
-                .set(AudioPlugin { default_spatial_scale: SpatialScale::new(0.15), ..default() });
+                .set(AudioPlugin {
+                    default_spatial_scale: SpatialScale::new(0.15),
+                    global_volume: GlobalVolume::new(Volume::Linear(if audio::harness_muted() { 0.0 } else { 1.0 })),
+                });
     let mut app = App::new();
     if headless_verify {
         // Exercise the same world and simulation systems without GPU pipeline compilation.
@@ -323,6 +329,9 @@ fn main() {
         // `Plugins` arity-15 cap, and appending to one is what broke the build first try.
         .add_plugins(phototrees::PhotoTreesPlugin)
         .add_plugins(blendertrees::BlenderTreesPlugin)
+        .add_plugins(blenderenv::BlenderEnvPlugin)
+        .add_plugins(blenderground::BlenderGroundPlugin)
+        .add_plugins(forest_slice::ForestSlicePlugin)
         // Cinematic atmospherics post pass (height fog + sun in-scatter + cloud light patches).
         // Toggled per-preset alongside god-rays in quality.rs; same custom-post-pass family.
         .add_plugins(atmospherics::AtmosphericsPlugin)

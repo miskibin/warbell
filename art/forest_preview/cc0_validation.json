@@ -1,0 +1,966 @@
+{
+  "schema": "warbell.forest_slice_cc0_validation.v1",
+  "pass": true,
+  "layout_sha256": "f231b3485da342396523c88f027767b9d6093ff84f60d4bc63a32deba98e58b8",
+  "instance_counts": {
+    "cc0_dandelion_a": 82,
+    "cc0_grass_patch_a": 456,
+    "cc0_grass_patch_b": 502,
+    "cc0_heliophila_a": 81,
+    "cc0_moss_rock_a": 12,
+    "cc0_moss_rock_b": 12,
+    "cc0_shrub_patch_a": 104,
+    "cc0_stump_a": 6,
+    "island_tree_01_optimized": 3,
+    "tree_small_02_optimized": 38
+  },
+  "models": [
+    {
+      "file": "assets/models/forest_slice/cc0/cc0_dandelion_a.glb",
+      "sha256": "a29854fea1755c1fcab92c160d3e50e06600beff59f0ee6a20724cda7f98889b",
+      "bytes": 3443684,
+      "triangles": 7864,
+      "meshes": [
+        {
+          "name": "cc0_dandelion_a",
+          "vertices": 5568,
+          "triangles": 7864,
+          "min": [
+            -0.2662832736968994,
+            0.0,
+            -0.24744734168052673
+          ],
+          "max": [
+            0.3127707242965698,
+            0.1315431445837021,
+            0.21529731154441833
+          ],
+          "material": 0
+        }
+      ],
+      "images": [
+        {
+          "name": "dandelion_01_nor_gl_1k",
+          "bytes": 1086589,
+          "sha256": "52de74a29c34919906100277706e915a935d3f63c25c0ebb2637242db5feb1e2",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "dandelion_01_diff_alpha_1k",
+          "bytes": 1021237,
+          "sha256": "09de04eeac54b775918cc2a6c05b3bedb8e4c383da58e39ead1f503ba5087cf4",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.5106897354125977
+        },
+        {
+          "name": "dandelion_01_arm_1k",
+          "bytes": 1019440,
+          "sha256": "f2ba5c0880f9963c20bc82820c436d4ed7b9933474d4c39ff031d03aface1173",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "dandelion_01",
+          "alpha_mode": "MASK",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/cc0_grass_patch_a.glb",
+      "sha256": "84a5ae25fd05d2b18fdd78c44dc3e29b4bb1e1e53086e8a830118212962c1279",
+      "bytes": 4666556,
+      "triangles": 6088,
+      "meshes": [
+        {
+          "name": "cc0_grass_patch_a",
+          "vertices": 6974,
+          "triangles": 6088,
+          "min": [
+            -0.4969911575317383,
+            0.0,
+            -0.4126761555671692
+          ],
+          "max": [
+            0.4657333493232727,
+            0.36587613821029663,
+            0.3818777799606323
+          ],
+          "material": 0
+        }
+      ],
+      "images": [
+        {
+          "name": "grass_medium_01_nor_gl_1k",
+          "bytes": 1916837,
+          "sha256": "d66d648be5f5d08c185c84c5b0f5ad2599f8fb1fe5ddae86958f794887b1e7f3",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "grass_medium_01_diff_alpha_1k",
+          "bytes": 999363,
+          "sha256": "beb4591e0063d52d9b33d8a4b79a6d54fae38241aad60e4b232dfd2d1c6b4a41",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.8409557342529297
+        },
+        {
+          "name": "grass_medium_01_arm_1k",
+          "bytes": 1377092,
+          "sha256": "45695f640afcfc95ac509dd8675705d21e6140f21a18da74843e68cd5b981be2",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "grass_medium_01",
+          "alpha_mode": "MASK",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/cc0_grass_patch_b.glb",
+      "sha256": "ed5d16b45f09fddaf3e8b9203543b154e2fe4e5c2ad5f9b397c94b07d5c90723",
+      "bytes": 4666556,
+      "triangles": 6088,
+      "meshes": [
+        {
+          "name": "cc0_grass_patch_b",
+          "vertices": 6974,
+          "triangles": 6088,
+          "min": [
+            -0.46775156259536743,
+            0.0,
+            -0.3930842876434326
+          ],
+          "max": [
+            0.45979970693588257,
+            0.37470710277557373,
+            0.4794865846633911
+          ],
+          "material": 0
+        }
+      ],
+      "images": [
+        {
+          "name": "grass_medium_01_nor_gl_1k",
+          "bytes": 1916837,
+          "sha256": "d66d648be5f5d08c185c84c5b0f5ad2599f8fb1fe5ddae86958f794887b1e7f3",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "grass_medium_01_diff_alpha_1k",
+          "bytes": 999363,
+          "sha256": "beb4591e0063d52d9b33d8a4b79a6d54fae38241aad60e4b232dfd2d1c6b4a41",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.8409557342529297
+        },
+        {
+          "name": "grass_medium_01_arm_1k",
+          "bytes": 1377092,
+          "sha256": "45695f640afcfc95ac509dd8675705d21e6140f21a18da74843e68cd5b981be2",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "grass_medium_01",
+          "alpha_mode": "MASK",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/cc0_heliophila_a.glb",
+      "sha256": "b654fb4f39176e9efb78c98dd4933c5cea0949e4909783c6985f50f42606d749",
+      "bytes": 4077668,
+      "triangles": 15604,
+      "meshes": [
+        {
+          "name": "cc0_heliophila_a",
+          "vertices": 13694,
+          "triangles": 15604,
+          "min": [
+            -0.34980443120002747,
+            0.0,
+            -0.3176947832107544
+          ],
+          "max": [
+            0.3637440502643585,
+            0.3975839614868164,
+            0.31680718064308167
+          ],
+          "material": 0
+        }
+      ],
+      "images": [
+        {
+          "name": "flower_heliophila_nor_gl_1k",
+          "bytes": 1250028,
+          "sha256": "102f9c60054b7cdfab6f7951729c49503bb142dc36d56bdc1190055093e1c2a7",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "flower_heliophila_diff_alpha_1k",
+          "bytes": 1004540,
+          "sha256": "fe16d334a584147c0c9cd50ba372a5fb50c0414b4e0751cee4f5486c44a47444",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.06753253936767578
+        },
+        {
+          "name": "flower_heliophila_arm_1k",
+          "bytes": 1070166,
+          "sha256": "310a4cef8a4203003fdf6adee18f1652d27eaab3b6769d4b14ae86cc35e93832",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "flower_heliophila",
+          "alpha_mode": "MASK",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/cc0_moss_rock_a.glb",
+      "sha256": "7cce0c235c1bd1850fbc89c3365a405c1a456d636b525f4ccb9a38c51c93afec",
+      "bytes": 2911904,
+      "triangles": 4100,
+      "meshes": [
+        {
+          "name": "cc0_moss_rock_a",
+          "vertices": 2294,
+          "triangles": 4100,
+          "min": [
+            -0.3868398666381836,
+            -0.0001883710501715541,
+            -0.38897550106048584
+          ],
+          "max": [
+            0.41442152857780457,
+            0.41788387298583984,
+            0.40126705169677734
+          ],
+          "material": 0
+        }
+      ],
+      "images": [
+        {
+          "name": "rock_moss_set_01_nor_gl_1k",
+          "bytes": 1376703,
+          "sha256": "39ca8da0ba0159a294fc64b5967bb156a36cd5f7a59e5bda4532c96b828bab55",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "rock_moss_set_01_diff_1k",
+          "bytes": 1038880,
+          "sha256": "7b10e39a0a4494758ac1f8931f4f22b6f0020d8d4e6f36ecf58f697afd3f2d2f",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "rock_moss_set_01_rough_1k",
+          "bytes": 359664,
+          "sha256": "fe9969648c42b25d67c1a8611a52d935b2e86112fa0860c8423cfa4436086a9e",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "rock_moss_set_01",
+          "alpha_mode": "OPAQUE",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/cc0_moss_rock_b.glb",
+      "sha256": "c0ae471677876d4fb881a0f14df7926c5873a9f4f05af780f6d63226dc5769bb",
+      "bytes": 2956544,
+      "triangles": 5576,
+      "meshes": [
+        {
+          "name": "cc0_moss_rock_b",
+          "vertices": 3040,
+          "triangles": 5576,
+          "min": [
+            -0.40826424956321716,
+            0.0,
+            -0.503470778465271
+          ],
+          "max": [
+            0.31456971168518066,
+            0.4290299415588379,
+            0.4342333674430847
+          ],
+          "material": 0
+        }
+      ],
+      "images": [
+        {
+          "name": "rock_moss_set_01_nor_gl_1k",
+          "bytes": 1376703,
+          "sha256": "39ca8da0ba0159a294fc64b5967bb156a36cd5f7a59e5bda4532c96b828bab55",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "rock_moss_set_01_diff_1k",
+          "bytes": 1038880,
+          "sha256": "7b10e39a0a4494758ac1f8931f4f22b6f0020d8d4e6f36ecf58f697afd3f2d2f",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "rock_moss_set_01_rough_1k",
+          "bytes": 359664,
+          "sha256": "fe9969648c42b25d67c1a8611a52d935b2e86112fa0860c8423cfa4436086a9e",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "rock_moss_set_01",
+          "alpha_mode": "OPAQUE",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/cc0_shrub_patch_a.glb",
+      "sha256": "9cab86405e76140a7884854c11638c0fb2dd05e15fbeb3c8217dd916d94971bd",
+      "bytes": 3559624,
+      "triangles": 8287,
+      "meshes": [
+        {
+          "name": "cc0_shrub_patch_a",
+          "vertices": 6084,
+          "triangles": 8287,
+          "min": [
+            -0.2219444215297699,
+            0.0,
+            -0.26248154044151306
+          ],
+          "max": [
+            0.34426605701446533,
+            0.5840365290641785,
+            0.25483256578445435
+          ],
+          "material": 0
+        }
+      ],
+      "images": [
+        {
+          "name": "shrub_03_nor_gl_1k",
+          "bytes": 1106934,
+          "sha256": "1ba8a32ee3ffcdaaf3275b5bac48301642b8a7ad8033afb9768ede8656a389f2",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "shrub_03_diff_alpha_1k",
+          "bytes": 1238141,
+          "sha256": "e1f476554f8dabda25c4c814f958e3fa1e51dba9e2010c7c0705050644f7e118",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.7492485046386719
+        },
+        {
+          "name": "shrub_03_arm_1k",
+          "bytes": 870836,
+          "sha256": "8509bf844e7c8ff333211f7f69abb5551759f6e7881bd2630b82c1bd85220c0d",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "shrub_03",
+          "alpha_mode": "MASK",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/cc0_stump_a.glb",
+      "sha256": "5f9258101165843e74a43184e46ad2b20ccadf8a71bfb8ec845e16969da805a5",
+      "bytes": 6511404,
+      "triangles": 17239,
+      "meshes": [
+        {
+          "name": "cc0_stump_a",
+          "vertices": 10351,
+          "triangles": 17239,
+          "min": [
+            -0.6433771252632141,
+            0.00014021102106198668,
+            -0.6235063076019287
+          ],
+          "max": [
+            0.5257274508476257,
+            0.4694768786430359,
+            0.680448055267334
+          ],
+          "material": 0
+        }
+      ],
+      "images": [
+        {
+          "name": "tree_stump_01_nor_gl_1k",
+          "bytes": 2280773,
+          "sha256": "1036aeb21e0a9126340161384dacfcac44c19f403b18e28eee9450dc672d1be6",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_stump_01_diff_1k",
+          "bytes": 1944492,
+          "sha256": "ef851b7615099d25d34efc5bdbf53d5d68c3b1f3865eda95ff805b0ea7fadac9",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_stump_01_arm_1k",
+          "bytes": 1683924,
+          "sha256": "a6d4c98a41096c9c764a85df796d1ffee0a6d1fe1ba1309671b90d65bc442b2b",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "tree_stump_01",
+          "alpha_mode": "OPAQUE",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/island_tree_01_optimized.glb",
+      "sha256": "3513eecacf1b339faee2c8b73d475b3300f0b44201dbfe4ccc28a71cbc74823d",
+      "bytes": 40956300,
+      "triangles": 439378,
+      "meshes": [
+        {
+          "name": "island_trees_01_blockout_cleaned",
+          "vertices": 157677,
+          "triangles": 176603,
+          "min": [
+            -4.002246379852295,
+            1.1635562181472778,
+            -4.397637367248535
+          ],
+          "max": [
+            4.073229789733887,
+            8.600997924804688,
+            3.806307554244995
+          ],
+          "material": 0
+        },
+        {
+          "name": "island_trees_01_blockout_cleaned.001",
+          "vertices": 16723,
+          "triangles": 29568,
+          "min": [
+            -2.4706757068634033,
+            0.0,
+            -2.9963016510009766
+          ],
+          "max": [
+            2.9826443195343018,
+            6.1967597007751465,
+            2.171360731124878
+          ],
+          "material": 1
+        },
+        {
+          "name": "island_trees_01_blockout_cleaned.002",
+          "vertices": 321365,
+          "triangles": 233207,
+          "min": [
+            -4.057509899139404,
+            1.1254632472991943,
+            -4.471019744873047
+          ],
+          "max": [
+            4.172025203704834,
+            8.700000762939453,
+            3.86739182472229
+          ],
+          "material": 2
+        }
+      ],
+      "images": [
+        {
+          "name": "island_tree_01_branches_nor_gl_1k",
+          "bytes": 1750428,
+          "sha256": "d922a23ab255f6ba2516beee87028f9f1406162dcbf0a5070f51cbb6aa2b03f3",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_branches_diff_1k",
+          "bytes": 1178677,
+          "sha256": "b2e0876ee36c0e1899e802ea594b7c0de97f0d662041519aeefec0f863f70916",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_branches_arm_1k",
+          "bytes": 1185335,
+          "sha256": "5b7df9cc93b89ee4d1d1161f13c3ef1e5d8a6c07ba44a6e05065969f29d71334",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_nor_gl_1k",
+          "bytes": 2246610,
+          "sha256": "afe3bfd6f362b08532fc8b991072a247ce52741ca3d8557c66460e6be39c30e9",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_diff_1k",
+          "bytes": 1700518,
+          "sha256": "96c745e18678d7f34db9dcb61f32af0033b8d2749efa73b777831c25d35e1e90",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_arm_1k",
+          "bytes": 1500105,
+          "sha256": "5dc5be614f86d06bb56e505626dbf8eb97fc4766229ada6aa941f8e2b6e66673",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_leaves_nor_gl_1k",
+          "bytes": 1022409,
+          "sha256": "6c68c366666cf9a48f8d35cf7db479b2d664b01d7ea9b1eef50884a203fbbe76",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "island_tree_01_leaves_rgba_1k",
+          "bytes": 437307,
+          "sha256": "512199b980d6d1d3110d66342fe856fcdd699bfdd3e5fbcd62a8762ac07a44c5",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.7493991851806641
+        },
+        {
+          "name": "island_tree_01_leaves_arm_1k",
+          "bytes": 1037043,
+          "sha256": "8dd201f1379e0ec798d400aef7c2e6e77b4117a7fb9020aadb02e3f049e34e95",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "island_tree_01_branches",
+          "alpha_mode": "OPAQUE",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        },
+        {
+          "name": "island_tree_01",
+          "alpha_mode": "OPAQUE",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        },
+        {
+          "name": "island_tree_01_leaves",
+          "alpha_mode": "MASK",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    },
+    {
+      "file": "assets/models/forest_slice/cc0/tree_small_02_optimized.glb",
+      "sha256": "3138fa8cde83ca82a31ee98abf1bd7284f7b3c9bc9a5ff1850fad842c6dcc2b3",
+      "bytes": 32261676,
+      "triangles": 164608,
+      "meshes": [
+        {
+          "name": "BezierCurve.002",
+          "vertices": 11641,
+          "triangles": 19803,
+          "min": [
+            -1.3435745239257812,
+            0.0,
+            -0.6900638937950134
+          ],
+          "max": [
+            1.6329777240753174,
+            6.474916458129883,
+            3.375678777694702
+          ],
+          "material": 0
+        },
+        {
+          "name": "BezierCurve.001",
+          "vertices": 22735,
+          "triangles": 28443,
+          "min": [
+            -1.9221285581588745,
+            2.945648670196533,
+            -2.2170801162719727
+          ],
+          "max": [
+            2.489924192428589,
+            7.75250244140625,
+            4.785872936248779
+          ],
+          "material": 1
+        },
+        {
+          "name": "BezierCurve.003",
+          "vertices": 277976,
+          "triangles": 116362,
+          "min": [
+            -2.303753137588501,
+            2.6078550815582275,
+            -2.416120767593384
+          ],
+          "max": [
+            2.817439317703247,
+            8.0,
+            5.0880842208862305
+          ],
+          "material": 2
+        }
+      ],
+      "images": [
+        {
+          "name": "tree_small_02_nor_gl_1k",
+          "bytes": 2301379,
+          "sha256": "5db0a7ef1b5c31a5effac2f49da137be7d409638c88d38182b4b48dd1552b22f",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_diff_1k",
+          "bytes": 1849511,
+          "sha256": "8099fc8ba0ca97d9c58b896c548b2bb99e5d9766d3dcf9487091af4e47e793b9",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_arm_1k",
+          "bytes": 1547139,
+          "sha256": "e054ac1fc2cc0d1bb44c03905c342917b20401e2d5ef23d7053ea29cb3be1489",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_branch_nor_gl_1k",
+          "bytes": 1422442,
+          "sha256": "a5f80035bf6396b474fa90fc12973369f1f396767ec8ba96a642d968f41ba00a",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_branch_diff_1k",
+          "bytes": 1139930,
+          "sha256": "593510cb3ed2944c5c771fac3faf916e96acb1bce2f918722ddc19344cfd045f",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_branch_arm_1k",
+          "bytes": 1009595,
+          "sha256": "2f5b9e61f063db4cebbae5722d983a6aa30ec5f4d8d4da56e1e2469b8f4b9f9e",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_leaves_nor_gl_1k",
+          "bytes": 1540599,
+          "sha256": "afebbbe75c001b311126874f96cb5095b9352b22defa9a2c025aca4f53333eb1",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        },
+        {
+          "name": "tree_small_02_leaves_rgba_1k",
+          "bytes": 851945,
+          "sha256": "57e138ddc4bdcc59a07dba9aac258d9a91f0110b1fa37a6be58c5cc940f243e2",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 0,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.46498775482177734
+        },
+        {
+          "name": "tree_small_02_leaves_arm_1k",
+          "bytes": 1415380,
+          "sha256": "4160f1664ec3700189b4f454ae1787c433265b9e95e47a1f884caedc3ca0a3d1",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "alpha_min": 255,
+          "alpha_max": 255,
+          "alpha_below_half_fraction": 0.0
+        }
+      ],
+      "materials": [
+        {
+          "name": "tree_small_02_trunk",
+          "alpha_mode": "OPAQUE",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        },
+        {
+          "name": "tree_small_02_branches",
+          "alpha_mode": "OPAQUE",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        },
+        {
+          "name": "tree_small_02_leaves",
+          "alpha_mode": "MASK",
+          "double_sided": true,
+          "normal_map": true,
+          "base_texture": true
+        }
+      ]
+    }
+  ],
+  "issues": []
+}

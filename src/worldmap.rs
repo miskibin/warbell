@@ -2820,7 +2820,7 @@ pub fn build_step(
         24 => crate::vignettes::populate_vignettes(commands, meshes, std_mats),
         25 => crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats),
         26 => crate::bridges::populate(commands, meshes, std_mats),
-        27 => crate::distant_isles::build(commands, meshes, std_mats),
+        27 => crate::distant_isles::build(commands, meshes, images, std_mats, terrain_mats),
         28 => crate::rival::build(commands, meshes, images, std_mats),
         // (29 was bs_swamp_pools — flat teal water discs, removed: read as ugly "plates"; real
         // carved pools also dropped — too small, the water shader foamed them solid white.)
@@ -3077,14 +3077,18 @@ fn bs_insert_ambiences(commands: &mut Commands, state: &mut BuildState) {
 
 /// Snow drifts banked against terrace walls where a snow tile abuts a higher neighbour.
 fn bs_snow_drifts(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+    let studio_drift = if crate::blenderground::enabled() && !is_arena() {
+        crate::blenderenv::get().and_then(|env| env.model("snowdrift_a"))
+    } else { None };
     let drift_mat = std_mats.add(StandardMaterial {
         base_color: Color::WHITE, // vertex colour carries the hue (mesh contract)
         perceptual_roughness: 0.62,
         reflectance: 0.5,
         ..default()
     });
-    let drift_meshes: Vec<Handle<Mesh>> =
-        (0..3).map(|v| meshes.add(crate::biome_snow::build_mound_mesh(v))).collect();
+    let drift_meshes: Vec<Handle<Mesh>> = if studio_drift.is_some() { Vec::new() } else {
+        (0..3).map(|v| meshes.add(crate::biome_snow::build_mound_mesh(v))).collect()
+    };
     for iz in 0..ROWS {
         for ix in 0..COLS {
             let Some((TB::Snow, h)) = tile_at(ix, iz) else { continue };
@@ -3101,9 +3105,14 @@ fn bs_snow_drifts(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
                     continue; // keep drift mounds off the plank decks
                 }
                 let v = (rng.next() * 3.0) as u32;
+                let (visual_mesh, visual_mat) = if let Some(model) = studio_drift {
+                    (model.mesh.clone(), model.mat.clone())
+                } else {
+                    (drift_meshes[(v % 3) as usize].clone(), drift_mat.clone())
+                };
                 commands.spawn((
-                    Mesh3d(drift_meshes[(v % 3) as usize].clone()),
-                    MeshMaterial3d(drift_mat.clone()),
+                    Mesh3d(visual_mesh),
+                    MeshMaterial3d(visual_mat),
                     Transform {
                         translation: Vec3::new(wx, tile_top_y_world(wx, wz), wz),
                         rotation: Quat::from_rotation_y(rng.next() as f32 * std::f32::consts::TAU),
@@ -3644,6 +3653,36 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 ]);
             }
         }
+        // Studio surface mode shades the same authored cliff geometry continuously. The
+        // original per-triangle normals deliberately expose every polygon; with the new
+        // Blender rock normal/albedo bake they read as plastic facets. Average adjoining
+        // triangle normals at each lattice vertex while retaining the exact positions,
+        // collision height classes and cliff silhouettes.
+        let studio = crate::blenderground::enabled() && !is_arena();
+        let mut smooth_n = vec![[0.0f32; 3]; grid.len()];
+        if studio {
+            for ci in 0..NC {
+                for rj in 0..nrows - 1 {
+                    let ia = ci * nrows + rj;
+                    let ib = (ci + 1) * nrows + rj;
+                    let ic = (ci + 1) * nrows + rj + 1;
+                    let id = ci * nrows + rj + 1;
+                    for tri in [[ia, ib, ic], [ia, ic, id]] {
+                        let p0 = grid[tri[0]];
+                        let p1 = grid[tri[1]];
+                        let p2 = grid[tri[2]];
+                        let e1 = Vec3::from_array(p1) - Vec3::from_array(p0);
+                        let e2 = Vec3::from_array(p2) - Vec3::from_array(p0);
+                        let normal = e1.cross(e2).normalize_or_zero();
+                        for &vi in &tri {
+                            smooth_n[vi][0] += normal.x;
+                            smooth_n[vi][1] += normal.y;
+                            smooth_n[vi][2] += normal.z;
+                        }
+                    }
+                }
+            }
+        }
         // Flat-shaded facet triangles — the crisp low-poly crag look (per-face normals from
         // the displaced geometry, matching the outward winding of the old wall quad).
         for ci in 0..NC {
@@ -3667,7 +3706,13 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                     let b = pos.len() as u32;
                     for &vi in &tri {
                         pos.push(grid[vi]);
-                        nrm.push(fnrm);
+                        if studio {
+                            let v = Vec3::from_array(smooth_n[vi]).normalize_or_zero();
+                            let s = (v * 0.86 + Vec3::from_array(n) * 0.14).normalize_or_zero();
+                            nrm.push(s.to_array());
+                        } else {
+                            nrm.push(fnrm);
+                        }
                         col.push(gcol[vi]);
                     }
                     idx.extend_from_slice(&[b, b + 1, b + 2]);

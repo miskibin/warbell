@@ -1,0 +1,49 @@
+{
+  "schema": "warbell.forest.art_review.v1",
+  "technical_validation_pass": true,
+  "art_approval": "pending",
+  "reference_visual_match": "not_achieved",
+  "performance_acceptance": "not_evaluated",
+  "motion_quality": "not_evaluated",
+  "main_base": "fb308c89adc993684c57773059f2c4ceadf9c17e",
+  "exe_sha256": "de146046dc45773a8db40ccf6de712dcc4a1c7d1e39b139e4a998dc2aa0d42ee",
+  "source_sha256": "525830815c32b966c45650c03ea5df108ffda3aad93833273012c6b6cf487178",
+  "layout_sha256": "f231b3485da342396523c88f027767b9d6093ff84f60d4bc63a32deba98e58b8",
+  "blender_scene_sha256": "e825184435dc97f99f617739afec82d2f6611c588d03337628381e341368cd07",
+  "instances": 3433,
+  "cc0_glb_count": 10,
+  "core_tests": {
+    "unit_passed": 325,
+    "integration_passed": 1
+  },
+  "captures": [
+    {
+      "file": "overview.png",
+      "sha256": "3a89f1800724e2b7df0423c75eded2e4dc645475d9bc90296fa0f4d2922c521b",
+      "run_record": "overview.json",
+      "settings": {
+        "quality": "ultra",
+        "exposure": "9.55",
+        "sky_lux": "1050",
+        "TAA": true,
+        "audio_playback_disabled": true
+      },
+      "exit_code": 0,
+      "errors": []
+    },
+    {
+      "file": "detail.png",
+      "sha256": "62c951eb64ef4b3fda513e0cef7bbfe16b02ed2190ab894f85674b36e8a3c34f",
+      "run_record": "detail.json",
+      "settings": {
+        "quality": "ultra",
+        "exposure": "9.55",
+        "sky_lux": "1050",
+        "TAA": true,
+        "audio_playback_disabled": true
+      },
+      "exit_code": 0,
+      "errors": []
+    }
+  ]
+}

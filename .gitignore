@@ -40,5 +40,12 @@
 # Profiling captures (trace_chrome writes multi-GB JSON; parsed by tools/trace_summary.py)
 trace-*.json
 
+# Local Python/Blender authoring scratch; source, manifests and final exports are tracked.
+__pycache__/
+*.py[cod]
+*.blend[0-9]
+/art/blender_environment/*.log
+/art/forest_preview/*.log
+
 # Brainstorming visual-companion mockups (local only)
 .superpowers/

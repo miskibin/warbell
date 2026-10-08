@@ -628,13 +628,22 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             DeckKind::Bridge => deck_mesh(s.half, seed),
             DeckKind::Boardwalk => boardwalk_mesh(s.half, seed),
         };
+        let model = crate::blenderenv::get().map(|env| {
+            let name = match s.kind { DeckKind::Bridge => "bridge_wood", DeckKind::Boardwalk => "bridge_boardwalk" };
+            env.model(name).unwrap_or_else(|| panic!("missing Blender bridge model {name}"))
+        });
+        let asset_scale = model.map_or(Vec3::ONE, |m| Vec3::new(
+            2.0 * s.half / (m.bounds_max.x - m.bounds_min.x).max(0.01),
+            1.0,
+            2.0 * s.half_z / (m.bounds_max.z - m.bounds_min.z).max(0.01),
+        ));
         commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(model.map_or_else(|| meshes.add(mesh), |m| m.mesh.clone())),
+            MeshMaterial3d(model.map_or_else(|| mat.clone(), |m| m.mat.clone())),
             Transform {
                 translation: Vec3::new(s.cx, s.base_y + 0.2, s.cz),
                 rotation: rot,
-                ..default()
+                scale: asset_scale,
             },
             BiomeEntity,
         ));

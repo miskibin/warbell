@@ -635,7 +635,7 @@ pub fn populate_plots(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: 
     let mut spots = Vec::with_capacity(PLOT_COUNT);
     for (idx, off) in PLOT_OFFSETS.iter().enumerate() {
         spots.push(*off);
-        spawn_textured(commands, meshes, mats, BuildPlot { idx }, crate::town_meshes::plot_parts(), *off);
+        spawn_textured(commands, meshes, mats, BuildPlot { idx }, "plot", crate::town_meshes::plot_parts(), *off);
     }
     commands.insert_resource(PlotSpots(spots));
 }
@@ -656,6 +656,7 @@ fn spawn_textured(
     meshes: &mut Assets<Mesh>,
     mats: &Mats,
     tag: impl Bundle,
+    model_name: &str,
     parts: Vec<(Mesh, M)>,
     pos: Vec2,
 ) -> Entity {
@@ -664,8 +665,13 @@ fn spawn_textured(
         .spawn((Transform::from_xyz(pos.x, y, pos.y), Visibility::Visible, crate::biome::BiomeEntity, tag))
         .id();
     commands.entity(parent).with_children(|p| {
-        for (mesh, m) in parts {
-            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(m)), Transform::default()));
+        if let Some(env) = crate::blenderenv::get() {
+            let model = env.model(model_name).unwrap_or_else(|| panic!("missing Blender town model {model_name}"));
+            p.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()), Transform::default()));
+        } else {
+            for (mesh, m) in parts {
+                p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(m)), Transform::default()));
+            }
         }
     });
     parent
@@ -1610,7 +1616,7 @@ fn sync_house_site_pad(
             None => *vis = Visibility::Hidden, // all twelve dwellings stand
         }
     } else if let (Some(p), Some(mats)) = (site, mats) {
-        spawn_textured(&mut commands, &mut meshes, &mats.0, HouseSitePad, crate::town_meshes::house_site_parts(), p);
+        spawn_textured(&mut commands, &mut meshes, &mats.0, HouseSitePad, "house_site", crate::town_meshes::house_site_parts(), p);
     }
 }
 
@@ -1623,7 +1629,8 @@ fn spawn_building(
     spots: &PlotSpots,
 ) {
     let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
-    let parent = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, building_parts(kind), pos);
+    let model_name = match kind { BuildKind::Farm => "farm", BuildKind::Lumber => "sawmill", BuildKind::Mine => "mine" };
+    let parent = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, model_name, building_parts(kind), pos);
     // Construction feedback: the fresh building pops up out of its plot on a kick of dust
     // (build_fx). Re-insert the parent transform pre-shrunk so it never flashes full-size.
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
@@ -1647,7 +1654,11 @@ fn spawn_building(
 fn spawn_rubble(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats, idx: usize,
     kind: Option<BuildKind>, spots: &PlotSpots) {
     let Some(pos) = spots.0.get(idx).copied() else { return };
-    let root = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, crate::town_meshes::rubble_parts(kind), pos);
+    let model_name = match kind {
+        Some(BuildKind::Farm) => "rubble_farm", Some(BuildKind::Lumber) => "rubble_sawmill",
+        Some(BuildKind::Mine) => "rubble_mine", None => "rubble_farm",
+    };
+    let root = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, model_name, crate::town_meshes::rubble_parts(kind), pos);
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
     let b = crate::castle::WORLD_BUMP;
     commands.entity(root).try_insert(Transform::from_xyz(pos.x, y, pos.y)

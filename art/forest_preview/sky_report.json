@@ -1,0 +1,27 @@
+{
+  "schema": "warbell.forest_slice_sky.v1",
+  "source_page": "https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky",
+  "license": "CC0-1.0",
+  "authors": [
+    "Greg Zaal",
+    "Jarod Guest"
+  ],
+  "source_sha256": "5244534e9cf5b606f2ff513aa00ddb161b0a4826ffd88a0d3bd03ac29247d198",
+  "output_sha256": "f58d020835fe6ff5abef7d8c366d4a7a25fae31fb7e37cb4cd2d4845542e0f8a",
+  "format": "RGBA16Float little endian, +X -X +Y -Y +Z -Z",
+  "face_size": 512,
+  "bytes": 12582912,
+  "radiance_gain": 0.762703998209811,
+  "radiance_clamp": 8,
+  "skybox_brightness": 1800,
+  "source_panorama_dimensions": [
+    2048,
+    1024
+  ],
+  "world_sun_direction": [
+    -0.6507971946388644,
+    0.7419804117208311,
+    -0.16102198630239936
+  ],
+  "method": "Bilinear equirectangular-to-cubemap projection, yaw aligned to upper-left key light; upper-hemisphere luminance p95 normalized to 0.85."
+}

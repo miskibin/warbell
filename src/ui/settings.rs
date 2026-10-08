@@ -241,7 +241,7 @@ fn sync_mute(
     mut sinks: Query<&mut AudioSink>,
     mut spatial: Query<&mut SpatialAudioSink>,
 ) {
-    let want = settings.muted || settings.unfocused;
+    let want = crate::audio::harness_muted() || settings.muted || settings.unfocused;
     for mut s in &mut sinks {
         if s.is_muted() != want {
             if want {
@@ -280,7 +280,7 @@ fn apply_audio_volumes(
         base.ambience = cfg.ambience_vol;
         base.captured = true;
     }
-    let master = settings.master.clamp(0.0, 1.0);
+    let master = if crate::audio::harness_muted() { 0.0 } else { settings.master.clamp(0.0, 1.0) };
     let sfx = master * settings.sfx.clamp(0.0, 1.0);
     cfg.music_vol = base.music * master * settings.music.clamp(0.0, 1.0);
     cfg.sfx_vol = base.sfx * sfx;

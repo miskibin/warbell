@@ -207,10 +207,22 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     //    and stay solid.
     const MIN_SOLID: f32 = 0.08;
     const MIN_SOLID_AREA: f32 = 0.09;
-    let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
+    let mut set = |name: &str, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
         let vis = if matches!(gate, DecorGate::Always) { Visibility::Inherited } else { Visibility::Hidden };
         let solid = (foot.x >= MIN_SOLID && foot.y >= MIN_SOLID && foot.x * foot.y >= MIN_SOLID_AREA)
             .then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
+        if let Some(env) = crate::blenderenv::get() {
+            let model = env.model(name).unwrap_or_else(|| panic!("missing Blender castle decor model {name}"));
+            let mut root = commands.spawn((Transform::default(), vis, Decor { gate },
+                crate::build_fx::RevealAt(pos), BiomeEntity));
+            if let Some(s) = solid { root.insert(s); }
+            let entity = root.id();
+            commands.entity(entity).with_children(|p| {
+                p.spawn((Mesh3d(model.mesh.clone()), MeshMaterial3d(model.mat.clone()),
+                    Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw))));
+            });
+            return;
+        }
         for (i, (m, slot)) in parts.into_iter().enumerate() {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(bake(m, pos, yaw, Vec3::ONE))),
@@ -232,58 +244,58 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
 
     // ── Day-one life (Always) ────────────────────────────────────────────────────
     // Furniture has tight footprints, while small posts remain visual-only so plaza lanes stay smooth.
-    set(notice_board_parts(), Vec3::new(-3.3, 0.0, 4.4), 0.35, DecorGate::Always, Vec2::ZERO);
-    set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::new(0.55, 0.25));
+    set("notice_board", notice_board_parts(), Vec3::new(-3.3, 0.0, 4.4), 0.35, DecorGate::Always, Vec2::ZERO);
+    set("trough", trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::new(0.55, 0.25));
     // (The old plaza market-goods pile lived here — removed; the merchant shop by the south gate
     // (`villagers::shop_parts`) is now the town's single market focal point.)
-    set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::new(0.60, 0.17));
+    set("bench", bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::new(0.60, 0.17));
     // A few lantern posts along the main lanes (thinned down — the bailey was getting busy).
     for (lx, lz, lyaw) in [
         (2.0, -6.6, 0.0),
         (-9.2, 2.0, -HALF_PI),
         (9.2, -2.0, HALF_PI),
     ] {
-        set(lantern_parts(), Vec3::new(lx, 0.0, lz), lyaw, DecorGate::Always, Vec2::new(0.14, 0.14));
+        set("lantern", lantern_parts(), Vec3::new(lx, 0.0, lz), lyaw, DecorGate::Always, Vec2::new(0.14, 0.14));
     }
 
     // ── Filled in as the town grows (House(n): shown once houses > n) ───────────
-    set(garden_parts(), Vec3::new(-4.2, 0.0, -9.4), 0.15, DecorGate::House(1), Vec2::ZERO);
-    set(woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
+    set("garden", garden_parts(), Vec3::new(-4.2, 0.0, -9.4), 0.15, DecorGate::House(1), Vec2::ZERO);
+    set("woodpile", woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
     // Laundry line = cloth hung overhead on a string between two thin posts — you walk UNDER it.
     // No collision (a 2.6-wide box across the lane just walls off the courtyard for no reason).
-    set(laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1), Vec2::ZERO);
+    set("laundry", laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1), Vec2::ZERO);
     // (Far-side duplicate garden + laundry cut — the bailey was over-dressed with junk stands.)
 
     // ── Upgrade set pieces ───────────────────────────────────────────────────────
     // The armory corner west of the plaza: racked spears + shields + a leather stand (tier 1),
     // extended with steel — sword rail + iron stand (tier 2). Arsenal unlocks join on display.
-    set(armory_parts(), Vec3::new(-8.6, 0.0, 3.0), 0.5, DecorGate::ArmsTier(1), Vec2::new(0.7, 0.3));
-    set(armory_veteran_parts(), Vec3::new(-8.2, 0.0, 4.9), 0.8, DecorGate::ArmsTier(2), Vec2::ZERO);
-    set(axe_display_parts(), Vec3::new(-6.9, 0.0, 6.3), 0.9, DecorGate::Weapon("axe"), Vec2::new(0.32, 0.25));
-    set(sword_display_parts(), Vec3::new(-7.9, 0.0, 7.6), 1.1, DecorGate::Weapon("sword_gold"), Vec2::new(0.3, 0.25));
-    set(grindstone_parts(), Vec3::new(-5.6, 0.0, 8.4), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::new(0.65, 0.40));
+    set("armory", armory_parts(), Vec3::new(-8.6, 0.0, 3.0), 0.5, DecorGate::ArmsTier(1), Vec2::new(0.7, 0.3));
+    set("armory_veteran", armory_veteran_parts(), Vec3::new(-8.2, 0.0, 4.9), 0.8, DecorGate::ArmsTier(2), Vec2::ZERO);
+    set("axe_display", axe_display_parts(), Vec3::new(-6.9, 0.0, 6.3), 0.9, DecorGate::Weapon("axe"), Vec2::new(0.32, 0.25));
+    set("sword_display", sword_display_parts(), Vec3::new(-7.9, 0.0, 7.6), 1.1, DecorGate::Weapon("sword_gold"), Vec2::new(0.3, 0.25));
+    set("grindstone", grindstone_parts(), Vec3::new(-5.6, 0.0, 8.4), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::new(0.65, 0.40));
 
     // Civic east side: the tax-collector's counting booth; the shrine the heal aura lives in.
-    set(tax_booth_parts(), Vec3::new(8.5, 0.0, 2.9), -0.6, DecorGate::TaxOffice, Vec2::new(0.65, 0.45));
-    set(shrine_parts(), Vec3::new(8.0, 0.0, -3.4), -0.8, DecorGate::Shrine, Vec2::new(0.4, 0.32));
+    set("tax_booth", tax_booth_parts(), Vec3::new(8.5, 0.0, 2.9), -0.6, DecorGate::TaxOffice, Vec2::new(0.65, 0.45));
+    set("shrine", shrine_parts(), Vec3::new(8.0, 0.0, -3.4), -0.8, DecorGate::Shrine, Vec2::new(0.4, 0.32));
 
     // Bounty board inside the north gate — wanted papers for the ork warlords.
-    set(bounty_board_parts(), Vec3::new(3.4, 0.0, -10.4), 0.1, DecorGate::Purchased("eco_bounty"), Vec2::ZERO);
+    set("bounty_board", bounty_board_parts(), Vec3::new(3.4, 0.0, -10.4), 0.1, DecorGate::Purchased("eco_bounty"), Vec2::ZERO);
 
     // Reinforced Keep: a mason's scaffold against the keep's west wall + dressed stone waiting.
-    set(scaffold_parts(), Vec3::new(-3.55, 0.0, 0.0), 0.0, DecorGate::Reinforced, Vec2::ZERO);
-    set(stone_pile_parts(), Vec3::new(-4.8, 0.0, 1.3), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.65));
+    set("scaffold", scaffold_parts(), Vec3::new(-3.55, 0.0, 0.0), 0.0, DecorGate::Reinforced, Vec2::ZERO);
+    set("stone_pile", stone_pile_parts(), Vec3::new(-4.8, 0.0, 1.3), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.65));
 
     // Tower Mastery: a standing fire basket inside each wall corner (the crews work all night).
     for (sx, sz) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-        set(brazier_parts(), Vec3::new(sx * 15.6, 0.0, sz * 10.6), sx * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2));
+        set("brazier", brazier_parts(), Vec3::new(sx * 15.6, 0.0, sz * 10.6), sx * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2));
     }
 
     // Merchant Guild: banner + stacked goods dressing the wandering merchant's stall (outside
     // the north wall — snap to the terrain there, the bailey's flat y=0 doesn't reach it).
     let stall_y = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-    set(guild_banner_parts(), Vec3::new(1.3, stall_y(1.3, -16.2), -16.2), 0.2, DecorGate::Guild, Vec2::new(0.16, 0.16));
-    set(guild_goods_parts(), Vec3::new(3.8, stall_y(3.8, -16.6), -16.6), -0.5, DecorGate::Guild, Vec2::new(0.6, 0.5));
+    set("guild_banner", guild_banner_parts(), Vec3::new(1.3, stall_y(1.3, -16.2), -16.2), 0.2, DecorGate::Guild, Vec2::new(0.16, 0.16));
+    set("guild_goods", guild_goods_parts(), Vec3::new(3.8, stall_y(3.8, -16.6), -16.6), -0.5, DecorGate::Guild, Vec2::new(0.6, 0.5));
 
     // Firelight: flickering pools for the night-burning pieces (the meshes' emissive alone
     // reads flat in the dark). Same pooled flicker as the wall torches.

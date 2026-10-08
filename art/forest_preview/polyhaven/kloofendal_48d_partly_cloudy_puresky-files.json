@@ -1,0 +1,69 @@
+{
+  "tonemapped": {
+    "size": 22162150,
+    "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/kloofendal_48d_partly_cloudy_puresky.jpg",
+    "md5": "3f2b19fa9c14943b34e5d4f480ba13ba"
+  },
+  "hdri": {
+    "8k": {
+      "hdr": {
+        "size": 74844926,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/8k/kloofendal_48d_partly_cloudy_puresky_8k.hdr",
+        "md5": "28091ec4839b564f57f780c316d6e9fd"
+      },
+      "exr": {
+        "size": 290870780,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/8k/kloofendal_48d_partly_cloudy_puresky_8k.exr",
+        "md5": "445c9c6d197a8601c69a6bf6b5d5ebdf"
+      }
+    },
+    "16k": {
+      "hdr": {
+        "size": 262444413,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/16k%2B/kloofendal_48d_partly_cloudy_puresky_16k.hdr",
+        "md5": "5e39fb9ec096884c4e972ca3f4ac89ea"
+      },
+      "exr": {
+        "size": 1127952396,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/16k%2B/kloofendal_48d_partly_cloudy_puresky_16k.exr",
+        "md5": "c0e78f8049737f99b67de31b57d4199f"
+      }
+    },
+    "4k": {
+      "hdr": {
+        "size": 20674857,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/kloofendal_48d_partly_cloudy_puresky_4k.hdr",
+        "md5": "816340c969d2e60d659051d13ac3c4dc"
+      },
+      "exr": {
+        "size": 75640460,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/4k/kloofendal_48d_partly_cloudy_puresky_4k.exr",
+        "md5": "2deea8da39fc5c379984d7887044575d"
+      }
+    },
+    "2k": {
+      "hdr": {
+        "size": 5451493,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/kloofendal_48d_partly_cloudy_puresky_2k.hdr",
+        "md5": "2eba3a4d7eeb23cbfbeca364c97e7980"
+      },
+      "exr": {
+        "size": 20062163,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/2k/kloofendal_48d_partly_cloudy_puresky_2k.exr",
+        "md5": "299976fb6e389e5349fabe80cf746b48"
+      }
+    },
+    "1k": {
+      "hdr": {
+        "size": 1435119,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_puresky_1k.hdr",
+        "md5": "c69498687e876bf68d2a8b8a62234eb9"
+      },
+      "exr": {
+        "size": 5498182,
+        "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/kloofendal_48d_partly_cloudy_puresky_1k.exr",
+        "md5": "ca0c1317a4b22bb25e826cb3640ee833"
+      }
+    }
+  }
+}

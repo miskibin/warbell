@@ -1,0 +1,56 @@
+{
+  "type": 1,
+  "name": "Jolcham Oak Bark 01",
+  "categories": [
+    "outdoor",
+    "natural",
+    "bark"
+  ],
+  "description": "Free 8k texture of Jolcham oak bark: rough, weathered, uneven bark with mossy, lichen-covered patches, deep fissures and coarse organic brown-green tones.",
+  "authors": {
+    "Charlotte Baglioni": "All"
+  },
+  "max_resolution": [
+    8192,
+    16384
+  ],
+  "date_published": 1777334400,
+  "staging": null,
+  "tags": [
+    "rough",
+    "weathered",
+    "uneven",
+    "moss",
+    "mossy",
+    "mosscovered",
+    "bark",
+    "tree",
+    "tree bark",
+    "organic",
+    "fissured",
+    "bark texture",
+    "tree trunk",
+    "trunk",
+    "tree texture",
+    "non square"
+  ],
+  "dimensions": [
+    1000,
+    2000
+  ],
+  "files_hash": "0a79f73d58cae8285349ccab52becc63ba56456e",
+  "category_id": "fc8dd00d-a670-5b83-af7f-2281cb9ca987",
+  "category": "Wood/Bark/Fissured Bark",
+  "attributes": {
+    "surface_use": "object",
+    "condition": [
+      "weathered",
+      "mossy"
+    ],
+    "origin": "natural",
+    "setting": "outdoor"
+  },
+  "img_version": "0f99fd59",
+  "download_count": 5186,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/jolcham_oak_bark_01.png?width=256&height=256&format=webp&v=0f99fd59"
+}

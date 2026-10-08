@@ -508,6 +508,20 @@ fn spawn_chest(
     chest: Chest,
     id: ChestId,
 ) {
+    // Keep the loot root and lid hinge intact; only their render assets change.
+    let fancy = chest.hoard || chest.trophy.is_some() || (chest.tier == ChestTier::Relic && !chest.cache);
+    let blender = crate::blenderenv::get().and_then(|assets| {
+        let (body, lid) = if fancy {
+            ("chest_relic_body", "chest_relic_lid")
+        } else {
+            ("chest_body", "chest_lid")
+        };
+        assets.model(body).zip(assets.model(lid))
+    });
+    let (body_mesh, lid_mesh, chest_mat) = blender.map_or(
+        (body_mesh, lid_mesh, chest_mat),
+        |(body, lid)| (&body.mesh, &lid.mesh, &body.mat),
+    );
     commands
         .spawn((
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(rot)),

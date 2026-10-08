@@ -8,10 +8,8 @@
 //! ~190-unit fog wall (`scene.rs` Linear fog) so they're solid haze from the castle and only
 //! resolve into soft, DoF-blurred silhouettes as the hero reaches the matching shore.
 //!
-//! There is deliberately **no white-triangle fallback**: every vertex is coloured and lit by
-//! the shared white `StandardMaterial` (auto-batched, per the mesh-building contract), so the
-//! islands pick up the sun, `DistanceFog` haze and `dof.rs` background blur for free — no
-//! custom shader, no day/night special-casing.
+//! In the Blender campaign pass the same world-space surface shader as the main island
+//! textures the distant land. The original vertex-colour material remains for other modes.
 //!
 //! Spawned from `worldmap::build` and tagged [`crate::biome::BiomeEntity`] so the biome-swap
 //! rebuild path (keys 1–5) despawns + recreates them with the rest of the world.
@@ -24,7 +22,9 @@ use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
+use crate::biome::GroundDetail;
 use crate::palette::lin;
+use crate::terrain::TerrainMaterial;
 
 /// Sea-surface Y (mirrors the private `worldmap::SEA_Y`). Island land starts just above it.
 const SEA_Y: f32 = -0.4;
@@ -211,7 +211,7 @@ fn top_color(isle: &Isle, c: i32, peak: i32, cx: f32, cz: f32) -> [f32; 4] {
 /// Build one island's terraced mesh in local space (centred at origin, Y already in world
 /// terms). Same flat-shaded quad recipe as `worldmap::build_terrain_chunk`: a top quad per land
 /// tile plus cliff walls down to lower neighbours / the waterline at the coast.
-fn build_mesh(isle: &Isle) -> Mesh {
+fn build_mesh(isle: &Isle, textured: bool, swamp: bool) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -249,7 +249,12 @@ fn build_mesh(isle: &Isle) -> Mesh {
             let top = top_y(c);
             let cx = center(ix);
             let cz = center(iz);
-            let tc = top_color(isle, c, peak, cx, cz);
+            let mut tc = top_color(isle, c, peak, cx, cz);
+            if textured {
+                // The terrain extension reads alpha as wetness (and negative alpha as
+                // cliffness), unlike the legacy white StandardMaterial path.
+                tc[3] = if swamp { 1.0 } else { 0.0 };
+            }
 
             // Top quad (flat, single colour per tile — blurred at this distance anyway).
             quad(
@@ -262,7 +267,15 @@ fn build_mesh(isle: &Isle) -> Mesh {
             let cliff = lin(isle.palette.cliff);
             let wall_top = [cliff[0] * 0.95, cliff[1] * 0.95, cliff[2] * 0.95, 1.0];
             let wall_bot = [cliff[0] * 0.62, cliff[1] * 0.60, cliff[2] * 0.58, 1.0];
-            let wc = [wall_bot, wall_bot, wall_top, wall_top];
+            let wc = if textured {
+                let mut low = wall_bot;
+                let mut high = wall_top;
+                low[3] = -1.0;
+                high[3] = -1.0;
+                [low, low, high, high]
+            } else {
+                [wall_bot, wall_bot, wall_top, wall_top]
+            };
             for (dx, dz) in NB {
                 let nc = cls(ix + dx, iz + dz);
                 // Inland steps drop to the lower neighbour; coast tiles drop to the waterline
@@ -296,7 +309,13 @@ fn build_mesh(isle: &Isle) -> Mesh {
 
 // ── Spawn ────────────────────────────────────────────────────────────────────────
 /// Spawn the ring of distant islands. Called once from `worldmap::build`.
-pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+pub fn build(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    std_mats: &mut Assets<StandardMaterial>,
+    terrain_mats: &mut Assets<TerrainMaterial>,
+) {
     // Capture aid: drop the backdrop isles entirely for a clean top-down map shot (they read as
     // pale blocks on the horizon at altitude). No effect on normal play.
     if std::env::var("FOREST_NOISLES").is_ok() {
@@ -316,6 +335,33 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
         cull_mode: None,
         ..default()
     });
+    let textured = crate::blenderground::enabled() && !crate::worldmap::is_arena();
+    let terrain_pair = if textured {
+        // Only the shader's surface selector uses `seed` in Blender mode. Both
+        // materials share the same eight baked atlases; swamp needs its wet sheet.
+        let detail = GroundDetail {
+            scale: 0.18,
+            strength: 0.45,
+            variation: 0.70,
+            seed: 1.0,
+            dark: 0x356b28,
+            base: 0x5d9e44,
+            light: 0x95d162,
+            grain: 0.55,
+            streak: 0.5,
+        };
+        let land = crate::terrain::make_material(&detail, 0.95, None, images, terrain_mats);
+        let swamp = crate::terrain::make_material(
+            &GroundDetail { seed: 11.0, ..detail },
+            0.95,
+            None,
+            images,
+            terrain_mats,
+        );
+        Some((land, swamp))
+    } else {
+        None
+    };
 
     let mut s: u32 = 0x1515_d1e5;
     for i in 0..COUNT {
@@ -361,13 +407,25 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
 
         let cx = dist * base_angle.cos();
         let cz = dist * base_angle.sin();
-        let mesh = meshes.add(build_mesh(&isle));
-        commands.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(cx, 0.0, cz).with_rotation(Quat::from_rotation_y(yaw)),
-            NotShadowCaster, // their shadows are fogged out anyway — skip the shadow pass
-            BiomeEntity,
-        ));
+        let swamp = i == COUNT - 1;
+        let mesh = meshes.add(build_mesh(&isle, textured, swamp));
+        let transform = Transform::from_xyz(cx, 0.0, cz).with_rotation(Quat::from_rotation_y(yaw));
+        if let Some((land_mat, swamp_mat)) = &terrain_pair {
+            commands.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(if swamp { swamp_mat.clone() } else { land_mat.clone() }),
+                transform,
+                NotShadowCaster,
+                BiomeEntity,
+            ));
+        } else {
+            commands.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(mat.clone()),
+                transform,
+                NotShadowCaster, // their shadows are fogged out anyway — skip the shadow pass
+                BiomeEntity,
+            ));
+        }
     }
 }

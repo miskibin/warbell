@@ -1,0 +1,16 @@
+{
+  "schema": "warbell.forest_slice_path.v1",
+  "source": "art/blender_environment/imagegen/path-albedo-v3.png",
+  "source_sha256": "d671919e8633f2c49fa8b2936a78ef4ffc865aa35e53b21679897deb1b74651d",
+  "method": "Blender import, 512 resize, 24px seam match, slice-only warm-earth exposure adjustment [0.82,0.83,0.93], luminance-derived OpenGL normal and roughness",
+  "mean_rgb_255": [
+    127.7523193359375,
+    100.80133056640625,
+    80.56681060791016
+  ],
+  "file_sha256": {
+    "ground_path_albedo.png": "b9fccb18269e1df9d252bf5bc6e4821482b46a3d0b6c38d4fb91ca110707dac1",
+    "ground_path_normal.png": "612d3bd04c2cd16d6cfcb01046ce72bf238378529b14e71803b40fb94c54f78a",
+    "ground_path_roughness.png": "eca0f56252551d673aadded2ecd72a6de0f4f9bf167de5a048b00692e6ea2a0a"
+  }
+}

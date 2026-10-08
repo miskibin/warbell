@@ -1,0 +1,217 @@
+{
+  "schema": "warbell.forest_cc0_understory_exports.v1",
+  "method": "Blender 4.5.9 through official mcp-for-blender execute_blender_code on isolated port 9878",
+  "source_manifest": "art/forest_preview/cc0_understory_downloads.json",
+  "rgba_manifest": "art/forest_preview/cc0_understory_rgba.json",
+  "models": [
+    {
+      "id": "cc0_grass_patch_a",
+      "source": "grass_medium_01",
+      "path": "assets/models/forest_slice/cc0/cc0_grass_patch_a.glb",
+      "sha256": "84a5ae25fd05d2b18fdd78c44dc3e29b4bb1e1e53086e8a830118212962c1279",
+      "triangles": 6088,
+      "bounds_min_blender_xyz_m": [
+        -0.49699,
+        -0.38188,
+        0.0
+      ],
+      "bounds_max_blender_xyz_m": [
+        0.46573,
+        0.41268,
+        0.36588
+      ],
+      "extent_blender_xyz_m": [
+        0.96272,
+        0.79455,
+        0.36588
+      ],
+      "base_z_m": 0.0,
+      "blender_export_sha256": "b774bfe9a7c6c9847557e9330c40ab109ae35a843902785a87816014bec1e20e",
+      "bytes": 4666556,
+      "embedded_images_png_only": true
+    },
+    {
+      "id": "cc0_grass_patch_b",
+      "source": "grass_medium_01",
+      "path": "assets/models/forest_slice/cc0/cc0_grass_patch_b.glb",
+      "sha256": "ed5d16b45f09fddaf3e8b9203543b154e2fe4e5c2ad5f9b397c94b07d5c90723",
+      "triangles": 6088,
+      "bounds_min_blender_xyz_m": [
+        -0.46775,
+        -0.47949,
+        0.0
+      ],
+      "bounds_max_blender_xyz_m": [
+        0.4598,
+        0.39308,
+        0.37471
+      ],
+      "extent_blender_xyz_m": [
+        0.92755,
+        0.87257,
+        0.37471
+      ],
+      "base_z_m": 0.0,
+      "blender_export_sha256": "bcd65edb6689fe8c45018927f5a67f9a32e16db35bd99ea3c1f0febc1d7c9a64",
+      "bytes": 4666556,
+      "embedded_images_png_only": true
+    },
+    {
+      "id": "cc0_shrub_patch_a",
+      "source": "shrub_03",
+      "path": "assets/models/forest_slice/cc0/cc0_shrub_patch_a.glb",
+      "sha256": "9cab86405e76140a7884854c11638c0fb2dd05e15fbeb3c8217dd916d94971bd",
+      "triangles": 8287,
+      "bounds_min_blender_xyz_m": [
+        -0.22194,
+        -0.25483,
+        0.0
+      ],
+      "bounds_max_blender_xyz_m": [
+        0.34427,
+        0.26248,
+        0.58404
+      ],
+      "extent_blender_xyz_m": [
+        0.56621,
+        0.51731,
+        0.58404
+      ],
+      "base_z_m": 0.0,
+      "blender_export_sha256": "94036653c572fb99e8281c840530078f3e42a21e8f900c7b793379649e2acaa8",
+      "bytes": 3559624,
+      "embedded_images_png_only": true
+    },
+    {
+      "id": "cc0_dandelion_a",
+      "source": "dandelion_01",
+      "path": "assets/models/forest_slice/cc0/cc0_dandelion_a.glb",
+      "sha256": "a29854fea1755c1fcab92c160d3e50e06600beff59f0ee6a20724cda7f98889b",
+      "triangles": 7864,
+      "bounds_min_blender_xyz_m": [
+        -0.26628,
+        -0.2153,
+        0.0
+      ],
+      "bounds_max_blender_xyz_m": [
+        0.31277,
+        0.24745,
+        0.13154
+      ],
+      "extent_blender_xyz_m": [
+        0.57905,
+        0.46274,
+        0.13154
+      ],
+      "base_z_m": 0.0,
+      "blender_export_sha256": "772f52d07b6621d64cc21358ec5c3cfffecba6c124bf7e6cbef3944ae8ec25a3",
+      "bytes": 3443684,
+      "embedded_images_png_only": true
+    },
+    {
+      "id": "cc0_heliophila_a",
+      "source": "flower_heliophila",
+      "path": "assets/models/forest_slice/cc0/cc0_heliophila_a.glb",
+      "sha256": "b654fb4f39176e9efb78c98dd4933c5cea0949e4909783c6985f50f42606d749",
+      "triangles": 15604,
+      "bounds_min_blender_xyz_m": [
+        -0.3498,
+        -0.31681,
+        0.0
+      ],
+      "bounds_max_blender_xyz_m": [
+        0.36374,
+        0.31769,
+        0.39758
+      ],
+      "extent_blender_xyz_m": [
+        0.71355,
+        0.6345,
+        0.39758
+      ],
+      "base_z_m": 0.0,
+      "blender_export_sha256": "098a5cc7ce5436df0ce63bb464778a2bba2dfd9ee9cd894e4ba7c1ba280e4a2c",
+      "bytes": 4077668,
+      "embedded_images_png_only": true
+    },
+    {
+      "id": "cc0_stump_a",
+      "source": "tree_stump_01",
+      "path": "assets/models/forest_slice/cc0/cc0_stump_a.glb",
+      "sha256": "5f9258101165843e74a43184e46ad2b20ccadf8a71bfb8ec845e16969da805a5",
+      "triangles": 17239,
+      "bounds_min_blender_xyz_m": [
+        -0.64338,
+        -0.68045,
+        0.00014
+      ],
+      "bounds_max_blender_xyz_m": [
+        0.52573,
+        0.62351,
+        0.46948
+      ],
+      "extent_blender_xyz_m": [
+        1.1691,
+        1.30395,
+        0.46934
+      ],
+      "base_z_m": 0.0,
+      "blender_export_sha256": "265a107a05013a67bf80d6d0bbd08f538f6c399cd2523a51defca61bc7d90a0b",
+      "bytes": 6511404,
+      "embedded_images_png_only": true
+    },
+    {
+      "id": "cc0_moss_rock_a",
+      "source": "rock_moss_set_01",
+      "path": "assets/models/forest_slice/cc0/cc0_moss_rock_a.glb",
+      "sha256": "7cce0c235c1bd1850fbc89c3365a405c1a456d636b525f4ccb9a38c51c93afec",
+      "triangles": 4100,
+      "bounds_min_blender_xyz_m": [
+        -0.38684,
+        -0.40127,
+        -0.00019
+      ],
+      "bounds_max_blender_xyz_m": [
+        0.41442,
+        0.38898,
+        0.41788
+      ],
+      "extent_blender_xyz_m": [
+        0.80126,
+        0.79024,
+        0.41807
+      ],
+      "base_z_m": 0.0,
+      "blender_export_sha256": "aeb323941d2c7d5202cb8dfa807aed73c8723fbc5b68d352da449f4de47e54ed",
+      "bytes": 2911904,
+      "embedded_images_png_only": true
+    },
+    {
+      "id": "cc0_moss_rock_b",
+      "source": "rock_moss_set_01",
+      "path": "assets/models/forest_slice/cc0/cc0_moss_rock_b.glb",
+      "sha256": "c0ae471677876d4fb881a0f14df7926c5873a9f4f05af780f6d63226dc5769bb",
+      "triangles": 5576,
+      "bounds_min_blender_xyz_m": [
+        -0.40826,
+        -0.43423,
+        0.0
+      ],
+      "bounds_max_blender_xyz_m": [
+        0.31457,
+        0.50347,
+        0.42903
+      ],
+      "extent_blender_xyz_m": [
+        0.72283,
+        0.9377,
+        0.42903
+      ],
+      "base_z_m": 0.0,
+      "blender_export_sha256": "671a31cb2f602a74340c0fd70296a61bfdd7eb31a20305380457d6932ecaf678",
+      "bytes": 2956544,
+      "embedded_images_png_only": true
+    }
+  ],
+  "postprocess": "tools/transcode_forest_glb_textures.py"
+}

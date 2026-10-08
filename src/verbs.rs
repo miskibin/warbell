@@ -641,6 +641,8 @@ pub fn populate_ore(
         metallic: 0.1,
         ..default()
     });
+    let rock_model = crate::blenderenv::get().map(|env| env.model("ore_rock")
+        .expect("missing Blender ore_rock"));
     // One gem hue per ore variant: the crystal material (base + emissive for the bloom glow) and a
     // matching point-light colour, so each boulder casts a soft coloured glow on its rock + ground.
     let gem: [(Color, LinearRgba); 4] = [
@@ -711,7 +713,11 @@ pub fn populate_ore(
                 crate::biome::BiomeEntity,
             ))
             .with_children(|p| {
-                p.spawn((Mesh3d(rock_mesh.clone()), MeshMaterial3d(rock_mat.clone()), Transform::default()));
+                p.spawn((
+                    Mesh3d(rock_model.map_or_else(|| rock_mesh.clone(), |m| m.mesh.clone())),
+                    MeshMaterial3d(rock_model.map_or_else(|| rock_mat.clone(), |m| m.mat.clone())),
+                    Transform::default(),
+                ));
                 p.spawn((Mesh3d(crystal_mesh.clone()), MeshMaterial3d(crystal_mat), Transform::default()));
                 // Strong coloured glow from the gem core, pulsing slowly (`ore_glow_pulse`) so
                 // the node breathes like a live thing — no shadows (cheap; ~18 on the map).
@@ -877,6 +883,10 @@ pub fn populate_forage(
         perceptual_roughness: 0.55,
         ..default()
     });
+    let herb_model = crate::blenderenv::get().map(|env| env.model("marsh_herb")
+        .expect("missing Blender marsh_herb"));
+    let herb_mesh = herb_model.map_or_else(|| herb_mesh, |m| m.mesh.clone());
+    let herb_mat = herb_model.map_or_else(|| herb_mat, |m| m.mat.clone());
     seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 1.0, crate::biome::Biome::Swamp, 55, 0x4e_b5_1c_0d);
 
     // Forest apples: standout apple TREES (permanent scenery) carrying a cluster of apples that
@@ -894,6 +904,10 @@ pub fn populate_forage(
     });
     let tree_mesh = meshes.add(apple_tree_mesh());
     let tree_mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    let orchard_model = crate::blenderenv::get().map(|env| env.model("orchard_apple_tree")
+        .expect("missing Blender orchard_apple_tree"));
+    let tree_mesh = orchard_model.map_or_else(|| tree_mesh, |m| m.mesh.clone());
+    let tree_mat = orchard_model.map_or_else(|| tree_mat, |m| m.mat.clone());
     // Stash the apple mesh/mat so the harvest pop can fling matching motes.
     commands.insert_resource(AppleAssets { fruit_mesh: apple_mesh.clone(), fruit_mat: apple_mat.clone() });
     populate_apple_orchard(commands, &tree_mesh, &tree_mat, &apple_mesh, &apple_mat);
