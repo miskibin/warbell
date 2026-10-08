@@ -36,6 +36,33 @@ fn shield_rest_r() -> Quat {
 
 static TIP: OnceLock<Vec3> = OnceLock::new();
 
+/// The locomotion solver uses the imported leg, rather than the old knight's proportions.
+#[derive(Clone, Copy)]
+pub(crate) struct LegRig {
+    pub hip: Vec3,
+    pub knee: Vec3,
+    pub foot: Vec3,
+    pub ankle_height: f32,
+}
+
+pub(crate) fn leg_rig() -> LegRig {
+    static LEG: OnceLock<LegRig> = OnceLock::new();
+    *LEG.get_or_init(|| {
+        let measure = |model: &Model| {
+            let hip = pos_of(model, "HipL");
+            let knee = pos_of(model, "KneeL");
+            let foot = pos_of(model, "FootL");
+            LegRig {
+                hip,
+                knee,
+                foot,
+                ankle_height: pos_of(model, "Hips").y + hip.y + knee.y + foot.y - model.min_y,
+            }
+        };
+        if let Some(gpu) = GPU.get() { measure(&gpu.model) } else { measure(&parse()) }
+    })
+}
+
 /// Blade tip in the blade mesh's local space. [`super::combat::hero_blade_trail`] reads it off the
 /// `HeroWeapon` entity (the blade mesh itself).
 pub fn weapon_tip() -> Vec3 {
