@@ -67,6 +67,18 @@ pub(crate) fn sword_rest_r() -> Quat {
     e3(SWORD_REST_X, 0.3, 0.0)
 }
 
+/// Three.js footman clips store joint eulers where **identity is the baked carry**. The mesh is
+/// pre-rotated by the inverse of the game rest, so a three.js euler `e` becomes `e * rest` here
+/// (and the shield's small rest translation is swung with it) and the blade/board move the way
+/// they did in the source model.
+fn posed_sword(ex: f32, ey: f32, ez: f32) -> Jp {
+    Jp::r(e3(ex, ey, ez) * sword_rest_r())
+}
+fn posed_shield(ex: f32, ey: f32, ez: f32) -> Jp {
+    let e = e3(ex, ey, ez);
+    Jp { t: Some(e * SHIELD_REST_T), r: e * shield_rest_r() }
+}
+
 /// Landing squash recovery time (a crouch that decays over this many seconds after touchdown).
 const LAND_RECOVER: f32 = 0.20;
 
@@ -229,14 +241,13 @@ fn walk_pose(c: f32) -> Pose {
     // Foot roll with a toe-off flick at the back of the stride (the +0.25 kick as the leg trails).
     p.foot_l = Jp::r(rx(-l.sin() * 0.6 + (-l.sin()).max(0.0) * 0.25));
     p.foot_r = Jp::r(rx(-r.sin() * 0.6 + (-r.sin()).max(0.0) * 0.25));
-    // Arms: relaxed pendulum swing with a soft elbow that folds deeper on the forward swing
-    // (negative shoulder-X = forward; the `sin` term goes negative with it, bending the elbow) —
-    // a straight arm swinging from the shoulder is the classic robot tell.
-    p.sh_l = Jp::r(e3(r.sin() * 0.42 + 0.05, 0.0, -0.36));
-    p.el_l = Jp::r(rx(-0.42 + r.sin() * 0.3));
-    p.sh_r = Jp::r(e3(l.sin() * 0.55 + 0.1, 0.0, 0.15 + c.cos() * 0.02));
-    p.el_r = Jp::r(rx(-0.32 + l.sin() * 0.32));
-    p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
+    // The footman's arms are already in the carry. These are the three.js walk deltas off that
+    // bind (a few degrees of counter-swing), not the old straight-arm knight bends — those lifted
+    // the blade into a lance and flared the shield.
+    p.sh_l = Jp::r(e3(r.sin() * 0.11, 0.0, 0.04));
+    p.el_l = Jp::r(rx(-0.30 + r.sin().min(0.0) * 0.08));
+    p.sh_r = Jp::r(e3(l.sin() * 0.16, 0.0, -0.04));
+    p.el_r = Jp::r(rx(-0.22 + l.sin().min(0.0) * 0.11));
     p
 }
 
@@ -259,11 +270,14 @@ fn run_pose(c: f32) -> Pose {
     p.knee_r = Jp::r(rx((-r.cos()).max(0.0) * 1.3 + 0.12));
     p.foot_l = Jp::r(rx(-l.sin() * 0.8 * 0.5 + 0.14));
     p.foot_r = Jp::r(rx(-r.sin() * 0.8 * 0.5 + 0.14));
-    p.sh_l = Jp::r(e3(r.sin() * 0.38 + 0.08, 0.0, -0.36));
-    p.el_l = Jp::r(rx(-0.65 + r.sin() * 0.14));
-    p.sh_r = Jp::r(e3(l.sin() * 0.62 + 0.15, 0.0, 0.18));
-    p.el_r = Jp::r(rx(-0.6 + l.sin() * 0.22));
-    p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
+    // Three.js run: elbows tuck, the blade rides point-up over the shoulder, the shield stays
+    // edge-on against the forearm. Eulers are identity-at-carry, composed onto the game rest.
+    p.sh_l = Jp::r(e3(r.sin() * 0.15, 0.0, 0.14));
+    p.el_l = Jp::r(rx(-1.15 + r.sin().min(0.0) * 0.2));
+    p.sh_r = Jp::r(e3(l.sin() * 0.12, 0.0, -0.14));
+    p.el_r = Jp::r(rx(-1.25 + l.sin().min(0.0) * 0.15));
+    p.sword = posed_sword(-2.046, -0.52, 0.119);
+    p.shield = posed_shield(0.924, 0.415, -0.121);
     p
 }
 
