@@ -675,8 +675,12 @@ pub(crate) fn spawn_hero_meshes(
 
     // Rig at the feet (y=0); proportions are HH-derived (see model::PROPORTIONS). Feet rest on the
     // ground because the boot mesh bottoms at the ankle joint's height below it.
+    // The rig is authored with the sword on +X, which (facing +Z) is the knight's LEFT hand. Mirror
+    // the whole tree across the YZ plane so he fights right-handed — sword in the right hand, shield
+    // on the left, like the reference render and the first-person viewmodel. Mirroring the parent
+    // (rather than swapping arm meshes) keeps every animator pose valid: each clip is just reflected.
     let rig = commands
-        .spawn((Transform::from_xyz(0.0, 0.0, 0.0), Visibility::Visible))
+        .spawn((Transform::from_scale(Vec3::new(-1.0, 1.0, 1.0)), Visibility::Visible))
         .id();
     commands.entity(root).add_child(rig);
 
@@ -694,7 +698,7 @@ pub(crate) fn spawn_hero_meshes(
         commands,
         hand_l,
         Some(Shield),
-        Transform { translation: Vec3::new(-0.07, -0.08, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.12, -1.5, 0.0), scale: Vec3::ONE },
+        Transform { translation: Vec3::new(-0.11, -0.08, 0.13), rotation: Quat::from_euler(EulerRot::XYZ, 0.12, -1.5, 0.0), scale: Vec3::ONE },
         mat,
         body(meshes.add(m.shield)),
     );
