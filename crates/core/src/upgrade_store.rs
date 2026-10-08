@@ -163,7 +163,8 @@ pub static UPGRADE_NODES: &[UpgradeNode] = &[
         "🎯", 120, 0, Some("def_towers"), TowerMastery),
     node("def_keep_archers", Defense, "Keep Archers",
         "Bowmen on the keep roof rain arrows down on the courtyard all night.",
-        "🏹", 100, 0, None, KeepArchers),
+        // 80g after the tree's scale: a viable third-day response after buying Guard Arms.
+        "🏹", 50, 0, None, KeepArchers),
     node("def_reinforce", Defense, "Reinforced Keep",
         "Greatly raises the keep's max HP — far more stone to grind through before it falls.",
         "🏰", 130, 30, None, ReinforceKeep),

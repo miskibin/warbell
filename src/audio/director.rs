@@ -1,15 +1,15 @@
 //! The voice director — the ONE Bevy system family that turns a [`Speak`] request into a playing
-//! clip + subtitle, enforcing one line at a time per speaker with priority-gated barge-in, and
+//! clip + subtitle, enforcing one dialogue at a time with priority-gated barge-in, and
 //! firing reply chains when a line ends. Replaces the bespoke mouth/cooldown bookkeeping that
 //! used to live in `voice.rs`/`npc.rs`/`ork.rs`/`hero_remarks.rs`.
 
 use std::collections::{HashMap, HashSet};
 
-use bevy::audio::{PlaybackMode, Volume};
+use bevy::audio::{Decodable, PlaybackMode, Source, Volume};
 use bevy::prelude::*;
 
 use super::lines::{
-    can_play, hero_window_blocks, passes_gates, pick_line, replies_to, speaker_voice, Active,
+    channel_available, hero_window_blocks, passes_gates, pick_line, replies_to, speaker_voice, Active,
     Chain, Concept, Line, Speaker,
 };
 use super::AudioConfig;
@@ -32,8 +32,7 @@ impl Speak {
     }
 }
 
-/// Marks a playing voice sink so a barge-in can stop it. Carries the speaker so we only stop the
-/// right mouth.
+/// Marks a playing voice sink so an interruption can stop the shared dialogue channel.
 #[derive(Component)]
 pub struct VoiceSink(pub Speaker);
 
@@ -55,7 +54,7 @@ pub struct Offer {
 #[derive(Resource, Default)]
 pub struct OfferedReply(pub Option<Offer>);
 
-/// One-line-at-a-time bookkeeping for every speaker, the per-line replay floor, and the rng.
+/// One dialogue channel, speaker identities, per-line replay floors, and the rng.
 #[derive(Resource)]
 pub struct VoiceManager {
     pub active: HashMap<Speaker, Active>,
@@ -64,7 +63,9 @@ pub struct VoiceManager {
     pub rng: u32,
     /// Pending chain dispatches: (fire_at, chain, position) queued when a line with `then` starts.
     pub pending_chains: Vec<(f32, Chain, Option<Vec3>)>,
-    /// Preloaded clip handles keyed by line id. Populated once at startup; persists across runs.
+    /// Decoded lengths cached per clip; persist across runs.
+    pub durations: HashMap<&'static str, f32>,
+    /// Preloaded handles keyed by line id; persist across runs.
     pub clips: HashMap<&'static str, Handle<AudioSource>>,
 }
 
@@ -77,6 +78,7 @@ impl Default for VoiceManager {
             rng: 0x1234_5678,
             pending_chains: Vec::new(),
             clips: HashMap::new(),
+            durations: HashMap::new(),
         }
     }
 }
@@ -107,8 +109,7 @@ impl VoiceManager {
     }
 }
 
-/// Resolve `Speak` requests into clips. For each request: pick a fresh line for the concept, check
-/// the speaker's barge-in gate, and if clear, stop any current sink for that speaker and play.
+/// Resolve this frame's requests to one highest-priority eligible line on the shared channel.
 pub fn speak_director(
     time: Res<Time>,
     cfg: Res<AudioConfig>,
@@ -122,12 +123,18 @@ pub fn speak_director(
     mut subs: ResMut<crate::subtitles::Subtitles>,
     sources: Res<Assets<AudioSource>>,
     mode: Res<crate::rts::GameMode>,
+    campaign: Res<crate::quest::CampaignRes>,
+    siege: Res<crate::siege::Siege>,
 ) {
     let now = time.elapsed_secs();
     let skirmish = *mode == crate::rts::GameMode::Skirmish;
     let hero_pos = hero.single().ok().map(|h| Vec3::new(h.pos.x, 1.6, h.pos.y));
 
+    let mut winner: Option<(Line, Option<Vec3>)> = None;
     for req in reqs.read() {
+        if super::campaign::replaces(req.concept, campaign.0.guided, crate::quest::lesson_night(&siege)) {
+            continue;
+        }
         // Central combat gate: while the hero is in a fight, drop every PEACEFUL concept (ambient
         // chatter, town advice, exploration musings). One rule replaces the old scattered phase
         // checks — and closes the gap that let a daytime warden/boss/rival fight slip a "Quiet day…"
@@ -149,10 +156,15 @@ pub fn speak_director(
         if line.speaker == Speaker::Hero && now < cd.until && hero_window_blocks(line.priority, cd.priority) {
             continue;
         }
-        if !can_play(mgr.active.get(&line.speaker), now, line.priority) {
-            continue;
+        if !channel_available(mgr.active.values(), now, line.priority) { continue; }
+        if !mgr.clips.get(line.id).is_some_and(|clip| sources.get(clip).is_some()) { continue; }
+        if winner.as_ref().is_none_or(|(old, _)| line.priority > old.priority) {
+            winner = Some((line, req.at.or(hero_pos)));
         }
-        play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &line, req.at.or(hero_pos), skirmish);
+    }
+    // Select before spawning: deferred Commands cannot see another sink spawned this frame.
+    if let Some((line, at)) = winner {
+        play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &line, at, skirmish);
     }
 }
 
@@ -186,13 +198,19 @@ fn play_line(
     } else {
         1.0
     };
-    // One mouth per speaker: stop whatever this speaker had going.
-    for (e, s) in sinks {
-        if s.0 == line.speaker {
-            commands.entity(e).try_despawn();
-        }
-    }
-    let dur = crate::subtitles::read_secs(line.text);
+    // A global dialogue channel matches the single subtitle. An urgent interruption also
+    // cancels the interrupted line's reply chain; it must not answer a line never finished.
+    for (e, _) in sinks { commands.entity(e).try_despawn(); }
+    mgr.active.clear();
+    mgr.pending_chains.clear();
+    let clip_secs = *mgr.durations.entry(line.id).or_insert_with(|| {
+        let mut decoder = sources.get(&clip).expect("loaded above").decoder();
+        decoder.total_duration().map(|d| d.as_secs_f32()).unwrap_or_else(|| {
+            let samples_per_second = decoder.sample_rate().get() as f32 * decoder.channels().get() as f32;
+            decoder.by_ref().count() as f32 / samples_per_second
+        })
+    });
+    let dur = clip_secs / speed + 0.15;
     // In skirmish the listener rides the iso camera ~90u overhead, so a SPATIAL voice (villager /
     // ork / rival) attenuates to silence — only the head-locked hero was ever heard. Play those 2D
     // there (slightly quieter, since 2D doesn't fall off with distance) so the town/enemy actually
@@ -242,7 +260,7 @@ fn play_line(
     // and orks are paced by their own trigger cadences. A no-op (missing clip) returned above, so a
     // silently-skipped line never spends the window.
     if line.speaker == Speaker::Hero {
-        cd.until = now + super::HERO_LINE_CD;
+        cd.until = now + super::HERO_LINE_CD.max(dur);
         cd.priority = line.priority;
     }
     subs.say_as(now, voice.name, line.text, dur);
@@ -276,6 +294,7 @@ pub fn tick_chains(
     mut subs: ResMut<crate::subtitles::Subtitles>,
     sources: Res<Assets<AudioSource>>,
     mode: Res<crate::rts::GameMode>,
+    threat: Res<super::HeroThreat>,
 ) {
     let now = time.elapsed_secs();
     let skirmish = *mode == crate::rts::GameMode::Skirmish;
@@ -306,7 +325,8 @@ pub fn tick_chains(
             .max_by_key(|l| l.priority)
             .copied();
         let Some(reply) = pick else { continue };
-        if can_play(mgr.active.get(&reply.speaker), now, reply.priority) {
+        if threat.in_danger && super::lines::is_peaceful(reply.concept) { continue; }
+        if channel_available(mgr.active.values(), now, reply.priority) {
             play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &reply, pos, skirmish);
         }
     }
@@ -338,4 +358,90 @@ pub fn setup_voice_manager(mut mgr: ResMut<VoiceManager>) {
         .unwrap_or(0x1234_5678)
         | 1;
     mgr.rng = seed;
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+    pub(crate) fn app() -> App {
+        let mut app = App::new();
+        app.init_resource::<Time>().init_resource::<AudioConfig>()
+            .init_resource::<VoiceManager>().init_resource::<super::super::HeroLineCooldown>()
+            .init_resource::<super::super::HeroThreat>()
+            .init_resource::<crate::subtitles::Subtitles>()
+            .init_resource::<crate::quest::CampaignRes>().init_resource::<crate::siege::Siege>()
+            .init_resource::<OfferedReply>().init_resource::<Assets<AudioSource>>()
+            .insert_resource(crate::rts::GameMode::Campaign)
+            .add_message::<Speak>().add_systems(Update, speak_director);
+        let bytes = include_bytes!("../../assets/audio/vo/hero/campaign_rescue_plan.ogg");
+        let clip = app.world_mut().resource_mut::<Assets<AudioSource>>()
+            .add(AudioSource { bytes: bytes.as_slice().into() });
+        for line in super::super::lines::LINES {
+            app.world_mut().resource_mut::<VoiceManager>().clips.insert(line.id, clip.clone());
+        }
+        app
+    }
+    pub(crate) fn step(app: &mut App, secs: f32) {
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f32(secs));
+        app.update();
+    }
+    fn sink_count(app: &mut App) -> usize {
+        app.world_mut().query::<&VoiceSink>().iter(app.world()).count()
+    }
+    #[test]
+    fn simultaneous_requests_spawn_one_line_and_urgent_interrupt_cancels_reply() {
+        let mut app = app();
+        app.world_mut().write_message(Speak::new(Concept::Greeting));
+        app.world_mut().write_message(Speak::new(Concept::LowHp));
+        step(&mut app, 1.0);
+        assert_eq!(sink_count(&mut app), 1);
+        assert_eq!(app.world().resource::<VoiceManager>().active[&Speaker::Hero].id, "hurt");
+        // An ordinary NPC reply cannot overlap the warning.
+        app.world_mut().write_message(Speak::new(Concept::Greeting));
+        step(&mut app, 1.0);
+        assert_eq!(sink_count(&mut app), 1);
+        assert_eq!(app.world().resource::<VoiceManager>().active[&Speaker::Hero].id, "hurt");
+        let chain = super::super::lines::LINES.iter().find(|l| l.id == "pa_armor").unwrap().then.unwrap();
+        app.world_mut().resource_mut::<VoiceManager>().pending_chains.push((8.0, chain, None));
+        app.world_mut().write_message(Speak::new(Concept::NightWarning));
+        step(&mut app, 1.0);
+        assert_eq!(sink_count(&mut app), 1);
+        let mgr = app.world().resource::<VoiceManager>();
+        assert_eq!(mgr.active[&Speaker::Hero].id, "night");
+        assert!(mgr.pending_chains.is_empty());
+    }
+    #[test]
+    fn channel_guard_uses_recording_length_instead_of_caption_estimate() {
+        let mut app = app();
+        // A short subtitle deliberately attached to the five-second recording in this fixture.
+        app.world_mut().write_message(Speak::new(Concept::ChestOpen));
+        step(&mut app, 1.0);
+        let mgr = app.world().resource::<VoiceManager>();
+        let duration = mgr.active[&Speaker::Hero].ends_at - 1.0;
+        assert!(duration > crate::subtitles::read_secs("Ooh, a chest.") + 1.0);
+        assert!((duration - 5.18).abs() < 0.1);
+        app.world_mut().write_message(Speak::new(Concept::Greeting));
+        step(&mut app, 4.0);
+        assert_eq!(app.world().resource::<VoiceManager>().active[&Speaker::Hero].id, "chest");
+        assert_eq!(sink_count(&mut app), 1);
+    }
+    #[test]
+    fn all_opening_recordings_decode_with_complete_non_silent_lengths() {
+        let manifest: serde_json::Value = serde_json::from_str(include_str!("../../docs/campaign-voice.json")).unwrap();
+        let clips = manifest["clips"].as_array().unwrap();
+        assert_eq!(clips.len(), 13);
+        for clip in clips {
+            let bytes = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(clip["path"].as_str().unwrap())).unwrap();
+            let source = AudioSource { bytes: bytes.into() };
+            let mut decoder = source.decoder();
+            let rate = decoder.sample_rate().get() as f64 * decoder.channels().get() as f64;
+            let mut audible = false;
+            let count = decoder.by_ref().inspect(|s| audible |= s.abs() > 0.01).count();
+            assert!(audible, "silent clip: {}", clip["id"]);
+            assert!((count as f64 / rate - clip["duration"].as_f64().unwrap()).abs() < 0.06,
+                "truncated clip: {}", clip["id"]);
+            assert!(super::super::lines::LINES.iter().any(|l| l.id == clip["id"].as_str().unwrap()));
+        }
+    }
 }

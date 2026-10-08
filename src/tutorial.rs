@@ -558,7 +558,7 @@ fn tab_combat(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atlas
             section(l, fonts, "KNOW YOUR ENEMY", |c| {
                 c.spawn(label(
                     &fonts.regular,
-                    "Each night's horde mixes four breeds. Health and hit numbers below are night one \u{2014} they grow every wave.",
+                    "Daylight scouts announce tonight's threat. Torch raiders burn farms; shamans cast from range. Raid the marked camp to remove its specialists from the next night.",
                     13.0,
                     TEXT_DIM,
                 ));
@@ -809,10 +809,10 @@ fn tab_survival(body: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, atl
                     s.spawn(label(&fonts.regular, "keep HP", 11.0, GREY));
                 });
                 point(c, fonts, atlas, None, Some("sym:warn"), "If it falls, the run ends", "Orks that reach the keep batter it down. Walls, towers and your sword are what stand between.");
-                point(c, fonts, atlas, None, Some("def_walls"), "It heals by day", "Keep and town damage mend during daylight \u{2014} survive the night and regroup.");
+                point(c, fonts, atlas, None, Some("def_walls"), "It heals by day", "The keep repairs during daylight. A ruined farm stops feeding people: walk to its remains and press E to rebuild.");
             });
             section(l, fonts, "RING THE BELL", |c| {
-                point(c, fonts, atlas, Some("E"), None, "Start the night early", "Done preparing? The war bell by the keep calls the horde now \u{2014} less waiting, same rewards.");
+                point(c, fonts, atlas, Some("E"), None, "Start the night early", "The first three days wait for you. Press E at the war bell when ready; later days have a countdown. You can ring it without finishing a lesson.");
             });
         },
         |r| {

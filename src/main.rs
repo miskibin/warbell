@@ -3,7 +3,7 @@
 // tracing logs. (The attribute is a no-op on non-Windows targets.)
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Warbell (formerly "D: Tileworld") — a Bevy 0.18 game. A knight defends a central
+//! Warbell (formerly "D: Tileworld") — a Bevy 0.19 game. A knight defends a central
 //! castle against night-wave ork sieges across a five-biome island: real-time combat,
 //! economy, an upgrade tree, inventory, villagers, bloodline succession, and wildlife, on
 //! one enlarged landmass ringed by open ocean (with drifting boats).
@@ -35,6 +35,7 @@ mod boats;
 mod boss;
 mod build_fx;
 mod camps;
+mod campaign_verify; // opt-in first-three-cycles engine integration checks
 mod capture;
 mod cinematic;
 mod castle;
@@ -151,7 +152,7 @@ fn main() {
     let mut window = Window { title: "Warbell".into(), ..default() };
     // Unattended verification should not activate its window over the user's current app.
     if std::env::var("FOREST_PERFTEST").is_ok() || std::env::var("FOREST_SHOT").is_ok()
-        || std::env::var("FOREST_RTS_ECOTEST").is_ok() {
+        || std::env::var("FOREST_RTS_ECOTEST").is_ok() || std::env::var("FOREST_CAMPAIGN_VERIFY").is_ok() {
         window.focused = false;
     }
     if std::env::var("FOREST_SHOT").is_ok() {
@@ -178,18 +179,47 @@ fn main() {
                 bevy::window::WindowResolution::new(p[0], p[1]).with_scale_factor_override(1.0);
         }
     }
-    App::new()
-        .add_plugins(
-            DefaultPlugins
+    let headless_verify = std::env::var("FOREST_CAMPAIGN_VERIFY_HEADLESS").as_deref() == Ok("1")
+        && std::env::var("FOREST_CAMPAIGN_VERIFY").is_ok();
+    let mut render_settings = bevy::render::settings::WgpuSettings::default();
+    if std::env::var("WGPU_SETTINGS_PRIO").as_deref() == Ok("webgpu") {
+        // Bevy's atmosphere LUTs sample Rgba32Float through filtering samplers. Keep this
+        // required feature when explicitly limiting optional features for software captures.
+        render_settings.features |= wgpu::Features::FLOAT32_FILTERABLE;
+    }
+    let mut plugins = DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(window),
+                    ..default()
+                })
+                .set(bevy::render::RenderPlugin {
+                    render_creation: bevy::render::settings::RenderCreation::Automatic(Box::new(render_settings)),
+                    // Compile one pipeline at a time on memory-limited capture machines.
+                    synchronous_pipeline_compilation: std::env::var("FOREST_RENDER_SYNC").as_deref() == Ok("1"),
                     ..default()
                 })
                 // Shrink the world→audio distance scale so spatial falloff is gentle enough
                 // that animals within `audio::AUDIBLE_RANGE` are actually audible (at scale
                 // 1.0 a 30-unit distance is near-silent). Tune alongside per-species volume.
-                .set(AudioPlugin { default_spatial_scale: SpatialScale::new(0.15), ..default() }),
-        )
+                .set(AudioPlugin { default_spatial_scale: SpatialScale::new(0.15), ..default() });
+    let mut app = App::new();
+    if headless_verify {
+        // Exercise the same world and simulation systems without GPU pipeline compilation.
+        // Keep the logical window for UI layout; screenshots use the ordinary renderer.
+        plugins = plugins.set(bevy::render::RenderPlugin {
+            render_creation: bevy::render::settings::RenderCreation::Automatic(Box::new(
+                bevy::render::settings::WgpuSettings { backends: None, ..default() },
+            )),
+            ..default()
+        }).disable::<bevy::winit::WinitPlugin>();
+        app.add_plugins((
+            bevy::app::ScheduleRunnerPlugin::run_loop(std::time::Duration::ZERO),
+            // Render components still install removal hooks in a backend-free app.
+            bevy::render::sync_world::SyncWorldPlugin,
+        ));
+    }
+    app
+        .add_plugins(plugins)
         // Split across two calls: a single tuple of all of these exceeds the arity the
         // `Plugins` trait is implemented for (≤15).
         .add_plugins((
@@ -277,7 +307,7 @@ fn main() {
             loading::LoadingPlugin, // branded boot veil over the first ~1s blank frame
             trees::TreeDebugPlugin, // FOREST_TREELINE="x,z" parks one of each tree kind for model shots
             hints::HintsPlugin, // bottom-right affordance toasts: spend/equip nudges (Prep-only)
-            quest::QuestPlugin, // tutorial quest chain: right-center tracker + J explainer card
+            quest::QuestPlugin, // situation-led first three cycles + optional J details
             groundtest::GroundTestPlugin, // debug: FOREST_GROUNDTEST=1 floating ground-shader test plane
             compass::CompassPlugin, // top-centre strip compass: heading + keep/Gnashfang landmark pips
             perftest::PerftestPlugin, // FOREST_PERFTEST=<secs>: headless leak instrumentation (off otherwise)
@@ -322,6 +352,17 @@ fn main() {
         .add_plugins(ruins::RuinsFxPlugin)
         // Ambush snowmen: static snow-biome decor that wakes + slams when the hero nears or strikes
         // it. Standalone — the tuples above are at the `Plugins` arity-15 cap.
-        .add_plugins(snowman::SnowmanPlugin)
-        .run();
+        .add_plugins(snowman::SnowmanPlugin);
+    campaign_verify::install(&mut app);
+    if std::env::var("FOREST_RENDER_SYNC").as_deref() == Ok("1") {
+        if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
+            // Default mesh slabs grow to 512MiB and retain the old buffer during copying.
+            // The allocator lives in RenderApp, so configure its resource there.
+            let mut meshes = bevy::render::mesh::allocator::MeshAllocatorSettings::default();
+            meshes.slab_allocator_settings.max_slab_size = 64 * 1024 * 1024;
+            meshes.slab_allocator_settings.large_threshold = 32 * 1024 * 1024;
+            render.insert_resource(meshes);
+        }
+    }
+    app.run();
 }

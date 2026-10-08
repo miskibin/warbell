@@ -330,7 +330,7 @@ fn auto_assign_workers(
         ),
     >,
 ) {
-    if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
+    if siege.as_ref().is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
         return; // night: defenders stay on the wall
     }
     // Visit plots farm-first (stable sort keeps index order within each group).
@@ -428,13 +428,14 @@ fn population_system(
     time: Res<Time>,
     siege: Option<Res<crate::siege::Siege>>,
     rallied: Query<(), With<crate::villagers::Rallied>>,
+    campaign: Res<crate::quest::CampaignRes>,
     mut town: ResMut<TownRes>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut speak: MessageWriter<crate::audio::Speak>,
 ) {
     // Growing a new peasant is a daytime thing: while the night wave is on, the food→population
     // flow pauses entirely — losses to the horde can't be replaced until dawn.
-    if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
+    if siege.as_ref().is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
         return;
     }
     // Muster freeze: while ANY townsperson is rallied to the war party (`K`), the farms go
@@ -445,6 +446,11 @@ fn population_system(
     if !rallied.is_empty() {
         return;
     }
+    // No hidden starvation countdown during the first, untimed learn-to-feed trial.
+    // Growth/food production still work; the protection ends on feeding or ringing the bell.
+    if campaign.0.guided && !campaign.0.farm_worked
+        && siege.as_ref().is_some_and(|s| s.wave_index < 0)
+        && town.0.net_food() < 0.0 { return; }
     let dt = time.delta_secs() as f64;
     match town.0.population_tick(dt) {
         PopEvent::Grew => {

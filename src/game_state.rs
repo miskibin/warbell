@@ -53,6 +53,11 @@ pub enum Modal {
     BossReward,
 }
 
+/// Run-state restoration is ordered before this set, so no system simulates an abandoned
+/// world for one frame while a Continue snapshot is waiting to be applied.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SimulationSet;
+
 /// Register `Update` systems that belong to the world-sim — the ones that MUST freeze when a panel
 /// opens or `Playing` is left. Exactly equivalent to
 /// `app.add_systems(Update, systems.run_if(in_state(Modal::None)))`, but it names the intent and
@@ -71,7 +76,7 @@ impl SimAppExt for App {
         &mut self,
         systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
     ) -> &mut Self {
-        self.add_systems(Update, systems.run_if(in_state(Modal::None)))
+        self.add_systems(Update, systems.in_set(SimulationSet).run_if(in_state(Modal::None)))
     }
 }
 

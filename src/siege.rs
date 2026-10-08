@@ -3,9 +3,9 @@
 //!
 //! The run is a loop of phases: **prep** (a free-roam "day" — the sun sweeps the sky as a
 //! countdown) → **wave** (night falls and a warband marches on the keep from a ring around
-//! it) → back to prep on a clear, or **victory** after the boss / **defeat** if the keep is
-//! razed. Eight escalating waves, the last a lone giant boss; an `easy/normal/hard` preset
-//! scales head-count, ork HP and the length of the day.
+//! it) → back to prep on a clear, or **defeat** if the keep is razed. The first three days
+//! introduce distinct problems without a deadline; later nights mix familiar threats.
+//! Victory comes from breaking Gnashfang Hold, rather than a fixed number of nights.
 //!
 //! This module owns the **pure decision core** (the wave table, difficulty presets, the
 //! per-frame [`step_wave_director`] reducer and the [`spawn_point`] ring math) — no ECS, no
@@ -25,6 +25,7 @@ use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::worldmap::ground_at_world;
 use crate::game_state::SimAppExt;
+use tileworld_core::threat::{threat_for, Tactic};
 
 // ── Tuning (ported from waveStore.ts) ──────────────────────────────────────────────
 
@@ -36,39 +37,18 @@ pub const PREP_DURATION: f32 = 195.0;
 /// spam-pressed skip can't collapse the day to ~0s right after a wave→prep transition.
 pub const MIN_PREP_SECONDS: f32 = 3.0;
 
-/// One escalating assault wave. `variants` is sampled round-robin by spawn index; `hp_scale`
-/// multiplies each ork's base HP; `dmg_scale` multiplies every invader attack (melee/bolt/keep/
-/// building) that night; `count` orks spawn `spawn_interval` seconds apart.
-pub struct WaveDef {
-    pub count: u32,
-    pub hp_scale: f32,
-    /// Per-night attack multiplier on all invader damage (see [`night_dmg_scale`]). 1.0 = base.
-    pub dmg_scale: f32,
-    pub variants: &'static [OrkVariant],
-    pub spawn_interval: f32,
+/// Shared pure-logic definitions; captures can address the first eight real nights directly.
+/// The live director calls `threat_for` so later nights rotate the mature tactical problems.
+pub use tileworld_core::threat::Threat as WaveDef;
+pub const WAVES: [WaveDef; 8] = tileworld_core::threat::THREATS;
+
+fn scene_variant(v: tileworld_core::ork_config::OrkVariant) -> OrkVariant {
+    use tileworld_core::ork_config::OrkVariant as V;
+    match v {
+        V::Grunt => OrkVariant::Grunt, V::Scout => OrkVariant::Scout,
+        V::Berserker => OrkVariant::Berserker, V::Shaman => OrkVariant::Shaman,
+    }
 }
-
-use OrkVariant::{Berserker, Grunt, Scout, Shaman};
-
-/// The eight waves. Night 1 is a gentle opener (a small grunt+scout band at base HP/damage, spawned
-/// slowly so few are alive at once); counts, HP **and** per-night attack then ramp HARD each night
-/// — the later sieges are meant to be a swarm, not a stroll. The final wave is a lone giant boss.
-///
-/// Tuning history: night 1 used to be 6 orks at a 1.2s interval which read as too punishing before
-/// any upgrades, while the mid/late nights plateaued too soft. This pass eased night 1 (5 orks, no
-/// dmg/hp bonus, 1.3s spawn → less early swarm) and steepened nights 4–7 in count, `hp_scale` and
-/// the new `dmg_scale` (later orks both endure and hit far harder), with tighter intervals up top
-/// so more of the warband is alive at once.
-pub const WAVES: [WaveDef; 8] = [
-    WaveDef { count: 5, hp_scale: 1.0, dmg_scale: 1.0, variants: &[Grunt, Grunt, Scout, Grunt], spawn_interval: 1.3 },
-    WaveDef { count: 7, hp_scale: 1.2, dmg_scale: 1.1, variants: &[Grunt, Scout, Grunt, Berserker], spawn_interval: 1.1 },
-    WaveDef { count: 10, hp_scale: 1.5, dmg_scale: 1.25, variants: &[Grunt, Scout, Berserker, Shaman], spawn_interval: 1.0 },
-    WaveDef { count: 13, hp_scale: 1.9, dmg_scale: 1.45, variants: &[Grunt, Berserker, Scout, Shaman], spawn_interval: 0.9 },
-    WaveDef { count: 17, hp_scale: 2.35, dmg_scale: 1.7, variants: &[Berserker, Scout, Grunt, Shaman], spawn_interval: 0.8 },
-    WaveDef { count: 22, hp_scale: 2.9, dmg_scale: 2.0, variants: &[Berserker, Scout, Shaman, Grunt], spawn_interval: 0.7 },
-    WaveDef { count: 26, hp_scale: 3.55, dmg_scale: 2.35, variants: &[Berserker, Shaman, Scout, Grunt], spawn_interval: 0.6 },
-    WaveDef { count: 1, hp_scale: 14.0, dmg_scale: 2.6, variants: &[Berserker], spawn_interval: 0.5 }, // boss
-];
 
 /// Extra invader HP per hero level past 1 (+4% each). As the knight levels (more damage, stamina,
 /// upgrades) the warband toughens in step so a high-level hero doesn't trivialize the same night.
@@ -84,8 +64,7 @@ pub fn ork_level_hp_mul(level: i64) -> f32 {
 /// building burn is scaled by this (see `invader_brain`). Clamps the wave index so the prep-day
 /// (`wave_index == -1`) and any over-run read the opener's base 1.0×.
 pub fn night_dmg_scale(wave_index: i32) -> f32 {
-    let i = wave_index.clamp(0, WAVES.len() as i32 - 1) as usize;
-    WAVES[i].dmg_scale
+    threat_for(wave_index.max(0) as usize).dmg_scale
 }
 
 /// Per-variant base HP for a wave (and camp) ork — the **full old-game** `orkConfig.ts` values
@@ -157,7 +136,7 @@ pub fn mods_for(d: Difficulty) -> DiffMods {
 
 /// Orks in wave `i` after the difficulty count multiplier (min 1).
 pub fn effective_count(i: usize, mods: DiffMods) -> u32 {
-    ((WAVES[i].count as f32 * mods.count_mul).round() as u32).max(1)
+    ((threat_for(i).count as f32 * mods.count_mul).round() as u32).max(1)
 }
 
 // ── Pure director core (ported from waveLogic.ts) ───────────────────────────────────
@@ -241,20 +220,13 @@ pub fn step_wave_director(input: &WaveStepInput) -> WaveStepResult {
             }
         }
         GamePhase::Wave => {
-            // Nights loop forever — the game is won by breaking Gnashfang Hold (the Warlord's
-            // death is the only `Victory`; see the 2026-06-17 assault spec), NOT by surviving a
-            // fixed count of nights. Past the WAVES table the index clamps to the last (hardest)
-            // wave, which replays with the ECS-side hero-level HP escalation, while `wave_index`
-            // keeps climbing so the "Night N" counter still rises.
-            // Clamp BEFORE the cast, like `night_dmg_scale`: `wave_index` is an `i32` whose
-            // documented day-one value is `-1`, and `-1 as usize` saturates, so `.min()` would then
-            // pick the LAST (boss) row rather than wave 0.
-            let i = input.wave_index.clamp(0, WAVES.len() as i32 - 1) as usize;
-            let def = &WAVES[i];
+            // Preserve the actual night index: mature threats rotate after the opening sequence.
+            let i = input.wave_index.max(0) as usize;
+            let def = threat_for(i);
             let count = effective_count(i, input.mods);
             // Spawn on interval until the wave's quota is met.
             if input.spawned < count && input.now >= timers.next_spawn_at {
-                let variant = def.variants[timers.spawn_index as usize % def.variants.len()];
+                let variant = scene_variant(def.slot(timers.spawn_index).variant);
                 let hp = (base_hp(variant) * def.hp_scale * input.mods.hp_mul).round();
                 actions.push(WaveAction::Spawn {
                     variant,
@@ -330,6 +302,39 @@ pub fn south_spawn_point(i: u32, keep: Vec2, max_ring: f32, standable: impl Fn(f
         r += 2.0;
     }
     best
+}
+
+/// Flanking scouts arrive at the side gates, visibly distinct from the southern main force.
+pub fn flank_spawn_point(i: u32, keep: Vec2, max_ring: f32, standable: impl Fn(f32, f32) -> bool) -> Vec2 {
+    let side = if i % 2 == 0 { 1.0 } else { -1.0 };
+    let angle = ((i as f32 * 0.618_034).fract() - 0.5) * 0.5;
+    let dir = Vec2::new(side * angle.cos(), angle.sin());
+    let mut best = keep + dir * 6.0;
+    let mut radius = 8.0;
+    while radius <= max_ring {
+        let p = keep + dir * radius;
+        if standable(p.x, p.y) { best = p; }
+        radius += 2.0;
+    }
+    best
+}
+
+/// Holding the guided day preserves a full breather every tick. An explicit bell still starts
+/// the night immediately, even on the first frame, so guidance never locks the player in.
+fn guided_prep_timers(mut timers: WaveTimers, now: f32, duration: f32, skip: bool) -> WaveTimers {
+    // Expiry is exact, avoiding cancellation in the ordinary skip's minimum-delay comparison.
+    // A tiny positive stamp keeps the zero-clock first bell out of the reducer's unarmed sentinel.
+    timers.prep_ends_at = if skip { now.max(f32::MIN_POSITIVE) } else { now + duration };
+    timers
+}
+
+/// Farms take priority over a closer workshop; rubble and unbuilt plots never attract raiders.
+fn raid_building_goal(from: Vec2, plots: &[tileworld_core::town_store::Plot], spots: &[Vec2]) -> Option<(usize, Vec2)> {
+    use tileworld_core::town_store::BuildKind;
+    spots.iter().enumerate()
+        .filter_map(|(i, p)| plots.get(i).filter(|plot| plot.is_built()).map(|plot| (i, *p, plot.kind == Some(BuildKind::Farm))))
+        .min_by(|(_, a, a_farm), (_, b, b_farm)| b_farm.cmp(a_farm).then_with(|| from.distance_squared(*a).total_cmp(&from.distance_squared(*b))))
+        .map(|(i, p, _)| (i, p))
 }
 
 /// Where a keep-marching invader actually paths: a standable point just inside the nearest gate.
@@ -528,6 +533,24 @@ impl Siege {
 #[derive(Resource)]
 pub struct InvaderArmory(pub orks::Armory);
 
+/// Orders are assigned by the announced wave slot, never by an unstable ECS entity id.
+#[derive(Component, Clone, Copy)]
+pub(crate) struct InvaderOrders {
+    tactic: Tactic,
+}
+
+/// `Armory::spawn` hashes this seed to choose its torch model. Keep visuals and orders in step:
+/// every arsonist visibly carries a torch; ordinary melee invaders keep their shields.
+fn invader_seed(mut seed: u32, variant: OrkVariant, tactic: Tactic) -> u32 {
+    if matches!(variant, OrkVariant::Grunt | OrkVariant::Berserker) {
+        let wants_torch = tactic == Tactic::Arson;
+        while ((seed.wrapping_mul(2654435761) >> 7) % 100 < 35) != wants_torch {
+            seed = seed.wrapping_add(1);
+        }
+    }
+    seed
+}
+
 /// Pause-aware siege clock. Accumulates frame time ONLY while the world runs (its advancing
 /// system is gated on `Modal::None`), so it does **not** tick during a pause or an open panel.
 /// The director's prep countdown + wave spawn timers are absolute stamps against THIS clock —
@@ -572,6 +595,7 @@ impl Plugin for SiegePlugin {
             .add_sim_systems(
                 (run_director, invader_brain, siege_controls, night_warning, keep_attack_alert, director_march)
                     .after(advance_game_clock)
+                    .after(crate::camps::respawn_warbands)
                     .run_if(crate::rts::in_campaign),
             )
             // HUD keeps drawing while frozen.
@@ -692,15 +716,20 @@ fn spawn_invader(
     hp: f32,
     ring_index: u32,
     now: f32,
+    tactic: Tactic,
 ) {
-    // Muster from the Hold: invaders arrive from the southern (Hold-facing) arc, not all around.
-    let p = south_spawn_point(ring_index, KEEP_POS, SPAWN_RING, spawn_footing);
-    let seed = ring_index.wrapping_mul(0x9e37_79b1) ^ (ring_index + 1);
+    let p = if tactic == Tactic::Flank {
+        flank_spawn_point(ring_index, KEEP_POS, SPAWN_RING, spawn_footing)
+    } else {
+        south_spawn_point(ring_index, KEEP_POS, SPAWN_RING, spawn_footing)
+    };
+    let seed = invader_seed(ring_index.wrapping_mul(0x9e37_79b1) ^ ring_index.wrapping_add(1), variant, tactic);
     let e = armory.spawn(commands, variant, INVADER_FACTION, KEEP_POS, p, seed);
     commands.entity(e).insert((
         WaveInvader { closest: p.distance(KEEP_POS), progress_at: now },
         crate::navgrid::NavPath::default(),
         Health { hp, max: hp },
+        InvaderOrders { tactic },
     ));
 }
 
@@ -826,7 +855,7 @@ pub fn director_march(
 /// wave / victory on a clear, and trips defeat if the keep is razed. Decision logic is the pure
 /// [`step_wave_director`]; this feeds it world state and applies its actions.
 #[allow(clippy::too_many_arguments)]
-fn run_director(
+pub(crate) fn run_director(
     time: Res<Time>,
     game: Res<GameTime>,
     mut siege: ResMut<Siege>,
@@ -834,6 +863,7 @@ fn run_director(
     mut player: ResMut<crate::player::PlayerRes>,
     eco: Res<crate::economy::EconomyState>,
     def: Res<crate::economy::Defenses>,
+    campaign: Res<crate::quest::CampaignRes>,
     mut town: ResMut<crate::town::TownRes>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     armory: Option<Res<InvaderArmory>>,
@@ -866,6 +896,10 @@ fn run_director(
 
     let alive = alive_invaders.iter().count() as u32; // fading corpses don't count → wave clears
     let mods = mods_for(siege.difficulty);
+    let next_night = (siege.wave_index + 1).max(0) as usize;
+    if siege.phase == GamePhase::Prep && campaign.0.learning_day(next_night) {
+        siege.timers = guided_prep_timers(siege.timers, now, PREP_DURATION * mods.prep_mul, siege.skip_requested);
+    }
     let res = step_wave_director(&WaveStepInput {
         phase: siege.phase,
         wave_index: siege.wave_index,
@@ -930,12 +964,20 @@ fn run_director(
                 }
             }
             WaveAction::Spawn { variant, hp, spawn_index, wave_index } => {
+                let threat = threat_for(wave_index);
+                let cleared = crate::camps::raid_cleared(&campaign.0, wave_index);
+                let Some(slot) = threat.slot_after_raid(spawn_index, cleared) else {
+                    // Consume prevented slots too. The reducer's quota measures planned slots;
+                    // leaving these uncounted would spawn forever and strand a reduced night.
+                    siege.spawned += 1;
+                    continue;
+                };
                 if let Some(arm) = armory.as_deref() {
                     // Offset the ring index per wave so successive nights don't reuse the same arc.
                     let ring_index = spawn_index + wave_index as u32 * 7;
                     // Toughen with the hero's level so leveling up doesn't soften the night.
                     let hp = (hp * ork_level_hp_mul(player.0.level)).round();
-                    spawn_invader(&mut commands, &arm.0, variant, hp, ring_index, now);
+                    spawn_invader(&mut commands, &arm.0, variant, hp, ring_index, now, slot.tactic);
                     siege.spawned += 1;
                 }
             }
@@ -979,6 +1021,7 @@ pub(crate) fn invader_brain(
             &mut crate::navgrid::NavPath,
             &mut Transform,
             &Health,
+            &InvaderOrders,
         ),
         Without<crate::dying::Dying>,
     >,
@@ -1004,7 +1047,7 @@ pub(crate) fn invader_brain(
     guard_positions.extend(live_guards.iter().map(|(_, p)| *p));
     guard_grid.rebuild(guard_positions.iter().map(|p| (p.x as f64, p.y as f64)));
 
-    for (e, mut o, mut inv, mut path, mut tf, hp) in &mut q {
+    for (e, mut o, mut inv, mut path, mut tf, hp, orders) in &mut q {
         o.atk_cd -= dt;
         // Berserker frenzy: faster march + quicker strikes under 40% HP (incl. the boss).
         let frenzied = o.variant == OrkVariant::Berserker && hp.hp < hp.max * 0.4;
@@ -1039,22 +1082,10 @@ pub(crate) fn invader_brain(
                 hold_pt = Some(crate::melee_ring::hold_point(e, hero.pos, o.pos));
             }
         }
-        // FORGIVING slice tuning: only ~1/3 of the warband (by id) are arsonists; the
-        // rest still rush the keep. They make for the nearest standing building. The
-        // keep's existing defenses (towers/archers/ballista) already auto-target ANY
-        // WaveInvader, so arsonists get shot on approach — no extra wiring needed.
-        let arsonist = (e.to_bits() % 3) == 0;
-        let building_goal: Option<(usize, Vec2)> = if arsonist {
-            let mut best: Option<(usize, f32)> = None;
-            for (idx, spot) in plot_spots.0.iter().enumerate() {
-                if town.0.plots.get(idx).map_or(false, |p| p.is_built()) {
-                    let d = o.pos.distance(*spot);
-                    if best.map_or(true, |(_, bd)| d < bd) {
-                        best = Some((idx, d));
-                    }
-                }
-            }
-            best.map(|(i, _)| (i, plot_spots.0[i]))
+        // Only the explicitly announced, visibly torch-bearing specialists burn buildings.
+        // Farms come first; after a collapse their survivors can move on to another building.
+        let building_goal: Option<(usize, Vec2)> = if orders.tactic == Tactic::Arson {
+            raid_building_goal(o.pos, &town.0.plots, &plot_spots.0)
         } else {
             None
         };
@@ -1064,11 +1095,7 @@ pub(crate) fn invader_brain(
             hp // waiting on the melee ring — prowl the circle, don't press in
         } else if chase_hero {
             hero.pos
-        } else if let Some((bidx, bpos)) = building_goal {
-            // Batter the building when in range; else march toward it.
-            if o.pos.distance(bpos) < BUILDING_ATTACK_RANGE {
-                building_dmg.0.push((bidx, BUILDING_DPS * dmg_scale * dt));
-            }
+        } else if let Some((_, bpos)) = building_goal {
             bpos
         } else {
             KEEP_POS
@@ -1084,14 +1111,21 @@ pub(crate) fn invader_brain(
         // nothing (walls shield the keep; only buildings + the keep itself are attackable).
         let in_yard = crate::castle::in_courtyard(o.pos.x, o.pos.y);
         let at_keep =
-            !chase_hero && guard_tgt.is_none() && in_yard && dist_keep <= KEEP_ATTACK_RANGE;
+            !chase_hero && guard_tgt.is_none() && building_goal.is_none() && in_yard && dist_keep <= KEEP_ATTACK_RANGE;
+        let at_building = !chase_hero && guard_tgt.is_none()
+            && building_goal.is_some_and(|(_, bp)| o.pos.distance(bp) < BUILDING_ATTACK_RANGE);
+        if at_building {
+            if let Some((bidx, _)) = building_goal {
+                building_dmg.0.push((bidx, BUILDING_DPS * dmg_scale * dt));
+            }
+        }
         // Chasing a target (hero/guard) uses cheap direct steering; only the keep march paths A*.
         // Arsonists with a building goal also steer directly toward `target` (= the building, in
         // the open safe-zone outside the walls) instead of running the keep A* — otherwise they'd
         // ignore the building and march the keep.
         let chase_direct = chase_hero || guard_tgt.is_some() || building_goal.is_some();
 
-        if at_hero || at_guard || at_keep {
+        if at_hero || at_guard || at_keep || at_building {
             o.moving = false;
             // Turn to face the target at a capped rate.
             let to = target - o.pos;
@@ -1130,6 +1164,9 @@ pub(crate) fn invader_brain(
                             attacker: Some(e),
                         });
                     }
+                } else if at_building {
+                    // The fire damage above is continuous; animate the raider battering the farm.
+                    o.atk_cd = orks::ORK_ATTACK_CD;
                 } else {
                     // Hammering the keep.
                     o.atk_cd =
@@ -1215,8 +1252,6 @@ pub(crate) fn invader_brain(
         // advancing* toward a hero/guard/building this frame. A wedged ork that merely INTENDS to
         // reach a building/hero but is frozen (steering boxed in → `!o.moving`) must still time out;
         // keying `engaged` on intent alone left a frozen arsonist immune forever, hanging the wave.
-        let at_building =
-            building_goal.is_some_and(|(_, bp)| o.pos.distance(bp) < BUILDING_ATTACK_RANGE);
         let attacking = at_hero || at_guard || at_keep || at_building;
         let pursuing = chase_hero || guard_tgt.is_some() || building_goal.is_some();
         // An in-yard keep-presser jostling in a crowd (moving but net-zero keep progress, e.g.
@@ -1280,6 +1315,8 @@ struct KeepRow;
 struct KeepIcon;
 #[derive(Component)]
 struct KeepText;
+#[derive(Component)]
+struct ThreatText;
 
 fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<AssetServer>) {
     let icons = ObjectiveIcons {
@@ -1304,7 +1341,8 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<Asse
                 right: Val::Px(16.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::FlexEnd,
-                row_gap: Val::Px(2.0),
+                row_gap: Val::Px(4.0),
+                max_width: Val::Px(360.0),
                 ..default()
             },
             anim(AnimKind::SlideDown, 0.0, 0.36),
@@ -1321,6 +1359,13 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<Asse
                         SubText,
                     ));
                 });
+            col.spawn((
+                label(&fonts.semibold, "", 15.0, rgb(255, 238, 196)),
+                Node { max_width: Val::Px(350.0), ..default() },
+                TextLayout::justify(Justify::Right),
+                TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.95) },
+                ThreatText,
+            ));
             // Keep-HP row: shield + percent, shown only during a wave (toggled in update_siege_hud).
             col.spawn((
                 Node {
@@ -1345,14 +1390,16 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<Asse
 
 fn update_siege_hud(
     siege: Res<Siege>,
+    campaign: Res<crate::quest::CampaignRes>,
     icons: Res<ObjectiveIcons>,
     keep: Res<KeepHp>,
     invaders: Query<&WaveInvader, Without<crate::dying::Dying>>,
     time: Res<Time>,
     mut obj_icon_q: Query<&mut ImageNode, (With<ObjIcon>, Without<KeepIcon>)>,
     mut keep_icon_q: Query<&mut ImageNode, (With<KeepIcon>, Without<ObjIcon>)>,
-    mut obj_text_q: Query<(&mut Text, &mut TextColor), (With<SubText>, Without<KeepText>)>,
-    mut keep_text_q: Query<(&mut Text, &mut TextColor), (With<KeepText>, Without<SubText>)>,
+    mut obj_text_q: Query<(&mut Text, &mut TextColor), (With<SubText>, Without<KeepText>, Without<ThreatText>)>,
+    mut keep_text_q: Query<(&mut Text, &mut TextColor), (With<KeepText>, Without<SubText>, Without<ThreatText>)>,
+    mut threat_text_q: Query<(&mut Text, &mut TextColor), (With<ThreatText>, Without<KeepText>, Without<SubText>)>,
     mut keep_row_q: Query<&mut Node, With<KeepRow>>,
 ) {
     // One icon + one number per phase; colour carries the phase mood. Nights loop forever, so no
@@ -1362,7 +1409,9 @@ fn update_siege_hud(
         GamePhase::Prep => {
             let left = siege.prep_seconds_left.max(0.0);
             let secs = left as i64;
-            (icons.sun.clone(), format!("{}:{:02}", secs / 60, secs % 60), rgb(255, 238, 196), left <= 10.0)
+            let held = campaign.0.learning_day((siege.wave_index + 1).max(0) as usize);
+            let value = if held { "Take your time".into() } else { format!("{}:{:02}", secs / 60, secs % 60) };
+            (icons.sun.clone(), value, rgb(255, 238, 196), !held && left <= 10.0)
         }
         GamePhase::Wave => {
             let alive = invaders.iter().count();
@@ -1387,6 +1436,21 @@ fn update_siege_hud(
     if let Ok((mut t, mut c)) = obj_text_q.single_mut() {
         **t = value;
         c.0 = col;
+    }
+    if let Ok((mut t, mut c)) = threat_text_q.single_mut() {
+        let night = if siege.phase == GamePhase::Prep { siege.wave_index + 1 } else { siege.wave_index }.max(0) as usize;
+        let threat = threat_for(night);
+        let cleared = crate::camps::raid_cleared(&campaign.0, night);
+        **t = match siege.phase {
+            GamePhase::Prep if cleared => format!("{}\n{}", threat.raid_result,
+                if campaign.0.learning_day(night) { "Ring the bell when ready" } else { "Prepare for the remaining attackers" }),
+            GamePhase::Prep if campaign.0.learning_day(night) => format!("Tonight: {}\nRing the bell when ready", threat.name),
+            GamePhase::Prep => format!("Tonight: {}\n{}", threat.name, threat.brief),
+            GamePhase::Wave if cleared => threat.raid_result.into(),
+            GamePhase::Wave => format!("Night {} · {}", night + 1, threat.name),
+            _ => String::new(),
+        };
+        c.0 = if cleared { rgb(150, 240, 150) } else { rgb(255, 238, 196) };
     }
 
     // Keep-HP line — only while a wave is live. Blue when healthy, reddening as the keep crumbles.
@@ -1421,9 +1485,10 @@ fn seed_demo_wave(mut siege: ResMut<Siege>, armory: Option<Res<InvaderArmory>>, 
     let count = staged_count(effective_count(wave_index, mods) as usize) as u32;
     let def = &WAVES[wave_index];
     for k in 0..count {
-        let variant = def.variants[k as usize % def.variants.len()];
+        let slot = def.slot(k);
+        let variant = scene_variant(slot.variant);
         let hp = (base_hp(variant) * def.hp_scale * mods.hp_mul).round();
-        spawn_invader(&mut commands, &arm.0, variant, hp, k + wave_index as u32 * 7, 0.0);
+        spawn_invader(&mut commands, &arm.0, variant, hp, k + wave_index as u32 * 7, 0.0, slot.tactic);
     }
     siege.phase = GamePhase::Wave;
     siege.wave_index = wave_index as i32;
@@ -1465,12 +1530,12 @@ fn siege_clip_refill(
     keep.hp = if std::env::var("FOREST_PERFTEST").is_ok() { keep.max }
         else { keep.hp.max(keep.max * 0.15) };
     let wave = &WAVES[staged_wave_index()];
-    let variants = wave.variants;
     let mods = mods_for(siege.difficulty);
     for _ in alive.iter().count()..target {
-        let v = variants[(*ring as usize) % variants.len()];
+        let slot = wave.slot(*ring);
+        let v = scene_variant(slot.variant);
         let hp = (base_hp(v) * wave.hp_scale * mods.hp_mul).round();
-        spawn_invader(&mut commands, &arm.0, v, hp, *ring, game.0);
+        spawn_invader(&mut commands, &arm.0, v, hp, *ring, game.0, slot.tactic);
         *ring = ring.wrapping_add(1);
     }
 }
@@ -1504,8 +1569,8 @@ mod tests {
     fn effective_count_scales_and_floors_at_one() {
         assert_eq!(effective_count(0, normal()), 5);
         assert_eq!(effective_count(0, mods_for(Difficulty::Hard)), 6); // round(5·1.25=6.25)=6
-        let boss = WAVES.len() - 1; // count 1; easy round(0.8)=1 floored, never 0
-        assert_eq!(effective_count(boss, mods_for(Difficulty::Easy)), 1);
+        assert_eq!(effective_count(7, mods_for(Difficulty::Easy)), 10);
+        assert_eq!(effective_count(0, DiffMods { count_mul: 0.01, ..normal() }), 1);
     }
 
 
@@ -1524,12 +1589,13 @@ mod tests {
     }
 
     #[test]
-    fn wave_table_has_eight_waves_with_boss_last() {
+    fn wave_table_has_eight_distinct_opening_nights_with_mixed_late_raids() {
         assert_eq!(WAVES.len(), 8);
-        let boss = &WAVES[7];
-        assert_eq!(boss.count, 1);
-        assert_eq!(boss.hp_scale, 14.0);
-        assert_eq!(boss.variants, &[OrkVariant::Berserker]);
+        let late = &WAVES[7];
+        assert_eq!(late.count, 14);
+        assert_eq!(late.hp_scale, 1.5);
+        assert!(late.variants.contains(&tileworld_core::ork_config::OrkVariant::Scout));
+        assert!(late.variants.contains(&tileworld_core::ork_config::OrkVariant::Shaman));
     }
 
     #[test]
@@ -1541,7 +1607,7 @@ mod tests {
         for w in WAVES.windows(2) {
             assert!(w[1].dmg_scale >= w[0].dmg_scale, "dmg_scale must be monotonic");
         }
-        assert_eq!(night_dmg_scale(99), WAVES[WAVES.len() - 1].dmg_scale); // over-run clamps
+        assert_eq!(night_dmg_scale(10), threat_for(10).dmg_scale);
     }
 
     #[test]
@@ -1590,7 +1656,7 @@ mod tests {
         });
         match r.actions[0] {
             WaveAction::Spawn { variant, spawn_index, wave_index, .. } => {
-                assert_eq!(variant, WAVES[0].variants[0]);
+                assert_eq!(variant, scene_variant(WAVES[0].variants[0]));
                 assert_eq!(spawn_index, 0);
                 assert_eq!(wave_index, 0);
             }
@@ -1636,10 +1702,7 @@ mod tests {
     }
 
     #[test]
-    fn nights_past_the_table_replay_the_last_wave() {
-        // A night well beyond the WAVES table still spawns (clamped to the last wave), instead of
-        // returning empty — so the looping endgame keeps throwing the hardest night.
-        let last = WAVES.len() - 1;
+    fn nights_past_the_table_rotate_mature_threats() {
         let beyond = WAVES.len() as i32 + 5;
         let r = step_wave_director(&WaveStepInput {
             phase: GamePhase::Wave, wave_index: beyond, spawned: 0, alive: 0,
@@ -1647,9 +1710,9 @@ mod tests {
         });
         match r.actions.first() {
             Some(WaveAction::Spawn { hp, variant, .. }) => {
-                assert_eq!(*hp, (base_hp(*variant) * WAVES[last].hp_scale).round());
+                assert_eq!(*hp, (base_hp(*variant) * threat_for(beyond as usize).hp_scale).round());
             }
-            other => panic!("expected a Spawn from the clamped last wave, got {other:?}"),
+            other => panic!("expected a Spawn from a rotated mature threat, got {other:?}"),
         }
     }
 
@@ -1675,17 +1738,98 @@ mod tests {
     }
 
     #[test]
-    fn boss_hp_is_base_times_scale() {
+    fn late_wave_hp_stays_moderate_for_the_familiar_enemies() {
         let last = WAVES.len() - 1;
         let r = step_wave_director(&WaveStepInput {
             phase: GamePhase::Wave, wave_index: last as i32, spawned: 0, alive: 0,
             timers: WaveTimers::default(), now: 0.0, skip: false, mods: normal(),
         });
         if let WaveAction::Spawn { hp, variant, .. } = r.actions[0] {
-            assert_eq!(variant, OrkVariant::Berserker);
-            assert_eq!(hp, (base_hp(OrkVariant::Berserker) * 14.0).round());
+            assert_eq!(variant, OrkVariant::Scout);
+            assert_eq!(hp, (base_hp(OrkVariant::Scout) * 1.5).round());
         } else {
             panic!("expected a Spawn action");
+        }
+    }
+
+    #[test]
+    fn guided_day_never_expires_but_an_explicit_bell_always_works() {
+        for now in [0.0, 0.125, 195.0, 10_000.0, 12_345.679] {
+            let held = guided_prep_timers(WaveTimers::default(), now, PREP_DURATION, false);
+            let r = step_wave_director(&WaveStepInput {
+                phase: GamePhase::Prep, wave_index: -1, spawned: 0, alive: 0,
+                timers: held, now, skip: false, mods: normal(),
+            });
+            assert!(r.actions.is_empty());
+            assert_eq!(r.timers.prep_ends_at - now, PREP_DURATION);
+
+            let ready = guided_prep_timers(held, now, PREP_DURATION, true);
+            let r = step_wave_director(&WaveStepInput {
+                phase: GamePhase::Prep, wave_index: -1, spawned: 0, alive: 0,
+                timers: ready, now, skip: true, mods: normal(),
+            });
+            assert_eq!(r.actions, vec![WaveAction::BeginWave { index: 0 }, WaveAction::SetPhase(GamePhase::Wave)]);
+        }
+    }
+
+    #[test]
+    fn omitted_ritual_slots_still_allow_the_reduced_night_to_clear() {
+        let threat = threat_for(2);
+        let count = effective_count(2, normal());
+        let mut timers = WaveTimers::default();
+        let mut actual_spawns = 0;
+        for consumed in 0..count {
+            let r = step_wave_director(&WaveStepInput {
+                phase: GamePhase::Wave, wave_index: 2, spawned: consumed, alive: 0,
+                timers, now: timers.next_spawn_at, skip: false, mods: normal(),
+            });
+            let WaveAction::Spawn { spawn_index, .. } = r.actions[0] else { panic!("missing planned slot") };
+            if let Some(slot) = threat.slot_after_raid(spawn_index, true) {
+                assert_ne!(slot.variant, tileworld_core::ork_config::OrkVariant::Shaman);
+                actual_spawns += 1;
+            }
+            timers = r.timers;
+        }
+        assert!(actual_spawns > 0 && actual_spawns < count);
+        let clear = step_wave_director(&WaveStepInput {
+            phase: GamePhase::Wave, wave_index: 2, spawned: count, alive: 0,
+            timers, now: 100.0, skip: false, mods: normal(),
+        });
+        assert_eq!(clear.actions, vec![WaveAction::SetPhase(GamePhase::Prep)]);
+    }
+
+    #[test]
+    fn arsonists_visibly_carry_torches_and_ordinary_invaders_do_not() {
+        for seed in 0..256 {
+            for variant in [OrkVariant::Grunt, OrkVariant::Berserker] {
+                let torch = invader_seed(seed, variant, Tactic::Arson);
+                let shield = invader_seed(seed, variant, Tactic::March);
+                assert!((torch.wrapping_mul(2654435761) >> 7) % 100 < 35);
+                assert!((shield.wrapping_mul(2654435761) >> 7) % 100 >= 35);
+            }
+        }
+    }
+
+    #[test]
+    fn arsonists_choose_a_farm_before_a_closer_workshop_and_ignore_its_ruins() {
+        use tileworld_core::town_store::{BuildKind, Plot, PlotState};
+        let built = |kind| Plot { kind: Some(kind), state: PlotState::Built { hp: 110.0, burning: false }, staffed: true };
+        let mut plots = [built(BuildKind::Lumber), built(BuildKind::Farm), Plot::empty()];
+        let spots = [Vec2::new(1.0, 0.0), Vec2::new(6.0, 0.0), Vec2::new(0.1, 0.0)];
+        assert_eq!(raid_building_goal(Vec2::ZERO, &plots, &spots), Some((1, spots[1])));
+        plots[1].state = PlotState::Rubble;
+        assert_eq!(raid_building_goal(Vec2::ZERO, &plots, &spots), Some((0, spots[0])));
+        plots[0].state = PlotState::Rubble;
+        assert_eq!(raid_building_goal(Vec2::ZERO, &plots, &spots), None);
+    }
+
+    #[test]
+    fn flanking_scouts_arrive_from_opposite_side_gates() {
+        for index in 0..12 {
+            let p = flank_spawn_point(index, Vec2::ZERO, 30.0, |_, _| true);
+            assert!(p.x.abs() > 25.0);
+            assert!(p.y.abs() < 8.0);
+            assert_eq!(p.x.is_sign_positive(), index % 2 == 0);
         }
     }
 

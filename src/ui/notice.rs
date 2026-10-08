@@ -63,7 +63,7 @@ fn setup_notice(mut commands: Commands) {
         NoticeRoot,
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(64.0),
+            top: Val::Px(82.0),
             left: Val::Percent(50.0),
             margin: UiRect::left(Val::Px(-140.0)),
             width: Val::Px(280.0),

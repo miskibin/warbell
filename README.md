@@ -36,9 +36,27 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
   war bell (ring in the night), or a chest (open it) and a prompt names it
 - **B** build mode — at your town, press **B**, then point and click to raise houses, farms,
   woodcutters and mines
+- **K** gather your militia / stand down · **J** current situation · **H** controls and help
 - **Tab / I** satchel · **Q** eat food · **Y / T** quick-slots · **Z / X / C** combat arts
 - **F** forage / rescue · **R** recruit · **` (backquote)** free-roam fly-cam · **P / Esc** pause
 - **F1** debug tuning panel · **F2** perf/state overlay · **1–5** swap biome patch
+
+## Your first three days
+
+There is no countdown during the first three preparations: ring the war bell with **E** when
+ready. The gold compass marker shows the current destination. You can try other approaches or
+ring the bell before finishing the suggested preparation.
+
+1. Gather the militia, free the nearby captives and bring the town back to work. A farm counts
+   when a villager is actually producing food there.
+2. Prepare for torch raiders targeting the farms. Buy a useful upgrade or intercept them yourself;
+   clearing their marked staging camp prevents the torch bearers joining that night.
+3. Decide how to face shamans: raid their marked camp to remove them from the incoming wave, or
+   prepare ranged defenses and face them at home.
+
+Later days bring back the preparation countdown and mix these threats. The day report states
+what is coming and what a successful raid changes. Ruined producers stop working; **E** at their
+remains rebuilds them. Existing saves keep their progress and resume without replaying the lessons.
 
 ## Build from source
 
