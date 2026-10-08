@@ -618,6 +618,18 @@ fn register_passive_blocker(x: f32, z: f32, footprint: Vec2, scale: f32, authore
     crate::blockers::add_obb(x, z, half.x, half.y, yaw);
 }
 
+/// Soft undergrowth can layer with other plants, but it must stay off actual solids.
+/// A solid boulder still needs its whole visible footprint clear of earlier scenery.
+/// All props keep reserving their visible extent for later structural set-pieces; those
+/// placement-only reservations must not become exclusion zones for the forest canopy.
+fn passive_placement_blocked(x: f32, z: f32, visual_radius: f32, scale: f32, authored_radius: f32) -> bool {
+    if authored_radius * scale >= 0.30 {
+        crate::blockers::any_visual_within(x, z, visual_radius)
+    } else {
+        crate::blockers::any_within(x, z, visual_radius)
+    }
+}
+
 fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHandles> {
     src.iter()
         .map(|c| {
@@ -1028,7 +1040,9 @@ pub fn scatter_region(
                         || landmark_core
                         || story_clearing
                         || tree_pts.iter().any(|q| q.distance_squared(p) < min_d2)
-                        || crate::blockers::any_visual_within(cx, cz, tree_clear)
+                        // Tree spacing follows trunks and solid scenery. Bush crowns and low
+                        // rocks are understorey, not empty circles that evict future trees.
+                        || crate::blockers::any_within(cx, cz, tree_clear)
                     {
                         // Passive non-tree prop, so it merges into the chunk's props bucket.
                         if let Some(fb) = fallback
@@ -1037,7 +1051,7 @@ pub fn scatter_region(
                             let fi = pick_weighted(&fb.weights, r.next());
                             let fs = r.range(fb.scale.0, fb.scale.1);
                             let footprint = fb.visual_radii[fi] * fs;
-                            if !crate::blockers::any_visual_within(cx, cz, footprint)
+                            if !passive_placement_blocked(cx, cz, footprint, fs, fb.block_radius)
                                 && !story_clearings.overlaps(cx, cz, footprint)
                             {
                                 let rot = yaw(&mut r);
@@ -1108,10 +1122,10 @@ pub fn scatter_region(
                         gz += 1.0;
                         continue;
                     }
-                    // Visual separation is independent of movement: low shrubs remain walkable,
-                    // but their full mesh cannot be merged through another prop.
+                    // Structural scenery stays separated; shrubs and small stones can layer
+                    // beneath trees and beside other undergrowth without thinning the forest.
                     let footprint = c.visual_radii[vi] * s;
-                    if story_clearing || crate::blockers::any_visual_within(cx, cz, footprint) {
+                    if story_clearing || passive_placement_blocked(cx, cz, footprint, s, c.block_radius) {
                         gz += 1.0;
                         continue;
                     }
@@ -1215,6 +1229,101 @@ fn yaw(r: &mut Rng) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, PartialEq)]
+    struct ScatterSnapshot {
+        trees: Vec<(u32, u32, u32)>,
+        passive_vertices: usize,
+    }
+
+    /// Real scatter with the real forest meshes/seed, on a flat, off-map fixture so roads,
+    /// landmark clearings and biome boundaries cannot make the regression camera-dependent.
+    /// Passive props are merged, so count their actual geometry rather than chunk entities.
+    fn scatter_fixture(cfg: &BiomeConfig) -> ScatterSnapshot {
+        let mut world = World::new();
+        let mut queue = bevy::ecs::world::CommandQueue::default();
+        let mut meshes = Assets::<Mesh>::default();
+        let mut materials = Assets::<StandardMaterial>::default();
+        scatter_region(
+            cfg, &mut Commands::new(&mut queue, &world), &mut meshes, &mut materials,
+            400.0, 432.0, false, &|_, _| true, &|_, _| 0.0, &[],
+        );
+        queue.apply(&mut world);
+        let mut trees: Vec<_> = world.query_filtered::<&Transform, With<crate::verbs::ChopTree>>()
+            .iter(&world)
+            .map(|tf| (tf.translation.x.to_bits(), tf.translation.z.to_bits(), tf.scale.x.to_bits()))
+            .collect();
+        trees.sort_unstable();
+        let passive_vertices = world.query_filtered::<&Mesh3d, Without<crate::verbs::ChopTree>>()
+            .iter(&world)
+            .map(|handle| meshes.get(&handle.0).unwrap().count_vertices())
+            .sum();
+        ScatterSnapshot { trees, passive_vertices }
+    }
+
+    fn forest_fixture() -> BiomeConfig {
+        let mut cfg = crate::biome_forest::config();
+        cfg.cover.clear(); // The regression is canopy/understorey placement, not grass shading.
+        cfg
+    }
+
+    fn reserve_soft_understorey() {
+        // Overlapping walk-through shrub footprints cover the entire fixture. They may
+        // reserve space against buildings, but must not veto a later tree or other shrub.
+        for x in (396..=436).step_by(4) {
+            for z in (396..=436).step_by(4) {
+                crate::blockers::reserve_visual(x as f32, z as f32, 3.0);
+            }
+        }
+    }
+
+    #[test]
+    fn forest_density_and_layout_survive_soft_vegetation_reservations() {
+        let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
+        let cfg = forest_fixture();
+        crate::blockers::reset();
+        let baseline = scatter_fixture(&cfg);
+        crate::blockers::reset();
+        reserve_soft_understorey();
+        let layered = scatter_fixture(&cfg);
+        crate::blockers::reset();
+        eprintln!("forest fixture: baseline {} trees / {} passive vertices; layered {} trees / {} passive vertices",
+            baseline.trees.len(), baseline.passive_vertices, layered.trees.len(), layered.passive_vertices);
+        assert!(baseline.trees.len() >= 40, "32x32 open forest must contain a real canopy: {baseline:?}");
+        assert!(baseline.passive_vertices > 0, "forest fixture must exercise the understorey too");
+        assert_eq!(layered, baseline, "walk-through plants must not change canopy or understorey density/layout");
+    }
+
+    #[test]
+    fn forest_scatter_still_rejects_solid_structures() {
+        let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        crate::blockers::add_box(416.0, 416.0, 18.0, 18.0);
+        let blocked = scatter_fixture(&forest_fixture());
+        crate::blockers::reset();
+        assert!(blocked.trees.is_empty(), "trees must not grow through a structure");
+        assert_eq!(blocked.passive_vertices, 0, "understorey must not grow through a structure");
+    }
+
+    #[test]
+    fn solid_passive_scenery_keeps_full_visual_separation() {
+        let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
+        let mut cfg = forest_fixture();
+        // Keep the actual forest rock meshes, but make this fixture a solid boulder class.
+        let mut boulders = cfg.classes.remove(3);
+        boulders.chance = 1.0;
+        boulders.block_radius = 1.0;
+        cfg.classes = vec![boulders];
+        crate::blockers::reset();
+        let baseline = scatter_fixture(&cfg);
+        crate::blockers::reset();
+        reserve_soft_understorey();
+        let reserved = scatter_fixture(&cfg);
+        crate::blockers::reset();
+        assert!(baseline.passive_vertices > 0, "fixture must actually place solid scenery");
+        assert_eq!(reserved.passive_vertices, 0, "solid scenery must respect the entire reserved footprint");
+    }
+
     #[test]
     fn passive_collision_matches_wide_rotated_variant() {
         let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
