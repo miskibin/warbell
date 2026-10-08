@@ -1,5 +1,5 @@
-//! Hero limb animation — a faithful 1:1 port of the user's three.js `updateKnightAnimation`
-//! (low-poly-knight-studio). Every studio clip is reproduced verbatim: **idle / walk / run / jump /
+//! Hero limb animation, based on the user's three.js `updateKnightAnimation`
+//! (low-poly-knight-studio): **idle / walk / run / jump /
 //! defend / attack1 (overhead chop) / attack2 (horizontal slash) / attack3 (forward thrust) /
 //! victory**. The studio builds each frame imperatively — reset every joint to rest, then a `switch`
 //! case sets some — so we mirror that: [`rest`] seeds a full [`Pose`] table and each clip function
@@ -360,21 +360,23 @@ pub(crate) fn stance_loco_pose(t: f32, wp: f32, m: f32, run: f32, back: f32, twi
 /// (`hero.stance_amt`), so leaving combat melts back to the relaxed carry — and coming out of a
 /// roll/attack flows straight into this ready pose. Attack/block/roll clips own their joints
 /// wholesale past this point, so the overlay only colours locomotion.
-fn guard_overlay(p: &mut Pose, amt: f32) {
+fn guard_overlay(p: &mut Pose, amt: f32, moving: f32) {
     let a = amt.clamp(0.0, 1.0);
     if a <= 0.001 {
         return;
     }
-    // Weight drops: hips sink + tip forward slightly, knees take the bend, thighs sit back.
+    // Moving legs already have a solved support/recovery. Apply the extra guard crouch
+    // only as movement settles; bending those knees again drove the supporting boot down.
+    let lower_amt = a * (1.0 - moving.clamp(0.0, 1.0));
     if let Some(t) = p.hips.t {
-        p.hips.t = Some(t - Vec3::new(0.0, 0.045 * a, 0.0));
+        p.hips.t = Some(t - Vec3::new(0.0, 0.045 * lower_amt, 0.0));
     }
-    p.hips.r = e3(0.05 * a, 0.0, 0.0) * p.hips.r;
+    p.hips.r = e3(0.05 * lower_amt, 0.0, 0.0) * p.hips.r;
     p.torso.r = e3(0.09 * a, 0.0, 0.0) * p.torso.r;
-    p.knee_l.r = p.knee_l.r * rx(0.22 * a);
-    p.knee_r.r = p.knee_r.r * rx(0.20 * a);
-    p.hip_l.r = p.hip_l.r * rx(-0.11 * a);
-    p.hip_r.r = p.hip_r.r * rx(-0.10 * a);
+    p.knee_l.r = p.knee_l.r * rx(0.22 * lower_amt);
+    p.knee_r.r = p.knee_r.r * rx(0.20 * lower_amt);
+    p.hip_l.r = p.hip_l.r * rx(-0.11 * lower_amt);
+    p.hip_r.r = p.hip_r.r * rx(-0.10 * lower_amt);
     // Sword arm to a mid guard — forearm raised, blade angled up-forward at the ready.
     p.sh_r = p.sh_r.lerp(Jp::r(e3(-0.35, -0.1, 0.28)), a);
     p.el_r = p.el_r.lerp(Jp::r(rx(-1.15)), a);
@@ -1071,7 +1073,7 @@ pub fn hero_anim(
             hero.back_amt,
             hero.strafe_twist,
         );
-        guard_overlay(&mut p, hero.stance_amt);
+        guard_overlay(&mut p, hero.stance_amt, moving);
         p
     };
     let pose = if hero.victory {
@@ -1261,6 +1263,24 @@ mod tests {
             let idle = idle_pose(2.0);
             assert!(stopped.hips.t.unwrap().distance(idle.hips.t.unwrap()) < 0.0001);
             assert!(stopped.knee_l.r.angle_between(idle.knee_l.r) < 0.001);
+        }
+    }
+
+    #[test]
+    fn combat_guard_preserves_moving_footman_support_and_level_soles() {
+        for back in [0.0, 1.0] {
+            for twist in [-0.7, 0.0, 0.7] {
+                for frame in 0..120 {
+                    let phase = std::f32::consts::TAU * frame as f32 / 120.0;
+                    let mut p = stance_loco_pose(2.0, phase, 1.0, 0.0, back, twist);
+                    guard_overlay(&mut p, 1.0, 1.0);
+                    for right in [false, true] {
+                        let (position, normal) = sole(&p, right);
+                        assert!(position.y >= -0.025, "guard must not drive the moving boot into the ground");
+                        assert!(normal.dot(Vec3::Y) > 0.995, "guard must preserve level moving soles");
+                    }
+                }
+            }
         }
     }
 }
