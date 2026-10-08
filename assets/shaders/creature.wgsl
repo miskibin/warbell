@@ -12,9 +12,49 @@
     forward_io::{VertexOutput, FragmentOutput},
 }
 
-struct CreatureParams { params: vec4<f32> };
+struct CreatureParams {
+    params: vec4<f32>,
+    // x = triplanar scale, y = height bump, z = roughness multiplier, w = mode
+    // (0 = the procedural surf families below, 1 = sampled triplanar PBR).
+    pbr: vec4<f32>,
+};
 // Bevy injects the material bind-group index; hardcoding @group(2) breaks on pipeline changes.
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> creature: CreatureParams;
+@group(#{MATERIAL_BIND_GROUP}) @binding(101) var ft_alb: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(102) var ft_alb_s: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(103) var ft_mr: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(104) var ft_mr_s: sampler;
+
+// Object-space normal. Bevy writes `world_normal = normalize(inverse_transpose(M) * objectNormal)`,
+// so `transpose(M) * world_normal` is parallel to the raw attribute — including on the footman's
+// non-uniformly scaled parts (pauldrons, straps). A pure inverse would skew those weights.
+fn ft_obj_normal(m: mat3x3<f32>, n_world: vec3<f32>) -> vec3<f32> {
+    return normalize(transpose(m) * n_world);
+}
+
+fn ft_tri_w(n: vec3<f32>) -> vec3<f32> {
+    let w = pow(abs(n), vec3<f32>(4.0));
+    return w / max(w.x + w.y + w.z, 1e-5);
+}
+
+fn ft_tri(t: texture_2d<f32>, s: sampler, p: vec3<f32>, n: vec3<f32>, sc: f32) -> vec4<f32> {
+    let w = ft_tri_w(n);
+    let q = p * sc;
+    return textureSample(t, s, q.zy) * w.x
+        + textureSample(t, s, q.xz + vec2<f32>(0.37, 0.37)) * w.y
+        + textureSample(t, s, q.xy + vec2<f32>(0.71, 0.71)) * w.z;
+}
+
+// Screen-space height bump, the same construction as the three.js `tpPerturb`.
+fn ft_perturb(sp: vec3<f32>, n: vec3<f32>, d_h: vec2<f32>) -> vec3<f32> {
+    let sx = normalize(dpdx(sp));
+    let sy = normalize(dpdy(sp));
+    let r1 = cross(sy, n);
+    let r2 = cross(n, sx);
+    let det = dot(sx, r1);
+    let g = sign(det) * (d_h.x * r1 + d_h.y * r2);
+    return normalize(abs(det) * n - g);
+}
 
 fn hash3(p: vec3<f32>) -> f32 {
     let q = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
@@ -61,10 +101,29 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         lp.z / max(dot(m[2], m[2]), 1e-5),
     );
 
+#ifdef VERTEX_COLORS
     let surf = in.color.a;        // surface code (see Surf::surf_code)
+#else
+    let surf = 1.0;               // uncoloured mesh: the neutral skin bucket
+#endif
     let strength = creature.params.x;
     let relief = creature.params.y;
     let spec_lift = creature.params.z;
+
+    // Footman (and any future textured hero part): real triplanar albedo / roughness / height,
+    // multiplied onto the material tint. Orks, villagers and wildlife stay on the procedural
+    // surf families below (`pbr.w == 0`) and never sample these textures.
+    if (creature.pbr.w > 0.5) {
+        let on = ft_obj_normal(m, pbr_input.N);
+        let sc = creature.pbr.x;
+        let alb = ft_tri(ft_alb, ft_alb_s, obj, on, sc);
+        let mr = ft_tri(ft_mr, ft_mr_s, obj, on, sc);
+        let rgb = pbr_input.material.base_color.rgb * alb.rgb;
+        pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), 1.0);
+        pbr_input.material.perceptual_roughness = clamp(mr.g * creature.pbr.z, 0.05, 1.0);
+        let d_h = vec2<f32>(dpdx(mr.r), dpdy(mr.r)) * creature.pbr.y;
+        pbr_input.N = ft_perturb(in.world_position.xyz, pbr_input.N, d_h);
+    } else {
 
     // Decode the surface family from the alpha bucket (see Surf::surf_code).
     // 0.07 Skin · 0.21 Fur · 0.36 Scale · 0.50 Stone · 0.64 Metal · 0.79 Cloth · 0.93 Bone
@@ -130,6 +189,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let dz = vnoise(obj * 18.0 + vec3<f32>(0.0, 0.0, e)) - vnoise(obj * 18.0 - vec3<f32>(0.0, 0.0, e));
         pbr_input.N = normalize(pbr_input.N + (m * vec3<f32>(dx, 0.0, dz)) * relief * 0.5);
     }
+    } // procedural surf (`pbr.w == 0`)
 
     var out: FragmentOutput;
     if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {

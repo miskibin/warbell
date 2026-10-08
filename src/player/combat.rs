@@ -1376,7 +1376,7 @@ pub fn hero_blade_trail(
         return;
     }
     let Ok(gt) = weapon_q.single() else { return };
-    let tip = gt.transform_point(super::model::WEAPON_TIP_LOCAL);
+    let tip = gt.transform_point(super::footman::weapon_tip());
     let prev = last_tip.replace(tip);
     let Some(prev) = prev else { return }; // first sweep frame: just record the anchor
     let seg = tip - prev;

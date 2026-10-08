@@ -198,7 +198,7 @@ const T_DAWN: f32 = 0.03; // ~5:00 — low sunrise sun, east horizon
 const T_NIGHTFALL: f32 = 0.75; // true midnight — prep's end / wave start (the approved deep-night look)
 const T_NIGHT_CAP: f32 = 0.90; // deep pre-dawn — the sun holds here on long waves (sunrise ≈0.97)
 const T_NIGHT: f32 = 0.75; // midnight — only the FOREST_WAVE screenshot boot (`start_t`)
-const T_NOON: f32 = 0.25; // end-screen daylight
+const T_NOON: f32 = 0.25; // guided-day and end-screen daylight
 const DAY_LERP_RATE: f32 = 0.7; // quick-ease speed (≈ a couple-second dusk/dawn) for edge transitions
 const NIGHT_DRIFT_RATE: f32 = 0.003; // slow clock creep through the wave (~100s nightfall→cap)
 // Ease-in on prep progress (>1): a bias toward daylight that keeps the sun UP through most of the
@@ -282,6 +282,7 @@ fn advance_sky(
     app: Res<State<AppState>>,
     modal: Option<Res<State<Modal>>>,
     siege: Option<Res<Siege>>,
+    campaign: Option<Res<crate::quest::CampaignRes>>,
     mut clock: ResMut<SkyClock>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>, Without<Moon>)>,
@@ -336,7 +337,12 @@ fn advance_sky(
                         s.prep_seconds_left,
                         crate::siege::mods_for(s.difficulty),
                     );
-                    ease_to(&mut clock.t, T_DAWN + (T_NIGHTFALL - T_DAWN) * prog.powf(PREP_SUN_EASE));
+                    // The teaching clock is held at a full breather. Don't strand its day
+                    // at low sunrise light: a first expedition needs clear daylight.
+                    let teaching = campaign.as_ref().is_some_and(|c| c.0.learning_day((s.wave_index + 1).max(0) as usize));
+                    let target = if teaching { T_NOON }
+                        else { T_DAWN + (T_NIGHTFALL - T_DAWN) * prog.powf(PREP_SUN_EASE) };
+                    ease_to(&mut clock.t, target);
                 }
                 GamePhase::Wave => {
                     // Already night (the normal case after a full prep): let time creep slowly

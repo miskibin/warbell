@@ -145,6 +145,13 @@ fn advance(world: &mut World, v: &mut Verify) -> Result<(), String> {
             let roster: Vec<_> = world.query_filtered::<&Ork, Without<crate::dying::Dying>>()
                 .iter(world).filter(|o| o.home().distance(centre) < 1.0).map(|o| o.variant).collect();
             ensure(roster.len() == 2 && roster.iter().all(|v| *v == OrkVariant::Scout), "introductory camp must contain two Scouts")?;
+            // A UI capture must show a real New Game, including its stipend. Stop only
+            // the scripted driver here; the ordinary world and untimed day keep running.
+            if std::env::var("FOREST_CAMPAIGN_VERIFY_HOLD").as_deref() == Ok("1") {
+                info!("CAMPAIGN_VERIFY fresh-run capture ready; normal starting resources verified");
+                v.advance(Step::Finished);
+                return Ok(());
+            }
             // An overdue clock still cannot begin an untimed lesson automatically.
             world.resource_mut::<crate::siege::GameTime>().0 += 400.0;
             pin_hero(world, Vec2::new(-5.0, 5.0));

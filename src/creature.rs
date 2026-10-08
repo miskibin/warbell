@@ -5,6 +5,11 @@
 //! subtle procedural texture (fur/scale/stone/metal/hide/bone/cloth) in model space, plus a
 //! per-surface roughness/spec response. Props/trees/scatter keep their own white material —
 //! this is creatures only.
+//!
+//! The footman hero opts into a second path in the same shader (`CreatureParams::pbr.w = 1`):
+//! triplanar albedo, roughness and height maps, so the plated knight keeps this pipeline's
+//! lighting, fog and exposure instead of a one-off material. Every other creature leaves
+//! `pbr.w` at 0 and ignores the (fallback) textures.
 
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
 use bevy::prelude::*;
@@ -20,12 +25,24 @@ pub struct CreatureParams {
     /// x = texture strength (luminance ±), y = micro-relief (normal perturb),
     /// z = metal spec lift, w = camera-space key-light lux (first-person viewmodel only; 0 = off).
     pub params: Vec4,
+    /// Triplanar PBR for the footman hero. x = texture scale, y = height bump, z = roughness
+    /// multiplier, w = mode (`0` procedural surf families, `1` sampled albedo/roughness/height).
+    /// Unused (`w == 0`) on orks, villagers and wildlife — those still bind a 1×1 fallback.
+    pub pbr: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Clone, TypePath, Debug)]
 pub struct CreatureExt {
     #[uniform(100)]
     pub params: CreatureParams,
+    /// Footman albedo (sRGB) and height/roughness (linear, R = height, G = roughness).
+    /// `None` on every non-textured creature; the pipeline binds a white fallback.
+    #[texture(101)]
+    #[sampler(102)]
+    pub albedo: Option<Handle<Image>>,
+    #[texture(103)]
+    #[sampler(104)]
+    pub mr: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for CreatureExt {
@@ -89,7 +106,11 @@ pub fn make_creature_material_with(
             perceptual_roughness: roughness, // per-surface response is applied in the shader
             ..default()
         },
-        extension: CreatureExt { params: CreatureParams { params } },
+        extension: CreatureExt {
+            params: CreatureParams { params, pbr: Vec4::ZERO },
+            albedo: None,
+            mr: None,
+        },
     })
 }
 

@@ -1,3 +1,12 @@
+// `build_knight` is unused (the footman is the body) but stays so the viewmodel helpers and a
+// later first-person swap still compile. Don't warn on that body.
+#![allow(dead_code)]
+
+//! **Knight mesh helpers.** The third-person body is no longer built here — it is the baked Royal
+//! Footman ([`super::footman`]). What remains is the first-person viewmodel (forearm, fist, the
+//! equipped weapon) plus the old procedural knight, kept so the viewmodel still has a mesh until
+//! that prop set is swapped onto the footman too.
+//!
 //! **Knight hero model** — a faithful Bevy port of the user's procedural three.js
 //! "Low-Poly Knight Studio" (`knightBuilder.ts`, the *knight* branch): a finely-articulated knight
 //! (hips → torso → neck → head; shoulder → elbow → hand+weapon/shield; hip → knee → foot) in steel
@@ -80,6 +89,9 @@ const PSHIELD: u32 = 0x2b2723;
 pub(crate) const K: f32 = 0.42; // previs-unit → rig scale
 pub(crate) const HH: f32 = 0.28; // (legacy; unused)
 pub(crate) const Y_HIPS: f32 = 1.05; // spine root = previs waist 2.5 × K
+/// Footman hip height in rig-local metres (the three.js pivot). [`super::anim`] shifts every
+/// authored hip translation onto this so the new body stands where the clips expect.
+pub const HIP_REST_Y: f32 = 0.98;
 pub(crate) const O_TORSO: f32 = 0.0; // torso pivot = hips (waist)
 pub(crate) const O_NECK: f32 = 0.60; // torso → neck (head shrunk ⇒ sits a touch lower)
 pub(crate) const O_HEAD: f32 = 0.0;
