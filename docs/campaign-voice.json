@@ -1,0 +1,111 @@
+{
+  "source_sha256": "a1af732d50576581de7976b6631ef62098660504d2a5b4774c4cc9b896e921d9",
+  "source_duration": 76.042438,
+  "voice": "Sully",
+  "clips": [
+    {
+      "id": "campaign_rescue_plan",
+      "path": "assets/audio/vo/hero/campaign_rescue_plan.ogg",
+      "source_start": 0.0,
+      "source_end": 5.02957,
+      "duration": 5.02957,
+      "sha256": "b942182786b3288f07929d18b327a57d1e5185fc4b582bcd87988701ca82806b"
+    },
+    {
+      "id": "campaign_home_workers",
+      "path": "assets/audio/vo/hero/campaign_home_workers.ogg",
+      "source_start": 5.58349,
+      "source_end": 11.0156,
+      "duration": 5.43211,
+      "sha256": "7cedbdb52a4eb168bf16cde45390e36fc97a69f63a63d6762673d6047bbf7c2b"
+    },
+    {
+      "id": "campaign_farm_working",
+      "path": "assets/audio/vo/hero/campaign_farm_working.ogg",
+      "source_start": 11.6218,
+      "source_end": 16.4462,
+      "duration": 4.8244,
+      "sha256": "33018d5a37a03a11b9950c0e9876dbd92e3d9e81d0beaef2e0a050715c0dcf0f"
+    },
+    {
+      "id": "campaign_torch_raid",
+      "path": "assets/audio/vo/hero/campaign_torch_raid.ogg",
+      "source_start": 17.5388,
+      "source_end": 23.2761,
+      "duration": 5.7373,
+      "sha256": "d68017d7d7a311f38a7132eb94eaeaeaca811c9ab4ffe9eac822dd531ba648b4"
+    },
+    {
+      "id": "campaign_shaman_plan",
+      "path": "assets/audio/vo/hero/campaign_shaman_plan.ogg",
+      "source_start": 23.8185,
+      "source_end": 28.5978,
+      "duration": 4.7793,
+      "sha256": "6583ad45c51982b206f01d164f0e47d2e451b028ed3bc646d49aaf5cd694f387"
+    },
+    {
+      "id": "campaign_ritual_broken",
+      "path": "assets/audio/vo/hero/campaign_ritual_broken.ogg",
+      "source_start": 29.2352,
+      "source_end": 34.3827,
+      "duration": 5.14751,
+      "sha256": "0c18758874e6ef5a50f681a5b463b05bc151093e39a7655cb6c984606dbf1468"
+    },
+    {
+      "id": "campaign_rally_reminder",
+      "path": "assets/audio/vo/hero/campaign_rally_reminder.ogg",
+      "source_start": 35.0942,
+      "source_end": 40.8531,
+      "duration": 5.75889,
+      "sha256": "8bd891a17552f41c8026c93334af64da7473082703c09326190ace39b5c7e7a2"
+    },
+    {
+      "id": "campaign_rescue_reminder",
+      "path": "assets/audio/vo/hero/campaign_rescue_reminder.ogg",
+      "source_start": 41.6575,
+      "source_end": 45.9491,
+      "duration": 4.29161,
+      "sha256": "2409351ad1ef8adca325deb5c48ae8631785b377ff644ae7797d890edf73fb92"
+    },
+    {
+      "id": "campaign_home_reminder",
+      "path": "assets/audio/vo/hero/campaign_home_reminder.ogg",
+      "source_start": 46.6592,
+      "source_end": 51.6605,
+      "duration": 5.00129,
+      "sha256": "26bf55607039fbdb82a8cd86835e826d2c50abbcca08d35161e54a85ab75db80"
+    },
+    {
+      "id": "campaign_farm_reminder",
+      "path": "assets/audio/vo/hero/campaign_farm_reminder.ogg",
+      "source_start": 52.5462,
+      "source_end": 57.7033,
+      "duration": 5.1571,
+      "sha256": "0d27158918a62879c1866e174769955490ac0a147773582d4d39d27177adbcfd"
+    },
+    {
+      "id": "campaign_upgrade_reminder",
+      "path": "assets/audio/vo/hero/campaign_upgrade_reminder.ogg",
+      "source_start": 58.4595,
+      "source_end": 63.3649,
+      "duration": 4.9054,
+      "sha256": "879d608560423d4f5def4f04f56b19e5da71bd64489f529daa03b82d676ef47b"
+    },
+    {
+      "id": "campaign_shaman_reminder",
+      "path": "assets/audio/vo/hero/campaign_shaman_reminder.ogg",
+      "source_start": 64.0987,
+      "source_end": 69.5671,
+      "duration": 5.46839,
+      "sha256": "59a06de66f59941862da2b69863a0eed5995a539d0c3b407c7ad2d00b5b7b1a7"
+    },
+    {
+      "id": "campaign_bell_reminder",
+      "path": "assets/audio/vo/hero/campaign_bell_reminder.ogg",
+      "source_start": 70.0744,
+      "source_end": 76.016,
+      "duration": 5.94161,
+      "sha256": "d1906db2dba313fda7b549428c55e0e18d606023ed4a461826dea6c05fddaebd"
+    }
+  ]
+}

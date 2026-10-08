@@ -52,6 +52,7 @@ pub fn speaker_voice(s: Speaker) -> SpeakerVoice {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Concept {
     // ── Hero event reactions (was `HeroEvent`) ──
+    Campaign(super::campaign::CampaignLine),
     FirstStone,
     ChestOpen,
     FirstRescue,
@@ -177,7 +178,7 @@ pub fn is_peaceful(c: Concept) -> bool {
     use Concept::*;
     matches!(
         c,
-        Intro | NearTown | NearKids | NearPet | NearGuard | InKeep | NearFortress
+        Campaign(_) | Intro | NearTown | NearKids | NearPet | NearGuard | InKeep | NearFortress
             | QuietMusing | BiomeEntered(_)
             | Greeting | VillagerArmedJab | ReplyToVillagerJab | VillagerLastWord
             | AdviseFarm | AdviseHouses | AdviseWood | AdviseStone | AdviseUpgrade | AdviseWalls
@@ -251,6 +252,21 @@ const fn line(id: &'static str, speaker: Speaker, concept: Concept, text: &'stat
 
 /// THE catalog. Filled in across the migration tasks (Phase C).
 pub const LINES: &[Line] = &[
+    // Opening campaign: all clips are from the supplied Sully recording.
+    Line { once: true, priority: 14, floor: 90.0, ..line("campaign_rescue_plan", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::RescuePlan), "They've taken our people. Gather the militia. We're getting them back.") },
+    Line { once: true, priority: 14, floor: 90.0, ..line("campaign_home_workers", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::HomeWorkers), "You're home. Back to the fields. Heroism doesn't pay for supper.") },
+    Line { once: true, priority: 14, floor: 90.0, ..line("campaign_farm_working", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::FarmWorking), "Food and defenders. Almost looks like I know what I'm doing.") },
+    Line { once: true, priority: 14, floor: 90.0, ..line("campaign_torch_raid", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::TorchRaid), "Torch bearers. Keep them off the farms. I prefer my wheat uncooked.") },
+    Line { once: true, priority: 14, floor: 90.0, ..line("campaign_shaman_plan", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::ShamanPlan), "Shamans are gathering. Break their camp, or ready the archers.") },
+    Line { once: true, priority: 14, floor: 90.0, ..line("campaign_ritual_broken", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::RitualBroken), "Ritual broken. Apparently, swords are bad for morale.") },
+    Line { once: false, priority: 9, floor: 90.0, ..line("campaign_rally_reminder", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::RallyReminder), "I should probably gather some men. Brave, not stupid.") },
+    Line { once: false, priority: 9, floor: 90.0, ..line("campaign_rescue_reminder", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::RescueReminder), "Those people are still caged. Standing here isn't helping.") },
+    Line { once: false, priority: 9, floor: 90.0, ..line("campaign_home_reminder", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::HomeReminder), "I should head home and dismiss the militia. Crops won't grow themselves.") },
+    Line { once: false, priority: 9, floor: 90.0, ..line("campaign_farm_reminder", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::FarmReminder), "I should probably build a farm. People insist on eating.") },
+    Line { once: false, priority: 9, floor: 90.0, ..line("campaign_upgrade_reminder", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::UpgradeReminder), "I should buy an upgrade at the keep. Insults won't stop torches.") },
+    Line { once: false, priority: 9, floor: 90.0, ..line("campaign_shaman_reminder", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::ShamanReminder), "Those shamans need dealing with. Arrows do shorten sermons.") },
+    Line { once: false, priority: 9, floor: 90.0, ..line("campaign_bell_reminder", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::BellReminder), "Time to ring the bell. Invite the neighbours. The ugly ones.") },
+
     // ── Hero event reactions ──
     Line { once: true,  priority: 20, ..line("stone",         Speaker::Hero, Concept::FirstStone,   "Huh, stone. I could shore up the castle walls with this.") },
     Line { floor: 300.0,              ..line("chest",         Speaker::Hero, Concept::ChestOpen,    "Ooh, a chest.") },
@@ -648,7 +664,7 @@ pub fn pick_line(
 #[derive(Clone, Copy, Debug)]
 pub struct Active {
     pub id: &'static str,
-    /// `elapsed_secs` when the clip is estimated to finish.
+    /// `elapsed_secs` when the decoded recording finishes (including playback-speed scaling).
     pub ends_at: f32,
     pub priority: u8,
     pub interruptible: bool,
@@ -665,6 +681,13 @@ pub fn can_play(active: Option<&Active>, now: f32, new_priority: u8) -> bool {
         Some(a) if now >= a.ends_at => true,
         Some(a) => a.interruptible && new_priority >= a.priority,
     }
+}
+
+/// One subtitle channel: ordinary dialogue waits for every speaker. Only a strictly
+/// higher urgent line can cut an interruptible utterance, never equal-priority chatter.
+pub fn channel_available<'a>(active: impl Iterator<Item = &'a Active>, now: f32, priority: u8) -> bool {
+    active.filter(|a| now < a.ends_at).all(|a|
+        a.interruptible && priority >= HERO_URGENT_PRIORITY && priority > a.priority)
 }
 
 /// Hero-line spacing: while the shared ~20 s window is open, only a genuinely URGENT line —
@@ -702,6 +725,17 @@ mod tests {
         }
     }
     use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn shared_channel_prevents_two_speakers_and_equal_priority_cuts() {
+        let a = Active { id: "test", ends_at: 14.0, priority: 14, interruptible: true, then: None };
+        assert!(!channel_available(std::iter::once(&a), 9.0, 14));
+        assert!(!channel_available(std::iter::once(&a), 9.0, 10));
+        assert!(channel_available(std::iter::once(&a), 9.0, 25));
+        assert!(channel_available(std::iter::once(&a), 14.0, 0));
+        let protected = Active { interruptible: false, ..a };
+        assert!(!channel_available(std::iter::once(&protected), 9.0, 255));
+    }
 
     #[test]
     fn candidates_filters_by_concept() {

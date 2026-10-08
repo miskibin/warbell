@@ -41,6 +41,31 @@ camp entities reconcile against the saved ledger. A save between the last guard'
 the rescue update can still free the cage after loading. Saves predating the campaign field
 continue with their normal preparation clock and do not restart the introduction.
 
+## Opening dialogue
+
+The thirteen Sully clips in `assets/audio/vo/hero/campaign_*.ogg` are cut from the supplied
+76-second recording. `docs/campaign-voice.json` records the source hash, cut boundaries,
+clip durations and hashes. Subtitles follow the recording; the combined source is not a
+runtime asset.
+
+Briefings explain rescue, torch raiders and the shaman choice. Payoffs acknowledge returned
+workers, food production and an actually broken ritual. Seven short reminders follow the
+current objective. Progress replaces pending advice and cancels a live obsolete instruction;
+combat stops opening advice too. Buying ranged support never claims the ritual was broken.
+Continue clears abandoned dialogue and establishes the loaded objective without replaying
+briefings or old rewards.
+
+An unchanged objective allows at most two reminders: after 55 seconds of safe, unpaused
+preparation, with at least 90 safe seconds between utterances. An existing farm suppresses
+build advice; rubble permits it again. Upgrade advice waits until the cheapest suggested
+upgrade is affordable. Generic opening/economy hints give way to this sequence for the first
+three guided days; rescue and combat warnings remain available.
+
+The director chooses one eligible request per frame across all speakers. Only a strictly
+higher urgent priority can interrupt a line, cancelling its scheduled reply. Playback and
+subtitle guards use the decoded clip length and playback speed, including older recordings
+that exceed their caption reading time. Quiet dialogue cannot overlap the tail of a recording.
+
 ## Reproducible checks
 
 ```bash
