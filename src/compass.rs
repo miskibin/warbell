@@ -24,7 +24,7 @@ use crate::warlord::Warlord;
 
 // ── Layout (px) ──────────────────────────────────────────────────────────────────────
 const STRIP_W: f32 = 440.0;
-const STRIP_H: f32 = 36.0;
+const STRIP_H: f32 = 62.0;
 /// Degrees of heading visible to each side of the needle (the half-window the strip spans).
 const HALF_SPAN: f32 = 70.0;
 const CENTER_X: f32 = STRIP_W / 2.0;
@@ -76,6 +76,10 @@ struct CompassBlip {
 
 #[derive(Component)]
 struct CompassRoot;
+#[derive(Component)]
+struct CompassGoal;
+#[derive(Component)]
+struct CompassGoalLabel;
 /// A tick or cardinal letter pinned to an absolute world bearing (radians); `half_w` centres it.
 #[derive(Component)]
 struct CompassMark {
@@ -95,7 +99,7 @@ impl Plugin for CompassPlugin {
         // and tagged `CampaignOnly`, so `apply_mode_visibility` hides it in the RTS iso view. The
         // per-frame update systems stay `in_campaign`-gated.
         app.add_systems(Startup, setup_compass)
-            .add_systems(Update, (update_compass, update_blips).run_if(crate::rts::in_campaign));
+            .add_systems(Update, (update_compass, update_blips, update_goal).run_if(crate::rts::in_campaign));
     }
 }
 
@@ -211,6 +215,17 @@ fn setup_compass(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<AssetS
                         CompassPip { home },
                     ));
                 }
+
+                // One named gold goal always remains visible at the edge when behind the player.
+                s.spawn((
+                    Node { position_type: PositionType::Absolute, top: Val::Px(38.0),
+                        width: Val::Px(120.0), justify_content: JustifyContent::Center,
+                        padding: UiRect::all(Val::Px(3.0)), border_radius: radius(R_CARD),
+                        display: Display::None, ..default() },
+                    BackgroundColor(rgba(20, 16, 13, 0.86)),
+                    CompassGoal,
+                    children![(label(&fonts.semibold, "", 11.0, GOLD), CompassGoalLabel)],
+                ));
 
                 // ── Live-radar blip pools (start hidden; `update_blips` shows the nearest few) ──
                 // Orks: small red dots straddling the baseline.
@@ -388,5 +403,40 @@ fn update_blips(
             }
             None => node.display = Display::None,
         }
+    }
+}
+
+/// Shared with the situation tracker: direction, name and distance instead of an invisible objective.
+#[allow(clippy::too_many_arguments)]
+fn update_goal(
+    state: Res<State<AppState>>,
+    modal: Option<Res<State<crate::game_state::Modal>>>,
+    campaign: Res<crate::quest::CampaignRes>,
+    siege: Res<crate::siege::Siege>,
+    town: Res<crate::town::TownRes>,
+    spots: Option<Res<crate::town::PlotSpots>>,
+    hero: Res<crate::player::HeroState>,
+    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    mut goal: Query<&mut Node, With<CompassGoal>>,
+    mut text: Query<&mut Text, With<CompassGoalLabel>>,
+) {
+    let Ok(mut node) = goal.single_mut() else { return };
+    let visible = *state.get() == AppState::Playing
+        && modal.as_ref().is_some_and(|m| *m.get() == crate::game_state::Modal::None);
+    let target = spots.as_ref().and_then(|spots| crate::quest::guidance_target(&campaign.0, &siege, &town, spots));
+    let (Some((pos, name)), Ok(cam)) = (target.filter(|_| visible), cameras.single()) else {
+        node.display = Display::None;
+        return;
+    };
+    let delta = pos - hero.pos;
+    let fwd = cam.forward();
+    let offset = wrap_pi(bearing_of(delta) - bearing_of(Vec2::new(fwd.x, fwd.z))).to_degrees();
+    let x = (CENTER_X + offset * PX_PER_DEG).clamp(60.0, STRIP_W - 60.0);
+    node.display = Display::Flex;
+    node.left = Val::Px(x - 60.0);
+    if let Ok(mut t) = text.single_mut() {
+        let arrow = if offset < -HALF_SPAN { "←" } else if offset > HALF_SPAN { "→" } else { "◆" };
+        let value = format!("{arrow} {name} · {:.0}m", delta.length());
+        if t.0 != value { t.0 = value; }
     }
 }

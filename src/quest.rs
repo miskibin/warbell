@@ -1,30 +1,15 @@
-//! **Quest system (Bevy layer)** — drives the tutorial chain from `tileworld_core::quest`.
-//!
-//! Owns four things:
-//! 1. **Detection** — tiny systems turn engine facts (bank deltas, a built farm, an animal kill,
-//!    opening the War Table, surviving a night) into [`QuestSignal`] messages. Each consults the
-//!    active objective first, so they only emit the signal that could matter (no flooding).
-//! 2. **Resolution** — `apply_quest_signals` feeds signals to [`QuestLog::record`], and on a
-//!    completion grants the reward (gold/wood/stone/item), pushes a Notice, and rings a sting.
-//! 3. **Tracker** — a persistent, clickable pill on the right-center edge (reusing the
-//!    `hints.rs` toast look) showing the active quest + progress.
-//! 4. **Explainer** — the `Modal::Quest` card (freeze gate) opened by **J** or the tracker.
-//!
-//! Quest progress is cross-run progression, so it rides the save (`savegame.rs` stores the
-//! `QuestLog`; [`restore_quest_log`] reconciles it from `GameLoaded`).
+//! Contextual campaign guidance: one need at a time, actual outcomes, and optional help.
+//! The first three days are untimed; the bell always lets the player choose their own approach.
+//! Legacy QuestLog stays in saves for compatibility; new runs use the additive Campaign snapshot.
 
 use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
-
-use tileworld_core::quest::{Objective, QuestLog, Reward, Signal, QUESTS};
+use tileworld_core::campaign::{Campaign, Objective};
+use tileworld_core::quest::QuestLog;
 use tileworld_core::town_store::BuildKind;
-
 use crate::audio::AudioCue;
-use crate::economy::Bank;
-use crate::game_state::{AppState, Modal};
-use crate::inventory::{try_grant, Inventory, Toasts};
-use crate::player::PlayerRes;
+use crate::game_state::{AppState, Modal, SimAppExt};
 use crate::savegame::GameLoaded;
 use crate::siege::{GamePhase, Siege};
 use crate::town::TownRes;
@@ -34,234 +19,124 @@ use crate::ui::texture::UiTextures;
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
-use crate::game_state::SimAppExt;
 
-/// The per-run quest state (wraps the parity-tested core log). Rides the save.
 #[derive(Resource, Default)]
 pub struct QuestLogRes(pub QuestLog);
-
-/// Frame-to-frame gather baseline. `None` re-seeds the baseline next frame without scoring — used
-/// at boot, on a fresh run, and after a load (so the starting stipend and the load's bank jump are
-/// never mistaken for gathering).
 #[derive(Resource, Default)]
-struct QuestTracking {
-    prev_wood: Option<f64>,
-    prev_stone: Option<f64>,
-}
-
-/// A reported engine fact, drained by [`apply_quest_signals`]. Decouples the (many, tiny)
-/// detectors from the single reward-granting path.
-#[derive(Message)]
-struct QuestSignal(Signal);
+pub struct CampaignRes(pub Campaign);
 
 pub struct QuestPlugin;
-
 impl Plugin for QuestPlugin {
     fn build(&self, app: &mut App) {
-        // Campaign-only: the quest chain (tracker, explainer, detection) has no place in Skirmish.
-        // Resources + the `QuestSignal` message stay registered so ungated writers elsewhere link.
         app.init_resource::<QuestLogRes>()
-            .init_resource::<QuestTracking>()
-            .add_message::<QuestSignal>()
-            // Ungated spawn: the tracker root is built in EVERY boot (the mode can flip
-            // mid-process) and tagged `CampaignOnly`, so `apply_mode_visibility` hides it in
-            // Skirmish. Everything else (reset/detect/panel) stays `in_campaign`-gated.
+            .init_resource::<CampaignRes>()
             .add_systems(Startup, setup_quest_root)
-            // Fresh run → restart the chain (mirrors the economy/town resets).
             .add_systems(OnExit(AppState::StartScreen), reset_quests.run_if(crate::rts::in_campaign).run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_quests.run_if(crate::rts::in_campaign))
-            // Opening the upgrade tree is a state transition, not a Modal::None event.
-            .add_systems(OnEnter(Modal::UpgradeTree), detect_war_table.run_if(crate::rts::in_campaign))
-            // Explainer card.
             .add_systems(OnEnter(Modal::Quest), spawn_quest_panel.run_if(crate::rts::in_campaign))
             .add_systems(OnExit(Modal::Quest), despawn_quest_panel.run_if(crate::rts::in_campaign))
             .add_systems(Update, quest_panel_input.run_if(in_state(Modal::Quest)).run_if(crate::rts::in_campaign))
-            // Detection (world running only).
-            .add_sim_systems(
-                (detect_gather, detect_builds, detect_hunt, detect_survive)
-                    .run_if(crate::rts::in_campaign),
-            )
-            // Open the explainer (world running only).
-            .add_sim_systems(quest_open_input.run_if(crate::rts::in_campaign))
-            // Resolution + restore run ungated: a signal emitted while a panel is open (the War
-            // Table) must be processed before the 2-frame message buffer drops it.
-            .add_systems(Update, (apply_quest_signals, restore_quest_log).run_if(crate::rts::in_campaign))
-            // The tracker checks the modal state itself (hidden behind panels / on menus).
+            .add_sim_systems((observe_campaign.run_if(|ready: Res<crate::biome::WorldReady>| ready.0), quest_open_input).chain().after(crate::camps::respawn_warbands).after(crate::siege::run_director).run_if(crate::rts::in_campaign))
+            .add_systems(Update, restore_quest_log.after(crate::savegame::RestoreRunSet).before(crate::game_state::SimulationSet).run_if(crate::rts::in_campaign))
             .add_systems(Update, drive_tracker.run_if(crate::rts::in_campaign));
     }
 }
 
-// ── Reset / restore ─────────────────────────────────────────────────────────────────────
-
-fn reset_quests(mut log: ResMut<QuestLogRes>, mut track: ResMut<QuestTracking>) {
-    log.0 = QuestLog::default();
-    track.prev_wood = None;
-    track.prev_stone = None;
+fn reset_quests(mut legacy: ResMut<QuestLogRes>, mut campaign: ResMut<CampaignRes>) {
+    legacy.0 = QuestLog::default();
+    campaign.0 = Campaign::default();
 }
 
-/// Reconcile quest progress from a loaded snapshot (the owning-module half of the save; the
-/// `QuestLog` itself is carried on `GameLoaded`). Re-seeds the gather baseline so the load's bank
-/// jump isn't scored as gathering.
 fn restore_quest_log(
     mut ev: MessageReader<GameLoaded>,
-    mut log: ResMut<QuestLogRes>,
-    mut track: ResMut<QuestTracking>,
+    mut legacy: ResMut<QuestLogRes>,
 ) {
     let Some(GameLoaded(data)) = ev.read().last() else { return };
-    // A save from before the quest system carries no quest data (`None`). That player already had a
-    // running town, so they're past onboarding — mark the chain complete rather than restart the
-    // tutorial on every load. A present log (any new save) restores verbatim.
-    log.0 = match &data.quest {
-        Some(q) => q.clone(),
-        None => QuestLog { active: QUESTS.len(), progress: 0.0 },
-    };
-    track.prev_wood = None;
-    track.prev_stone = None;
+    legacy.0 = data.quest.clone().unwrap_or_default();
+    // Positional legacy quests never map onto new lessons. Existing runs retain their freedom.
+    // Campaign is restored synchronously in apply_pending_load, before any camp/director step.
 }
 
-// ── Detection ───────────────────────────────────────────────────────────────────────────
-
-/// Score wood/stone *gained* (positive bank deltas) while the matching gather quest is active.
-fn detect_gather(
-    log: Res<QuestLogRes>,
-    bank: Res<Bank>,
-    mut track: ResMut<QuestTracking>,
-    mut sigs: MessageWriter<QuestSignal>,
-) {
-    let wood = bank.0.wood();
-    let stone = bank.0.stone();
-    let obj = log.0.current().map(|q| q.objective);
-    if let Some(prev) = track.prev_wood {
-        let d = wood - prev;
-        if d > 0.0 && matches!(obj, Some(Objective::GatherWood(_))) {
-            sigs.write(QuestSignal(Signal::WoodGained(d)));
-        }
-    }
-    if let Some(prev) = track.prev_stone {
-        let d = stone - prev;
-        if d > 0.0 && matches!(obj, Some(Objective::GatherStone(_))) {
-            sigs.write(QuestSignal(Signal::StoneGained(d)));
-        }
-    }
-    track.prev_wood = Some(wood);
-    track.prev_stone = Some(stone);
+pub fn lesson_night(siege: &Siege) -> usize {
+    if siege.phase == GamePhase::Wave { siege.wave_index.max(0) as usize }
+    else { (siege.wave_index + 1).max(0) as usize }
 }
 
-/// Complete the build objectives. **Producers** (Farm/Woodcutter/Mine) are read from town *state*,
-/// so one raised *early* (build mode is open all through Prep) still completes its quest the moment
-/// the chain reaches it — never a soft-lock on an already-occupied plot. A **House** is read from
-/// the actual [`PlayerBuilt`](crate::town::PlayerBuilt) action instead (difficulty-proof: a bonus
-/// starting house on Easy would trip a start-vs-current count, but not a real build event).
-fn detect_builds(
-    log: Res<QuestLogRes>,
-    town: Res<TownRes>,
-    mut built: MessageReader<crate::town::PlayerBuilt>,
-    mut sigs: MessageWriter<QuestSignal>,
-) {
-    // Drain every frame (even off-objective) so the reader can't back up past its buffer.
-    let house_raised = built.read().any(|b| b.0.is_none());
-    let has_producer = |k: BuildKind| town.0.plots.iter().any(|p| p.is_built() && p.kind == Some(k));
-    let Some(q) = log.0.current() else { return };
-    match q.objective {
-        Objective::BuildFarm if has_producer(BuildKind::Farm) => {
-            sigs.write(QuestSignal(Signal::FarmBuilt));
-        }
-        Objective::BuildLumber if has_producer(BuildKind::Lumber) => {
-            sigs.write(QuestSignal(Signal::LumberBuilt));
-        }
-        Objective::BuildMine if has_producer(BuildKind::Mine) => {
-            sigs.write(QuestSignal(Signal::MineBuilt));
-        }
-        Objective::BuildHouse if house_raised => {
-            sigs.write(QuestSignal(Signal::HouseBuilt));
-        }
-        _ => {}
-    }
-}
-
-/// Each wild-animal kill (drained even when off-quest so the reader can't back up).
-fn detect_hunt(
-    log: Res<QuestLogRes>,
-    mut kills: MessageReader<crate::verbs::AnimalKilled>,
-    mut sigs: MessageWriter<QuestSignal>,
-) {
-    let hunting = matches!(log.0.current().map(|q| q.objective), Some(Objective::HuntAnimal(_)));
-    let n = kills.read().count();
-    if hunting {
-        for _ in 0..n {
-            sigs.write(QuestSignal(Signal::AnimalHunted));
-        }
-    }
-}
-
-/// The `Wave → Prep` dawn edge — a survived night (same edge the autosave fires on).
-fn detect_survive(
-    mut prev: Local<Option<GamePhase>>,
-    siege: Res<Siege>,
-    mut sigs: MessageWriter<QuestSignal>,
-) {
-    let phase = siege.phase;
-    let was = prev.replace(phase);
-    if was == Some(GamePhase::Wave) && phase == GamePhase::Prep {
-        sigs.write(QuestSignal(Signal::NightSurvived));
-    }
-}
-
-/// Opening the War Table (runs on the `OnEnter(Modal::UpgradeTree)` transition).
-fn detect_war_table(mut sigs: MessageWriter<QuestSignal>) {
-    sigs.write(QuestSignal(Signal::WarTableOpened));
-}
-
-// ── Resolution ──────────────────────────────────────────────────────────────────────────
-
-/// Drain reported signals into the log; on each completion grant the reward + celebrate.
+/// Facts are state-based, so an early farm, early rescue or early purchase counts later too.
+/// A built farm alone doesn't teach the work loop: a person must actually produce food there.
 #[allow(clippy::too_many_arguments)]
-fn apply_quest_signals(
-    mut sigs: MessageReader<QuestSignal>,
-    mut log: ResMut<QuestLogRes>,
-    mut player: ResMut<PlayerRes>,
-    mut bank: ResMut<Bank>,
-    mut inv: ResMut<Inventory>,
-    mut toasts: ResMut<Toasts>,
-    mut notice: ResMut<crate::ui::notice::Notice>,
-    mut cues: MessageWriter<AudioCue>,
-    mut speak: MessageWriter<crate::audio::Speak>,
+pub(crate) fn observe_campaign(
     time: Res<Time>,
+    siege: Res<Siege>,
+    hero: Res<crate::player::HeroState>,
+    town: Res<TownRes>,
+    rescued: Res<crate::villagers::RescuedCamps>,
+    up: Res<crate::economy::Upgrades>,
+    def: Res<crate::economy::Defenses>,
+    rallied: Query<(), (With<crate::villagers::Rallied>, Without<crate::dying::Dying>)>,
+    mut campaign: ResMut<CampaignRes>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    mut previous: Local<Option<(GamePhase, i32)>>,
 ) {
+    let last = previous.replace((siege.phase, siege.wave_index));
+    let c = &mut campaign.0;
+    let was = (c.rescued, c.returned, c.farm_worked, c.defense_bought);
+    c.rallied |= !rallied.is_empty();
+    c.rescued |= rescued.done.iter().any(|done| *done);
+    c.returned |= c.rescued && crate::castle::in_footprint(hero.pos.x, hero.pos.y) && rallied.is_empty();
+    c.farm_worked |= town.0.food_rate() > 0.0;
+    c.defense_bought |= !up.0.purchased().is_empty();
+    c.ranged_prepared = def.keep_archers || def.towers || def.ballista;
+    let night = lesson_night(&siege);
+    c.shaman_cleared = c.raid_day == night as i32
+        && crate::camps::raid_target(night as i32).is_some_and(|i| c.cleared_camps.get(i).copied().unwrap_or(false));
     let now = time.elapsed_secs_f64();
-    for QuestSignal(sig) in sigs.read() {
-        let Some(done) = log.0.record(*sig) else { continue };
-        let q = &QUESTS[done];
-        grant_reward(q.reward, &mut player, &mut bank, &mut inv, &mut toasts, now);
-        notice.push(format!("Quest complete — {}", q.title), now);
-        cues.write(AudioCue::LevelUp);
-        speak.write(crate::audio::Speak::new(crate::audio::Concept::QuestDone));
-        if log.0.is_complete() {
-            notice.push("Your hold stands. The keep is yours to defend.", now);
+    if siege.phase == GamePhase::Prep && last.is_some_and(|(phase, _)| phase == GamePhase::Wave) {
+        let farms = town.0.plots.iter().filter(|p| p.kind == Some(BuildKind::Farm) && p.is_built()).count();
+        if siege.wave_index == 1 {
+            notice.push(if farms > 0 { "Dawn: the fields still stand. Stand down with K and your people return to work." }
+                else { "Dawn: the fields were lost. Walk to the ruins and press E to rebuild, or B to raise a farm." }, now);
         }
+    }
+    if c.guided && siege.phase == GamePhase::Prep {
+        if c.briefed_day != night as i32 {
+            c.briefed_day = night as i32;
+            match night {
+                0 => notice.push("Captives need help. Bring your militia — K. Follow the gold marker on the compass.", now),
+                1 => notice.push("Torch raiders are coming for the farms. Buy an upgrade at the keep and choose where to defend.", now),
+                2 => notice.push("Shamans join tonight's attack. Break their marked camp, or prepare ranged defenses.", now),
+                _ => {},
+            }
+        }
+        if !was.0 && c.rescued { notice.push("They're free. Return to the keep and stand down with K so your people can work.", now); }
+        if !was.1 && c.returned { notice.push("You're back at the keep. Build a farm and let a villager start working — B.", now); }
+        if !was.2 && c.farm_worked { notice.push("Your people are working the farm. Ring the war bell when you're ready for night.", now); }
+        if !was.3 && c.defense_bought && night == 1 { notice.push("Upgrade bought. Choose where to meet tonight's torch raid.", now); }
     }
 }
 
-/// Pay out a quest reward into the live resources / satchel.
-fn grant_reward(
-    r: Reward,
-    player: &mut PlayerRes,
-    bank: &mut Bank,
-    inv: &mut Inventory,
-    toasts: &mut Toasts,
-    now: f64,
-) {
-    if r.gold != 0 {
-        player.0.add_gold(r.gold);
-    }
-    if r.wood > 0.0 {
-        bank.0.add_wood(r.wood);
-    }
-    if r.stone > 0.0 {
-        bank.0.add_stone(r.stone);
-    }
-    if let Some((id, n)) = r.item {
-        try_grant(&mut inv.0, &mut toasts.0, id, n, now);
+/// Exactly one navigational goal, shared by tracker and compass; no hunt for an unmarked camp.
+/// Later days retain the raid opportunity, without step-by-step instruction.
+pub fn guidance_target(c: &Campaign, siege: &Siege, town: &TownRes, spots: &crate::town::PlotSpots) -> Option<(Vec2, &'static str)> {
+    let night = lesson_night(siege);
+    let wave = siege.phase == GamePhase::Wave;
+    let objective = c.objective(night, wave);
+    match objective {
+        Objective::Rally => crate::camps::intro_target().and_then(crate::camps::camp_centre).map(|p| (p, "Captives")),
+        Objective::Rescue => crate::camps::intro_target().and_then(crate::camps::camp_centre).map(|p| (p, "Captives")),
+        Objective::ReturnHome | Objective::PrepareDefense => Some((Vec2::ZERO, "Keep")),
+        Objective::CallNight | Objective::SurviveRitual => Some((crate::castle::BELL_POS, if wave { "Keep" } else { "War bell" })),
+        Objective::FeedPeople | Objective::DefendFarm => town.0.plots.iter().enumerate()
+            .find(|(_, p)| p.kind == Some(BuildKind::Farm))
+            .and_then(|(i, _)| spots.0.get(i)).copied()
+            .map(|p| (p, "Farm")).or(Some((Vec2::ZERO, "Build a farm"))),
+        Objective::HoldKeep => Some((Vec2::ZERO, "Keep")),
+        Objective::DisruptRitual | Objective::FreePlay if !wave => {
+            let target = crate::camps::raid_target(night as i32)?;
+            if c.raid_day == night as i32 && c.cleared_camps.get(target).copied().unwrap_or(false) { return None; }
+            crate::camps::camp_centre(target).map(|p| (p, "Raid camp"))
+        }
+        _ => None,
     }
 }
 
@@ -270,7 +145,7 @@ fn grant_reward(
 #[derive(Component)]
 struct QuestRoot;
 /// The persistent, clickable tracker pill. Spawned once; its children (icon/text/bar) are rebuilt
-/// each frame, but the button entity itself lives so clicks register across frames.
+/// when the situation changes, while the button entity lives so clicks register across frames.
 #[derive(Component)]
 struct QuestCard;
 
@@ -316,15 +191,16 @@ fn setup_quest_root(mut commands: Commands) {
         });
 }
 
-/// Rebuild the tracker's content each frame for the active quest. Hidden (collapsed) behind any
-/// panel, on the menus, and once the chain is complete.
+/// Update the tracker for the current situation. Hidden behind panels and after the first cycles.
 fn drive_tracker(
     time: Res<Time>,
-    log: Res<QuestLogRes>,
+    campaign: Res<CampaignRes>,
+    siege: Res<Siege>,
     modal: Option<Res<State<Modal>>>,
     atlas: Res<IconAtlas>,
     fonts: Res<UiFonts>,
     mut commands: Commands,
+    mut shown: Local<String>,
     mut card_q: Query<
         (Entity, &mut Node, &mut BorderColor, Option<&Children>),
         With<QuestCard>,
@@ -334,7 +210,10 @@ fn drive_tracker(
 
     // Visible only while actually playing with no panel up and a quest still active.
     let playing = modal.as_ref().map_or(false, |m| *m.get() == Modal::None);
-    let Some(q) = log.0.current().filter(|_| playing) else {
+    let night = lesson_night(&siege);
+    let wave = siege.phase == GamePhase::Wave;
+    let q = campaign.0.lesson(night, wave);
+    if !playing || campaign.0.objective(night, wave) == Objective::FreePlay {
         if node.display != Display::None {
             node.display = Display::None;
             if let Some(children) = children {
@@ -344,12 +223,16 @@ fn drive_tracker(
             }
         }
         return;
-    };
+    }
 
+    let became_visible = node.display == Display::None;
     node.display = Display::Flex;
     // Slow gold pulse on the border (matches the hints toast).
     let pulse = 0.5 + 0.5 * (time.elapsed_secs() * 3.0).sin();
     *bcol = BorderColor::all(GOLD.with_alpha(0.45 + 0.4 * pulse));
+
+    if !became_visible && *shown == q.id { return; }
+    *shown = q.id.to_string();
 
     // Rebuild children (cheap — a few nodes; the button shell persists for click detection).
     if let Some(children) = children {
@@ -357,9 +240,7 @@ fn drive_tracker(
             commands.entity(c).try_despawn();
         }
     }
-    let obj = q.objective;
-    let frac = log.0.fraction() as f32;
-    let progress = log.0.progress;
+
     commands.entity(card).with_children(|row| {
         if let Some(entry) = atlas.get_tintable(q.icon) {
             row.spawn(widgets::icon_tinted(entry, 26.0, GOLD));
@@ -372,46 +253,10 @@ fn drive_tracker(
         })
         .with_children(|col| {
             col.spawn(label(&fonts.bold, q.title, 14.0, GOLD));
-            if obj.is_metered() {
-                col.spawn(label(
-                    &fonts.semibold,
-                    format!("{} / {}", progress.floor() as i64, obj.target() as i64),
-                    12.0,
-                    TEXT,
-                ));
-                tracker_bar(col, frac);
-            } else {
-                col.spawn(label(&fonts.regular, q.action, 12.0, TEXT_DIM));
-            }
-            col.spawn(label(&fonts.regular, "J — what's this?", 10.0, GREY));
+            col.spawn(label(&fonts.regular, q.why, 12.0, TEXT));
+            col.spawn(label(&fonts.semibold, q.action, 12.0, TEXT_DIM));
+            col.spawn(label(&fonts.regular, "J — details · H — controls", 10.0, GREY));
         });
-    });
-}
-
-/// A thin gold progress bar for metered quests.
-fn tracker_bar(p: &mut RelatedSpawnerCommands<ChildOf>, frac: f32) {
-    p.spawn((
-        Node {
-            width: Val::Px(150.0),
-            height: Val::Px(7.0),
-            border: border(1.0),
-            border_radius: radius(R_SLOT),
-            overflow: Overflow::clip(),
-            margin: UiRect::top(Val::Px(1.0)),
-            ..default()
-        },
-        BackgroundColor(SLOT_BG),
-        BorderColor::all(SLOT_BORDER),
-    ))
-    .with_children(|track| {
-        track.spawn((
-            Node {
-                width: Val::Percent(frac.clamp(0.0, 1.0) * 100.0),
-                height: Val::Percent(100.0),
-                ..default()
-            },
-            widgets::vgrad(GOLD, GOLD_DEEP),
-        ));
     });
 }
 
@@ -425,13 +270,14 @@ struct QuestCloseBtn;
 /// **J** or a click on the tracker opens the explainer (no-op once the chain is complete).
 fn quest_open_input(
     keys: Res<ButtonInput<KeyCode>>,
-    log: Res<QuestLogRes>,
+    campaign: Res<CampaignRes>,
+    siege: Res<Siege>,
     card: Query<&Interaction, (With<QuestCard>, Changed<Interaction>)>,
     mut next: ResMut<NextState<Modal>>,
     mut cues: MessageWriter<AudioCue>,
     mut auto_done: Local<bool>,
 ) {
-    if log.0.is_complete() {
+    if campaign.0.objective(lesson_night(&siege), siege.phase == GamePhase::Wave) == Objective::FreePlay {
         return;
     }
     // Screenshot hook: `FOREST_PANEL=quest` opens the explainer once under the capture harness.
@@ -467,7 +313,8 @@ fn despawn_quest_panel(mut commands: Commands, q: Query<Entity, With<QuestPanelU
 
 fn spawn_quest_panel(
     mut commands: Commands,
-    log: Res<QuestLogRes>,
+    campaign: Res<CampaignRes>,
+    siege: Res<Siege>,
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
     tex: Res<UiTextures>,
@@ -475,10 +322,7 @@ fn spawn_quest_panel(
 ) {
     // Guard: the panel only opens with an active quest, but bail cleanly if the chain finished
     // between the keypress and this OnEnter.
-    let Some(q) = log.0.current() else {
-        commands.spawn(QuestPanelUi); // empty marker so OnExit has something to despawn
-        return;
-    };
+    let q = campaign.0.lesson(lesson_night(&siege), siege.phase == GamePhase::Wave);
 
     commands.spawn((widgets::scrim(60), FocusPolicy::Block, QuestPanelUi)).with_children(|root| {
         root.spawn((
@@ -510,7 +354,7 @@ fn spawn_quest_panel(
             .with_children(|h| {
                 h.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), ..default() })
                     .with_children(|t| {
-                        t.spawn(label(&fonts.display, "QUEST", 12.0, KICKER));
+                        t.spawn(label(&fonts.display, "YOUR NEXT MOVE", 12.0, KICKER));
                         t.spawn(label(&fonts.display, q.title, 22.0, GOLD));
                     });
                 h.spawn(Node {
@@ -568,12 +412,7 @@ fn spawn_quest_panel(
                 ));
             });
 
-            // Reward preview.
-            panel_section(card, &fonts, "REWARD", |c| {
-                reward_chips(c, &fonts, &atlas, q.reward);
-            });
-
-            card.spawn(label(&fonts.regular, "Finish it to claim the reward.", 11.0, GREY));
+            card.spawn(label(&fonts.regular, "Other approaches work too. Ring the bell whenever you are ready.", 11.0, GREY));
         });
     });
 }
@@ -604,48 +443,70 @@ fn panel_section(
     });
 }
 
-/// Render a reward as icon+amount chips (gold / wood / stone / item).
-fn reward_chips(
-    p: &mut RelatedSpawnerCommands<ChildOf>,
-    fonts: &UiFonts,
-    atlas: &IconAtlas,
-    r: Reward,
-) {
-    p.spawn(Node {
-        flex_direction: FlexDirection::Row,
-        align_items: AlignItems::Center,
-        column_gap: Val::Px(14.0),
-        flex_wrap: FlexWrap::Wrap,
-        row_gap: Val::Px(6.0),
-        ..default()
-    })
-    .with_children(|row| {
-        let mut chip = |icon: &str, text: String| {
-            row.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: Val::Px(5.0),
-                ..default()
-            })
-            .with_children(|c| {
-                if let Some(entry) = atlas.get_tintable(icon) {
-                    c.spawn(widgets::icon_tinted(entry, 18.0, GOLD));
-                }
-                c.spawn(label(&fonts.bold, text, 13.5, GOLD));
-            });
-        };
-        if r.gold != 0 {
-            chip("sym:gold", format!("{} gold", r.gold));
-        }
-        if r.wood > 0.0 {
-            chip("stat:wood", format!("{} wood", r.wood as i64));
-        }
-        if r.stone > 0.0 {
-            chip("stat:stone", format!("{} stone", r.stone as i64));
-        }
-        if let Some((id, n)) = r.item {
-            let name = tileworld_core::inventory::item_def(id).map(|d| d.name).unwrap_or(id);
-            chip("stat:food", format!("{name} ×{n}"));
-        }
-    });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tileworld_core::town_store::{Plot, PlotState};
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<Siege>()
+            .init_resource::<crate::player::HeroState>()
+            .init_resource::<TownRes>()
+            .init_resource::<crate::villagers::RescuedCamps>()
+            .init_resource::<crate::economy::Upgrades>()
+            .init_resource::<crate::economy::Defenses>()
+            .init_resource::<CampaignRes>()
+            .init_resource::<crate::ui::notice::Notice>()
+            .add_systems(Update, observe_campaign);
+        app
+    }
+
+    #[test]
+    fn farm_lesson_requires_actual_food_flow_and_purchase_requires_owned_upgrade() {
+        let mut app = app();
+        app.world_mut().resource_mut::<TownRes>().0.plots = vec![Plot {
+            kind: Some(BuildKind::Farm),
+            state: PlotState::Built { hp: BuildKind::Farm.max_hp(), burning: false },
+            staffed: false,
+        }];
+        app.update();
+        assert!(!app.world().resource::<CampaignRes>().0.farm_worked);
+        assert!(!app.world().resource::<CampaignRes>().0.defense_bought);
+        app.world_mut().resource_mut::<TownRes>().0.plots[0].staffed = true;
+        app.world_mut().resource_mut::<crate::economy::Upgrades>().0 =
+            tileworld_core::upgrade_store::UpgradeState::restore(&["hero_hp_1"]);
+        app.update();
+        let c = &app.world().resource::<CampaignRes>().0;
+        assert!(c.farm_worked);
+        assert!(c.defense_bought);
+        assert!(!c.ranged_prepared, "hero upgrade is no substitute for actual ranged support");
+    }
+
+    #[test]
+    fn rescue_done_early_counts_but_return_requires_coming_home() {
+        let mut app = app();
+        app.world_mut().resource_mut::<crate::villagers::RescuedCamps>().done = vec![true];
+        app.world_mut().resource_mut::<crate::player::HeroState>().pos = Vec2::new(80.0, 30.0);
+        app.update();
+        assert!(app.world().resource::<CampaignRes>().0.rescued);
+        assert!(!app.world().resource::<CampaignRes>().0.returned);
+        app.world_mut().resource_mut::<crate::player::HeroState>().pos = Vec2::ZERO;
+        app.update();
+        assert!(app.world().resource::<CampaignRes>().0.returned);
+    }
+
+    #[test]
+    fn fresh_run_resets_guidance_and_raid_outcomes() {
+        let mut app = App::new();
+        app.insert_resource(QuestLogRes(QuestLog { active: 7, progress: 0.0 }))
+            .insert_resource(CampaignRes(Campaign { rescued: true, defense_bought: true,
+                raid_day: 2, cleared_camps: vec![true], ..Default::default() }))
+            .add_systems(Update, reset_quests);
+        app.update();
+        assert_eq!(app.world().resource::<CampaignRes>().0, Campaign::default());
+        assert_eq!(app.world().resource::<QuestLogRes>().0, QuestLog::default());
+    }
 }

@@ -47,7 +47,7 @@ use crate::game_state::AppState;
 use crate::inventory::Inventory;
 use crate::landmarks::{Discoveries, Landmark};
 use crate::player::PlayerRes;
-use crate::quest::QuestLogRes;
+use crate::quest::{CampaignRes, QuestLogRes};
 use crate::siege::{Difficulty, GamePhase, KeepHp, Siege};
 use crate::succession::Lives;
 use crate::town::TownRes;
@@ -120,6 +120,9 @@ pub struct SaveData {
     /// run doesn't restart the tutorial on every Continue.
     #[serde(default)]
     pub quest: Option<QuestLog>,
+    /// New contextual lessons and same-day camp disruption. Absent in legacy runs.
+    #[serde(default)]
+    pub campaign: Option<tileworld_core::campaign::Campaign>,
     // ── rival stronghold (Stronghold-Crusader-style AI opponent) ──
     /// The rival lord's banked gold. Additive — old saves default to 0.0 (a fresh treasury).
     #[serde(default)]
@@ -231,6 +234,9 @@ pub struct GameLoaded(pub SaveData);
 #[derive(Message)]
 pub struct RequestSave(pub usize);
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RestoreRunSet;
+
 pub struct SaveGamePlugin;
 
 impl Plugin for SaveGamePlugin {
@@ -258,7 +264,7 @@ impl Plugin for SaveGamePlugin {
             // chained so a dawn write always precedes (and re-arms) the periodic one.
             .add_sim_systems(
                 (advance_playtime, autosave_on_dawn, autosave_tick)
-                    .chain()
+                    .chain().after(crate::quest::observe_campaign)
                     .run_if(crate::rts::in_campaign),
             )
             // Manual save (pause-menu button). Runs in `Paused` — where the world is frozen but
@@ -275,7 +281,7 @@ impl Plugin for SaveGamePlugin {
                     .run_if(crate::rts::in_campaign),
             )
             // Apply a pending load the moment a run is playing (cheap no-op when nothing pending).
-            .add_systems(Update, apply_pending_load.run_if(in_state(AppState::Playing)).run_if(crate::rts::in_campaign))
+            .add_systems(Update, apply_pending_load.in_set(RestoreRunSet).before(crate::game_state::SimulationSet).run_if(in_state(AppState::Playing)).run_if(crate::rts::in_campaign))
             // Reconcile world entities from the GameLoaded snapshot (ungated; fires once per load).
             // `restore_active_map` rebuilds the terrain if the loaded run was on a different map.
             .add_systems(
@@ -417,6 +423,7 @@ fn rescan_slots(mut slots: ResMut<SaveSlots>) {
 struct RunClocks<'w> {
     playtime: ResMut<'w, Playtime>,
     timer: ResMut<'w, AutosaveTimer>,
+    campaign: ResMut<'w, CampaignRes>,
 }
 
 /// Fresh-run reset (`OnExit(StartScreen)` / `OnExit(GameOver)`, like every other `reset_*`): the
@@ -456,6 +463,7 @@ struct SaveCtx<'w, 's> {
     captives: Option<Res<'w, crate::ork_fortress::BlightCaptives>>,
     disc: Res<'w, Discoveries>,
     quest: Res<'w, QuestLogRes>,
+    campaign: Res<'w, CampaignRes>,
     rival: Res<'w, crate::rival::RivalState>,
     active_map: Res<'w, crate::worldmap::ActiveMap>,
     playtime: Res<'w, Playtime>,
@@ -509,6 +517,7 @@ impl SaveCtx<'_, '_> {
                 .collect(),
             opened_chests,
             quest: Some(self.quest.0.clone()),
+            campaign: Some(self.campaign.0.clone()),
             rival_gold: self.rival.gold,
             rival_population: self.rival.population,
             rival_built: self.rival.built,
@@ -693,6 +702,7 @@ fn apply_pending_load(
 
     // Play clock: resume the saved run's total, and put the next periodic autosave a full interval
     // out from there (so loading never fires one instantly, nor defers it past the interval).
+    clocks.campaign.0 = data.campaign.clone().unwrap_or_else(tileworld_core::campaign::Campaign::legacy);
     clocks.playtime.0 = data.playtime_secs;
     clocks.timer.pending = false;
     clocks.timer.next_at = data.playtime_secs + AUTOSAVE_INTERVAL;
@@ -739,6 +749,14 @@ fn apply_pending_load(
     // wipe them; `seen` mirrors `done` (a rescued camp was certainly seen populated).
     camps.done = data.rescued_camps.clone();
     camps.seen = data.rescued_camps.clone();
+    // A save can land between the last camp kill and the cage's one-time rescue update.
+    // Its successful raid proves a warband existed; resume that pending rescue rather than
+    // leaving prisoners in an empty, protected camp that can never be "seen populated" again.
+    if clocks.campaign.0.raid_day == data.wave_index + 1 {
+        for (i, &cleared) in clocks.campaign.0.cleared_camps.iter().enumerate() {
+            if cleared && i < camps.seen.len() { camps.seen[i] = true; }
+        }
+    }
     // Blight cages: restore the freed flags so respawned patrols can't re-free an already-freed
     // captive (which would dup `population`). The cage VISUALS (door open/shut, captives seated
     // or gone) reconcile from the GameLoaded message below — `camps::reconcile_cages_on_load`.
@@ -881,6 +899,7 @@ mod tests {
             claimed_landmark_gear: vec!["The Old Mill".into()],
             opened_chests: vec![false, true, false],
             quest: Some(QuestLog { active: 3, progress: 2.0 }),
+            campaign: Some(tileworld_core::campaign::Campaign { rallied: true, rescued: true, raid_day: 2, cleared_camps: vec![false, true], ..Default::default() }),
             rival_gold: 142.5,
             rival_population: 8,
             rival_built: 5,
@@ -908,8 +927,20 @@ mod tests {
         assert_eq!(back.discovered_landmarks, vec!["The Old Mill".to_string()]);
         assert_eq!(back.opened_chests, vec![false, true, false]);
         assert_eq!(back.quest, Some(QuestLog { active: 3, progress: 2.0 }));
+        assert_eq!(back.campaign, sample().campaign);
         assert!(back.bag.has_item("potion"));
         assert!(back.town.plots[0].is_built());
+    }
+
+    #[test]
+    fn legacy_save_does_not_restart_guidance() {
+        let mut v = serde_json::to_value(sample()).unwrap();
+        v.as_object_mut().unwrap().remove("campaign");
+        let data: SaveData = serde_json::from_value(v).unwrap();
+        assert!(data.campaign.is_none());
+        let campaign = data.campaign.unwrap_or_else(tileworld_core::campaign::Campaign::legacy);
+        assert!(!campaign.guided);
+        assert!(!campaign.learning_day(0));
     }
 
     /// A save written before the quest system has no `quest` field → it must parse as `None` (not a
@@ -940,6 +971,7 @@ mod tests {
         let mut app = App::new();
         app.add_message::<GameLoaded>()
             .init_resource::<PendingLoad>()
+            .init_resource::<CampaignRes>()
             .init_resource::<Siege>()
             .init_resource::<KeepHp>()
             .init_resource::<PlayerRes>()
@@ -956,10 +988,18 @@ mod tests {
             .init_resource::<AutosaveTimer>()
             .add_systems(Update, apply_pending_load);
 
-        app.insert_resource(PendingLoad(Some(sample())));
+        let mut data = sample();
+        // The middle cage has not processed the last guard's death yet, but the day raid
+        // already succeeded. Loading must let that real rescue finish exactly once.
+        let campaign = data.campaign.as_mut().unwrap();
+        campaign.raid_day = data.wave_index + 1;
+        campaign.cleared_camps = vec![false, true, false];
+        let saved_campaign = campaign.clone();
+        app.insert_resource(PendingLoad(Some(data)));
         app.update();
 
         let w = app.world();
+        assert_eq!(w.resource::<CampaignRes>().0, saved_campaign, "campaign restored synchronously before simulation");
         assert_eq!(w.resource::<PlayerRes>().0.gold, 777, "hero gold restored");
         assert_eq!(w.resource::<Lives>().heirs, 5, "heirs restored");
         assert_eq!(w.resource::<Siege>().wave_index, 2, "night restored");
@@ -972,6 +1012,7 @@ mod tests {
         assert!(w.resource::<Inventory>().0.has_item("potion"), "satchel restored");
         assert!(w.resource::<TownRes>().0.plots[0].is_built(), "town buildings restored");
         assert_eq!(w.resource::<RescuedCamps>().done, vec![true, false, true]);
+        assert_eq!(w.resource::<RescuedCamps>().seen, vec![true, true, true], "pending rescue remains observable in an empty, raided camp");
         assert_eq!(w.resource::<Playtime>().0, 1234.0, "play clock resumed");
         assert_eq!(
             w.resource::<AutosaveTimer>().next_at,

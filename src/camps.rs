@@ -26,6 +26,8 @@ use crate::orks::{self, Faction, VARIANTS};
 use crate::palette::lin;
 use crate::worldmap::{self, GX, GZ};
 use crate::meshkit::tinted;
+use crate::game_state::SimAppExt;
+use tileworld_core::threat::{threat_for, ThreatKind};
 
 // ── Plugin (campfire flicker + smoke) ────────────────────────────────────────────────
 
@@ -37,10 +39,11 @@ impl Plugin for CampsPlugin {
         // (a mid-swing door finishing under a pause is harmless), and the load reconcile must
         // fire on the GameLoaded message whenever it lands.
         app.add_systems(Update, (flicker_flames, drift_smoke, swing_cage_doors, reconcile_cages_on_load));
-        app.add_systems(
-            Update,
-            respawn_warbands.run_if(in_state(crate::game_state::Modal::None)),
-        );
+        app.add_systems(Update, reconcile_warbands_on_load
+            .after(crate::savegame::RestoreRunSet)
+            .before(crate::game_state::SimulationSet));
+        app.add_sim_systems(respawn_warbands.run_if(crate::rts::in_campaign)
+            .run_if(|ready: Res<crate::biome::WorldReady>| ready.0));
     }
 }
 
@@ -204,6 +207,8 @@ pub(crate) struct CampWarbands {
     /// guardians (camp-style orks home-anchored at a landmark).
     pub(crate) armory: orks::Armory,
     cleared_at: Vec<Option<f32>>,
+    /// A clear is real only after the warband has been observed alive (startup/load safety).
+    seen: Vec<bool>,
 }
 
 fn flicker_flames(time: Res<Time>, mut q: Query<(&Flicker, &mut Transform)>) {
@@ -232,6 +237,7 @@ fn drift_smoke(time: Res<Time>, mut q: Query<(&CampSmoke, &mut Transform)>) {
 #[derive(Clone, Copy)]
 pub struct CampSite {
     centre: Vec2,
+    biome: Biome,
     faction: Faction,
     rot: f32,
     seed: u32,
@@ -264,7 +270,7 @@ pub fn plan() -> &'static [CampSite] {
                 if let Some((cx, cz)) = found {
                     let rot = rng_range(&mut rng, 0.0, TAU);
                     let seed = next_u32(&mut rng);
-                    placed.push(CampSite { centre: Vec2::new(cx, cz), faction, rot, seed });
+                    placed.push(CampSite { centre: Vec2::new(cx, cz), biome: *b, faction, rot, seed });
                 } else {
                     info!("camps: no flat clearing found for {:?}", b);
                 }
@@ -274,6 +280,42 @@ pub fn plan() -> &'static [CampSite] {
         .as_slice()
 }
 
+/// A nearby, manageable first expedition. Stable for the run, independent of hero movement.
+pub fn intro_target() -> Option<usize> {
+    let spawn = crate::player::spawn_point().0;
+    plan().iter().enumerate()
+        .min_by(|(_, a), (_, b)| a.centre.distance_squared(spawn).total_cmp(&b.centre.distance_squared(spawn)))
+        .map(|(i, _)| i)
+}
+
+pub fn camp_centre(index: usize) -> Option<Vec2> {
+    plan().get(index).map(|s| s.centre)
+}
+
+/// One camp stages the announced specialists. Biomes are retained on the site, so a failed
+/// placement cannot shift every camp's identity. The arson introduction uses a fresh camp.
+pub fn raid_target(next_night: i32) -> Option<usize> {
+    let kind = threat_for(next_night.max(0) as usize).kind;
+    if kind == ThreatKind::Recon { return intro_target(); }
+    let preferred: &[Biome] = match kind {
+        ThreatKind::Arson => &[Biome::Forest, Biome::Desert, Biome::Rocky, Biome::Snow, Biome::Swamp],
+        ThreatKind::Ritual => &[Biome::Swamp, Biome::Desert, Biome::Snow, Biome::Rocky, Biome::Forest],
+        ThreatKind::Flank => &[Biome::Desert, Biome::Forest, Biome::Snow, Biome::Rocky, Biome::Swamp],
+        ThreatKind::Breakers => &[Biome::Rocky, Biome::Snow, Biome::Desert, Biome::Forest, Biome::Swamp],
+        ThreatKind::Recon => unreachable!(),
+    };
+    let avoid_intro = kind == ThreatKind::Arson && next_night == 1 && plan().len() > 1;
+    preferred.iter().find_map(|biome| plan().iter().enumerate()
+        .find(|(i, s)| s.biome == *biome && (!avoid_intro || Some(*i) != intro_target()))
+        .map(|(i, _)| i))
+}
+
+/// Camp work only changes the night it was done for; permanent captive flags are separate.
+pub fn raid_cleared(campaign: &tileworld_core::campaign::Campaign, next_night: usize) -> bool {
+    campaign.raid_day == next_night as i32
+        && raid_target(next_night as i32).is_some_and(|i| campaign.cleared_camps.get(i).copied().unwrap_or(false))
+}
+
 /// Each camp's `(prisoner-cage world XZ, camp-centre world XZ)` — the rescue interaction walks
 /// up to the cage, and the centre is used to test whether the warband guarding it is cleared.
 /// The cage sits at camp-local `(-2.2, 2.2)` (see `build`), rotated by the site yaw.
@@ -281,7 +323,7 @@ pub fn cage_positions() -> Vec<(Vec2, Vec2)> {
     plan()
         .iter()
         .map(|s| {
-            let w = Quat::from_rotation_y(s.rot) * Vec3::new(-2.2, 0.0, 2.2);
+            let w = Quat::from_rotation_y(s.rot) * Vec3::new(-2.4, 0.0, 2.2);
             (s.centre + Vec2::new(w.x, w.z), s.centre)
         })
         .collect()
@@ -555,8 +597,11 @@ pub fn build(
             ));
         }
 
-        // Warband: one of each variant at its offset, home-anchored to the camp centre.
-        for (i, variant) in VARIANTS.iter().enumerate() {
+        // The first rescue faces two scouts; the other camps retain their mixed warbands.
+        // Once repopulated this becomes an ordinary camp, so the introduction is not a loot loop.
+        let introduction = Some(camp) == intro_target();
+        let variants: &[orks::OrkVariant] = if introduction { &[orks::OrkVariant::Scout, orks::OrkVariant::Scout] } else { &VARIANTS };
+        for (i, variant) in variants.iter().enumerate() {
             let (lx, lz) = WARBAND[i];
             let world = place(v(lx, 0.0, lz));
             let seed = site.seed.wrapping_add((i as u32).wrapping_mul(0x9e37_79b1));
@@ -566,20 +611,58 @@ pub fn build(
 
     // Keep the armory + per-camp clear timers alive so `respawn_warbands` can repopulate a wiped
     // camp off-screen after a cooldown (the cage + its captives are NOT respawned).
-    commands.insert_resource(CampWarbands { armory, cleared_at: vec![None; sites.len()] });
+    commands.insert_resource(CampWarbands { armory, cleared_at: vec![None; sites.len()], seen: vec![false; sites.len()] });
 }
 
 /// Respawn a camp's whole warband (one of each variant at its ring offset, home-anchored to the
 /// camp centre) — the same layout [`build`] lays down, from the kept-alive armory.
 fn spawn_warband(commands: &mut Commands, armory: &orks::Armory, site: &CampSite) {
+    spawn_warband_with(commands, armory, site, &VARIANTS);
+}
+
+fn spawn_warband_with(commands: &mut Commands, armory: &orks::Armory, site: &CampSite, variants: &[orks::OrkVariant]) {
     let rot_q = Quat::from_rotation_y(site.rot);
     let cy = worldmap::ground_at_world(site.centre.x, site.centre.y).unwrap_or(0.0);
     let centre3 = Vec3::new(site.centre.x, cy, site.centre.y);
-    for (i, variant) in VARIANTS.iter().enumerate() {
+    for (i, variant) in variants.iter().enumerate() {
         let (lx, lz) = WARBAND[i];
         let world = centre3 + rot_q * v(lx, 0.0, lz);
         let seed = site.seed.wrapping_add((i as u32).wrapping_mul(0x9e37_79b1));
         armory.spawn(commands, *variant, site.faction, site.centre, Vec2::new(world.x, world.z), seed);
+    }
+}
+
+/// A Continue restores camps from the saved day ledger rather than the abandoned battlefield.
+/// Partial kills are transient; today's successfully raided camps stay quiet. Timer/seen state
+/// is reset synchronously before simulation, so a stale empty camp cannot manufacture a raid.
+fn reconcile_warbands_on_load(
+    mut loaded: MessageReader<crate::savegame::GameLoaded>,
+    campaign: Res<crate::quest::CampaignRes>,
+    game: Res<crate::siege::GameTime>,
+    wb: Option<ResMut<CampWarbands>>,
+    q: Query<(Entity, &orks::Ork), (Without<orks::WaveInvader>, Without<crate::dying::Dying>)>,
+    mut commands: Commands,
+) {
+    let Some(crate::savegame::GameLoaded(data)) = loaded.read().last() else { return };
+    let Some(mut wb) = wb else { return };
+    let sites = plan();
+    wb.cleared_at = vec![None; sites.len()];
+    wb.seen = vec![false; sites.len()];
+    for (entity, ork) in &q {
+        if sites.iter().any(|site| site.centre.distance(ork.home()) < 1.0) {
+            commands.entity(entity).try_despawn();
+        }
+    }
+    for (i, site) in sites.iter().enumerate() {
+        let cleared = campaign.0.raid_day == data.wave_index + 1
+            && campaign.0.cleared_camps.get(i).copied().unwrap_or(false);
+        if cleared {
+            wb.cleared_at[i] = Some(game.0);
+        } else if campaign.0.guided && data.wave_index < 0 && !campaign.0.rescued && Some(i) == intro_target() {
+            spawn_warband_with(&mut commands, &wb.armory, site, &[orks::OrkVariant::Scout, orks::OrkVariant::Scout]);
+        } else {
+            spawn_warband(&mut commands, &wb.armory, site);
+        }
     }
 }
 
@@ -588,11 +671,15 @@ fn spawn_warband(commands: &mut Commands, armory: &orks::Armory, site: &CampSite
 /// [`CAMP_RESPAWN_FAR`] away (so the warband returns unseen), the whole warband respawns. Only the
 /// orks come back: the prisoner cage stays open, the apples/chests run their own respawn timers
 /// (`verbs.rs`), so a re-cleared camp yields no fresh captives — just a renewed fight.
-fn respawn_warbands(
-    time: Res<Time>,
+pub(crate) fn respawn_warbands(
+    game: Res<crate::siege::GameTime>,
+    siege: Res<crate::siege::Siege>,
+    mut campaign: ResMut<crate::quest::CampaignRes>,
     hero: Res<crate::player::HeroState>,
     wb: Option<ResMut<CampWarbands>>,
-    orks_q: Query<&orks::Ork, (Without<orks::WaveInvader>, Without<crate::dying::Dying>)>,
+    orks_q: Query<(Entity, &orks::Ork), (Without<orks::WaveInvader>, Without<crate::dying::Dying>)>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    time: Res<Time>,
     mut commands: Commands,
 ) {
     let Some(mut wb) = wb else { return };
@@ -600,27 +687,71 @@ fn respawn_warbands(
     if sites.is_empty() || wb.cleared_at.len() != sites.len() {
         return;
     }
-    let now = time.elapsed_secs();
+    let now = game.0;
+    let next_night = match siege.phase {
+        crate::siege::GamePhase::Prep => siege.wave_index + 1,
+        _ => siege.wave_index,
+    }.max(0);
+    let new_day = siege.phase == crate::siege::GamePhase::Prep && campaign.0.raid_day != next_night;
+    if new_day {
+        campaign.0.raid_day = next_night;
+        campaign.0.cleared_camps = vec![false; sites.len()];
+        campaign.0.shaman_cleared = false;
+    } else {
+        // Padding preserves old-save flags instead of discarding progress after a schema change.
+        campaign.0.cleared_camps.resize(sites.len(), false);
+    }
     // Living warband orks per camp (invaders + fading corpses excluded by the query filter).
-    let mut alive = vec![0u32; sites.len()];
-    for o in &orks_q {
+    let mut alive = vec![Vec::new(); sites.len()];
+    for (entity, o) in &orks_q {
         let h = o.home();
         if let Some(i) = sites.iter().position(|s| s.centre.distance(h) < 1.0) {
-            alive[i] += 1;
+            alive[i].push(entity);
         }
     }
     for (i, site) in sites.iter().enumerate() {
-        if alive[i] > 0 {
+        if new_day && Some(i) == raid_target(next_night) && alive[i].is_empty()
+            && wb.cleared_at[i].is_some() && hero.pos.distance(site.centre) <= CAMP_RESPAWN_FAR {
+            // Holding an already-defeated forward camp through dawn is a valid way to stop it
+            // regrouping. The next day cannot promise shamans from an empty, occupied camp.
+            campaign.0.cleared_camps[i] = true;
+            campaign.0.shaman_cleared = threat_for(next_night as usize).kind == ThreatKind::Ritual;
+            notice.push(threat_for(next_night as usize).raid_result, time.elapsed_secs_f64());
+        }
+        let protected = campaign.0.raid_day == next_night && campaign.0.cleared_camps[i];
+        if protected {
+            // Rebuild/load spawns pristine warbands. Reconcile today's successful raid so the
+            // camp stays visibly quiet and suppression cannot expire before its promised night.
+            for entity in &alive[i] { commands.entity(*entity).try_despawn(); }
+            wb.cleared_at[i].get_or_insert(now);
+            continue;
+        }
+        if !alive[i].is_empty() {
+            wb.seen[i] = true;
             wb.cleared_at[i] = None; // still populated — reset the clear clock
             continue;
         }
         let Some(cleared) = wb.cleared_at[i] else {
+            if !wb.seen[i] { continue; }
             wb.cleared_at[i] = Some(now); // just went quiet — start the cooldown
+            if siege.phase == crate::siege::GamePhase::Prep {
+                campaign.0.cleared_camps[i] = true;
+                if Some(i) == raid_target(next_night) {
+                    let threat = threat_for(next_night as usize);
+                    campaign.0.shaman_cleared = threat.kind == ThreatKind::Ritual;
+                    notice.push(threat.raid_result, time.elapsed_secs_f64());
+                }
+            }
             continue;
         };
-        if now - cleared >= CAMP_RESPAWN_DELAY && hero.pos.distance(site.centre) > CAMP_RESPAWN_FAR {
+        // At dawn a previously cleared staging camp can regroup off-screen for its next raid;
+        // all other camps keep their normal cooldown. No one respawns in the hero's view.
+        let regroup = siege.phase == crate::siege::GamePhase::Prep && Some(i) == raid_target(next_night);
+        if (now - cleared >= CAMP_RESPAWN_DELAY || regroup)
+            && hero.pos.distance(site.centre) > CAMP_RESPAWN_FAR {
             spawn_warband(&mut commands, &wb.armory, site);
             wb.cleared_at[i] = None;
+            wb.seen[i] = false;
         }
     }
 }

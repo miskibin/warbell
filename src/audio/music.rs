@@ -8,14 +8,14 @@
 //!   - **Arid** — the desert + rocky mountains share one theme ("Heat Hail"), riding the same
 //!     day slot the same way the Blight theme does.
 //!   - **Night dread** — the SAME track swells in every night the siege is in its `Wave` phase.
-//!   - **Boss march** — replaces the dread on the final boss wave.
+//!   - **Boss march** — replaces the dread during the assault on Gnashfang Hold.
 
 use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
 use super::{frand, AudioConfig, MusicState};
 use crate::game_state::AppState;
-use crate::siege::{GamePhase, Siege, WAVES};
+use crate::siege::{GamePhase, Siege};
 
 /// The day tracks — one is picked at random each dawn (Wave→Prep edge). All loop silently from
 /// startup; only the chosen one's volume rides up during the day. (The two hymns are the old
@@ -82,7 +82,7 @@ pub(crate) fn setup_music(asset: Res<AssetServer>, mut commands: Commands) {
     layer("audio/blight-music.ogg", 0.0, MusicLayer::Blight); // silent until the hero enters the Blight
     layer("audio/heat-hail.ogg", 0.0, MusicLayer::Arid); // silent until the hero enters desert/rock
     layer(NIGHT_TRACK, 0.0, MusicLayer::Night); // silent until the siege wave — always this track
-    layer("audio/orc-march-tallow.ogg", 0.0, MusicLayer::Boss); // silent until the boss wave
+    layer("audio/orc-march-tallow.ogg", 0.0, MusicLayer::Boss); // silent until the Hold is breached
     layer("audio/boss-fight-music.ogg", 0.0, MusicLayer::Warden); // silent until a warden is engaged
     layer("audio/menu-theme.ogg", 0.0, MusicLayer::Menu); // fades in on the title screen
 }
@@ -105,6 +105,7 @@ pub(crate) fn update_music(
     state: Res<MusicState>,
     app: Res<State<AppState>>,
     siege: Option<Res<Siege>>,
+    warlord: Query<(), (With<crate::warlord::Warlord>, Without<crate::dying::Dying>)>,
     hero: Option<Res<crate::player::HeroState>>,
     mut heat: Local<f32>,
     mut night: Local<f32>,
@@ -117,15 +118,9 @@ pub(crate) fn update_music(
     mut q: Query<(&MusicLayer, &mut AudioSink)>,
 ) {
     let dt = time.delta_secs();
-    let (is_wave, boss) = match siege.as_deref() {
-        Some(s) => {
-            let wave = s.phase == GamePhase::Wave;
-            // Final-wave boss music on night 8 AND every looped night beyond it (`>=`, since nights
-            // now repeat the hardest wave forever).
-            (wave, wave && s.wave_index >= 0 && s.wave_index as usize >= WAVES.len() - 1)
-        }
-        None => (false, false),
-    };
+    let is_wave = siege.as_ref().is_some_and(|s| s.phase == GamePhase::Wave);
+    // The real Warlord only spawns on breach. Ordinary late nights are mixed raids.
+    let boss = !warlord.is_empty();
     let on_menu = *app.get() == AppState::StartScreen;
 
     // Roll a fresh DAY track at each dawn (Wave→Prep edge) so later days vary — but the OPENING day
@@ -144,7 +139,7 @@ pub(crate) fn update_music(
     // (the hero standing in Gnashfang Hold's mire — the one biome with its own theme).
     let combat_target = if state.fighting { 1.0 } else { 0.0 };
     *heat += (combat_target - *heat) * (dt * COMBAT_FADE).min(1.0);
-    *night += ((if is_wave { 1.0 } else { 0.0 }) - *night) * (dt * NIGHT_FADE).min(1.0);
+    *night += ((if is_wave || boss { 1.0 } else { 0.0 }) - *night) * (dt * NIGHT_FADE).min(1.0);
     let in_blight = hero
         .as_deref()
         .is_some_and(|h| h.alive && crate::ork_fortress::in_blight_world(h.pos.x, h.pos.y));
