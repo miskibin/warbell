@@ -72,11 +72,15 @@ pub(crate) fn sword_rest_r() -> Quat {
 /// (and the shield's small rest translation is swung with it) and the blade/board move the way
 /// they did in the source model.
 fn posed_sword(ex: f32, ey: f32, ez: f32) -> Jp {
-    Jp::r(e3(ex, ey, ez) * sword_rest_r())
+    Jp::r(m3(ex, ey, ez) * sword_rest_r())
 }
 fn posed_shield(ex: f32, ey: f32, ez: f32) -> Jp {
-    let e = e3(ex, ey, ez);
+    let e = m3(ex, ey, ez);
     Jp { t: Some(e * SHIELD_REST_T), r: e * shield_rest_r() }
+}
+/// A three.js euler carried across the export's X mirror: X turns survive, Y and Z flip.
+fn m3(ex: f32, ey: f32, ez: f32) -> Quat {
+    e3(ex, -ey, -ez)
 }
 
 /// Landing squash recovery time (a crouch that decays over this many seconds after touchdown).
@@ -244,9 +248,9 @@ fn walk_pose(c: f32) -> Pose {
     // The footman's arms are already in the carry. These are the three.js walk deltas off that
     // bind (a few degrees of counter-swing), not the old straight-arm knight bends — those lifted
     // the blade into a lance and flared the shield.
-    p.sh_l = Jp::r(e3(r.sin() * 0.11, 0.0, 0.04));
+    p.sh_l = Jp::r(m3(r.sin() * 0.11, 0.0, 0.04));
     p.el_l = Jp::r(rx(-0.30 + r.sin().min(0.0) * 0.08));
-    p.sh_r = Jp::r(e3(l.sin() * 0.16, 0.0, -0.04));
+    p.sh_r = Jp::r(m3(l.sin() * 0.16, 0.0, -0.04));
     p.el_r = Jp::r(rx(-0.22 + l.sin().min(0.0) * 0.11));
     p
 }
@@ -272,9 +276,9 @@ fn run_pose(c: f32) -> Pose {
     p.foot_r = Jp::r(rx(-r.sin() * 0.8 * 0.5 + 0.14));
     // Three.js run: elbows tuck, the blade rides point-up over the shoulder, the shield stays
     // edge-on against the forearm. Eulers are identity-at-carry, composed onto the game rest.
-    p.sh_l = Jp::r(e3(r.sin() * 0.15, 0.0, 0.14));
+    p.sh_l = Jp::r(m3(r.sin() * 0.15, 0.0, 0.14));
     p.el_l = Jp::r(rx(-1.15 + r.sin().min(0.0) * 0.2));
-    p.sh_r = Jp::r(e3(l.sin() * 0.12, 0.0, -0.14));
+    p.sh_r = Jp::r(m3(l.sin() * 0.12, 0.0, -0.14));
     p.el_r = Jp::r(rx(-1.25 + l.sin().min(0.0) * 0.15));
     p.sword = posed_sword(-2.046, -0.52, 0.119);
     p.shield = posed_shield(0.924, 0.415, -0.121);
@@ -511,24 +515,25 @@ fn jump_pose(vel_y: f32) -> Pose {
 
 // ── Defend (shield block) — full studio depth (ease=1) + idle sway; cross-faded by block_amt. ──
 fn defend_pose(t: f32) -> Pose {
-    let hold = (t * 5.5).sin() * 0.012;
+    // The three.js footman BLOCK: bladed stance, shield squared in front of the chest, the sword
+    // drawn back at the hip with its point toward the foe.
+    let b = (t * PI * 2.0 / 1.2).sin();
     let mut p = rest();
-    p.hips = Jp { t: Some(Vec3::new(0.0, 0.96 + hold, 0.05)), r: e3(0.05, 0.15, 0.0) };
-    p.torso = Jp::r(e3(0.1, -0.05, 0.0));
-    p.head = Jp::r(e3(-0.08, -0.1, 0.0));
-    p.hip_l = Jp::r(e3(-0.35, 0.1, -0.08));
-    p.knee_l = Jp::r(rx(0.45));
-    p.foot_l = Jp::r(rx(-0.15));
-    p.hip_r = Jp::r(e3(-0.2, -0.1, 0.15));
-    p.knee_r = Jp::r(rx(0.25));
-    p.foot_r = Jp::r(rx(-0.1));
-    p.sh_l = Jp::r(e3(-0.6, 0.0, -0.4));
-    p.el_l = Jp::r(rx(-0.8));
-    // Shield braced flat in front (studio blockPos/blockRot).
-    p.shield = Jp { t: Some(Vec3::new(0.0, 0.0, 0.1)), r: e3(PI / 2.0, 0.0, 0.0) };
-    p.sh_r = Jp::r(e3(0.15, 0.1, 0.25));
-    p.el_r = Jp::r(rx(-0.5));
-    p.sword = Jp::r(e3(2.4, 0.0, 0.0));
+    p.hips = Jp { t: Some(Vec3::new(0.0, 1.035, 0.0)), r: m3(0.0, -0.25, 0.0) };
+    p.torso = Jp::r(m3(0.1 + 0.02 * b, -0.15, 0.0));
+    p.head = Jp::r(m3(0.0, 0.38, 0.0));
+    p.hip_l = Jp::r(m3(-0.32, 0.25, 0.06));
+    p.knee_l = Jp::r(rx(0.38));
+    p.foot_l = Jp::r(rx(-0.06));
+    p.hip_r = Jp::r(m3(0.28, 0.25, -0.06));
+    p.knee_r = Jp::r(rx(0.3));
+    p.foot_r = Jp::r(rx(-0.58));
+    p.sh_l = Jp::r(m3(-1.15, 0.0, -0.2));
+    p.el_l = Jp::r(rx(-1.05));
+    p.shield = posed_shield(2.133, -0.344, 0.06);
+    p.sh_r = Jp::r(m3(-0.35, 0.0, -0.25));
+    p.el_r = Jp::r(rx(-1.15));
+    p.sword = posed_sword(-0.09, 0.149, 0.254);
     p
 }
 
