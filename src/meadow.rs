@@ -166,18 +166,20 @@ pub fn build(
     ));
 
     // ── Nature clumps (diagonal quarters; cardinal lanes stay open) ────────────────
-    let mut tree = |commands: &mut Commands, meshes: &mut Assets<Mesh>, kind, x: f32, z: f32, s: f32, yaw: f32| {
+    let tree = |commands: &mut Commands, meshes: &mut Assets<Mesh>, kind, x: f32, z: f32, s: f32, yaw: f32| {
         let m = crate::trees::build_tree_mesh(kind);
         let r = crate::trees::silhouette_block_radius(&m) * s;
         if r > 0.15 {
             crate::blockers::add_box(x, z, r, r);
         }
+        let blender = crate::blendertrees::get().and_then(|a|
+            a.pick(kind, x, z, 0, crate::blendertrees::Source::Meadow));
         commands.spawn((
-            Mesh3d(meshes.add(m)),
-            MeshMaterial3d(mat.clone()),
+            Mesh3d(blender.as_ref().map_or_else(|| meshes.add(m), |b| b.mesh.clone())),
+            MeshMaterial3d(blender.as_ref().map_or_else(|| mat.clone(), |b| b.mat.clone())),
             Transform::from_xyz(x, ground(x, z), z)
                 .with_rotation(Quat::from_rotation_y(yaw))
-                .with_scale(Vec3::splat(s)),
+                .with_scale(blender.as_ref().map_or(Vec3::splat(s), |b| b.shape * s)),
             BiomeEntity,
         ));
     };

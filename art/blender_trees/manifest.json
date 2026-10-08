@@ -1,0 +1,116 @@
+{
+  "schema": "warbell.blender_tree_manifest.v1",
+  "atlas": "tree_atlas.png",
+  "atlas_size": [
+    1024,
+    1024
+  ],
+  "source": "Blender 4.5.9 via official mcp-for-blender execute_blender_code",
+  "leaf_source": "dgreenheck/ez-tree MIT; original files already shipped at assets/textures/leaves/{oakL,aspenL,pineL}.png",
+  "models": [
+    {
+      "name": "oak_a",
+      "species": "oak",
+      "vertices": 2402,
+      "triangles": 1394,
+      "bounds": {
+        "min": [
+          -0.871972,
+          0.0,
+          -0.896158
+        ],
+        "max": [
+          0.989247,
+          1.885507,
+          1.035845
+        ]
+      }
+    },
+    {
+      "name": "oak_b",
+      "species": "oak",
+      "vertices": 2402,
+      "triangles": 1394,
+      "bounds": {
+        "min": [
+          -0.939901,
+          0.0,
+          -0.863382
+        ],
+        "max": [
+          1.006436,
+          1.912923,
+          0.983502
+        ]
+      }
+    },
+    {
+      "name": "birch_a",
+      "species": "birch",
+      "vertices": 2088,
+      "triangles": 1170,
+      "bounds": {
+        "min": [
+          -0.665774,
+          0.0,
+          -0.763367
+        ],
+        "max": [
+          0.739361,
+          1.75918,
+          0.632534
+        ]
+      }
+    },
+    {
+      "name": "birch_b",
+      "species": "birch",
+      "vertices": 2088,
+      "triangles": 1170,
+      "bounds": {
+        "min": [
+          -0.706096,
+          0.0,
+          -0.814052
+        ],
+        "max": [
+          0.713835,
+          1.730604,
+          0.695463
+        ]
+      }
+    },
+    {
+      "name": "pine_a",
+      "species": "pine",
+      "vertices": 2726,
+      "triangles": 1668,
+      "bounds": {
+        "min": [
+          -1.068594,
+          0.0,
+          -0.946048
+        ],
+        "max": [
+          1.023534,
+          2.421584,
+          0.965812
+        ]
+      }
+    }
+  ],
+  "sha256": {
+    "tree_atlas.png": "f05675a71aa978f23d659c21fa4550f847e642c92256fedcc409913a6a34b73d",
+    "oak_a.glb": "6dd33195ec38574a80da75cda446807f3e3a9f453d712ad550c7bb8713614894",
+    "oak_a.json": "4d526ac699f594c460864954d89fd4a4857a6ac0e61556fe1aa8c49f0020a3e3",
+    "oak_b.glb": "40c6597681a402d8c46b979bd1458b64ba8f438b4641e0f20db81e88cf6a496c",
+    "oak_b.json": "d67e059de9af8b4b9801899c0b9bf43c5329823d79cf307de97d18995cb89d22",
+    "birch_a.glb": "c0929bc3b4138cbfd3bccd69787819666de4f515c0a615b1beadaf671085881c",
+    "birch_a.json": "678858ef0b581456c2301c26ef301177166175763b4514c53605e7c9ca4f9139",
+    "birch_b.glb": "bf6c2047417c38794d60883eacf59fba5e892e9bb8b8b73cfbcaa2058e9be8b9",
+    "birch_b.json": "5257fdaba041b9998f58a197479ee4ac83b5d0a8738687430251551e45d180d1",
+    "pine_a.glb": "e7c11498aad09e2aa55100c467ac324c56c0e3f2b9eae806e17bc603d502fd71",
+    "pine_a.json": "f90f99b5339083c2920733ab1f57c27de31158700dec91228705fc31e51f11e5",
+    "warbell_trees.blend": "c233539e67e12f36c91e0d3b73227f86de874c4c9836640a9024ac786a29ab70"
+  }
+}

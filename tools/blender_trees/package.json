@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "description": "Validation tooling for Warbell Blender tree exchange assets",
+  "dependencies": { "gltf-validator": "2.0.0-dev.3.10" }
+}

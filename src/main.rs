@@ -30,6 +30,7 @@ mod biome_forest;
 mod biome_rocky;
 mod biome_snow;
 mod biome_swamp;
+mod blendertrees; // FOREST_BLENDERTREES=1: Blender-authored forest tree A/B study
 mod blockers;
 mod boats;
 mod boss;
@@ -321,6 +322,7 @@ fn main() {
         // var is set. Standalone call for the same reason as godrays: the tuples above are at the
         // `Plugins` arity-15 cap, and appending to one is what broke the build first try.
         .add_plugins(phototrees::PhotoTreesPlugin)
+        .add_plugins(blendertrees::BlenderTreesPlugin)
         // Cinematic atmospherics post pass (height fog + sun in-scatter + cloud light patches).
         // Toggled per-preset alongside god-rays in quality.rs; same custom-post-pass family.
         .add_plugins(atmospherics::AtmosphericsPlugin)

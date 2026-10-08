@@ -1001,16 +1001,16 @@ pub fn scatter_region(
             let density = SCATTER_DENSITY * (1.0 + OPEN_SCATTER_BOOST * crate::roads::openness(cx, cz));
             let roll = r.next();
             let mut acc = 0.0;
-            let mut chosen: Option<&ClassHandles> = None;
-            for c in &classes {
+            let mut chosen: Option<(usize, &ClassHandles)> = None;
+            for (class_idx, c) in classes.iter().enumerate() {
                 let chance = if c.tree { c.chance * tree_mult } else { c.chance };
                 acc += chance * density;
                 if roll < acc {
-                    chosen = Some(c);
+                    chosen = Some((class_idx, c));
                     break;
                 }
             }
-            if let Some(c) = chosen {
+            if let Some((class_idx, c)) = chosen {
                 let vi = pick_weighted(&c.weights, r.next());
                 let s = r.range(c.scale.0, c.scale.1);
                 let landmark_buffered = crate::ruins::near_landmark_collision_buffer(cx, cz);
@@ -1065,20 +1065,35 @@ pub fn scatter_region(
                         // world stays deterministic. Photo trees are one merged mesh on one shared
                         // material (see `phototrees::mesh::build_tree`), so the one-entity-per-tree
                         // batching contract below holds identically for both paths.
-                        let photo = crate::phototrees::get().map(|p| p.pick(r.next()));
+                        // Blender study: swap only the five living forest kinds. Keep the
+                        // original variant's blocker, scale, root entity and placement rolls.
+                        // The asset choice hashes the already selected position; it consumes
+                        // no extra scatter RNG draw and cannot move subsequent props.
+                        let blender = if cfg.biome == Biome::Forest {
+                            crate::blendertrees::get().and_then(|a| a.pick_forest(class_idx, vi, cx, cz))
+                        } else { None };
+                        let photo = if blender.is_none() {
+                            crate::phototrees::get().map(|p| p.pick(r.next()))
+                        } else { None };
                         // Trees stay individual entities (chop HP + wind sway) sharing one
                         // uploaded handle per variant — the renderer auto-batches the instances.
                         let mut tree = commands.spawn((
-                            Mesh3d(photo.as_ref().map_or_else(|| c.handles[vi].clone(), |p| p.0.clone())),
+                            Mesh3d(blender.as_ref().map_or_else(
+                                || photo.as_ref().map_or_else(|| c.handles[vi].clone(), |p| p.0.clone()),
+                                |b| b.mesh.clone(),
+                            )),
                             // Translucent-foliage material, NOT the shared prop `mat`.
                             MeshMaterial3d(
-                                photo.as_ref().map_or_else(|| tree_mat.clone(), |p| p.1.clone()),
+                                blender.as_ref().map_or_else(
+                                    || photo.as_ref().map_or_else(|| tree_mat.clone(), |p| p.1.clone()),
+                                    |b| b.mat.clone(),
+                                ),
                             ),
                             // Identity rotation — wind `Sway` overwrites it each frame.
                             Transform {
                                 translation: Vec3::new(cx, py, cz),
                                 rotation: Quat::IDENTITY,
-                                scale: Vec3::splat(s),
+                                scale: blender.as_ref().map_or(Vec3::splat(s), |b| b.shape * s),
                             },
                             crate::wind::sway_for(cx, cz, base),
                             // Every scattered tree is choppable for wood (1 tree = 1 wood). The

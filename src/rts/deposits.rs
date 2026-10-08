@@ -321,13 +321,16 @@ fn spawn_grove(
         let kind = if k % 3 == 0 { TreeKind::Broadleaf } else { TreeKind::Pine };
         let yaw = crate::wildlife::rng_range(seed, 0.0, TAU);
         let sc = crate::wildlife::rng_range(seed, 0.9, 1.25);
+        let blender = crate::blendertrees::get().and_then(|a|
+            a.pick(kind, tx, tz, k % 5, crate::blendertrees::Source::Rts));
         let e = commands
             .spawn((
-                Mesh3d(meshes.add(build_tree_mesh(kind))),
-                MeshMaterial3d(tree_mat.clone()),
+                Mesh3d(blender.as_ref().map_or_else(
+                    || meshes.add(build_tree_mesh(kind)), |b| b.mesh.clone())),
+                MeshMaterial3d(blender.as_ref().map_or_else(|| tree_mat.clone(), |b| b.mat.clone())),
                 Transform::from_xyz(tx, ty, tz)
                     .with_rotation(Quat::from_rotation_y(yaw))
-                    .with_scale(Vec3::splat(sc)),
+                    .with_scale(blender.as_ref().map_or(Vec3::splat(sc), |b| b.shape * sc)),
                 crate::rts::RtsSpawned,
             ))
             .id();

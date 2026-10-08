@@ -54,6 +54,12 @@ impl Plugin for PerftestPlugin {
             app.add_systems(Update, perf_spike_watch);
         }
         let Ok(raw) = std::env::var("FOREST_PERFTEST") else { return };
+        // The unattended window deliberately starts unfocused. Bevy's default unfocused
+        // UpdateMode is a 60 Hz timer even with VSync disabled, masking small A/B costs.
+        // Use the same continuous scheduling as a focused game only for uncapped profiling.
+        if std::env::var("FOREST_NOVSYNC").is_ok() {
+            app.insert_resource(bevy::winit::WinitSettings::continuous());
+        }
         let duration = raw.trim().parse::<f32>().unwrap_or(600.0).max(20.0);
         let speed = std::env::var("FOREST_PERFSPEED")
             .ok()

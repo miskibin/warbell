@@ -306,7 +306,18 @@ fn advance_sky(
     // hold too, not drift on. Mirrors the sim freeze gate. The sun's transform/colour below still
     // applies every frame, so the frozen scene keeps drawing.
     let frozen = *app.get() == AppState::Paused || modal.is_some_and(|m| *m.get() != Modal::None);
-    if !clock.paused && !frozen {
+    // Matched performance captures need identical lighting while the siege/AI keep running.
+    // `SkyClock.paused` also stops GameTime, so it is not suitable for that comparison.
+    static PERF_SKY: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    let perf_sky = PERF_SKY.get_or_init(|| {
+        std::env::var("FOREST_PERF_SKY").ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|t| t.is_finite()).map(|t| t.rem_euclid(1.0))
+    });
+    if let Some(t) = perf_sky {
+        clock.t = *t;
+    }
+    if !clock.paused && !frozen && perf_sky.is_none() {
         // Ease `clock.t` along the SHORTEST arc on the [0,1) circle toward `target`, so a
         // night→dawn wrap goes FORWARD through midnight (sun rises in the east) not backward.
         let ease_to = |t: &mut f32, target: f32| {

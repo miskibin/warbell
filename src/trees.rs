@@ -748,10 +748,13 @@ fn spawn_treeline(
         let x = p[0] + i as f32 * 3.0 - (kinds.len() as f32 - 1.0) * 1.5;
         let z = p[1];
         let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+        let blender = crate::blendertrees::get().and_then(|a|
+            a.pick(*k, x, z, 0, crate::blendertrees::Source::Treeline));
         commands.spawn((
-            Mesh3d(meshes.add(build_tree_mesh(*k))),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_translation(Vec3::new(x, y, z)).with_scale(Vec3::splat(2.0)),
+            Mesh3d(blender.as_ref().map_or_else(|| meshes.add(build_tree_mesh(*k)), |b| b.mesh.clone())),
+            MeshMaterial3d(blender.as_ref().map_or_else(|| mat.clone(), |b| b.mat.clone())),
+            Transform::from_translation(Vec3::new(x, y, z))
+                .with_scale(blender.as_ref().map_or(Vec3::splat(2.0), |b| b.shape * 2.0)),
         ));
     }
 }
