@@ -6,9 +6,11 @@
 //! mutates the fields it touches. The per-frame system then writes the chosen pose onto the rig
 //! joints.
 //!
-//! Game adaptations (kept minimal so the *poses* stay verbatim):
+//! Game adaptations:
 //! - **walk/run** read `walk_phase` for their `cycle` (gait locked to real movement speed, not
 //!   wall-clock) and are cross-faded by `moving_amt` (idle→gait) and `run_amt` (walk→run).
+//!   The hero's imported footman uses its measured leg lengths and grounded foot targets;
+//!   other bipeds retain the shared studio clips.
 //! - **jump** — the studio faked the hop by sliding `hips.y`; here the **real jump physics own the
 //!   height** (the root's world Y), so the studio `height` (0 launch/landing, 1 apex) is recovered
 //!   from the hero's vertical speed and fed into the studio's exact airtime joint formulas.
@@ -291,18 +293,54 @@ pub(crate) fn loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
     idle_pose(t).lerp(&gait, m)
 }
 
-/// Combat-stance locomotion: [`loco_pose`] with two extra axes driven by `movement` —
+/// Grounded footman gait. The shared biped clips above belong to a longer-legged rig;
+/// simply reusing their ankle rotations on the imported footman tipped the boots into the
+/// floor and left the supporting foot floating. Solve this body's hip/knee chain toward
+/// a planted stance / lifted recovery, then counter-rotate the ankle to keep the sole level.
+fn footman_gait(c: f32, run: f32) -> Pose {
+    let mut p = walk_pose(c).lerp(&run_pose(c), run);
+    let rig = super::footman::leg_rig();
+    let hips_y = super::model::HIP_REST_Y - lerp(0.025, 0.08, run)
+        + lerp(0.005, 0.015, run) * c.sin().abs();
+    // The writer shifts legacy clip heights by HIP_REST_Y - 1.05.
+    p.hips.t = Some(Vec3::new(c.sin() * 0.018, hips_y + 1.05 - super::model::HIP_REST_Y, 0.0));
+    let upper = rig.knee.y.hypot(rig.knee.z);
+    let lower = rig.foot.y.hypot(rig.foot.z);
+    let shin_rest = (-rig.foot.z).atan2(-rig.foot.y);
+    let stride = lerp(0.18, 0.32, run);
+    let lift = lerp(0.065, 0.20, run);
+    let leg = |phase: f32| {
+        let swing = phase.cos().max(0.0);
+        let z = stride * phase.sin();
+        let y = rig.ankle_height + lift * swing * swing - hips_y - rig.hip.y;
+        let distance = y.hypot(z).clamp((upper - lower).abs() + 0.001, upper + lower - 0.001);
+        let bend = ((distance * distance - upper * upper - lower * lower) / (2.0 * upper * lower))
+            .clamp(-1.0, 1.0).acos();
+        let thigh = (-z).atan2(-y) - (lower * bend.sin()).atan2(upper + lower * bend.cos());
+        let knee = bend - shin_rest;
+        (Jp::r(rx(thigh)), Jp::r(rx(knee)), Jp::r(rx(-thigh - knee)))
+    };
+    (p.hip_l, p.knee_l, p.foot_l) = leg(c);
+    (p.hip_r, p.knee_r, p.foot_r) = leg(c + PI);
+    p
+}
+
+fn footman_loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
+    idle_pose(t).lerp(&footman_gait(wp, run), m)
+}
+
+/// Footman combat-stance locomotion with two extra axes driven by `movement` —
 /// `back` (0..1) cross-fades toward the gait played in REVERSE phase (a backpedal: the hero
 /// steps backward while still facing the foe), and `twist` (radians) yaws the pelvis+legs
 /// toward the movement while the torso/head counter-rotate to stay square on the target — the
 /// classic lower-body-aims-along-movement / upper-body-faces-target split every lock-on game
 /// uses, here as a differential yaw on the existing joints.
 pub(crate) fn stance_loco_pose(t: f32, wp: f32, m: f32, run: f32, back: f32, twist: f32) -> Pose {
-    let mut p = loco_pose(t, wp, m, run);
+    let mut p = footman_loco_pose(t, wp, m, run);
     if back > 0.001 {
         // The same cycle run backward reads as stepping back; the mid-blend "gather step" as the
         // two phases cancel is exactly what a person does reversing direction.
-        p = p.lerp(&loco_pose(t, -wp, m, run), back.clamp(0.0, 1.0));
+        p = p.lerp(&footman_loco_pose(t, -wp, m, run), back.clamp(0.0, 1.0));
     }
     if twist.abs() > 1e-3 {
         // Hips carry the legs AND the torso (rig: hips → torso, hips → hip_l/r), so yawing the
@@ -1021,7 +1059,7 @@ pub fn hero_anim(
     let moving = hero.moving_amt.clamp(0.0, 1.0);
 
     // Combat stance feeds two extra locomotion axes (backpedal blend + pelvis-vs-torso twist);
-    // both are 0 out of the stance, where this reduces exactly to the plain `loco_pose`. The
+    // both are 0 out of the stance, where this reduces exactly to the footman locomotion. The
     // guard overlay then colours ALL stance locomotion (idle/walk/run) into the ready-to-fight
     // carry — knees bent, shield up, blade at the ready.
     let loco = {
@@ -1163,6 +1201,66 @@ fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<(Quat, Qua
         Work => {
             let chop = ((ph.max(0.0) * 1.3).fract() * PI).sin();
             (Some((e3(-1.2 - chop * 0.5, 0.0, 0.1), rx(-0.6 + chop * 0.3))), None)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sole(p: &Pose, right: bool) -> (Vec3, Vec3) {
+        let rig = super::super::footman::leg_rig();
+        let (hip, knee, foot) = if right {
+            (p.hip_r, p.knee_r, p.foot_r)
+        } else {
+            (p.hip_l, p.knee_l, p.foot_l)
+        };
+        let mirror = |v: Vec3| if right { Vec3::new(-v.x, v.y, v.z) } else { v };
+        let hip_rotation = p.hips.r * hip.r;
+        let knee_rotation = hip_rotation * knee.r;
+        let foot_rotation = knee_rotation * foot.r;
+        let hips = p.hips.t.unwrap() + Vec3::Y * (super::super::model::HIP_REST_Y - 1.05);
+        let ankle = hips + p.hips.r * mirror(rig.hip)
+            + hip_rotation * mirror(rig.knee) + knee_rotation * mirror(rig.foot);
+        let sole = ankle + foot_rotation * Vec3::new(0.0, -rig.ankle_height, 0.0);
+        (sole, foot_rotation * Vec3::Y)
+    }
+
+    #[test]
+    fn footman_supporting_boots_stay_grounded_through_walk_and_run() {
+        for run in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let mut max_lift = 0.0_f32;
+            for frame in 0..120 {
+                let phase = std::f32::consts::TAU * frame as f32 / 120.0;
+                let p = footman_gait(phase, run);
+                for right in [false, true] {
+                    let leg_phase = phase + if right { PI } else { 0.0 };
+                    let (position, normal) = sole(&p, right);
+                    assert!(position.y >= -0.025, "boot penetrates ground: run={run}, phase={leg_phase}, y={}", position.y);
+                    if leg_phase.cos() <= 0.0 {
+                        assert!(position.y.abs() <= 0.025, "supporting boot floats: run={run}, phase={leg_phase}, y={}", position.y);
+                    }
+                    assert!(normal.dot(Vec3::Y) > 0.995, "sole must stay level during locomotion");
+                    max_lift = max_lift.max(position.y);
+                }
+            }
+            assert!(max_lift > 0.05, "recovery foot must lift, not skate");
+        }
+    }
+
+    #[test]
+    fn footman_gait_is_periodic_and_blends_back_to_idle() {
+        for run in [0.0, 0.5, 1.0] {
+            let a = footman_gait(0.0, run);
+            let b = footman_gait(std::f32::consts::TAU, run);
+            for j in [Joint::Hips, Joint::HipL, Joint::HipR, Joint::KneeL, Joint::KneeR, Joint::FootL, Joint::FootR] {
+                assert!(a.get(j).r.angle_between(b.get(j).r) < 0.001);
+            }
+            let stopped = stance_loco_pose(2.0, 1.7, 0.0, run, 0.0, 0.0);
+            let idle = idle_pose(2.0);
+            assert!(stopped.hips.t.unwrap().distance(idle.hips.t.unwrap()) < 0.0001);
+            assert!(stopped.knee_l.r.angle_between(idle.knee_l.r) < 0.001);
         }
     }
 }
