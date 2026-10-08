@@ -1348,10 +1348,10 @@ fn brazier_parts() -> Vec<(Mesh, M)> {
 // `PreWalls`, which meant buying the Palisade Walls DELETED every sign of life and left bare
 // paving; now the settlement's working corners stay through the whole game. Built at local
 // origin, base at y=0; the `build()` spawn closure bakes each cluster to its courtyard spot.
-// Decorative only — they register NO collision (blockers are append-only and can't be cleanly
-// removed), and they sit at the courtyard corners (±10, ±6), clear of the keep, the bell, the
-// gates and every house slot. (More set dressing — and the upgrade-bought set pieces — live in
-// `castle_decor.rs`.)
+// Solid ground-level parts register tight, rotated footprints in `register_yard_blockers`,
+// leaving the space between each cluster walkable. They sit at the courtyard corners (±10, ±6),
+// clear of the keep, the bell, the gates and every house slot. More set dressing — and the
+// upgrade-bought set pieces — live in `castle_decor.rs`.
 
 /// A log lying along the X axis (for stacked woodpiles / windlass rollers).
 pub(crate) fn log_x(r: f32, len: f32, y: f32, z: f32) -> Mesh {
@@ -1860,10 +1860,11 @@ pub fn build(
     // a separate module so the structures stay readable here.
     crate::castle_decor::build(commands, meshes, &mats);
 
-    // Only the always-present keep is solid from the start; the gated structures register their
-    // blockers when their upgrade reveals them (see `sync_castle`), so the courtyard is open
-    // until you build the walls — no invisible barriers.
+    // The always-present keep and work-yard props are solid from the start; gated structures
+    // register their blockers when their upgrade reveals them (see `sync_castle`), so the
+    // courtyard is open until you build the walls — no invisible barriers.
     register_keep_blocker();
+    register_yard_blockers();
     mats
 }
 
@@ -1874,6 +1875,39 @@ const COLLISION_PAD: f32 = 0.12;
 fn register_keep_blocker() {
     let p = COLLISION_PAD;
     crate::blockers::add_box(0.0, 0.0, KEEP_W * 0.88 / 2.0 + p, KEEP_D * 0.88 / 2.0 + p);
+}
+
+/// Match the permanent work-yard props' ground footprints, including their baked local offsets
+/// and rotations. Separate boxes leave gaps around logs, cart handles and sacks walkable instead
+/// of turning each courtyard corner into one oversized obstacle.
+fn register_yard_blockers() {
+    let part = |pos: Vec2, yaw: f32, x: f32, z: f32, hw: f32, hd: f32| {
+        let offset = Quat::from_rotation_y(yaw) * Vec3::new(x, 0.0, z);
+        crate::blockers::add_obb(pos.x + offset.x, pos.y + offset.z, hw, hd, yaw);
+    };
+
+    let wood = Vec2::new(-10.0, 6.0);
+    part(wood, 0.6, 0.0, 0.0, 0.30, 0.30); // chopping block
+    part(wood, 0.6, 0.0, -0.9, 0.75, 0.37); // stacked logs
+
+    let hay = Vec2::new(10.0, 6.0);
+    part(hay, -0.5, 0.0, 0.025, 0.71, 0.315); // bales and binding ropes
+    for (x, z) in [(0.72, 0.24), (0.8, -0.22)] {
+        part(hay, -0.5, x, z, 0.20, 0.20);
+    }
+
+    let cart = Vec2::new(-10.0, -6.0);
+    part(cart, 2.3, 0.0, 0.0, 0.65, 0.44); // bed, rails and wheels
+    for z in [-0.28, 0.28] {
+        part(cart, 2.3, 0.85, z, 0.45, 0.03); // handle shafts
+    }
+    for (x, z) in [(0.95, -0.6), (1.2, -0.35)] {
+        part(cart, 2.3, x, z, 0.31, 0.31); // barrels and hoops
+    }
+
+    let well = Vec2::new(10.0, -6.0);
+    part(well, 0.4, 0.0, 0.0, 0.55, 0.55); // stone curb and supporting posts
+    part(well, 0.4, 0.0, 0.62, 0.16, 0.16); // bucket beside the curb
 }
 
 /// Perimeter wall blockers — one box per segment (registered when Walls is built).
@@ -2116,5 +2150,30 @@ fn drift_smoke(time: Res<Time>, mut q: Query<(&Smoke, &mut Transform)>) {
         tf.translation.y = s.base_y + cycle * 1.7;
         let sc = (0.12 + cycle * 0.42) * (1.0 - cycle).max(0.0);
         tf.scale = Vec3::splat(sc.max(0.001));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn yard_props_are_solid_without_closing_gate_lanes() {
+        let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        register_yard_blockers();
+        for (x, z) in [(-10.0, 6.0), (10.0, 6.0), (-10.0, -6.0), (10.0, -6.0)] {
+            assert!(crate::blockers::is_blocked(x, z), "work-yard prop at ({x}, {z}) must be solid");
+        }
+        let logs = Vec3::new(-10.0, 0.0, 6.0)
+            + Quat::from_rotation_y(0.6) * Vec3::new(0.6, 0.0, -0.9);
+        assert!(crate::blockers::is_blocked(logs.x, logs.z), "rotated log pile must be solid");
+        let barrel = Vec3::new(-10.0, 0.0, -6.0)
+            + Quat::from_rotation_y(2.3) * Vec3::new(1.2, 0.0, -0.35);
+        assert!(crate::blockers::is_blocked(barrel.x, barrel.z), "offset cart barrel must be solid");
+        for (x, z) in [(0.0, 10.0), (0.0, -10.0), (14.0, 0.0), (-14.0, 0.0), (-8.0, 6.0), (8.0, -6.0)] {
+            assert!(!crate::blockers::any_within(x, z, 0.35), "lane at ({x}, {z}) must stay clear");
+        }
+        crate::blockers::reset();
     }
 }

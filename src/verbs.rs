@@ -665,7 +665,8 @@ pub fn populate_ore(
         let z = crate::wildlife::rng_range(&mut rng, -worldmap::GZ + 5.0, worldmap::GZ - 5.0);
         if worldmap::biome_at_world(x, z) != Some(crate::biome::Biome::Rocky)
             || worldmap::ground_at_world(x, z).is_none()
-            || crate::blockers::is_blocked(x, z)
+            || crate::blockers::any_visual_within(x, z, 0.95)
+            || crate::poi::overlaps_planned_clearing(x, z, 0.95)
             || crate::camps::in_clearing(x, z)
             || crate::castle::in_footprint(x, z)
             || crate::bridges::near_bridge(x, z, 1.0)
@@ -1008,7 +1009,8 @@ fn populate_apple_orchard(
         let z = crate::wildlife::rng_range(&mut rng, -worldmap::GZ + 5.0, worldmap::GZ - 5.0);
         if worldmap::biome_at_world(x, z) != Some(crate::biome::Biome::Forest)
             || worldmap::ground_at_world(x, z).is_none()
-            || crate::blockers::any_within(x, z, APPLE_CLEAR)
+            || crate::blockers::any_visual_within(x, z, APPLE_CLEAR)
+            || crate::poi::overlaps_planned_clearing(x, z, APPLE_CLEAR)
             || crate::camps::in_clearing(x, z)
             || crate::castle::in_footprint(x, z)
             || crate::bridges::near_bridge(x, z, 1.0)
@@ -1028,6 +1030,8 @@ fn populate_apple_orchard(
         }
         // Register the trunk as a blocker so the NEXT apple tree (and any mover) keeps clear of it.
         crate::blockers::add(x, z, 0.45);
+        // Reserve the crown for later roadside scenery; only the trunk blocks movement.
+        crate::blockers::reserve_visual(x, z, 0.66 * APPLE_TREE_SCALE);
         commands
             .spawn((
                 Mesh3d(tree_mesh.clone()),

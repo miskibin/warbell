@@ -248,7 +248,7 @@ fn assign_ore(
     // every `RETRY_SECS` — measured as a steady ~450ms hit every ~3s for over a minute straight, one
     // specific stuck miner. Backing off on failure turns "guaranteed every tick" into "occasional".
     let jobless_miners = workers.iter().filter(|(_, worker, _, cd)| {
-        town.0.plots.get(worker.idx).and_then(|p| p.kind) == Some(BuildKind::Mine)
+        town.0.plots.get(worker.idx).filter(|p| p.is_built()).and_then(|p| p.kind) == Some(BuildKind::Mine)
             && cd.is_none_or(|c| now >= c.until)
     });
     for (e, _worker, v, _cd) in jobless_miners.take(MAX_ASSIGN_PER_TICK) {

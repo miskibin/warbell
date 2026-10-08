@@ -9,8 +9,8 @@
 //! (`ruins.rs`/`vignettes.rs` contract — base at y=0, one shared white material, so the whole
 //! layer auto-batches per kind). Placement is deterministic (mulberry32 on a fixed seed) and
 //! rejects water / roads themselves / build plots / clearings / blocked or steep ground. Pieces
-//! are cover-class: NO nav blockers — invader steering and villager pathing must never snag on
-//! a fence post planted beside the highway.
+//! reserve their full visual footprint and register tight solid colliders. Road clearance keeps
+//! the furniture beside the highway without letting actors walk through its posts and rails.
 //!
 //! Signpost boards are unlabeled arrows (world-space text is out of scope for the pass); the
 //! post itself marking "a fork with destinations" is the legibility win.
@@ -133,23 +133,69 @@ fn rng_next(state: &mut u32) -> f32 {
     ((t ^ (t >> 14)) as f32) / 4_294_967_296.0
 }
 
-/// A spot is usable if it's on land, off the road surface itself, and clear of everything that
-/// owns its ground. Steepness is rejected with a 4-probe spread (furniture on a slope floats).
-fn spot_ok(x: f32, z: f32) -> bool {
+/// Reject overhanging pieces, not just occupied centres. The whole footprint must sit on flat,
+/// unclaimed ground, and visually broad props must stay clear even when they have no collider.
+fn spot_ok(x: f32, z: f32, footprint: f32) -> bool {
     let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
-    for (dx, dz) in [(0.45_f32, 0.0_f32), (-0.45, 0.0), (0.0, 0.45), (0.0, -0.45)] {
-        match crate::worldmap::ground_at_world(x + dx, z + dz) {
-            Some(y) if (y - y0).abs() <= 0.30 => {}
-            _ => return false,
+    if crate::blockers::any_visual_within(x, z, footprint)
+        || crate::poi::overlaps_planned_clearing(x, z, footprint)
+        || crate::bridges::near_bridge(x, z, footprint + 0.2)
+    {
+        return false;
+    }
+    let (mut lo, mut hi) = (y0, y0);
+    for k in 0..=8 {
+        let a = k as f32 * (TAU / 8.0);
+        let (px, pz) = if k == 8 { (x, z) } else { (x + a.cos() * footprint, z + a.sin() * footprint) };
+        let Some(y) = crate::worldmap::ground_at_world(px, pz) else { return false };
+        lo = lo.min(y);
+        hi = hi.max(y);
+        if crate::roads::on_road(px, pz)
+            || crate::town::near_build_plot(px, pz)
+            || crate::castle::in_footprint(px, pz)
+            || crate::camps::in_clearing(px, pz)
+            || crate::rival::near_fort(px, pz)
+            || crate::ruins::near_landmark_visual_footprint(px, pz)
+            || crate::worldmap::cliff_shelf_world(px, pz)
+            || crate::worldmap::is_pool_world(px, pz)
+        {
+            return false;
         }
     }
-    !crate::roads::on_road(x, z)
-        && !crate::blockers::is_blocked(x, z)
-        && !crate::town::near_build_plot(x, z)
-        && !crate::castle::in_footprint(x, z)
-        && !crate::camps::in_clearing(x, z)
-        && !crate::rival::near_fort(x, z)
-        && !crate::worldmap::cliff_shelf_world(x, z)
+    hi - lo <= 0.30
+}
+
+#[derive(Clone, Copy)]
+enum Furniture {
+    Signpost,
+    Cairn,
+    Fence,
+    Shrine,
+}
+
+impl Furniture {
+    /// Encloses the mesh, including high boards and roof overhangs, for placement only.
+    fn visual_radius(self, scale: f32) -> f32 {
+        let radius = match self {
+            Self::Signpost => 0.84,
+            Self::Cairn => 0.35,
+            Self::Fence => 1.13,
+            Self::Shrine => 0.43,
+        };
+        radius * scale
+    }
+
+    fn register(self, x: f32, z: f32, yaw: f32, scale: f32) {
+        let (hw, hd, offset) = match self {
+            Self::Signpost => (0.065, 0.065, Vec2::ZERO),
+            Self::Cairn => (0.30, 0.30, Vec2::new(0.0, 0.04)),
+            Self::Fence => (1.125, 0.05, Vec2::ZERO),
+            Self::Shrine => (0.26, 0.26, Vec2::ZERO),
+        };
+        let c = Quat::from_rotation_y(yaw) * Vec3::new(offset.x * scale, 0.0, offset.y * scale);
+        crate::blockers::add_obb(x + c.x, z + c.z, hw * scale, hd * scale, yaw);
+        crate::blockers::reserve_visual(x, z, self.visual_radius(scale));
+    }
 }
 
 /// Plant signposts at road junctions + cairn/fence/shrine furniture along the arteries.
@@ -168,7 +214,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let h_fence = meshes.add(fence());
     let h_shrine = meshes.add(shrine());
     let mut rng: u32 = 0x3a5f_11d7;
-    let spawn = |commands: &mut Commands, handle: &Handle<Mesh>, x: f32, y: f32, z: f32, yaw: f32, s: f32| {
+    let spawn = |commands: &mut Commands, handle: &Handle<Mesh>, kind: Furniture, x: f32, y: f32, z: f32, yaw: f32, s: f32| {
         commands.spawn((
             Mesh3d(handle.clone()),
             MeshMaterial3d(mat.clone()),
@@ -176,6 +222,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             BiomeEntity,
             range.clone(),
         ));
+        kind.register(x, z, yaw, s);
     };
 
     // 1. Signposts: one just off each junction (probe a ring of offsets for a legal spot).
@@ -188,9 +235,11 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         for k in 0..16 {
             let (a, r) = (base + (k % 8) as f32 * (TAU / 8.0), if k < 8 { 2.3 } else { 3.6 });
             let (x, z) = (j.x + a.cos() * r, j.y + a.sin() * r);
-            if spot_ok(x, z) {
+            let yaw = rng_next(&mut rng) * TAU;
+            let scale = 0.95 + rng_next(&mut rng) * 0.15;
+            if spot_ok(x, z, Furniture::Signpost.visual_radius(scale)) {
                 let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-                spawn(commands, &h_sign, x, y, z, rng_next(&mut rng) * TAU, 0.95 + rng_next(&mut rng) * 0.15);
+                spawn(commands, &h_sign, Furniture::Signpost, x, y, z, yaw, scale);
                 posts += 1;
                 placed = true;
                 break;
@@ -223,19 +272,20 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 let q = p + perp * off * side;
                 side = -side;
                 next_at += 26.0 + rng_next(&mut rng) * 14.0;
-                if !spot_ok(q.x, q.y) || last.iter().any(|l| l.distance(q) < 9.0) {
+                let roll = rng_next(&mut rng);
+                let road_yaw = dir.y.atan2(dir.x); // world yaw aligning local X with the road
+                let (handle, kind, yaw, scale) = if roll < 0.38 {
+                    (&h_cairn, Furniture::Cairn, rng_next(&mut rng) * TAU, 0.85 + rng_next(&mut rng) * 0.4)
+                } else if roll < 0.72 {
+                    (&h_fence, Furniture::Fence, -road_yaw, 0.9 + rng_next(&mut rng) * 0.25)
+                } else {
+                    (&h_shrine, Furniture::Shrine, -road_yaw + FRAC_PI_2, 0.95 + rng_next(&mut rng) * 0.2)
+                };
+                if !spot_ok(q.x, q.y, kind.visual_radius(scale)) || last.iter().any(|l| l.distance(q) < 9.0) {
                     continue;
                 }
                 let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
-                let roll = rng_next(&mut rng);
-                let road_yaw = dir.y.atan2(dir.x); // world yaw aligning local X with the road
-                if roll < 0.38 {
-                    spawn(commands, &h_cairn, q.x, y, q.y, rng_next(&mut rng) * TAU, 0.85 + rng_next(&mut rng) * 0.4);
-                } else if roll < 0.72 {
-                    spawn(commands, &h_fence, q.x, y, q.y, -road_yaw, 0.9 + rng_next(&mut rng) * 0.25);
-                } else {
-                    spawn(commands, &h_shrine, q.x, y, q.y, -road_yaw + FRAC_PI_2, 0.95 + rng_next(&mut rng) * 0.2);
-                }
+                spawn(commands, handle, kind, q.x, y, q.y, yaw, scale);
                 last.push(q);
                 pieces += 1;
             }

@@ -25,6 +25,50 @@ use crate::castle::{bx, flat, gable, log_x, taper, M};
 
 const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
 
+/// Collapsed trade building: low broken footings, charred beams and fallen roof pieces.
+/// The debris stays below knee height so its deliberately walkable footprint reads correctly.
+pub fn rubble_parts(kind: Option<tileworld_core::town_store::BuildKind>) -> Vec<(Mesh, M)> {
+    use tileworld_core::town_store::BuildKind;
+    let mut parts = vec![
+        (bx(3.9, 0.045, 2.65, 0.0, 0.024, 0.0), M::Soil),
+        (bx(1.95, 0.12, 1.72, -0.95, 0.065, 0.0), M::DarkStone),
+    ];
+    // Uneven lengths and heights make a breached foundation rather than an intact short box.
+    for (x, z, w, d, h) in [(-1.7, -0.70, 0.42, 0.24, 0.32), (-1.1, -0.70, 0.58, 0.23, 0.19),
+        (-0.35, -0.70, 0.31, 0.25, 0.26), (-1.78, 0.48, 0.22, 0.45, 0.23),
+        (-0.48, 0.73, 0.67, 0.21, 0.18)] {
+        parts.push((bx(w, h, d, x, h / 2.0, z), M::DarkStone));
+    }
+    for (x, z, len, yaw) in [(-0.95, 0.08, 1.75, 0.40), (-0.45, -0.20, 1.15, -0.65),
+        (-1.10, 0.70, 1.3, -0.30), (0.38, 0.20, 0.8, 0.95)] {
+        parts.push((bx(len, 0.12, 0.14, 0.0, 0.0, 0.0)
+            .rotated_by(Quat::from_euler(EulerRot::XYZ, 0.0, yaw, 0.06))
+            .translated_by(Vec3::new(x, 0.15, z)), M::Beam));
+    }
+    let roof = if matches!(kind, Some(BuildKind::Farm)) { M::Thatch } else { M::HouseRoof2 };
+    for (x, z, yaw) in [(-1.15, -0.05, -0.32), (-0.20, 0.55, 0.45)] {
+        parts.push((bx(0.76, 0.055, 0.52, 0.0, 0.0, 0.0)
+            .rotated_by(Quat::from_euler(EulerRot::XYZ, 0.18, yaw, -0.12))
+            .translated_by(Vec3::new(x, 0.23, z)), roof));
+    }
+    // A damaged yard hints at the lost trade without leaving an intact working building.
+    match kind {
+        Some(BuildKind::Farm) => parts.push((bx(1.6, 0.06, 1.8, 0.95, 0.07, 0.0), M::Packed)),
+        Some(BuildKind::Lumber) => parts.push((log_x(0.17, 0.82, 0.17, -0.48)
+            .translated_by(Vec3::new(1.0, 0.0, 0.0)), M::Wood)),
+        Some(BuildKind::Mine) => {
+            parts.push((bx(0.6, 0.08, 0.6, 0.85, 0.07, -0.25), M::DarkStone));
+            parts.push((bx(0.3, 0.2, 0.35, 1.32, 0.10, 0.5), M::Stone));
+        }
+        None => {}
+    }
+    // Scorch only the debris; normal buildings continue sharing the town's materials.
+    parts.into_iter().map(|(mesh, material)| {
+        let tint = if matches!(material, M::Beam | M::Wood | M::Thatch | M::HouseRoof2) { 0.28 } else { 0.65 };
+        (crate::meshkit::tinted(mesh, [tint, tint, tint, 1.0]), material)
+    }).collect()
+}
+
 // ── Farm: thatched barn (−X) + tilled field (+X) ─────────────────────────────────────
 
 /// The farm's barn: plank walls under a deep thatch gable, big double door, hayloft hatch

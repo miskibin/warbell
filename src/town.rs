@@ -11,7 +11,7 @@
 //! stay ungated. Numbers live in `town_store` (test-gated).
 
 use bevy::prelude::*;
-use tileworld_core::town_store::{BuildKind, Cost, MAX_HOUSES, PopEvent, Town, POP_PER_HOUSE};
+use tileworld_core::town_store::{BuildKind, Cost, MAX_HOUSES, PopEvent, PlotState, Town, POP_PER_HOUSE};
 
 use crate::castle::{Mats, VillageMats, M};
 use crate::combat_fx::FloatReq;
@@ -51,6 +51,10 @@ pub struct TownRes(pub Town);
 #[derive(Message)]
 pub struct PlayerBuilt(pub Option<BuildKind>);
 
+/// Request to restore the former trade on a collapsed plot.
+#[derive(Message)]
+pub struct RebuildPlot(pub usize);
+
 impl Default for TownRes {
     fn default() -> Self {
         let mut t = Town::new(PLOT_COUNT, 0);
@@ -60,13 +64,13 @@ impl Default for TownRes {
 }
 
 /// Tags a build-plot (the construction-site placeholder) entity, carrying its plot index so it can
-/// be hidden once something is built there (and shown again on an empty/rubble plot).
+/// be hidden once something is built there; collapsed plots have their own ruin hierarchy.
 #[derive(Component)]
 pub struct BuildPlot {
     pub idx: usize,
 }
 
-/// The building mesh sitting on a plot (despawned on collapse/rebuild).
+/// The building or ruin hierarchy sitting on a plot (replaced on collapse/rebuild).
 #[derive(Component)]
 pub struct BuildingMesh {
     pub idx: usize,
@@ -154,7 +158,7 @@ fn free_plots(town: &Town, spots: &PlotSpots) -> Vec<usize> {
 }
 
 /// Wood/stone still short of a cost, as a player-facing line — `None` if affordable.
-fn cost_shortfall(cost: Cost, bank: &tileworld_core::resource_store::ResourceState) -> Option<String> {
+pub(crate) fn cost_shortfall(cost: Cost, bank: &tileworld_core::resource_store::ResourceState) -> Option<String> {
     let nw = (cost.wood - bank.wood()).max(0.0).ceil() as i64;
     let ns = (cost.stone - bank.stone()).max(0.0).ceil() as i64;
     match (nw, ns) {
@@ -235,6 +239,7 @@ impl Plugin for TownPlugin {
             .init_resource::<BuildMode>()
             .init_resource::<PlotSpots>()
             .add_message::<PlayerBuilt>()
+            .add_message::<RebuildPlot>()
             // Run AFTER economy's reset: its `bank.0.reset()` zeroes food/wood too, so the
             // START_WOOD grant must come last or it gets wiped (system-order race).
             .add_systems(
@@ -272,14 +277,14 @@ impl Plugin for TownPlugin {
             )
             // Sim (gated): apply damage + repair only while playing.
             .add_sim_systems(
-                (apply_building_damage, repair_system),
+                (apply_building_damage, repair_system, rebuild_plot).chain(),
             )
             // Rebuild building meshes to match a loaded `TownRes` (ungated; fires on a load).
-            .add_systems(Update, restore_buildings)
+            .add_systems(Update, restore_buildings.before(stage_town_for_shot).before(build_place).before(rebuild_plot))
             // VFX (ungated): flames flicker even when frozen.
             .add_systems(Update, flame_flicker)
             // Screenshot staging (ungated): no-op unless FOREST_TOWN / FOREST_PANEL=build set.
-            .add_systems(Update, (stage_town_for_shot, open_build_for_shot));
+            .add_systems(Update, (stage_town_for_shot.before(apply_building_damage), open_build_for_shot));
         // Clip-only: raise the town one plot at a time for a construction timelapse.
         if std::env::var("FOREST_DEMO").ok().as_deref() == Some("build") {
             app.add_sim_systems(demo_build_timelapse);
@@ -395,7 +400,7 @@ fn sync_staffed(
         }
     }
     for (i, plot) in town.0.plots.iter_mut().enumerate() {
-        plot.staffed = staffed[i];
+        plot.staffed = plot.is_built() && staffed[i];
     }
 }
 
@@ -507,10 +512,14 @@ fn sync_population_bodies(
 /// and a New Game / Continue reconciles the town IN-PROCESS without one. So the boxes must be
 /// removed here by plot box-centre or they linger as **invisible barriers** where a building stood
 /// last run. Castle walls/keep/houses sit at different centres, so this tight `eps` leaves them be.
+fn clear_plot_blocker(pos: Vec2) {
+    // Also remove the legacy unscaled shell left by older saves/builds.
+    crate::blockers::remove_box_near(pos.x - 0.95, pos.y, 0.05);
+    crate::blockers::remove_box_near(pos.x - 0.95 * crate::castle::WORLD_BUMP, pos.y, 0.05);
+}
+
 fn clear_building_blockers(spots: &PlotSpots) {
-    for pos in &spots.0 {
-        crate::blockers::remove_box_near(pos.x - 0.95, pos.y, 0.3);
-    }
+    for pos in &spots.0 { clear_plot_blocker(*pos); }
 }
 
 /// New run: clear the town and seed starting wood. Mirrors `economy::reset_economy`.
@@ -547,10 +556,7 @@ fn reset_town(
     }
 }
 
-/// On a loaded game (`GameLoaded`), rebuild building meshes to match the restored `TownRes`:
-/// reap every current building mesh + flame, then spawn one per built plot. The plot pads
-/// persist (built once at startup), so only the buildings on them need reconciling — the mirror
-/// of `reset_town`'s reap, but for an arbitrary saved layout instead of an empty one.
+/// Reconcile structures and ruins after a load or a phased world-map rebuild.
 fn restore_buildings(
     mut ev: MessageReader<crate::savegame::GameLoaded>,
     town: Res<TownRes>,
@@ -560,19 +566,25 @@ fn restore_buildings(
     mut meshes: ResMut<Assets<Mesh>>,
     stale: Query<Entity, Or<(With<BuildingMesh>, With<Flame>)>>,
 ) {
-    if ev.read().count() == 0 {
-        return;
-    }
+    let loaded = ev.read().last().map(|crate::savegame::GameLoaded(data)| &data.town);
+    // A load onto another map rebuilds BiomeEntity several frames AFTER GameLoaded. When its
+    // plots land, recreate the restored structures/ruins again instead of leaving built plots
+    // invisible. Same-map loads use the carried snapshot, independent of resource write order.
+    if loaded.is_none() && !spots.is_changed() { return; }
+    if spots.0.is_empty() { return; }
+    let model = loaded.unwrap_or(&town.0);
     let Some(mats) = mats else { return };
-    for e in &stale {
-        commands.entity(e).try_despawn();
-    }
-    // Drop the prior buildings' collision boxes before `spawn_building` re-adds them below, or a
-    // Continue duplicates/strands town boxes in the shared `blockers` set (no in-process reset).
+    for e in &stale { commands.entity(e).try_despawn(); }
     clear_building_blockers(&spots);
-    for (idx, plot) in town.0.plots.iter().enumerate() {
-        if let (true, Some(kind)) = (plot.is_built(), plot.kind) {
-            spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
+    for (idx, plot) in model.plots.iter().enumerate() {
+        match plot.state {
+            PlotState::Built { .. } => {
+                if let Some(kind) = plot.kind {
+                    spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
+                }
+            }
+            PlotState::Rubble => spawn_rubble(&mut commands, &mut meshes, &mats.0, idx, plot.kind, &spots),
+            PlotState::Empty => {}
         }
     }
 }
@@ -622,12 +634,11 @@ pub fn populate_plots(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: 
     commands.insert_resource(PlotSpots(spots));
 }
 
-/// Hide a plot's construction-site placeholder once a building stands on it (and show it again on
-/// an empty/rubble plot) — so you never see the timber frame poking through a finished building.
+/// Show the construction pad only on an empty plot, never through a building or its ruins.
 fn sync_plot_visibility(town: Res<TownRes>, mut q: Query<(&BuildPlot, &mut Visibility)>) {
     for (plot, mut vis) in &mut q {
-        let built = town.0.plots.get(plot.idx).is_some_and(|p| p.is_built());
-        *vis = if built { Visibility::Hidden } else { Visibility::Visible };
+        let empty = town.0.plots.get(plot.idx).is_some_and(|p| p.state == PlotState::Empty);
+        *vis = if empty { Visibility::Visible } else { Visibility::Hidden };
     }
 }
 
@@ -664,42 +675,38 @@ fn apply_building_damage(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut fa: Local<Option<FlameAssets>>,
+    mats: Option<Res<VillageMats>>,
     spots: Res<PlotSpots>,
     buildings: Query<(Entity, &BuildingMesh)>,
     flames: Query<(Entity, &Flame)>,
 ) {
-    if pending.0.is_empty() {
-        return;
-    }
-    // Plots that already show a flame. Tracked across the drain loop so multiple damage events to
-    // the SAME plot in one frame (every arsonist pushes damage every frame) don't each spawn a
-    // flame — `commands` aren't flushed mid-system, so the `flames` query alone can't see a flame
-    // queued earlier this frame, and the building used to sprout a stack of overlapping flames.
-    let mut burning: std::collections::HashSet<usize> = flames.iter().map(|(_, f)| f.idx).collect();
+    if pending.0.is_empty() { return; }
+    // Aggregate first: a non-lethal hit followed by a lethal hit in the same frame must not
+    // queue a flame that the later collapse cannot yet see in its deferred-command query.
+    let mut damage = [0.0_f64; PLOT_COUNT];
     for (idx, dmg) in pending.0.drain(..) {
-        let was_built = town.0.plots.get(idx).map_or(false, |p| p.is_built());
-        town.0.damage(idx, dmg as f64);
-        if !was_built {
-            continue;
+        if let Some(sum) = damage.get_mut(idx) {
+            if dmg.is_finite() && dmg > 0.0 { *sum += dmg as f64; }
         }
-        let now_rubble = town.0.plots.get(idx).map_or(false, |p| {
-            matches!(p.state, tileworld_core::town_store::PlotState::Rubble)
-        });
+    }
+    for (idx, dmg) in damage.into_iter().enumerate().filter(|(_, dmg)| *dmg > 0.0) {
+        let was_built = town.0.plots.get(idx).is_some_and(|p| p.is_built());
+        town.0.damage(idx, dmg);
+        if !was_built { continue; }
+        let now_rubble = town.0.plots.get(idx).is_some_and(|p| p.state == PlotState::Rubble);
         if now_rubble {
-            // Collapse: drop the building mesh + its flames, leave the bare plot (rubble).
+            // Collapse: remove the solid shell immediately, then leave visible, walkable ruins.
+            if let Some(pos) = spots.0.get(idx) { clear_plot_blocker(*pos); }
             for (e, bm) in &buildings {
-                if bm.idx == idx {
-                    commands.entity(e).try_despawn();
-                }
+                if bm.idx == idx { commands.entity(e).try_despawn(); }
             }
             for (e, f) in &flames {
-                if f.idx == idx {
-                    commands.entity(e).try_despawn();
-                }
+                if f.idx == idx { commands.entity(e).try_despawn(); }
             }
-            burning.remove(&idx);
-        } else if burning.insert(idx) {
-            // Newly burning this frame (insert returns true) → show exactly one flame.
+            if let Some(mats) = mats.as_ref() {
+                spawn_rubble(&mut commands, &mut meshes, &mats.0, idx, town.0.plots[idx].kind, &spots);
+            }
+        } else if !flames.iter().any(|(_, f)| f.idx == idx) {
             let assets = fa.get_or_insert_with(|| flame_assets(&mut meshes, &mut materials));
             spawn_flame(&mut commands, assets, idx, &spots);
         }
@@ -813,6 +820,7 @@ fn stage_town_for_shot(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut damage: ResMut<PendingBuildingDamage>,
 ) {
     if *done || spots.0.is_empty() {
         return;
@@ -845,6 +853,8 @@ fn stage_town_for_shot(
         town.0.damage(0, 20.0);
         let fa = flame_assets(&mut meshes, &mut materials);
         spawn_flame(&mut commands, &fa, 0, &spots);
+    } else if mode == "rubble" {
+        damage.0.extend([(0, 20.0), (0, 1000.0), (1, 1000.0), (3, 1000.0)]);
     }
 }
 
@@ -1252,7 +1262,8 @@ fn build_strip_update(
     let (msg, short) = match cost_shortfall(build_cost(kind, &town.0), &bank.0) {
         Some(short) => (format!("{} \u{2014} {short}", kind.label()), true),
         None => (
-            format!("Place a {} \u{2014} click a glowing plot, or W\u{00b7}S + Enter \u{00b7} A\u{00b7}D change \u{00b7} Esc leave", kind.label()),
+            format!("{} a {} \u{2014} click a glowing plot, or W\u{00b7}S + Enter \u{00b7} A\u{00b7}D change \u{00b7} Esc leave",
+                if mode.target.and_then(|i| town.0.plots.get(i)).is_some_and(|p| p.state == PlotState::Rubble) { "Rebuild" } else { "Place" }, kind.label()),
             false,
         ),
     };
@@ -1621,7 +1632,47 @@ fn spawn_building(
     commands.spawn(crate::build_fx::DustBurst::building(Vec3::new(pos.x, y, pos.y)));
     // Solid structure: register a collision box over the trade's building (the −X side of the
     // plot) so the hero + orks route around it. (The working yard on the +X side stays walkable.)
-    crate::blockers::add_box(pos.x - 0.95, pos.y, 1.05, 0.95);
+    clear_plot_blocker(pos);
+    crate::blockers::add_box(pos.x - 0.95 * b, pos.y, 1.05 * b, 0.95 * b);
+}
+
+/// Ruins share the building lifecycle tag so rebuild/reset/load reap the entire hierarchy.
+/// Deliberately no collider: knee-high scattered debris leaves the old footprint passable.
+fn spawn_rubble(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats, idx: usize,
+    kind: Option<BuildKind>, spots: &PlotSpots) {
+    let Some(pos) = spots.0.get(idx).copied() else { return };
+    let root = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, crate::town_meshes::rubble_parts(kind), pos);
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    let b = crate::castle::WORLD_BUMP;
+    commands.entity(root).try_insert(Transform::from_xyz(pos.x, y, pos.y)
+        .with_scale(Vec3::new(b, b * crate::castle::BUILDING_TALLER, b)));
+    commands.spawn(crate::build_fx::DustBurst::building(Vec3::new(pos.x - 0.95 * b, y, pos.y)));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rebuild_plot(mut requests: MessageReader<RebuildPlot>, siege: Option<Res<crate::siege::Siege>>,
+    hero: Res<HeroState>, spots: Res<PlotSpots>, mut town: ResMut<TownRes>, mut bank: ResMut<Bank>,
+    mats: Option<Res<VillageMats>>, mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>,
+    existing: Query<(Entity, &BuildingMesh)>, mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut built: MessageWriter<PlayerBuilt>) {
+    for RebuildPlot(idx) in requests.read() {
+        if !hero.alive || !siege.as_ref().is_some_and(|s| s.phase == crate::siege::GamePhase::Prep) { continue; }
+        let Some(pos) = spots.0.get(*idx) else { continue };
+        if hero.pos.distance(*pos) >= 3.6 { continue; }
+        let Some(plot) = town.0.plots.get(*idx) else { continue };
+        if plot.state != PlotState::Rubble { continue; }
+        // Old saves discarded the kind at collapse. Their ruins can still be rebuilt as a farm.
+        let kind = plot.kind.unwrap_or(BuildKind::Farm);
+        let Some(mats) = mats.as_ref() else { continue };
+        if town.0.build(*idx, kind, &mut bank.0) {
+            for (e, bm) in &existing {
+                if bm.idx == *idx { commands.entity(e).try_despawn(); }
+            }
+            spawn_building(&mut commands, &mut meshes, &mats.0, *idx, kind, &spots);
+            cues.write(crate::audio::AudioCue::UiSelect);
+            built.write(PlayerBuilt(Some(kind)));
+        }
+    }
 }
 
 /// The textured parts for a producer — each trade has its own structure (barn / saw shed /
@@ -1631,5 +1682,90 @@ fn building_parts(kind: BuildKind) -> Vec<(Mesh, M)> {
         BuildKind::Farm => crate::town_meshes::farm_parts(),
         BuildKind::Lumber => crate::town_meshes::woodcutter_parts(),
         BuildKind::Mine => crate::town_meshes::mine_parts(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app() -> App {
+        let pos = Vec2::new(95.0, 95.0);
+        let mut images = Assets::<Image>::default();
+        let mut materials = Assets::<StandardMaterial>::default();
+        let mats = crate::castle::build_mats(&mut images, &mut materials);
+        let mut bank = Bank::default();
+        bank.0.add_wood(100.0);
+        bank.0.add_stone(100.0);
+        let mut town = TownRes(Town::new(1, 0));
+        assert!(town.0.build(0, BuildKind::Lumber, &mut bank.0));
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .insert_resource(Assets::<Mesh>::default())
+            .insert_resource(materials)
+            .insert_resource(VillageMats(mats))
+            .insert_resource(PlotSpots(vec![pos]))
+            .insert_resource(town).insert_resource(bank)
+            .insert_resource(HeroState { pos, alive: true, ..default() })
+            .insert_resource(crate::siege::Siege::default())
+            .init_resource::<PendingBuildingDamage>()
+            .add_message::<RebuildPlot>().add_message::<PlayerBuilt>()
+            .add_message::<crate::savegame::GameLoaded>()
+            .add_message::<crate::audio::AudioCue>()
+            .add_systems(Startup, |mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>,
+                mats: Res<VillageMats>, spots: Res<PlotSpots>| {
+                spawn_building(&mut commands, &mut meshes, &mats.0, 0, BuildKind::Lumber, &spots);
+            })
+            .add_systems(Update, (restore_buildings, apply_building_damage, rebuild_plot).chain());
+        app.update();
+        app
+    }
+
+    /// Exercises deferred commands and the live blocker store, beyond the pure Town tests.
+    #[test]
+    fn collapse_and_rebuild_replace_visuals_and_collision_once() {
+        let _lock = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        let mut app = test_app();
+        let pos = app.world().resource::<PlotSpots>().0[0];
+        let shell = pos - Vec2::new(0.95 * crate::castle::WORLD_BUMP, 0.0);
+        assert!(crate::blockers::is_blocked(shell.x, shell.y));
+        app.world_mut().resource_mut::<PendingBuildingDamage>().0.extend([(0, 20.0), (0, 1000.0)]);
+        app.update();
+        let plot = &app.world().resource::<TownRes>().0.plots[0];
+        assert_eq!(plot.state, PlotState::Rubble);
+        assert_eq!(plot.kind, Some(BuildKind::Lumber));
+        assert!(!crate::blockers::any_within(shell.x, shell.y, 1.0), "collapse must free the old footprint");
+        assert_eq!(app.world_mut().query::<&BuildingMesh>().iter(app.world()).count(), 1, "one ruin hierarchy");
+        assert_eq!(app.world_mut().query::<&Flame>().iter(app.world()).count(), 0, "no same-frame orphan flame");
+
+        let json = serde_json::to_string(&app.world().resource::<TownRes>().0).unwrap();
+        app.world_mut().resource_mut::<TownRes>().0 = serde_json::from_str(&json).unwrap();
+        app.world_mut().insert_resource(PlotSpots(vec![pos]));
+        app.update();
+        assert_eq!(app.world_mut().query::<&BuildingMesh>().iter(app.world()).count(), 1, "map reconciliation must restore one ruin");
+        assert!(!crate::blockers::is_blocked(shell.x, shell.y));
+        app.world_mut().resource_mut::<crate::siege::Siege>().phase = crate::siege::GamePhase::Wave;
+        app.world_mut().write_message(RebuildPlot(0));
+        app.update();
+        assert_eq!(app.world().resource::<TownRes>().0.plots[0].state, PlotState::Rubble);
+        let before = app.world().resource::<Bank>().0.clone();
+        app.world_mut().resource_mut::<crate::siege::Siege>().phase = crate::siege::GamePhase::Prep;
+        app.world_mut().resource_mut::<Bank>().0.reset();
+        app.world_mut().write_message(RebuildPlot(0));
+        app.update();
+        assert_eq!(app.world().resource::<TownRes>().0.plots[0].state, PlotState::Rubble, "no resources must leave ruins intact");
+        assert!(!crate::blockers::is_blocked(shell.x, shell.y));
+        app.world_mut().resource_mut::<Bank>().0 = before.clone();
+        app.world_mut().write_message(RebuildPlot(0));
+        app.world_mut().write_message(RebuildPlot(0));
+        app.update();
+        assert!(app.world().resource::<TownRes>().0.plots[0].is_built());
+        assert!(crate::blockers::is_blocked(shell.x, shell.y), "rebuild must restore collision");
+        assert_eq!(app.world_mut().query::<&BuildingMesh>().iter(app.world()).count(), 1);
+        let after = &app.world().resource::<Bank>().0;
+        assert_eq!(before.wood() - after.wood(), BuildKind::Lumber.cost().wood);
+        assert_eq!(before.stone() - after.stone(), BuildKind::Lumber.cost().stone);
+        crate::blockers::reset();
     }
 }

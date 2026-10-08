@@ -53,6 +53,7 @@ enum InteractKind {
     /// At a landmark whose gear is already won (or a vignette with none) — **E** prays at its
     /// shrine for a timed buff (`landmarks::shrine`).
     Shrine,
+    Rebuild(usize),
 }
 impl InteractKind {
     fn prompt(self) -> &'static str {
@@ -65,6 +66,7 @@ impl InteractKind {
             InteractKind::BreachGate => "Break the gate",
             InteractKind::TrialChallenge => "Challenge the guardians",
             InteractKind::Shrine => "Pray at the shrine",
+            InteractKind::Rebuild(_) => "Rebuild",
         }
     }
     /// The keycap shown on the prompt chip. Every contextual action — chests included — is on **E**.
@@ -77,10 +79,10 @@ impl InteractKind {
 #[derive(Resource, Default)]
 struct ActiveInteraction {
     kind: Option<InteractKind>,
-    /// A player-facing "can't act yet" reason for the active interaction (red prompt + detail),
-    /// or `None` when actionable. No current interaction gates on cost — building's afford check
-    /// moved to the HUD-button build mode (`town::build_place`) — so this stays `None` today, but
-    /// the prompt machinery is kept for the next gated interaction.
+    /// Dynamic rebuild label names the lost trade and its exact resource cost.
+    label: Option<String>,
+    /// A player-facing reason when the active interaction is blocked.
+    /// Rebuilding names the missing wood/stone here.
     blocked: Option<String>,
 }
 
@@ -99,6 +101,10 @@ struct LandmarkIo<'w, 's> {
     /// The in-flight Rune-Trial — so the `[E] Challenge the guardians` prompt disappears once the
     /// defence has started (you can't begin a second trial mid-fight).
     trial: Res<'w, crate::landmarks::RuneTrial>,
+    town: Res<'w, crate::town::TownRes>,
+    plots: Res<'w, crate::town::PlotSpots>,
+    bank: Res<'w, crate::economy::Bank>,
+    rebuild: MessageWriter<'w, crate::town::RebuildPlot>,
 }
 
 /// The centred hint row. Holds up to three sibling chips — `[B] Build`, the contextual `[E] …`, and
@@ -167,6 +173,7 @@ fn drive_interaction(
     // surface keep/shop/bell/chest prompts (they'd fight `town::build_place` for the key).
     if build_mode.active {
         active.kind = None;
+        active.label = None;
         active.blocked = None;
         return;
     }
@@ -177,6 +184,15 @@ fn drive_interaction(
         (InteractKind::Shop, shop_anchor(), SHOP_DIST, true),
         (InteractKind::WarBell, crate::castle::BELL_POS, BELL_DIST, siege.phase == GamePhase::Prep),
     ];
+    if siege.phase == GamePhase::Prep {
+        for (idx, plot) in landmark_io.town.0.plots.iter().enumerate() {
+            if plot.state == tileworld_core::town_store::PlotState::Rubble {
+                if let Some(pos) = landmark_io.plots.0.get(idx) {
+                    candidates.push((InteractKind::Rebuild(idx), *pos, 3.6, true));
+                }
+            }
+        }
+    }
     // A villager jab on offer: the prompt anchors where the speaker stood (expiry is handled by
     // `tick_chains`; here we only range-gate it).
     if let Some(offer) = offered.0 {
@@ -240,10 +256,26 @@ fn drive_interaction(
         }
     }
     active.kind = best.map(|(k, _)| k);
-    active.blocked = None; // no interaction carries a cost gate now (building moved to build mode)
+    active.label = match active.kind {
+        Some(InteractKind::Rebuild(idx)) => {
+            let kind = landmark_io.town.0.plots[idx].kind.unwrap_or(tileworld_core::town_store::BuildKind::Farm);
+            let cost = kind.cost();
+            Some(format!("Rebuild {} · {} wood · {} stone", kind.label(), cost.wood, cost.stone))
+        }
+        _ => None,
+    };
+    active.blocked = match active.kind {
+        Some(InteractKind::Rebuild(idx)) => {
+            let kind = landmark_io.town.0.plots[idx].kind.unwrap_or(tileworld_core::town_store::BuildKind::Farm);
+            crate::town::cost_shortfall(kind.cost(), &landmark_io.bank.0)
+        }
+        _ => None,
+    };
 
     if let (true, Some(kind)) = (keys.just_pressed(KeyCode::KeyE), active.kind) {
+        if active.blocked.is_some() { return; }
         match kind {
+            InteractKind::Rebuild(idx) => { landmark_io.rebuild.write(crate::town::RebuildPlot(idx)); }
             InteractKind::Upgrades => next_modal.set(Modal::UpgradeTree),
             InteractKind::Shop => next_modal.set(Modal::Shop),
             InteractKind::WarBell => {
@@ -461,9 +493,10 @@ fn update_prompt(
     }
 
     if let Ok((mut t, mut col)) = label_q.single_mut() {
+        let label = active.label.as_deref().unwrap_or(k.prompt());
         let want = match blocked {
-            Some(detail) => format!("{}  \u{2014}  {detail}", k.prompt()),
-            None => k.prompt().to_string(),
+            Some(detail) => format!("{label}  \u{2014}  {detail}"),
+            None => label.to_string(),
         };
         if t.as_str() != want {
             **t = want;

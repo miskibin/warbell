@@ -65,5 +65,7 @@ fn town_round_trips_with_built_and_rubble_plots() {
     t.build_house(&mut bank); // exercise the houses count too
     t.damage(0, 5.0); // ignite plot 0 (Built { burning: true })
     t.damage(2, 1.0); // plot 2 was empty → no-op, stays Empty
+    t.build(3, BuildKind::Lumber, &mut bank);
+    t.damage(3, 1000.0); // collapsed trade must survive JSON for reconstruction
     assert_eq!(round_trip(&t), t);
 }
