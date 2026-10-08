@@ -83,6 +83,11 @@ FOREST_VIEW=hero FOREST_CLIP=/tmp/turn FOREST_CLIP_FRAMES=120 FOREST_CLIP_FPS=30
   previewed hero/biped/quadruped (see `viewer.rs::anim_drive` + `biped_anim_drive` +
   `quad_anim_drive` for each family's clip list). Landmark set-pieces always run their part
   animators (sails/orbits/pulses) — no extra flag needed.
+- `FOREST_VIEW_ANIM=locomotion` previews a six-second idle → walk → run → jump → landing →
+  walk → stop sequence. With `FOREST_CLIP_FRAMES=180 FOREST_CLIP_FPS=30`, the sequence starts
+  when recording starts, after the warm-up. `runjump` also includes grounded running and
+  landing. For the same sequence driven by actual movement input in the world, use
+  `FOREST_DEMO=locomotion FOREST_TPS=1` instead of the viewer.
 - Lighting here is a neutral 3-point rig, NOT the game's atmosphere/IBL — geometry, proportions
   and per-surface texture (the `surf` codes) read true, but final in-game tone differs. For a
   lighting/atmosphere check, capture in the real game (`visual-debug-cloud`).

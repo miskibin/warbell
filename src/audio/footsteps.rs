@@ -37,7 +37,7 @@ pub(crate) fn hero_footsteps(
     let Ok(hero) = hero_q.single() else { return };
     let surface = surface_at(hero.pos);
 
-    // `walk_phase` advances whenever the hero is moving (mid-air too), so derive the gait
+    // `walk_phase` advances with accepted grounded travel, so derive the gait
     // half-cycle index from it; a change = one footfall.
     let half = (hero.walk_phase / PI).floor() as i64;
     let landed = hero.on_ground && *was_air;
@@ -45,7 +45,7 @@ pub(crate) fn hero_footsteps(
 
     if landed {
         // Touchdown after a jump / fall — a single louder step, and swallow any walking step
-        // that the airborne phase advance would otherwise also fire this frame.
+        // that resuming the grounded gait would otherwise also fire this frame.
         cues.write(AudioCue::Footstep { surface, landing: true });
         *last_half = half;
         return;

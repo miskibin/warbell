@@ -21,7 +21,7 @@
 //! and a slack keel-over on death. (First person doesn't use this rig at all — it is hidden and the
 //! camera-parented `viewmodel` draws the hands.)
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
@@ -97,7 +97,7 @@ pub(crate) struct Jp {
 }
 impl Jp {
     fn r(r: Quat) -> Self {
-        Jp { t: None, r }
+        Jp { t: None, r: r.normalize() }
     }
     fn lerp(self, o: Jp, s: f32) -> Jp {
         let t = match (self.t, o.t) {
@@ -106,7 +106,7 @@ impl Jp {
             (None, Some(b)) => Some(b),
             (None, None) => None,
         };
-        Jp { t, r: self.r.slerp(o.r, s) }
+        Jp { t, r: self.r.slerp(o.r, s).normalize() }
     }
 }
 
@@ -167,6 +167,137 @@ impl Pose {
             foot_r: self.foot_r.lerp(o.foot_r, s),
             shield: self.shield.lerp(o.shield, s),
             sword: self.sword.lerp(o.sword, s),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MotionClip {
+    Locomotion,
+    Airborne,
+    Attack(u8),
+    Charge,
+    Roll,
+    Dash,
+    Victory,
+}
+
+/// Per-hero transient state, reset with Hero::fresh on a new run. Capture the
+/// actually displayed pose on a clip change, including changes during another fade.
+#[derive(Default)]
+pub(super) struct AnimationState {
+    clip: Option<MotionClip>,
+    displayed: Option<Pose>,
+    from: Option<Pose>,
+    elapsed: f32,
+    was_air: bool,
+    landing_elapsed: Option<f32>,
+    leap_right: bool,
+    block_weight: f32,
+    contacts: [Option<(i32, Vec2)>; 2],
+    released_contacts: [Option<(i32, Vec2, f32)>; 2],
+}
+
+impl AnimationState {
+    fn contact(&mut self, grounded: bool, dt: f32, phase: f32, run: f32) -> f32 {
+        if !grounded && !self.was_air {
+            // Keep the leg already reaching forward as the leap's lead leg.
+            self.leap_right = foot_target(phase + PI, run).0 > foot_target(phase, run).0;
+        }
+        if grounded && self.was_air {
+            self.landing_elapsed = Some(0.0);
+        } else if let Some(elapsed) = &mut self.landing_elapsed {
+            *elapsed += dt;
+        }
+        self.was_air = !grounded;
+        if !grounded { return 0.0; }
+        let Some(elapsed) = self.landing_elapsed else { return 0.0; };
+        if elapsed >= LAND_RECOVER {
+            self.landing_elapsed = None;
+            return 0.0;
+        }
+        // Absorb the impact over a few frames, rather than snapping straight
+        // into the deepest crouch on the first grounded frame.
+        smoothstep(elapsed / 0.055) * (1.0 - elapsed / LAND_RECOVER).powi(2)
+    }
+
+    fn blend(&mut self, target: Pose, clip: MotionClip, dt: f32) -> Pose {
+        if self.clip != Some(clip) {
+            self.from = self.displayed;
+            self.elapsed = 0.0;
+            self.clip = Some(clip);
+        } else {
+            self.elapsed += dt;
+        }
+        let duration = match clip {
+            MotionClip::Airborne => 0.10,
+            MotionClip::Locomotion => 0.14,
+            // Keep attacks responsive and preserve their authored damage frame.
+            MotionClip::Attack(_) => 0.055,
+            MotionClip::Dash => 0.025,
+            MotionClip::Victory => 0.20,
+            _ => 0.09,
+        };
+        let pose = if let Some(from) = self.from {
+            from.lerp(&target, smoothstep(self.elapsed / duration))
+        } else {
+            target
+        };
+        if self.elapsed >= duration { self.from = None; }
+        self.displayed = Some(pose);
+        pose
+    }
+
+    fn plant_contacts(&mut self, p: &mut Pose, pos: Vec2, facing: f32, phase: f32, run: f32) {
+        let scale = super::footman::leg_rig().world_scale;
+        let heading = Quat::from_rotation_y(facing);
+        let mut targets = [foot_transform(p, false), foot_transform(p, true)];
+        for (i, right) in [false, true].into_iter().enumerate() {
+            let phase = phase + if right { PI } else { 0.0 };
+            let cycle = (phase / TAU).floor() as i32;
+            if let Some((released_cycle, anchor, release_phase)) = self.released_contacts[i] {
+                if released_cycle == cycle {
+                    self.contacts[i] = None;
+                    let offset = anchor - pos;
+                    let from = heading.inverse() * Vec3::new(offset.x, 0.0, offset.y) / scale;
+                    let blend = smoothstep((phase - release_phase).abs());
+                    targets[i].0 = from.lerp(targets[i].0, blend)
+                        + Vec3::Y * (0.10 * (PI * blend).sin());
+                    targets[i].1 = Quat::IDENTITY.slerp(targets[i].1, blend);
+                    continue;
+                }
+            }
+            if !foot_in_contact(phase, run) {
+                self.contacts[i] = None;
+                continue;
+            }
+            let (sole, _) = foot_transform(p, right);
+            let world = heading * (sole * scale);
+            let anchor = match self.contacts[i] {
+                Some((last_cycle, anchor)) if last_cycle == cycle => anchor,
+                _ => pos + Vec2::new(world.x, world.z),
+            };
+            let offset = anchor - pos;
+            let mut target = heading.inverse() * Vec3::new(offset.x, 0.0, offset.y) / scale;
+            target.y = 0.0;
+            let rig = super::footman::leg_rig();
+            let hip = p.hips.t.unwrap() + p.hips.r * leg_vectors(right).0;
+            let horizontal = Vec2::new(target.x - hip.x, target.z - hip.z).length();
+            let reach = rig.knee.length() + rig.foot.length() - 0.012;
+            // A hard turn needs a fresh step. Keeping an unreachable anchor
+            // folded the body down to the ankles while IK still slid the boot.
+            if horizontal > reach * 0.82 {
+                self.contacts[i] = None;
+                self.released_contacts[i] = Some((cycle, anchor, phase));
+                targets[i] = (target, Quat::IDENTITY);
+                continue;
+            }
+            self.contacts[i] = Some((cycle, anchor));
+            targets[i] = (target, Quat::IDENTITY);
+        }
+        lower_pelvis_to_reach(p, &targets);
+        for (right, (target, rotation)) in [false, true].into_iter().zip(targets) {
+            plant_leg(p, right, target, rotation);
         }
     }
 }
@@ -293,35 +424,171 @@ pub(crate) fn loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
     idle_pose(t).lerp(&gait, m)
 }
 
-/// Grounded footman gait. The shared biped clips above belong to a longer-legged rig;
-/// simply reusing their ankle rotations on the imported footman tipped the boots into the
-/// floor and left the supporting foot floating. Solve this body's hip/knee chain toward
-/// a planted stance / lifted recovery, then counter-rotate the ankle to keep the sole level.
-fn footman_gait(c: f32, run: f32) -> Pose {
-    let mut p = walk_pose(c).lerp(&run_pose(c), run);
+/// One foot's contact fraction and half-stroke, in imported joint units. The same
+/// measurements drive BOTH the foot trajectory and the distance clock; changing a pose
+/// must not silently change the amount of ground covered by a step.
+fn gait_dimensions(run: f32) -> (f32, f32) {
+    let run = run.clamp(0.0, 1.0);
+    (lerp(0.52, 0.38, run), lerp(0.38, 0.52, run))
+}
+
+fn foot_in_contact(phase: f32, run: f32) -> bool {
+    phase.rem_euclid(TAU) / TAU <= gait_dimensions(run).0
+}
+
+fn contact_phase(phase: f32, back: f32) -> Option<f32> {
+    // Reversing blends two different contact schedules. Neither foot can be
+    // treated as fully planted until the forward/backward gait has settled.
+    if back <= 0.01 { Some(phase) }
+    else if back >= 0.99 { Some(-phase) }
+    else { None }
+}
+
+pub(crate) fn gait_phase_delta(distance: f32, run: f32) -> f32 {
+    let (contact, stride) = gait_dimensions(run);
+    distance.max(0.0) * TAU * contact / (2.0 * stride * super::footman::leg_rig().world_scale)
+}
+
+/// Phase zero is the left touchdown; PI is the right touchdown. During contact
+/// the sole retracts linearly, exactly cancelling the root's forward displacement.
+/// The recovery curve matches that velocity at both ends, with a lifted, rolling boot.
+fn foot_target(phase: f32, run: f32) -> (f32, f32, f32) {
+    let (contact, stride) = gait_dimensions(run);
+    let u = phase.rem_euclid(TAU) / TAU;
+    if u <= contact {
+        return (stride * (1.0 - 2.0 * u / contact), 0.0, 0.0);
+    }
+    let s = (u - contact) / (1.0 - contact);
+    let tangent = -2.0 * stride * (1.0 - contact) / contact;
+    let z = (2.0 * s.powi(3) - 3.0 * s * s + 1.0) * -stride
+        + (-2.0 * s.powi(3) + 3.0 * s * s) * stride
+        + (2.0 * s.powi(3) - 3.0 * s * s + s) * tangent;
+    // A runner folds the trailing leg early, clearing it before the body rises
+    // into flight. Slow symmetric recovery left the leg overextended behind him.
+    let recovery = s + run * 0.30 * (PI * s).sin();
+    let lift = lerp(0.085, 0.40, run) * (PI * recovery).sin().powi(2);
+    let pitch = lerp(0.10, 0.32, run) * (TAU * s).sin() * (PI * s).sin();
+    (z, lift, pitch)
+}
+
+fn leg_vectors(right: bool) -> (Vec3, Vec3, Vec3) {
     let rig = super::footman::leg_rig();
-    let hips_y = super::model::HIP_REST_Y - lerp(0.025, 0.08, run)
-        + lerp(0.005, 0.015, run) * c.sin().abs();
-    // The writer shifts legacy clip heights by HIP_REST_Y - 1.05.
-    p.hips.t = Some(Vec3::new(c.sin() * 0.018, hips_y + 1.05 - super::model::HIP_REST_Y, 0.0));
-    let upper = rig.knee.y.hypot(rig.knee.z);
-    let lower = rig.foot.y.hypot(rig.foot.z);
-    let shin_rest = (-rig.foot.z).atan2(-rig.foot.y);
-    let stride = lerp(0.18, 0.32, run);
-    let lift = lerp(0.065, 0.20, run);
-    let leg = |phase: f32| {
-        let swing = phase.cos().max(0.0);
-        let z = stride * phase.sin();
-        let y = rig.ankle_height + lift * swing * swing - hips_y - rig.hip.y;
-        let distance = y.hypot(z).clamp((upper - lower).abs() + 0.001, upper + lower - 0.001);
-        let bend = ((distance * distance - upper * upper - lower * lower) / (2.0 * upper * lower))
-            .clamp(-1.0, 1.0).acos();
-        let thigh = (-z).atan2(-y) - (lower * bend.sin()).atan2(upper + lower * bend.cos());
-        let knee = bend - shin_rest;
-        (Jp::r(rx(thigh)), Jp::r(rx(knee)), Jp::r(rx(-thigh - knee)))
+    let mirror = |v: Vec3| if right { Vec3::new(-v.x, v.y, v.z) } else { v };
+    (mirror(rig.hip), mirror(rig.knee), mirror(rig.foot))
+}
+
+/// Two-bone IK with the knee pole facing forward. Solve in pelvis space so weight
+/// transfer, pelvis rotation and landing compression cannot move a planted sole.
+fn plant_leg(p: &mut Pose, right: bool, sole: Vec3, sole_rotation: Quat) {
+    let rig = super::footman::leg_rig();
+    let (hip, upper_rest, lower_rest) = leg_vectors(right);
+    let pelvis = p.hips.t.unwrap() + Vec3::Y * (super::model::HIP_REST_Y - 1.05);
+    let ankle = sole + sole_rotation * (Vec3::Y * rig.ankle_height);
+    let target = p.hips.r.inverse() * (ankle - pelvis) - hip;
+    let upper = upper_rest.length();
+    let lower = lower_rest.length();
+    let d = target.length().clamp((upper - lower).abs() + 0.001, upper + lower - 0.001);
+    let along = target.normalize_or_zero();
+    let pole = p.hips.r.inverse() * Vec3::Z;
+    let bend_dir = (pole - along * pole.dot(along)).normalize_or_zero();
+    let cos = ((upper * upper + d * d - lower * lower) / (2.0 * upper * d)).clamp(-1.0, 1.0);
+    let knee = upper * (along * cos + bend_dir * (1.0 - cos * cos).max(0.0).sqrt());
+    let thigh_r = Quat::from_rotation_arc(upper_rest.normalize(), knee.normalize());
+    let shin_r = Quat::from_rotation_arc(lower_rest.normalize(), (along * d - knee).normalize());
+    let joints = (
+        Jp::r(thigh_r),
+        Jp::r(thigh_r.inverse() * shin_r),
+        Jp::r((p.hips.r * shin_r).inverse() * sole_rotation),
+    );
+    if right { (p.hip_r, p.knee_r, p.foot_r) = joints; }
+    else { (p.hip_l, p.knee_l, p.foot_l) = joints; }
+}
+
+fn foot_transform(p: &Pose, right: bool) -> (Vec3, Quat) {
+    let rig = super::footman::leg_rig();
+    let (hip_offset, knee_offset, foot_offset) = leg_vectors(right);
+    let (hip, knee, foot) = if right { (p.hip_r, p.knee_r, p.foot_r) }
+        else { (p.hip_l, p.knee_l, p.foot_l) };
+    let thigh_r = p.hips.r * hip.r;
+    let shin_r = thigh_r * knee.r;
+    let foot_r = shin_r * foot.r;
+    let hips = p.hips.t.unwrap() + Vec3::Y * (super::model::HIP_REST_Y - 1.05);
+    let ankle = hips + p.hips.r * hip_offset + thigh_r * knee_offset + shin_r * foot_offset;
+    (ankle - foot_r * (Vec3::Y * rig.ankle_height), foot_r)
+}
+
+/// A change of stride or heading can move a planted target outside the current
+/// pelvis height's reach. Absorb it with the body rather than stretching the leg
+/// and letting IK silently slide the foot toward the hip.
+fn lower_pelvis_to_reach(p: &mut Pose, targets: &[(Vec3, Quat); 2]) {
+    let rig = super::footman::leg_rig();
+    let reach = rig.knee.length() + rig.foot.length() - 0.012;
+    let mut hips = p.hips.t.unwrap();
+    let height_offset = super::model::HIP_REST_Y - 1.05;
+    for (right, (sole, rotation)) in [false, true].into_iter().zip(targets) {
+        let hip_offset = p.hips.r * leg_vectors(right).0;
+        let ankle = *sole + *rotation * (Vec3::Y * rig.ankle_height);
+        let dx = ankle.x - hips.x - hip_offset.x;
+        let dz = ankle.z - hips.z - hip_offset.z;
+        let drop = (reach * reach - dx * dx - dz * dz).max(0.0).sqrt();
+        hips.y = hips.y.min(ankle.y - hip_offset.y + drop - height_offset);
+    }
+    p.hips.t = Some(hips);
+}
+
+fn landing_pose(p: &mut Pose, amount: f32) {
+    let feet = [foot_transform(p, false), foot_transform(p, true)];
+    p.hips.t = p.hips.t.map(|t| t - Vec3::Y * (0.075 * amount));
+    p.torso.r *= rx(0.12 * amount);
+    p.sh_l.r *= rx(0.10 * amount);
+    p.sh_r.r *= rx(0.10 * amount);
+    for (right, (mut sole, rotation)) in [false, true].into_iter().zip(feet) {
+        // A blended descending pose can put a boot below the grounded root.
+        // Clamp contact, then solve the crouch instead of adding knee rotations.
+        sole.y = sole.y.max(0.0);
+        let rotation = if sole.y < 0.025 { Quat::IDENTITY } else { rotation };
+        plant_leg(p, right, sole, rotation);
+    }
+}
+
+fn footman_gait(c: f32, run: f32) -> Pose {
+    let run = run.clamp(0.0, 1.0);
+    let mut p = rest();
+    let swing = c.cos();
+    // Walking transfers weight between contacts; running has a compressed support
+    // followed by a short flight, rather than alternating two planted marching feet.
+    let half = c.rem_euclid(PI) / TAU;
+    let contact = gait_dimensions(run).0;
+    let base_y = lerp(0.88, 0.76, run);
+    let hips_y = if contact >= 0.5 || half <= contact {
+        base_y + lerp(0.006, 0.095, run) * (PI * half / contact).sin().powi(2)
+    } else {
+        base_y + (0.20 * (0.5 - contact) / 0.12) * (PI * (half - contact) / (0.5 - contact)).sin().powi(2)
     };
-    (p.hip_l, p.knee_l, p.foot_l) = leg(c);
-    (p.hip_r, p.knee_r, p.foot_r) = leg(c + PI);
+    p.hips = Jp {
+        t: Some(Vec3::new(-swing * 0.014, hips_y + 1.05 - super::model::HIP_REST_Y, 0.0)),
+        r: e3(0.0, swing * 0.035, swing * 0.018),
+    };
+    let lean = lerp(0.055, 0.18, run);
+    p.torso = Jp::r(e3(lean, -swing * lerp(0.045, 0.085, run), -swing * 0.015));
+    p.head = Jp::r(e3(-lean * 0.7, swing * 0.025, swing * 0.009));
+    // An equipped knight pumps the arms opposite the legs, with soft elbows and
+    // the equipment kept close. Avoid the old rigid, shoulder-high sword carry.
+    p.sh_r = Jp::r(e3(-swing * lerp(0.16, 0.32, run), 0.0, lerp(0.025, 0.075, run)));
+    p.sh_l = Jp::r(e3(swing * lerp(0.11, 0.20, run), 0.0, -lerp(0.025, 0.06, run)));
+    p.el_r = Jp::r(rx(-lerp(0.16, 0.48, run) - swing.min(0.0) * 0.06));
+    p.el_l = Jp::r(rx(-lerp(0.20, 0.40, run) + swing.max(0.0) * 0.05));
+    p.sword = Jp::r(e3(lerp(SWORD_REST_X, 1.75, run), 0.3, -0.04 * run));
+    p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
+    let targets = [false, true].map(|right| {
+        let (z, lift, pitch) = foot_target(c + if right { PI } else { 0.0 }, run);
+        let (hip, knee, foot) = leg_vectors(right);
+        (Vec3::new(hip.x + knee.x + foot.x, lift, z), rx(pitch))
+    });
+    lower_pelvis_to_reach(&mut p, &targets);
+    for (right, (sole, rotation)) in [false, true].into_iter().zip(targets) {
+        plant_leg(&mut p, right, sole, rotation);
+    }
     p
 }
 
@@ -1010,26 +1277,19 @@ pub fn hero_anim(
     time: Res<Time>,
     player: Res<super::PlayerRes>,
     dir: Res<crate::cinematic::DirectorState>,
-    hero_q: Query<(&Hero, &HeroHealth)>,
+    mut hero_q: Query<(&mut Hero, &HeroHealth)>,
     mut parts: Query<(&HeroPart, &mut Transform)>,
-    // Edge-detect touchdown (was airborne, now grounded) to stamp a short landing-squash window.
-    mut was_air: Local<bool>,
-    mut land_at: Local<f32>,
-    // Smoothed block weight (0 = open, 1 = full defend) so the brace eases in/out.
-    mut block_amt: Local<f32>,
 ) {
-    let Ok((hero, hh)) = hero_q.single() else { return };
+    let Ok((mut hero, hh)) = hero_q.single_mut() else { return };
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
 
-    // Touchdown edge → arm the landing squash (before the early-returns so it's always stamped).
-    if *was_air && hero.on_ground {
-        *land_at = now;
-    }
-    *was_air = !hero.on_ground;
+    let (grounded, phase, run) = (hero.on_ground, hero.walk_phase, hero.run_amt);
+    let landing = hero.animation.contact(grounded, dt, phase, run);
 
     // Slain: let the limbs go slack while the body keels over (root rotation owned by health.rs).
     if !player.0.is_alive() {
+        hero.animation = AnimationState::default();
         for (part, mut tf) in &mut parts {
             tf.rotation = match part.joint {
                 Joint::Hips => {
@@ -1049,8 +1309,8 @@ pub fn hero_anim(
 
     // Ease the block weight toward its target each frame (≈0.15s settle, ~the studio 0.22 ENTER).
     let block_target = if hh.blocking { 1.0 } else { 0.0 };
-    *block_amt += (block_target - *block_amt) * (dt * 10.0).min(1.0);
-    let block_amt = block_amt.clamp(0.0, 1.0);
+    hero.animation.block_weight += (block_target - hero.animation.block_weight) * (1.0 - (-dt * 10.0).exp());
+    let block_amt = hero.animation.block_weight.clamp(0.0, 1.0);
 
     let attack = hero.attacking.then(|| attack_phase((hero.attack_t / hero.attack_dur).clamp(0.0, 1.0)));
     let gesture = dir.gesture.map(|g| gesture_pose(g, now - dir.gesture_start));
@@ -1076,56 +1336,76 @@ pub fn hero_anim(
         guard_overlay(&mut p, hero.stance_amt, moving);
         p
     };
-    let pose = if hero.victory {
-        victory_pose(now)
+    let (pose, clip) = if hero.victory {
+        (victory_pose(now), MotionClip::Victory)
     } else if hero.roll_t >= 0.0 {
         // Dodge roll: fold into the tuck through the somersault's core, unfolding at both ends so
         // the dive-in / stand-up carry the transition (the root owns the actual tumble).
         let u = (hero.roll_t / super::movement::ROLL_TIME).clamp(0.0, 1.0);
         let w = smoothstep(u / 0.15) * smoothstep((1.0 - u) / 0.18);
-        loco.lerp(&roll_pose(), w)
+        (loco.lerp(&roll_pose(), w), MotionClip::Roll)
     } else if hero.dash_t >= 0.0 {
         // Sand Dash slide: play the dash-swipe lunge, easing back into locomotion at the blink's tail.
         let p = (hero.dash_t / super::movement::DASH_TIME).clamp(0.0, 1.0);
         let tail = smoothstep((p - 0.7) / 0.3);
-        dash_pose(p).lerp(&loco, tail)
+        (dash_pose(p).lerp(&loco, tail), MotionClip::Dash)
     } else if let Some((phase, p)) = &attack {
         let atk = attack_pose(hero.attack_variant, phase, *p);
-        if hero.on_ground && moving > 0.05 {
+        let p = if hero.on_ground && moving > 0.05 {
             action_over_loco(&atk, &loco, moving) // running / walking attack
         } else {
             atk
-        }
+        };
+        (p, MotionClip::Attack(hero.attack_variant))
     } else if hero.charge_t > CHARGE_GRACE && hero.on_ground {
         // Holding a Heavy Strike (the light swing has finished): coil into the overhead wind-up,
         // deepening as the bar fills. Layers over locomotion so you can creep while charging.
         let frac = (hero.charge_t / CHARGE_THRESHOLD).clamp(0.0, 1.0);
         let st = charge_stance(frac, (now * 22.0).sin());
-        if moving > 0.05 {
+        let p = if moving > 0.05 {
             action_over_loco(&st, &loco, moving)
         } else {
             st
-        }
+        };
+        (p, MotionClip::Charge)
     } else if !hero.on_ground {
         let j = jump_pose(hero.vel_y);
-        if moving > 0.05 {
+        let mut p = if moving > 0.05 {
             j.lerp(&leap_pose(hero.vel_y), moving) // running leap
         } else {
             j
+        };
+        if hero.animation.leap_right {
+            std::mem::swap(&mut p.hip_l, &mut p.hip_r);
+            std::mem::swap(&mut p.knee_l, &mut p.knee_r);
+            std::mem::swap(&mut p.foot_l, &mut p.foot_r);
+            std::mem::swap(&mut p.sh_l, &mut p.sh_r);
+            std::mem::swap(&mut p.el_l, &mut p.el_r);
         }
+        (p, MotionClip::Airborne)
     } else if block_amt > 0.001 {
-        brace(&loco, &defend_pose(now), block_amt, moving)
+        (brace(&loco, &defend_pose(now), block_amt, moving), MotionClip::Locomotion)
     } else {
-        loco
+        (loco, MotionClip::Locomotion)
     };
-
-    // Landing squash: a quick crouch the instant the feet hit, easing back over `LAND_RECOVER`.
-    let landing = if *land_at <= 0.0 {
-        0.0 // no touchdown yet (fresh boot) — don't play an unearned landing crouch
+    let mut pose = hero.animation.blend(pose, clip, dt);
+    if landing > 0.0 && attack.is_none() && grounded
+        && matches!(clip, MotionClip::Locomotion) {
+        landing_pose(&mut pose, landing);
+    }
+    // Keep the contact point through speed changes and turns too: interpolating
+    // stride lengths alone moves an already-planted boot during walk/run blends.
+    let contact_phase = contact_phase(phase, hero.back_amt);
+    if grounded && moving > 0.95 && hero.animation.from.is_none()
+        && contact_phase.is_some()
+        && matches!(clip, MotionClip::Locomotion | MotionClip::Attack(_) | MotionClip::Charge) {
+        let (pos, facing) = (hero.pos, hero.facing);
+        hero.animation.plant_contacts(&mut pose, pos, facing, contact_phase.unwrap(), run);
     } else {
-        let u = (1.0 - (now - *land_at) / LAND_RECOVER).clamp(0.0, 1.0);
-        u * u
-    };
+        hero.animation.contacts = [None, None];
+        hero.animation.released_contacts = [None, None];
+    }
+    hero.animation.displayed = Some(pose);
 
     for (part, mut tf) in &mut parts {
         let jp = pose.get(part.joint);
@@ -1159,21 +1439,6 @@ pub fn hero_anim(
         }
         tf.rotation = rot;
 
-        // Landing squash folded over the locomotion pose right after touchdown (studio positive-knee
-        // crouch: hips dip, knees bend, thighs settle back, feet flatten, torso leans in).
-        if landing > 0.0 && attack.is_none() && hero.on_ground {
-            match part.joint {
-                Joint::Hips => tf.translation.y -= 0.12 * landing,
-                Joint::KneeL | Joint::KneeR => tf.rotation *= rx(0.9 * landing),
-                Joint::HipL | Joint::HipR => tf.rotation *= rx(-0.35 * landing),
-                Joint::FootL | Joint::FootR => tf.rotation *= rx(0.4 * landing),
-                Joint::Torso => tf.rotation *= rx(0.25 * landing),
-                // Arms throw down to absorb the impact, then spring back as `landing` decays.
-                Joint::ShoulderL | Joint::ShoulderR => tf.rotation *= rx(0.3 * landing),
-                Joint::ElbowL | Joint::ElbowR => tf.rotation *= rx(-0.25 * landing),
-                _ => {}
-            }
-        }
     }
 }
 
@@ -1211,6 +1476,68 @@ fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<(Quat, Qua
 mod tests {
     use super::*;
 
+    #[test]
+    fn reversing_direction_does_not_switch_planted_feet_mid_blend() {
+        let phase = 0.2 * TAU;
+        assert_eq!(contact_phase(phase, 0.0), Some(phase));
+        assert_eq!(contact_phase(phase, 1.0), Some(-phase));
+        for back in [0.1, 0.49, 0.5, 0.51, 0.9] {
+            assert_eq!(contact_phase(phase, back), None);
+        }
+        let before = stance_loco_pose(1.0, phase, 1.0, 0.0, 0.499, 0.0);
+        let after = stance_loco_pose(1.0, phase, 1.0, 0.0, 0.501, 0.0);
+        for right in [false, true] {
+            assert!(sole(&before, right).0.distance(sole(&after, right).0) < 0.003);
+        }
+    }
+
+    #[test]
+    fn sharp_sprint_turns_release_unreachable_contacts_without_collapsing_the_body() {
+        let dt = 1.0 / 60.0;
+        for turn in [PI * 0.5, PI] {
+            let mut state = AnimationState::default();
+            let mut phase = 0.0;
+            let mut pos = Vec2::ZERO;
+            let mut velocity = Vec2::Y * 6.125;
+            let mut facing = 0.0;
+            let mut run = 1.0;
+            let desired = Vec2::new(turn.sin(), turn.cos()) * 6.125;
+            let mut first = footman_gait(phase, run);
+            state.plant_contacts(&mut first, pos, facing, phase, run);
+            let mut previous_feet = [sole(&first, false).0, sole(&first, true).0];
+            for _ in 0..120 {
+                velocity = velocity.lerp(desired, (dt * 14.0_f32).min(1.0));
+                facing = super::super::movement::lerp_angle(facing, turn, dt * 15.0);
+                let speed = velocity.length();
+                let target = ((speed - 3.5) / 2.625).clamp(0.0, 1.0);
+                run += (target - run) * (1.0 - (-dt * 10.0).exp());
+                pos += velocity * dt;
+                phase += gait_phase_delta(speed * dt, run);
+                let mut p = footman_gait(phase, run);
+                state.plant_contacts(&mut p, pos, facing, phase, run);
+                let height = p.hips.t.unwrap().y + super::super::model::HIP_REST_Y - 1.05;
+                assert!(height > 0.55, "turn collapsed the pelvis: turn={turn}, height={height}");
+                for (i, right) in [false, true].into_iter().enumerate() {
+                    let foot = sole(&p, right).0;
+                    if let Some((cycle, _, release_phase)) = state.released_contacts[i] {
+                        let foot_phase = phase + if right { PI } else { 0.0 };
+                        if cycle == (foot_phase / TAU).floor() as i32
+                            && (foot_phase - release_phase).abs() < 0.001 {
+                            assert!(foot.distance(previous_feet[i]) < 0.20,
+                                "early toe-off snaps the foot at a sharp turn");
+                        }
+                    }
+                    previous_feet[i] = foot;
+                    if let Some((_, anchor)) = state.contacts[i] {
+                        let world = Quat::from_rotation_y(facing)
+                            * (sole(&p, right).0 * super::super::footman::leg_rig().world_scale);
+                        assert!((pos + Vec2::new(world.x, world.z)).distance(anchor) < 0.003);
+                    }
+                }
+            }
+        }
+    }
+
     fn sole(p: &Pose, right: bool) -> (Vec3, Vec3) {
         let rig = super::super::footman::leg_rig();
         let (hip, knee, foot) = if right {
@@ -1230,6 +1557,157 @@ mod tests {
     }
 
     #[test]
+    fn supporting_feet_cancel_world_travel_at_walk_run_and_blended_speeds() {
+        for run in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            for speed in [0.8, 3.5, 6.125, 8.5] {
+                for dt in [1.0 / 120.0, 1.0 / 30.0] {
+                    let mut contacts: [Option<(i32, Vec3)>; 2] = [None, None];
+                    let mut comparisons = 0;
+                    let mut phase = 0.0;
+                    let mut distance = 0.0;
+                    for _ in 0..240 {
+                        let p = footman_gait(phase, run);
+                        for (i, right) in [false, true].into_iter().enumerate() {
+                            let foot_phase = phase + if right { PI } else { 0.0 };
+                            if !foot_in_contact(foot_phase, run) { continue; }
+                            let (position, _) = sole(&p, right);
+                            let world = Vec3::Z * distance + position * super::super::footman::leg_rig().world_scale;
+                            let cycle = (foot_phase / TAU).floor() as i32;
+                            if let Some((last_cycle, planted)) = contacts[i] {
+                                if last_cycle == cycle {
+                                    assert!(world.distance(planted) < 0.003,
+                                        "planted foot slides: run={run}, speed={speed}, dt={dt}, displacement={:?}", world - planted);
+                                    comparisons += 1;
+                                }
+                            }
+                            contacts[i] = Some((cycle, world));
+                        }
+                        distance += speed * dt;
+                        phase += gait_phase_delta(speed * dt, run);
+                    }
+                    assert!(comparisons > 10, "must exercise sustained foot contact");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn foot_contact_and_recovery_have_continuous_position_and_velocity() {
+        for run in [0.0, 0.5, 1.0] {
+            let contact = gait_dimensions(run).0 * TAU;
+            for boundary in [0.0, contact, TAU] {
+                let eps = 0.0001;
+                let a = foot_target(boundary - eps, run);
+                let b = foot_target(boundary, run);
+                let c = foot_target(boundary + eps, run);
+                assert!((a.0 - c.0).abs() < 0.001);
+                assert!((a.1 - c.1).abs() < 0.001);
+                assert!(((b.0 - a.0) / eps - (c.0 - b.0) / eps).abs() < 0.005);
+            }
+        }
+    }
+
+    #[test]
+    fn planted_feet_remain_fixed_while_speed_and_heading_change() {
+        let dt = 1.0 / 120.0;
+        let mut state = AnimationState::default();
+        let mut phase = 0.0;
+        let mut pos = Vec2::ZERO;
+        let mut run = 0.0;
+        let scale = super::super::footman::leg_rig().world_scale;
+        for frame in 0..600 {
+            let t = frame as f32 * dt;
+            let speed = if t < 1.0 { 3.5 } else if t < 3.0 { 6.125 } else { 3.5 };
+            let target = ((speed - 3.5_f32) / 2.625).clamp(0.0, 1.0);
+            run += (target - run) * (1.0 - (-dt * 10.0).exp());
+            let facing = if t < 2.0 { 0.0 } else { (t - 2.0).min(1.0) * 0.6 };
+            pos += Vec2::new(facing.sin(), facing.cos()) * speed * dt;
+            phase += gait_phase_delta(speed * dt, run);
+            let mut p = footman_gait(phase, run);
+            state.plant_contacts(&mut p, pos, facing, phase, run);
+            for (i, right) in [false, true].into_iter().enumerate() {
+                if let Some((_, anchor)) = state.contacts[i] {
+                    let world = Quat::from_rotation_y(facing) * (sole(&p, right).0 * scale);
+                    let actual = pos + Vec2::new(world.x, world.z);
+                    assert!(actual.distance(anchor) < 0.003,
+                        "contact moved through a speed/heading change: frame={frame}, run={run}, error={}", actual.distance(anchor));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn running_has_flight_and_a_longer_step_than_walking() {
+        let (_, walk_stride) = gait_dimensions(0.0);
+        let (_, run_stride) = gait_dimensions(1.0);
+        assert!(run_stride > walk_stride * 1.3);
+        // After left toe-off, before right touchdown, both boots recover.
+        let phase = 0.44 * TAU;
+        assert!(foot_target(phase, 1.0).1 > 0.0);
+        assert!(foot_target(phase + PI, 1.0).1 > 0.0);
+        assert!(foot_target(phase, 0.0).1 == 0.0 || foot_target(phase + PI, 0.0).1 == 0.0);
+    }
+
+    fn assert_same_pose(a: &Pose, b: &Pose) {
+        for joint in [Joint::Hips, Joint::Torso, Joint::Head, Joint::ShoulderL, Joint::ShoulderR,
+            Joint::ElbowL, Joint::ElbowR, Joint::HipL, Joint::HipR, Joint::KneeL,
+            Joint::KneeR, Joint::FootL, Joint::FootR, Joint::Shield, Joint::Sword] {
+            let delta = a.get(joint).r.inverse() * b.get(joint).r;
+            assert!(delta.to_scaled_axis().length() < 0.001, "clip entry snaps at {joint:?}");
+            if let (Some(a), Some(b)) = (a.get(joint).t, b.get(joint).t) {
+                assert!(a.distance(b) < 0.0001);
+            }
+        }
+    }
+
+    #[test]
+    fn takeoff_landing_and_interrupted_fades_start_at_the_displayed_pose() {
+        for phase in [0.0, 0.7, PI, 4.8] {
+            let dt = 1.0 / 60.0;
+            let mut state = AnimationState::default();
+            let loco = footman_gait(phase, 1.0);
+            state.blend(loco, MotionClip::Locomotion, dt);
+            state.contact(false, dt, phase, 1.0);
+            let first_air = state.blend(leap_pose(6.5), MotionClip::Airborne, dt);
+            assert_same_pose(&loco, &first_air);
+            for i in 0..8 {
+                state.blend(leap_pose(6.5 - i as f32 * 0.5), MotionClip::Airborne, dt);
+            }
+            let last_air = state.displayed.unwrap();
+            state.contact(true, dt, phase, 1.0);
+            let first_ground = state.blend(loco, MotionClip::Locomotion, dt);
+            assert_same_pose(&last_air, &first_ground);
+            let recovering = state.blend(loco, MotionClip::Locomotion, dt);
+            let interrupted = state.blend(leap_pose(6.5), MotionClip::Airborne, dt);
+            assert_same_pose(&recovering, &interrupted);
+            for _ in 0..12 { state.blend(leap_pose(3.0), MotionClip::Airborne, dt); }
+            assert_same_pose(&state.displayed.unwrap(), &leap_pose(3.0));
+        }
+    }
+
+    #[test]
+    fn leap_lead_follows_the_forward_leg_and_landing_compression_preserves_contacts() {
+        let mut state = AnimationState::default();
+        state.contact(false, 0.016, 0.0, 1.0);
+        assert!(!state.leap_right);
+        state.contact(true, 0.016, 0.0, 1.0);
+        state.contact(false, 0.016, PI, 1.0);
+        assert!(state.leap_right);
+        for run in [0.0, 0.5, 1.0] {
+            for frame in 0..120 {
+                let mut p = footman_gait(TAU * frame as f32 / 120.0, run);
+                let before = [sole(&p, false).0, sole(&p, true).0];
+                landing_pose(&mut p, 1.0);
+                for (right, original) in [false, true].into_iter().zip(before) {
+                    let (after, _) = sole(&p, right);
+                    assert!(after.distance(original) < 0.003, "landing moved a foot: run={run}, frame={frame}");
+                    assert!(after.y >= -0.003);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn footman_supporting_boots_stay_grounded_through_walk_and_run() {
         for run in [0.0, 0.25, 0.5, 0.75, 1.0] {
             let mut max_lift = 0.0_f32;
@@ -1240,10 +1718,12 @@ mod tests {
                     let leg_phase = phase + if right { PI } else { 0.0 };
                     let (position, normal) = sole(&p, right);
                     assert!(position.y >= -0.025, "boot penetrates ground: run={run}, phase={leg_phase}, y={}", position.y);
-                    if leg_phase.cos() <= 0.0 {
+                    if foot_target(leg_phase, run).1 < 0.00001 {
                         assert!(position.y.abs() <= 0.025, "supporting boot floats: run={run}, phase={leg_phase}, y={}", position.y);
                     }
-                    assert!(normal.dot(Vec3::Y) > 0.995, "sole must stay level during locomotion");
+                    if foot_target(leg_phase, run).1 < 0.00001 {
+                        assert!(normal.dot(Vec3::Y) > 0.995, "supporting sole must stay level");
+                    }
                     max_lift = max_lift.max(position.y);
                 }
             }
@@ -1257,7 +1737,7 @@ mod tests {
             let a = footman_gait(0.0, run);
             let b = footman_gait(std::f32::consts::TAU, run);
             for j in [Joint::Hips, Joint::HipL, Joint::HipR, Joint::KneeL, Joint::KneeR, Joint::FootL, Joint::FootR] {
-                assert!(a.get(j).r.angle_between(b.get(j).r) < 0.001);
+                assert!(a.get(j).r.angle_between(b.get(j).r) < 0.001, "periodicity at {j:?}, run={run}");
             }
             let stopped = stance_loco_pose(2.0, 1.7, 0.0, run, 0.0, 0.0);
             let idle = idle_pose(2.0);
@@ -1277,7 +1757,10 @@ mod tests {
                     for right in [false, true] {
                         let (position, normal) = sole(&p, right);
                         assert!(position.y >= -0.025, "guard must not drive the moving boot into the ground");
-                        assert!(normal.dot(Vec3::Y) > 0.995, "guard must preserve level moving soles");
+                        let foot_phase = if back > 0.5 { -phase } else { phase } + if right { PI } else { 0.0 };
+                        if foot_target(foot_phase, 0.0).1 < 0.00001 {
+                            assert!(normal.dot(Vec3::Y) > 0.995, "guard must preserve level supporting soles");
+                        }
                     }
                 }
             }

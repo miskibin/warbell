@@ -100,6 +100,7 @@ pub struct Hero {
     pub on_ground: bool,
     pub air_takeoff_y: f32,
     pub walk_phase: f32,
+    animation: anim::AnimationState,
     /// 0..1 smooth blend tracking `moving` (drives anim weight).
     pub moving_amt: f32,
     /// 0..1 smooth blend tracking `sprinting` (drives the walk→run pose blend in [`anim`]).
@@ -222,6 +223,7 @@ impl Hero {
             on_ground: true,
             air_takeoff_y: y,
             walk_phase: 0.0,
+            animation: anim::AnimationState::default(),
             moving_amt: 0.0,
             run_amt: 0.0,
             moving: false,
@@ -424,7 +426,8 @@ impl Plugin for PlayerPlugin {
                     camera::fp_body_visibility
                         .after(camera::player_camera), // FP: hide the world rig
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
-                    anim::hero_anim,
+                    anim::hero_anim.after(movement::player_move).after(animtest)
+                        .after(combat::player_attack).after(block::player_block),
                     combat::update_sparks,
                     combat::update_fx_fades,
                     combat::update_light_fades, // impact flashes (kill/heavy/parry) decay + despawn
@@ -508,14 +511,14 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 0.0;
-            hero.walk_phase += dt * 7.0; // = movement::STEP_FREQ
+            hero.walk_phase += anim::gait_phase_delta(dt * 3.5, 0.0);
         }
         "strafe" => {
             // Combat-stance sideways step: legs twisted toward the movement, torso on the "foe".
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 0.0;
-            hero.walk_phase += dt * 7.0;
+            hero.walk_phase += anim::gait_phase_delta(dt * 3.5, 0.0);
             hero.stance_amt = 1.0;
             hero.strafe_twist = 0.6;
         }
@@ -524,7 +527,7 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 0.0;
-            hero.walk_phase += dt * 7.0;
+            hero.walk_phase += anim::gait_phase_delta(dt * 3.5, 0.0);
             hero.stance_amt = 1.0;
             hero.back_amt = 1.0;
         }
@@ -532,7 +535,7 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += dt * 7.0 * 1.75; // STEP_FREQ * SPRINT_MULT
+            hero.walk_phase += anim::gait_phase_delta(dt * 6.125, 1.0);
         }
         "block" | "defend" => hh.blocking = true,
         "attack" | "attack1" => swing(&mut hero, 0),

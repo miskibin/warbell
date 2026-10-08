@@ -60,13 +60,30 @@ pub fn run() {
 }
 
 /// Synthesise `Hero`/`HeroHealth` state from `FOREST_VIEW_ANIM` so `hero_anim` plays that clip.
-fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crate::player::HeroHealth)>) {
-    let Ok((mut hero, mut hh)) = q.single_mut() else { return };
-    let dt = time.delta_secs();
+fn anim_drive(
+    time: Res<Time>,
+    progress: Option<Res<crate::capture::ClipProgress>>,
+    mut previous_time: Local<Option<f32>>,
+    mut q: Query<(&mut crate::player::Hero, &mut crate::player::HeroHealth, &mut Transform)>,
+) {
+    let Ok((mut hero, mut hh, mut root)) = q.single_mut() else { return };
+    let fps = std::env::var("FOREST_CLIP_FPS").ok()
+        .and_then(|s| s.parse::<f32>().ok()).unwrap_or(30.0).max(1.0);
+    let recording = progress.as_ref().is_none_or(|p| p.recording);
+    let now = progress.as_ref().map_or(time.elapsed_secs(), |p| p.frame as f32 / fps);
+    let dt = previous_time.map_or(0.0, |previous| (now - previous).max(0.0));
+    *previous_time = Some(now);
+    let mode = std::env::var("FOREST_VIEW_ANIM").unwrap_or_default();
+    let previous_moving = hero.moving_amt;
+    let previous_run = hero.run_amt;
+    let previous_velocity = hero.vel;
     hero.moving = false;
     hero.moving_amt = 0.0;
     hero.run_amt = 0.0;
     hero.on_ground = true;
+    hero.vel = Vec2::ZERO;
+    hero.vel_y = 0.0;
+    hero.y = 0.0;
     hero.attacking = false;
     hero.victory = false;
     hero.heavy = false;
@@ -79,24 +96,24 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
         hero.attack_variant = variant;
         hero.attack_t = (hero.attack_t + dt) % crate::player::ATTACK_DURATION;
     };
-    match std::env::var("FOREST_VIEW_ANIM").unwrap_or_default().as_str() {
+    match mode.as_str() {
         "walk" => {
             hero.moving = true;
             hero.moving_amt = 1.0;
-            hero.walk_phase += dt * 7.0; // = movement::STEP_FREQ
+            hero.vel = Vec2::Y * 3.5;
         }
         "run" => {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += dt * 7.0 * 1.75; // STEP_FREQ * SPRINT_MULT
+            hero.vel = Vec2::Y * 6.125;
         }
         "block" | "defend" => hh.blocking = true,
         "blockwalk" => {
             hh.blocking = true;
             hero.moving = true;
             hero.moving_amt = 1.0;
-            hero.walk_phase += dt * 7.0;
+            hero.vel = Vec2::Y * 3.5;
         }
         "attack" | "attack1" => swing(&mut hero, 0),
         "attack2" => swing(&mut hero, 1),
@@ -114,16 +131,40 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += dt * 7.0 * 1.75;
+            hero.vel = Vec2::Y * 6.125;
             swing(&mut hero, 1);
         }
         "runjump" => {
             hero.moving = true;
             hero.moving_amt = 1.0;
             hero.run_amt = 1.0;
-            hero.walk_phase += dt * 7.0 * 1.75;
-            hero.on_ground = false;
-            hero.vel_y = (time.elapsed_secs() * 1.2).cos() * 6.5;
+            hero.vel = Vec2::Y * 6.125;
+            let air_time = now.rem_euclid(2.5) - 1.0;
+            if (0.0..0.65).contains(&air_time) {
+                hero.on_ground = false;
+                hero.vel_y = 6.5 - 20.0 * air_time;
+                hero.y = 6.5 * air_time - 10.0 * air_time * air_time;
+            }
+        }
+        "locomotion" => {
+            // Record the complete transition sequence from frame zero, after shader warm-up.
+            let t = if recording { now.rem_euclid(6.0) } else { 0.0 };
+            let moving = (0.4..5.5).contains(&t);
+            let running = (1.6..4.5).contains(&t);
+            let speed = if running { 6.125 } else if moving { 3.5 } else { 0.0 };
+            let ramp = 1.0 - (-(if moving { 14.0 } else { 9.0 }) * dt).exp();
+            hero.vel = previous_velocity.lerp(Vec2::Y * speed, ramp);
+            hero.moving = moving;
+            let moving_target = (hero.vel.length() / 0.65).clamp(0.0, 1.0);
+            hero.moving_amt = previous_moving + (moving_target - previous_moving) * (1.0 - (-18.0 * dt).exp());
+            let run_target = ((hero.vel.length() - 3.5) / 2.625).clamp(0.0, 1.0);
+            hero.run_amt = previous_run + (run_target - previous_run) * (1.0 - (-10.0 * dt).exp());
+            let air_time = t - 2.6;
+            if recording && (0.0..0.65).contains(&air_time) {
+                hero.on_ground = false;
+                hero.vel_y = 6.5 - 20.0 * air_time;
+                hero.y = 6.5 * air_time - 10.0 * air_time * air_time;
+            }
         }
         "victory" => hero.victory = true,
         // Loop the Sand-Dash slide progress (0→1 along the blink) so a clip shows the dash-swipe lunge.
@@ -136,6 +177,13 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
         }
         _ => {} // idle
     }
+    if hero.on_ground && (mode != "locomotion" || recording) {
+        hero.walk_phase += crate::player::anim::gait_phase_delta(hero.vel.length() * dt, hero.run_amt);
+    }
+    // Contact anchors track virtual world travel while the preview remains on its stage.
+    let travel = hero.vel * dt;
+    hero.pos += travel;
+    root.translation.y = hero.y;
 }
 
 /// Drive a previewed quadruped's [`crate::quadruped::QuadDrive`] from `FOREST_VIEW_ANIM`

@@ -5,6 +5,8 @@
 //! scenario with `FOREST_DEMO`:
 //!   - `explore` — walk the hero along a scenic path behind a chase-cam; the world stays alive
 //!     (villagers, wildlife, wind, day sky). Pair with `FOREST_CLIP`.
+//!   - `locomotion` — real movement input through walk, sprint, jump, landing and stopping;
+//!     pair with `FOREST_TPS=1` and a six-second `FOREST_CLIP` to verify foot contact.
 //!   - `defend`  — reinforce the courtyard with guards for a lively castle defence. Pair with
 //!     `FOREST_CLIP FOREST_WAVE=1 FOREST_DEFEND=1 FOREST_TOWN=1` (siege + auto-defences + the
 //!     sustained horde from `siege_clip_refill`); frame with `FOREST_CAM`/`FOREST_CLIP_ORBIT`.
@@ -27,7 +29,13 @@ impl Plugin for DemoPlugin {
                 // Mark the hero scripted so `player::movement` yields locomotion to `explore_drive`
                 // (otherwise, in a `FOREST_TPS` Play-mode capture, input-driven movement fights it).
                 app.insert_resource(crate::player::ScriptedHero)
-                    .add_systems(Update, explore_drive.run_if(in_state(crate::game_state::Modal::None)))
+                    .add_systems(Update, explore_drive.before(crate::player::anim::hero_anim)
+                        .run_if(in_state(crate::game_state::Modal::None)))
+                    .add_systems(PostUpdate, mute_captions);
+            }
+            Some("locomotion") => {
+                // Do not mark this hero scripted: ordinary player_move owns all displacement.
+                app.add_systems(PreUpdate, locomotion_input.after(bevy::input::InputSystems))
                     .add_systems(PostUpdate, mute_captions);
             }
             Some("defend") => {
@@ -62,6 +70,44 @@ impl Plugin for DemoPlugin {
     }
 }
 
+/// Real input-driven smoke sequence. Recording frames provide a repeatable timeline;
+/// without a clip, wait for world startup before beginning the six-second sequence.
+fn locomotion_input(
+    time: Res<Time>,
+    progress: Option<Res<crate::capture::ClipProgress>>,
+    ready: Res<crate::biome::WorldReady>,
+    state: Res<State<crate::game_state::AppState>>,
+    mut next: ResMut<NextState<crate::game_state::AppState>>,
+    mut mode: ResMut<crate::player::PlayMode>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut started: Local<Option<f32>>,
+    mut previous: Local<f32>,
+) {
+    for key in [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD,
+        KeyCode::ShiftLeft, KeyCode::ShiftRight, KeyCode::Space] {
+        keys.reset(key);
+    }
+    *mode = crate::player::PlayMode::Play;
+    if !ready.0 { return; }
+    if *state.get() == crate::game_state::AppState::StartScreen {
+        next.set(crate::game_state::AppState::Playing);
+        return;
+    }
+    if *state.get() != crate::game_state::AppState::Playing { return; }
+    let t = if let Some(progress) = progress {
+        if !progress.recording { return; }
+        let fps = std::env::var("FOREST_CLIP_FPS").ok()
+            .and_then(|s| s.parse::<f32>().ok()).unwrap_or(30.0).max(1.0);
+        progress.frame as f32 / fps
+    } else {
+        time.elapsed_secs() - *started.get_or_insert(time.elapsed_secs())
+    };
+    if (0.4..5.5).contains(&t) { keys.press(KeyCode::KeyW); }
+    if (1.6..4.5).contains(&t) { keys.press(KeyCode::ShiftLeft); }
+    if *previous < 2.6 && t >= 2.6 { keys.press(KeyCode::Space); }
+    *previous = t;
+}
+
 // ── explore: scripted hero walk + chase-cam ──────────────────────────────────────────
 
 /// Scenic walk route (world XZ). Heads out of the castle lawn south-west toward the forest, over
@@ -74,7 +120,6 @@ const EXPLORE_PATH: [Vec2; 5] = [
     Vec2::new(-36.0, 30.0),
 ];
 const EXPLORE_SPEED: f32 = 4.0; // world units / sec
-const STEP_FREQ: f32 = 7.0; // matches movement.rs leg cadence
 
 /// Position + unit tangent at arc-length `d` along the polyline; `arrived` once past the end.
 fn sample_path(path: &[Vec2], d: f32) -> (Vec2, Vec2, bool) {
@@ -109,6 +154,7 @@ fn explore_drive(
     };
     // Hold at the start until recording begins (warm-up lets shaders/lighting settle first).
     let rec = prog.as_ref().map_or(true, |p| p.recording);
+    let old_pos = sample_path(&EXPLORE_PATH, *dist).0;
     if rec {
         // Only step forward onto solid land — never walk out over a river (no terrain there).
         let next = *dist + EXPLORE_SPEED * dt;
@@ -117,20 +163,22 @@ fn explore_drive(
             *dist = next;
         }
     }
-    let (pos, dir, arrived) = sample_path(&EXPLORE_PATH, *dist);
+    let (pos, dir, _) = sample_path(&EXPLORE_PATH, *dist);
 
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(hero.y);
-    let walking = rec && !arrived;
+    let traveled = pos.distance(old_pos);
+    let walking = rec && traveled > 0.0001;
     hero.pos = pos;
     hero.y = y;
     hero.facing = dir.x.atan2(dir.y);
     hero.moving = walking;
     hero.moving_amt = if walking { 1.0 } else { 0.0 };
-    if walking {
-        hero.walk_phase += dt * STEP_FREQ;
-    }
-    let bob = hero.walk_phase.sin().abs() * 0.05 * hero.moving_amt;
-    htf.translation = Vec3::new(pos.x, y + bob, pos.y);
+    hero.run_amt = 0.0;
+    hero.on_ground = true;
+    hero.vel_y = 0.0;
+    hero.vel = if dt > 0.0 { (pos - old_pos) / dt } else { Vec2::ZERO };
+    hero.walk_phase += crate::player::anim::gait_phase_delta(traveled, 0.0);
+    htf.translation = Vec3::new(pos.x, y, pos.y);
     htf.rotation = Quat::from_rotation_y(hero.facing);
 
     // Camera: in FreeRoam (no follow-cam runs) drive a bespoke third-person chase. In Play

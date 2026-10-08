@@ -40,7 +40,6 @@ const STANCE_TWIST_MAX: f32 = 0.7;
 const GRAVITY: f32 = 20.0;
 const JUMP_SPEED: f32 = 6.5;
 const TURN_RATE: f32 = 15.0; // snappier facing toward the move direction
-const STEP_FREQ: f32 = 7.0;
 /// Velocity-ramp rates (1/s): the hero accelerates IN fast and slides OUT a touch slower, so he has
 /// momentum/weight instead of snapping to full speed and stopping dead.
 const ACCEL: f32 = 14.0;
@@ -458,10 +457,8 @@ pub fn player_move(
     // ── Horizontal motion with axis-separated terrain + prop collision ──
     let sprinting =
         moving && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
-    // Smooth walk⇄run blend so the run pose eases in/out instead of snapping (anim reads `run_amt`).
-    let run_target = if sprinting { 1.0 } else { 0.0 };
-    hero.run_amt += (run_target - hero.run_amt) * (dt * 8.0).min(1.0);
     let cur_y = footing(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
+    let move_from = hero.pos;
 
     // ── Combat stance: engaged while a soft-target is ringed AND blows have actually been traded
     // (`combat_until` — landing a hit or taking one starts it, and it lingers a few seconds past
@@ -526,11 +523,6 @@ pub fn player_move(
     if hero.vel.length_squared() < 1e-4 {
         hero.vel = Vec2::ZERO; // settle exactly so a stopped hero doesn't creep
     }
-
-    // Anim weight tracks ACTUAL speed so the legs keep striding through the stop-slide (no foot-slide
-    // while static, no snap to idle).
-    let speed_frac = (hero.vel.length() / SPEED).clamp(0.0, 1.0);
-    hero.moving_amt += (speed_frac - hero.moving_amt) * (dt * 13.0).min(1.0);
 
     if hero.vel.length_squared() > 1e-6 {
         let nx = hero.pos.x + hero.vel.x * dt;
@@ -654,12 +646,10 @@ pub fn player_move(
         hero.on_ground = false;
     }
 
-    // ── Walk phase + body bob ──
-    // Advance the gait by ACTUAL speed so footfalls match the accel/slide (and ease out, not cut).
-    let spd = hero.vel.length();
-    if spd > 0.01 {
-        hero.walk_phase += dt * STEP_FREQ * (spd / SPEED);
-    }
+    // Use accepted displacement AFTER terrain/prop/body collision. Intent or
+    // pre-collision velocity made the legs keep running against a wall.
+    let distance = move_from.distance(hero.pos);
+    update_locomotion(&mut hero, distance, dt);
     // Vertical bob is owned entirely by the rig (the hips joint in `anim`) so it's applied exactly
     // once — stacking a second bob here (at a different frequency) is what made the gait read
     // jittery/uncoordinated. The root just tracks the ground.
@@ -667,4 +657,55 @@ pub fn player_move(
     tf.rotation = Quat::from_rotation_y(hero.facing);
 
     write_state(&mut state, &hero);
+}
+
+fn update_locomotion(hero: &mut Hero, distance: f32, dt: f32) {
+    let speed = distance / dt.max(1e-6);
+    hero.moving = speed > 0.01;
+    let run_target = ((speed - SPEED) / (SPEED * (SPRINT_MULT - 1.0))).clamp(0.0, 1.0);
+    hero.run_amt += (run_target - hero.run_amt) * (1.0 - (-dt * 10.0).exp());
+    // A slow step keeps its reach and slows its cadence; scaling the whole pose
+    // by speed / SPEED shrank strides during acceleration and while braking.
+    let moving_target = (speed / 0.65).clamp(0.0, 1.0);
+    hero.moving_amt += (moving_target - hero.moving_amt) * (1.0 - (-dt * 18.0).exp());
+    if hero.on_ground {
+        hero.walk_phase += super::anim::gait_phase_delta(distance, hero.run_amt);
+    }
+}
+
+#[cfg(test)]
+mod locomotion_tests {
+    use super::*;
+
+    #[test]
+    fn gait_uses_accepted_distance_and_stops_at_a_wall() {
+        let mut hero = Hero::fresh(Vec2::ZERO, 0.0, 0.0);
+        let dt = 1.0 / 60.0;
+        for _ in 0..60 { update_locomotion(&mut hero, SPEED * dt, dt); }
+        assert!((hero.walk_phase - super::super::anim::gait_phase_delta(SPEED, 0.0)).abs() < 0.001);
+        let phase = hero.walk_phase;
+        // Held input and nonzero intended velocity must not advance rejected steps.
+        hero.vel = Vec2::Y * SPEED;
+        for _ in 0..60 { update_locomotion(&mut hero, 0.0, dt); }
+        assert_eq!(hero.walk_phase, phase);
+        assert!(hero.moving_amt < 0.001);
+        assert!(!hero.moving);
+    }
+
+    #[test]
+    fn sprint_blends_from_actual_speed_and_airborne_travel_freezes_the_gait() {
+        let mut hero = Hero::fresh(Vec2::ZERO, 0.0, 0.0);
+        let dt = 1.0 / 60.0;
+        for _ in 0..60 { update_locomotion(&mut hero, SPEED * SPRINT_MULT * dt, dt); }
+        assert!(hero.run_amt > 0.99);
+        assert!(hero.moving_amt > 0.99);
+        let phase = hero.walk_phase;
+        hero.on_ground = false;
+        for _ in 0..30 { update_locomotion(&mut hero, SPEED * SPRINT_MULT * dt, dt); }
+        assert_eq!(hero.walk_phase, phase);
+        hero.on_ground = true;
+        for _ in 0..60 { update_locomotion(&mut hero, SPEED * dt, dt); }
+        assert!(hero.run_amt < 0.001);
+        assert!(hero.walk_phase > phase);
+    }
 }

@@ -43,6 +43,8 @@ pub(crate) struct LegRig {
     pub knee: Vec3,
     pub foot: Vec3,
     pub ankle_height: f32,
+    /// Imported joint units to the gameplay world's units (including the hero root).
+    pub world_scale: f32,
 }
 
 pub(crate) fn leg_rig() -> LegRig {
@@ -57,6 +59,7 @@ pub(crate) fn leg_rig() -> LegRig {
                 knee,
                 foot,
                 ankle_height: pos_of(model, "Hips").y + hip.y + knee.y + foot.y - model.min_y,
+                world_scale: super::HERO_SCALE * TARGET_RIG_HEIGHT / (model.max_y - model.min_y),
             }
         };
         if let Some(gpu) = GPU.get() { measure(&gpu.model) } else { measure(&parse()) }
