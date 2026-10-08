@@ -293,7 +293,7 @@ impl AnimationState {
             let rig = super::footman::leg_rig();
             let hip = p.hips.t.unwrap() + p.hips.r * leg_vectors(right).0;
             let horizontal = Vec2::new(target.x - hip.x, target.z - hip.z).length();
-            let reach = rig.knee.length() + rig.foot.length() - 0.012;
+            let reach = rig.knee.length() + rig.foot.length() - 0.001;
             // A hard turn needs a fresh step. Keeping an unreachable anchor
             // folded the body down to the ankles while IK still slid the boot.
             if horizontal > reach * 0.72 {
@@ -441,7 +441,7 @@ pub(crate) fn loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
 /// must not silently change the amount of ground covered by a step.
 fn gait_dimensions(run: f32) -> (f32, f32) {
     let run = run.clamp(0.0, 1.0);
-    (lerp(0.58, 0.30, run), lerp(0.40, 0.44, run))
+    (lerp(0.54, 0.26, run), lerp(0.36, 0.34, run))
 }
 
 fn foot_in_contact(phase: f32, run: f32) -> bool {
@@ -467,9 +467,9 @@ pub(crate) fn gait_phase_delta(distance: f32, run: f32) -> f32 {
 fn foot_target(phase: f32, run: f32) -> (f32, f32, f32) {
     let (contact, stride) = gait_dimensions(run);
     let u = phase.rem_euclid(TAU) / TAU;
-    let offset = -0.10 * run;
+    let offset = -0.11 * run;
     let heel = lerp(-0.16, -0.08, run);
-    let toe = lerp(0.25, 0.38, run);
+    let toe = lerp(0.25, 0.45, run);
     if u <= contact {
         let support = u / contact;
         let pitch = heel * (1.0 - smoothstep(support / 0.22))
@@ -549,7 +549,9 @@ fn foot_transform(p: &Pose, right: bool) -> (Vec3, Quat) {
 /// and letting IK silently slide the foot toward the hip.
 fn lower_pelvis_to_reach(p: &mut Pose, targets: &[(Vec3, Quat); 2]) {
     let rig = super::footman::leg_rig();
-    let reach = rig.knee.length() + rig.foot.length() - 0.012;
+    // Only avoid the IK singularity. A larger reserve forces bent knees even
+    // directly over the planted foot, making every gait look like a crouch.
+    let reach = rig.knee.length() + rig.foot.length() - 0.001;
     let mut hips = p.hips.t.unwrap();
     let height_offset = super::model::HIP_REST_Y - 1.05;
     for (right, (sole, rotation)) in [false, true].into_iter().zip(targets) {
@@ -587,44 +589,51 @@ fn footman_gait(c: f32, run: f32) -> Pose {
     // two separate sine lobes caused a second bounce during every single step.
     let half = c.rem_euclid(PI) / TAU;
     let contact = gait_dimensions(run).0;
-    let walk_y = 0.94 - 0.025 * (2.0 * c).cos();
-    let run_y = 0.88 - 0.035 * (TAU * (half - contact * 0.5) / 0.5).cos();
+    let walk_y = 0.9545 - 0.0275 * (2.0 * c).cos();
+    let run_y = 0.963 - 0.018 * (TAU * (half - contact * 0.5) / 0.5).cos();
     let hips_y = lerp(walk_y, run_y, run);
     p.hips = Jp {
-        t: Some(Vec3::new(-swing * 0.008, hips_y + 1.05 - super::model::HIP_REST_Y, 0.0)),
+        t: Some(Vec3::new(-c.sin() * 0.018, hips_y + 1.05 - super::model::HIP_REST_Y, 0.0)),
         r: e3(0.0, swing * 0.035, swing * 0.012),
     };
-    let lean = lerp(0.035, 0.16, run);
+    let lean = lerp(0.01, 0.045, run);
     p.torso = Jp::r(e3(lean, -swing * lerp(0.045, 0.085, run), -swing * 0.015));
     p.head = Jp::r(e3(-lean * 0.7, swing * 0.025, swing * 0.009));
     // An equipped knight pumps the arms opposite the legs, with soft elbows and
     // the equipment kept close. Avoid the old rigid, shoulder-high sword carry.
     p.sh_r = Jp::r(e3(-swing * lerp(0.20, 0.38, run), 0.0, lerp(0.025, 0.06, run)));
     p.sh_l = Jp::r(e3(swing * lerp(0.14, 0.28, run), 0.0, -lerp(0.025, 0.06, run)));
-    p.el_r = Jp::r(rx(-lerp(0.20, 0.78, run) - swing.min(0.0) * 0.08));
-    p.el_l = Jp::r(rx(-lerp(0.25, 0.72, run) + swing.max(0.0) * 0.06));
+    p.el_r = Jp::r(rx(-lerp(0.12, 0.60, run) - swing.min(0.0) * 0.08));
+    p.el_l = Jp::r(rx(-lerp(0.16, 0.60, run) + swing.max(0.0) * 0.06));
     // Counter the bent elbow so the blade stays angled down beside the runner,
     // rather than flicking horizontally in front of the body on every step.
     p.sword = Jp::r(e3(lerp(1.75, 2.20, run) + swing * 0.18 * run, 0.3, -0.04 * run));
     p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
     let mut targets = [false, true].map(|right| {
         let (z, lift, pitch) = foot_target(c + if right { PI } else { 0.0 }, run);
-        let (hip, knee, foot) = leg_vectors(right);
-        (Vec3::new(hip.x + knee.x + foot.x, lift, z), rx(pitch))
+        // Feet pass under the hips, rather than following the wide combat rest pose.
+        (Vec3::new(if right { 0.085 } else { -0.085 }, lift, z), rx(pitch))
     });
     // A recovery foot is free to lift higher. Lowering the whole body to reach
     // that airborne foot introduced extra dips in every running flight phase.
     let rig = super::footman::leg_rig();
-    let reach = (rig.knee.length() + rig.foot.length()) * lerp(0.985, 0.94, run);
+    let reach = rig.knee.length() + rig.foot.length() - 0.001;
     let pelvis = p.hips.t.unwrap() + Vec3::Y * (super::model::HIP_REST_Y - 1.05);
     for (i, right) in [false, true].into_iter().enumerate() {
-        if foot_in_contact(c + if right { PI } else { 0.0 }, run) { continue; }
+        let phase = c + if right { PI } else { 0.0 };
+        if foot_in_contact(phase, run) { continue; }
+        let recovery = (phase.rem_euclid(TAU) / TAU - contact) / (1.0 - contact);
+        let free = smoothstep(recovery / 0.04) * smoothstep((1.0 - recovery) / 0.04);
+        // Use the same reach as support. Reserving extra knee flexion only
+        // while airborne makes the foot pop when its contact state changes.
         let hip = pelvis + p.hips.r * leg_vectors(right).0;
         let ankle_offset = targets[i].1 * (Vec3::Y * rig.ankle_height);
         let ankle = targets[i].0 + ankle_offset;
         let horizontal = Vec2::new(ankle.x - hip.x, ankle.z - hip.z).length_squared();
         let lowest_ankle = hip.y - (reach * reach - horizontal).max(0.0).sqrt();
-        targets[i].0.y = targets[i].0.y.max(lowest_ankle - ankle_offset.y);
+        // During walk/run blends the contact height can also be constrained by
+        // the other foot. Ease this correction away before either boundary.
+        targets[i].0.y = lerp(targets[i].0.y, targets[i].0.y.max(lowest_ankle - ankle_offset.y), free);
     }
     lower_pelvis_to_reach(&mut p, &targets);
     for (right, (sole, rotation)) in [false, true].into_iter().zip(targets) {
@@ -1533,13 +1542,74 @@ mod tests {
             }
             let min = heights.iter().copied().fold(f32::INFINITY, f32::min);
             let max = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            assert!(min > 0.83, "gait collapses into a crouch: {min}");
+            assert!(min > 0.92, "gait collapses into a crouch: {min}");
             assert!(max - min < 0.09, "gait bounces too far: {}", max - min);
-            let peaks = (0..heights.len()).filter(|&i| {
-                heights[i] > heights[(i + heights.len() - 1) % heights.len()] + 0.00001
-                    && heights[i] > heights[(i + 1) % heights.len()] + 0.00001
+            // Count body rises above 5 mm in world space. Heel/toe contact can
+            // add a small settling motion; it must not become another body bob.
+            let n = heights.len();
+            let peaks = (0..n).filter(|&i| {
+                if heights[i] <= heights[(i + n - 1) % n]
+                    || heights[i] <= heights[(i + 1) % n] { return false; }
+                let mut valleys = [heights[i]; 2];
+                for (side, direction) in [-1isize, 1].into_iter().enumerate() {
+                    for step in 1..n {
+                        let j = (i as isize + direction * step as isize).rem_euclid(n as isize) as usize;
+                        if heights[j] > heights[i] { break; }
+                        valleys[side] = valleys[side].min(heights[j]);
+                    }
+                }
+                (heights[i] - valleys[0].max(valleys[1]))
+                    * super::super::footman::leg_rig().world_scale > 0.005
             }).count();
-            assert_eq!(peaks, 2, "one rise per step, without secondary bounces");
+            assert_eq!(peaks, 2, "one visible body rise per step");
+        }
+    }
+
+    #[test]
+    fn solved_gait_has_no_foot_or_pelvis_pop_at_contact_boundaries() {
+        for run in [0.0, 0.5, 1.0] {
+            for offset in [0.0, PI] {
+                for boundary in [offset, offset + gait_dimensions(run).0 * TAU] {
+                    let before = footman_gait(boundary - 0.00001, run);
+                    let after = footman_gait(boundary + 0.00001, run);
+                    assert!(before.hips.t.unwrap().distance(after.hips.t.unwrap()) < 0.001,
+                        "pelvis snaps at run={run}, phase={boundary}");
+                    for right in [false, true] {
+                        let a = foot_transform(&before, right).0;
+                        let b = foot_transform(&after, right).0;
+                        assert!(a.distance(b) < 0.001,
+                            "boot snaps at run={run}, phase={boundary}: {}", a.distance(b));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn locomotion_supports_an_upright_body_over_narrow_foot_lanes() {
+        for run in [0.0, 1.0] {
+            // Measure actual bone directions, not the knee's local rotation:
+            // the imported rest bones already point slightly sideways.
+            for right in [false, true] {
+                let phase = gait_dimensions(run).0 * TAU * 0.5
+                    + if right { PI } else { 0.0 };
+                let p = footman_gait(phase, run);
+                let (_, upper, lower) = leg_vectors(right);
+                let knee = if right { p.knee_r } else { p.knee_l };
+                let bend = upper.angle_between(knee.r * lower).to_degrees();
+                let limit = if run == 0.0 { 15.0 } else { 35.0 };
+                assert!(bend < limit, "support knee stays crouched: run={run}, bend={bend}");
+            }
+            for frame in 0..120 {
+                let p = footman_gait(TAU * frame as f32 / 120.0, run);
+                let left = foot_transform(&p, false).0;
+                let right = foot_transform(&p, true).0;
+                let width = (right.x - left.x) * super::super::footman::leg_rig().world_scale;
+                assert!((0.10..0.16).contains(&width), "wide combat stance: {width}");
+                let spine = p.hips.r * p.torso.r * Vec3::Y;
+                assert!(spine.angle_between(Vec3::Y).to_degrees() < 5.0,
+                    "locomotion folds the torso forward");
+            }
         }
     }
 
