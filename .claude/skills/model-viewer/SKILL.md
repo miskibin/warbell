@@ -84,7 +84,8 @@ FOREST_VIEW=hero FOREST_CLIP=/tmp/turn FOREST_CLIP_FRAMES=120 FOREST_CLIP_FPS=30
   `quad_anim_drive` for each family's clip list). Landmark set-pieces always run their part
   animators (sails/orbits/pulses) — no extra flag needed.
   For the hero, `walk` plays the base WASD speed (a jog for this body — the gait is cut from
-  ground speed), `stroll` a true walk, `run` the Shift sprint.
+  ground speed), `stroll` a true walk, `run` the Shift sprint (sword slung on the back — it is
+  only drawn for a fight); `draw` loops the over-the-shoulder draw / sheathe.
 - Lighting here is a neutral 3-point rig, NOT the game's atmosphere/IBL — geometry, proportions
   and per-surface texture (the `surf` codes) read true, but final in-game tone differs. For a
   lighting/atmosphere check, capture in the real game (`visual-debug-cloud`).
