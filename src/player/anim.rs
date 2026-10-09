@@ -23,7 +23,7 @@
 //! and a slack keel-over on death. (First person doesn't use this rig at all — it is hidden and the
 //! camera-parented `viewmodel` draws the hands.)
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
@@ -391,7 +391,7 @@ fn leg_track(u: f32, g: &Gait) -> (f32, f32, f32, f32) {
 fn swing_leg(s: f32, g: &Gait, off: (f32, f32), strike: (f32, f32)) -> (f32, f32) {
     let k = |w: f32, j: f32, sp: f32| lerp(lerp(w, j, g.run), sp, g.sprint).to_radians();
     let thigh = [off.0, k(8.0, 5.0, 12.0), k(22.0, 30.0, 48.0), k(28.0, 46.0, 68.0), strike.0];
-    let knee = [off.1, k(55.0, 88.0, 118.0), k(42.0, 92.0, 115.0), k(14.0, 50.0, 58.0), strike.1];
+    let knee = [off.1, k(58.0, 88.0, 118.0), k(48.0, 92.0, 115.0), k(16.0, 50.0, 58.0), strike.1];
     let ends = |v: &[f32; 5]| ((v[1] - v[0]) / 0.25, (v[4] - v[3]) / 0.25);
     let (ts, te) = ends(&thigh);
     let (ks, ke) = ends(&knee);
@@ -486,15 +486,24 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
     let swing_s = |u: f32| (u >= g.duty).then(|| (u - g.duty) / (1.0 - g.duty));
     // +1 when the LEFT boot is out front (its strike), −1 at the right strike.
     let swing = (c).cos();
-    let support = kl.max(kr);
 
     // ── Pelvis ──
-    // Walk vaults UP over the planted leg; a run sinks INTO it (and floats in the flight phase).
-    let bob = lerp(0.022, -lerp(0.025, 0.035, sprint), run) * support;
-    let base = super::model::HIP_REST_Y - lerp(0.015, lerp(0.025, 0.045, sprint), run);
+    // Vertical bob, once per step — the main carrier of weight. A walk vaults UP over the planted
+    // leg (highest at single-leg mid-stance, lowest in double support); a run sinks INTO the
+    // stance (lowest mid-stance, loaded knee) and peaks in the flight phase. Amplitudes follow
+    // human centre-of-mass excursion scaled to this ~1.9 m body: ~4-5 cm peak-to-peak walking,
+    // ~8-9 cm jogging, a little flatter in a full sprint.
+    let step = (2.0 * u_l).fract();
+    let crest = (TAU * (step - (g.duty + 0.5 * run))).cos(); // +1 at the top of the bob
+    let bob = lerp(0.022, lerp(0.045, 0.038, sprint), run) * crest;
+    let base = super::model::HIP_REST_Y - lerp(0.012, lerp(0.035, 0.05, sprint), run);
     let sway = lerp(0.03, 0.012, run) * (kr - kl); // over the stance foot (left leg is −X)
-    let pel_yaw = lerp(0.10, 0.07, run) * swing; // + swings the left hip forward
-    let pelvis = e3(lerp(0.0, 0.06, run), pel_yaw, -lerp(0.035, 0.015, run) * (kr - kl));
+    // Hips work in all three planes: they yaw with the stride (the forward leg's hip swings
+    // forward), DROP on the swing-leg side while the other leg carries the weight, and tip
+    // forward a touch as the body loads into each stance.
+    let pel_yaw = lerp(0.10, lerp(0.12, 0.14, sprint), run) * swing; // + swings the left hip forward
+    let pel_drop = lerp(0.06, 0.075, run) * (kr - kl); // − = right (+X) hip low: left leg loaded
+    let pelvis = e3(run * (0.06 - 0.03 * crest), pel_yaw, pel_drop);
     // Never ask a planted leg for more reach than it has: the hips sink at the far ends of a
     // stride instead of the boot peeling off the ground (soft-min keeps it smooth).
     let reach = 0.985 * (rig.knee.y.hypot(rig.knee.z) + rig.foot.y.hypot(rig.foot.z));
@@ -542,9 +551,10 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
     (p.hip_r, p.knee_r, p.foot_r) = leg(hip_r, u_r, ar, pr);
 
     // ── Trunk: lean into the speed, shoulders counter-rotate the pelvis, head stays on the road ──
-    let lean = lerp(0.04, lerp(0.15, 0.28, sprint), run) + run * 0.03 * support;
+    let lean = lerp(0.04, lerp(0.15, 0.28, sprint), run) + run * 0.035 * (1.0 - crest) * 0.5;
     let shoulder = lerp(0.07, lerp(0.13, 0.17, sprint), run) * swing; // + = right shoulder forward
-    p.torso = Jp::r(Quat::from_rotation_y(-pel_yaw - shoulder) * e3(lean - lerp(0.0, 0.06, run), 0.0, lerp(0.02, 0.01, run) * (kr - kl)));
+    // The trunk takes back most of the pelvic drop so the shoulders stay nearly level.
+    p.torso = Jp::r(Quat::from_rotation_y(-pel_yaw - shoulder) * e3(lean - lerp(0.0, 0.06, run), 0.0, -0.75 * pel_drop));
     p.head = Jp::r(e3(-lean * 0.75, shoulder * 0.9, 0.0));
 
     // ── Arms: opposite arm to the forward leg (right/sword arm forward when the left boot is out
