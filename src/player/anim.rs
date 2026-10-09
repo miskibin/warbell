@@ -332,7 +332,7 @@ struct Gait {
 
 fn gait_at(v: f32) -> Gait {
     let run = smoothstep((v - 2.0) / 1.7);
-    let sprint = smoothstep((v - 4.9) / 2.7);
+    let sprint = smoothstep((v - 4.4) / 1.9);
     // Short creeping steps when barely moving, a full stride by a brisk walk.
     let walk_sweep = lerp(0.40, 0.9, smoothstep(v / 1.5));
     let k = |w: f32, j: f32, s: f32| lerp(lerp(w, j, run), s, sprint);
@@ -579,27 +579,31 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
     // elbow is NOT locked at 90° — it closes to ~70° in front and opens past 90° behind, trailing
     // the shoulder a beat (that lag is what reads as loose rather than robotic). A walk swings
     // near-straight. ──
-    let amp = lerp(0.26, lerp(0.52, 0.64, sprint), run);
+    let amp = lerp(0.26, lerp(0.55, 0.72, sprint), run);
     let back_bias = lerp(0.04, 0.18, run);
-    let flex_front = lerp(0.45, lerp(1.75, 1.95, sprint), run);
-    let flex_back = lerp(0.12, lerp(1.2, 1.1, sprint), run);
-    let tuck = lerp(0.0, -0.07, run); // + = away from the body
-    let cross = 0.35 * run; // forward-swing drift toward the midline
-    // `scale` trims the pump; `inward` is how far the back swing tucks the arm toward the spine
-    // (the bent arm otherwise flings the fist out past the hip); `elbow_fix` holds the elbow at a
-    // steady carry (the shield arm: a big board flapping through a full pump reads as broken).
-    let arm = |fwd: f32, fwd_late: f32, side: f32, scale: f32, inward: f32, elbow_fix: f32| {
-        let z = tuck - cross * fwd.max(0.0) - inward * run * (-fwd).max(0.0);
+    let flex_front = lerp(0.45, lerp(1.7, 1.85, sprint), run);
+    let flex_back = lerp(0.12, lerp(1.25, 1.2, sprint), run);
+    // One arm: `scale` trims the pump; `cross_f` drifts the front swing toward the midline and
+    // `cross_b` tucks the back swing toward the spine (a bent arm otherwise flings the fist out
+    // past the hip); `out` is the resting abduction (+ = away from the body); `elbow_fix` holds the
+    // elbow at a steady carry.
+    let arm = |fwd: f32, fwd_late: f32, side: f32, scale: f32, cross_f: f32, cross_b: f32, out: f32, elbow_fix: f32| {
+        let z = out - run * (cross_f * fwd.max(0.0) + cross_b * (-fwd).max(0.0));
         let sh = e3(-scale * amp * fwd + back_bias, -0.2 * run * side, side * z);
         let pump = -lerp(flex_back, flex_front, 0.5 + 0.5 * fwd_late);
         let el = rx(lerp(pump, -0.5 * (flex_back + flex_front), elbow_fix));
         (sh, el)
     };
-    // The arm trails the leg phase a little; the forearm trails the upper arm.
-    let arm_swing = (c - 0.3).cos();
-    let late = (c - 0.3 - lerp(0.35, 0.45, run)).cos();
-    let (sr, er) = arm(arm_swing, late, 1.0, lerp(1.0, 0.8, armed), 0.4, 0.0);
-    let (sl, el) = arm(-arm_swing, -late, -1.0, lerp(0.85, 0.6, run), 0.1, lerp(0.2, 0.6, run));
+    // The arm trails the leg phase a touch and the forearm the upper arm — enough to read as
+    // loose, not so much that the hands whip.
+    let arm_swing = (c - 0.15).cos();
+    let late = (c - 0.15 - 0.25).cos();
+    // Free (sword) arm: the full sprinter's pump.
+    let (sr, er) = arm(arm_swing, late, 1.0, lerp(1.0, 0.8, armed), 0.25, 0.4, lerp(0.0, -0.06, run), 0.0);
+    // Shield arm: a shield is CARRIED, not pumped — elbow held near 90° with the board upright on
+    // the outside of the forearm, riding the stride with only a small swing (pumping it flailed
+    // the board and drove it through the fist and thigh).
+    let (sl, el) = arm(-arm_swing, -late, -1.0, lerp(0.85, 0.3, run), 0.0, 0.0, lerp(0.0, 0.1, run), lerp(0.2, 1.0, run));
     // The shoulder girdle travels with its arm (forward + a hair up on the front swing, back on
     // the back swing) instead of the arm pivoting about a bolted-down socket.
     let girdle = |rest: Vec3, fwd: f32| {
@@ -613,7 +617,7 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
     // near-upright instead of fanning behind the head.
     let wrist = armed * run * 0.85 * (lerp(1.0, 0.8, armed) * amp * arm_swing + (flex_front - flex_back) * 0.5 * late);
     p.sword = Jp::r(rx(wrist) * sword_rest_r().slerp(posed_sword(-2.046, -0.52, 0.119).r, run));
-    p.shield = rest().shield.lerp(posed_shield(0.924, 0.415, -0.121), run);
+    p.shield = rest().shield;
     p
 }
 
@@ -1835,10 +1839,10 @@ mod tests {
         let steps = |v: f32| gait_phase_rate(v) / PI; // two steps per 2π
         let walk = steps(super::super::SPEED);
         assert!((1.8..2.6).contains(&walk), "walk cadence {walk}");
-        let run = steps(super::super::SPEED * super::super::SPRINT_MULT);
-        assert!((2.6..3.6).contains(&run) && run > walk, "run cadence {run}");
-        let sprint = steps(6.125); // a hasted / downhill-road top speed
-        assert!((3.2..4.5).contains(&sprint), "sprint cadence {sprint}");
+        let jog = steps(3.2);
+        assert!((2.6..3.6).contains(&jog) && jog > walk, "jog cadence {jog}");
+        let sprint = steps(super::super::SPEED * super::super::SPRINT_MULT);
+        assert!((3.0..4.6).contains(&sprint) && sprint > jog, "sprint cadence {sprint}");
         assert_eq!(gait_phase_rate(0.0), 0.0);
     }
 

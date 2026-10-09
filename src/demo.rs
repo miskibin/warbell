@@ -75,7 +75,7 @@ const EXPLORE_PATH: [Vec2; 5] = [
 ];
 const EXPLORE_SPEED: f32 = crate::player::SPEED; // world units / sec — the WASD walk
 
-/// `FOREST_DEMO_SPEED=<u/s>` overrides the explore pace (e.g. `3.22` = the Shift run), so a
+/// `FOREST_DEMO_SPEED=<u/s>` overrides the explore pace (e.g. `5.04` = the Shift sprint), so a
 /// clip can film the hero's walk / jog / sprint gait — the animator picks the gait from speed.
 fn explore_speed() -> f32 {
     std::env::var("FOREST_DEMO_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(EXPLORE_SPEED)
