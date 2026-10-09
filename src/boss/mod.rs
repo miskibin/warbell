@@ -45,7 +45,7 @@ const DMG_GROWTH: f32 = 1.13;
 const SIG_MULT: f32 = 1.6;
 
 const BODY_R: f32 = 0.8;
-const SPEED: f32 = 2.4; // slower than the hero (3.5) so it can be kited — but closes harder now
+const SPEED: f32 = 2.4; // slower than the SPRINTING hero (5.0) so it can be kited — but it catches a walker
 const TURN: f32 = 2.2; // rad/s
 /// Hero must come within this to wake the one-time "something stirs" notice.
 const NOTICE_RANGE: f32 = 28.0;

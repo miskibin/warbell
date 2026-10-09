@@ -16,8 +16,11 @@ use crate::{blockers, steer, worldmap};
 
 use super::{FirstPerson, Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes};
 
-const SPEED: f32 = 3.5;
-const SPRINT_MULT: f32 = 1.75;
+/// WASD is a brisk WALK (≈1.8 m/s for this ~1.9 m body) and Shift a SPRINT (≈6.5 m/s): the gait
+/// is cut from ground speed. A sprinting hero outruns everything (wolves hunt at 3.8); a walking
+/// one can be caught by ork scouts, bosses and the snowman.
+pub(crate) const SPEED: f32 = 1.4;
+pub(crate) const SPRINT_MULT: f32 = 3.6;
 
 // ── Combat stance (the Witcher "Alert Near") ──
 // With a soft-target near (`hero.soft_pos`, picked by `softlock`), the body stays SQUARE TO THE
@@ -40,10 +43,11 @@ const STANCE_TWIST_MAX: f32 = 0.7;
 const GRAVITY: f32 = 20.0;
 const JUMP_SPEED: f32 = 6.5;
 const TURN_RATE: f32 = 15.0; // snappier facing toward the move direction
-const STEP_FREQ: f32 = 7.0;
 /// Velocity-ramp rates (1/s): the hero accelerates IN fast and slides OUT a touch slower, so he has
 /// momentum/weight instead of snapping to full speed and stopping dead.
 const ACCEL: f32 = 14.0;
+/// Ground speed (world u/s) by which the legs are fully cycling rather than blending from idle.
+const GAIT_FULL_SPEED: f32 = 1.0;
 const DECEL: f32 = 9.0;
 pub(super) const PLAYER_R: f32 = 0.22;
 /// How far outside a trunk's collision shell the player starts getting a gentle steer assist.
@@ -528,8 +532,9 @@ pub fn player_move(
     }
 
     // Anim weight tracks ACTUAL speed so the legs keep striding through the stop-slide (no foot-slide
-    // while static, no snap to idle).
-    let speed_frac = (hero.vel.length() / SPEED).clamp(0.0, 1.0);
+    // while static, no snap to idle). Saturates at a slow walk: the gait itself is foot-locked at
+    // every speed, so any idle blended in above that would only drag the planted boot.
+    let speed_frac = (hero.vel.length() / GAIT_FULL_SPEED).clamp(0.0, 1.0);
     hero.moving_amt += (speed_frac - hero.moving_amt) * (dt * 13.0).min(1.0);
 
     if hero.vel.length_squared() > 1e-6 {
@@ -656,10 +661,10 @@ pub fn player_move(
 
     // ── Walk phase + body bob ──
     // Advance the gait by ACTUAL speed so footfalls match the accel/slide (and ease out, not cut).
+    // The rate is the animator's foot-lock contract, so the planted boot never skates.
     let spd = hero.vel.length();
-    if spd > 0.01 {
-        hero.walk_phase += dt * STEP_FREQ * (spd / SPEED);
-    }
+    hero.gait_speed = spd;
+    hero.walk_phase += dt * super::anim::gait_phase_rate(spd);
     // Vertical bob is owned entirely by the rig (the hips joint in `anim`) so it's applied exactly
     // once — stacking a second bob here (at a different frequency) is what made the gait read
     // jittery/uncoordinated. The root just tracks the ground.

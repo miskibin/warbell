@@ -7,10 +7,12 @@
 //! joints.
 //!
 //! Game adaptations:
-//! - **walk/run** read `walk_phase` for their `cycle` (gait locked to real movement speed, not
-//!   wall-clock) and are cross-faded by `moving_amt` (idle→gait) and `run_amt` (walk→run).
-//!   The hero's imported footman uses its measured leg lengths and grounded foot targets;
-//!   other bipeds retain the shared studio clips.
+//! - **walk/jog/sprint** (the hero) are a procedural, foot-locked IK gait cut from the real ground
+//!   speed (`Hero::gait_speed`; see [`footman_gait`]): the planted boot sweeps back exactly as fast
+//!   as the body travels, the cadence follows from that ([`gait_phase_rate`]), and the style
+//!   (walk → jog → sprint) is picked by speed. Other bipeds retain the shared studio walk/run clips.
+//! - **clip changes** (take-off, landing, a swing starting, dash/charge) cross-fade from the last
+//!   written pose instead of snapping ([`ClipBlend`]).
 //! - **jump** — the studio faked the hop by sliding `hips.y`; here the **real jump physics own the
 //!   height** (the root's world Y), so the studio `height` (0 launch/landing, 1 apex) is recovered
 //!   from the hero's vertical speed and fed into the studio's exact airtime joint formulas.
@@ -21,7 +23,7 @@
 //! and a slack keel-over on death. (First person doesn't use this rig at all — it is hidden and the
 //! camera-parented `viewmodel` draws the hands.)
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
@@ -293,40 +295,343 @@ pub(crate) fn loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
     idle_pose(t).lerp(&gait, m)
 }
 
-/// Grounded footman gait. The shared biped clips above belong to a longer-legged rig;
-/// simply reusing their ankle rotations on the imported footman tipped the boots into the
-/// floor and left the supporting foot floating. Solve this body's hip/knee chain toward
-/// a planted stance / lifted recovery, then counter-rotate the ankle to keep the sole level.
-fn footman_gait(c: f32, run: f32) -> Pose {
-    let mut p = walk_pose(c).lerp(&run_pose(c), run);
-    let rig = super::footman::leg_rig();
-    let hips_y = super::model::HIP_REST_Y - lerp(0.025, 0.08, run)
-        + lerp(0.005, 0.015, run) * c.sin().abs();
-    // The writer shifts legacy clip heights by HIP_REST_Y - 1.05.
-    p.hips.t = Some(Vec3::new(c.sin() * 0.018, hips_y + 1.05 - super::model::HIP_REST_Y, 0.0));
+// ── Hero (footman) gait: foot-locked, speed-driven ─────────────────────────────────────────
+// The old footman gait swept the planted boot only ±0.18 m while the body travelled ~2 m per
+// step at the hero's base speed — the feet covered under a fifth of the ground the body did, which
+// is the "moonwalk". Here the gait is cut FROM the ground speed: the stance foot sweeps back
+// exactly as fast as the body moves forward (so it stays nailed to the ground), and the cadence is
+// derived from that same contract ([`gait_phase_rate`]), so any speed — haste, swamp, roads, a
+// heavy-strike creep — stays foot-locked with no retuning.
+//
+// Speed also picks the gait STYLE: a walk (long stance, double support, a vaulting hip) at low
+// speed, a jog (short stance, a flight phase, knees that drive) at the hero's base speed, and a
+// sprint (longer reach, high heel kick, deep lean, pumping arms) with Shift. NB the base speed
+// (`movement::SPEED`, ≈4.5 model-m/s) is jogging pace for a ~1.9 m figure — a foot-locked walk there
+// would need ~5 steps/s — so the base gait IS a jog; the walk shows at the slower speeds.
+//
+// Leg cycle `u` (0..1, left = walk_phase/2π, right half a cycle later): heel strike at `u = 0`
+// (so the footstep SFX/dust, keyed on walk_phase crossing kπ, land on contacts), stance until
+// `duty`, then the swing.
+
+/// Shape of the gait at one ground speed (model metres / s).
+#[derive(Clone, Copy)]
+struct Gait {
+    /// Stance travel of the planted ankle, strike → toe-off, relative to the hips (m).
+    sweep: f32,
+    /// Share of `sweep` ahead of the hip at heel strike (runners land closer under the body).
+    front: f32,
+    /// Stance share of one leg cycle (walk > 0.5 = double support; run < 0.5 = flight).
+    duty: f32,
+    /// Plantar-flex at toe-off (rad, + = toe down) and the boot pitch at contact (− = heel first).
+    toe_off: f32,
+    strike: f32,
+    /// 0 walk → 1 jog, and 0 jog → 1 sprint (style weights for the upper body / bob).
+    run: f32,
+    sprint: f32,
+}
+
+fn gait_at(v: f32) -> Gait {
+    let run = smoothstep((v - 2.0) / 1.7);
+    let sprint = smoothstep((v - 4.4) / 1.9);
+    // Short creeping steps when barely moving, a full stride by a brisk walk.
+    let walk_sweep = lerp(0.40, 0.9, smoothstep(v / 1.5));
+    let k = |w: f32, j: f32, s: f32| lerp(lerp(w, j, run), s, sprint);
+    Gait {
+        sweep: k(walk_sweep, 0.78, 0.86),
+        front: k(0.44, 0.36, 0.30),
+        duty: k(0.6, 0.28, 0.22),
+        toe_off: k(0.38, 0.55, 0.75),
+        strike: k(-0.22, -0.08, 0.0),
+        run,
+        sprint,
+    }
+}
+
+/// World units per footman model metre (rig scale × `HERO_SCALE`).
+fn hero_model_scale() -> f32 {
+    super::footman::leg_rig().scale * super::HERO_SCALE
+}
+
+/// `walk_phase` advance rate (rad/s) at a world ground speed — the foot-lock contract: a stance of
+/// `duty` of the cycle must carry the planted ankle back through `sweep` at exactly the body's speed.
+pub(crate) fn gait_phase_rate(world_speed: f32) -> f32 {
+    let v = world_speed.max(0.0) / hero_model_scale();
+    if v < 1e-4 {
+        return 0.0;
+    }
+    let g = gait_at(v);
+    std::f32::consts::TAU * v * g.duty / g.sweep
+}
+
+/// Where one leg's boot is at leg-cycle `u`: (flat-ankle z, clearance of the lowest boot point,
+/// pitch, stance support weight 0..1). Only the pitch is meaningful in the swing.
+fn leg_track(u: f32, g: &Gait) -> (f32, f32, f32, f32) {
+    let z_strike = g.front * g.sweep;
+    if u < g.duty {
+        // Planted: the ankle slides back linearly = locked to the ground. Heel rocker settles the
+        // boot flat after the strike, toe rocker peels the heel up into the push-off.
+        let s = u / g.duty;
+        let pitch = lerp(g.strike, 0.0, smoothstep(s / 0.18)) + g.toe_off * smoothstep((s - 0.68) / 0.32);
+        (z_strike - s * g.sweep, 0.0, pitch, (PI * s).sin())
+    } else {
+        // Swing legs are posed by joint angle (see `swing_leg`), not by an ankle path; only the
+        // boot pitch is used from here: pointed through the fold-up, levelled for the strike.
+        let s = (u - g.duty) / (1.0 - g.duty);
+        let pitch = lerp(g.toe_off, g.strike, smoothstep((s - 0.3) / 0.55));
+        (0.0, 0.0, pitch, 0.0)
+    }
+}
+
+/// A swing leg's (thigh, knee-flex) forward angles at swing progress `s`, keyed on running /
+/// walking gait-lab joint curves (Novacheck '98: jog hip flexion peaks ≈45° late in the swing and
+/// the knee folds to ≈90–95° just after toe-off; a sprint ≈65–70° / ≈120°; a walk ≈28° / ≈55°),
+/// with the ends pinned to the stance IK at toe-off and strike so the hand-off is seamless.
+/// (An ankle-path IK here let the thigh fly up past horizontal whenever the boot rose under the
+/// hip — 136° of hip flexion in the sprint.)
+fn swing_leg(s: f32, g: &Gait, off: (f32, f32), strike: (f32, f32)) -> (f32, f32) {
+    let k = |w: f32, j: f32, sp: f32| lerp(lerp(w, j, g.run), sp, g.sprint).to_radians();
+    let thigh = [off.0, k(8.0, 5.0, 12.0), k(22.0, 30.0, 48.0), k(28.0, 46.0, 68.0), strike.0];
+    let knee = [off.1, k(58.0, 88.0, 118.0), k(48.0, 92.0, 115.0), k(16.0, 50.0, 58.0), strike.1];
+    let ends = |v: &[f32; 5]| ((v[1] - v[0]) / 0.25, (v[4] - v[3]) / 0.25);
+    let (ts, te) = ends(&thigh);
+    let (ks, ke) = ends(&knee);
+    (keyed(&thigh, s, ts, te), keyed(&knee, s, ks, ke))
+}
+
+/// Smooth curve through five evenly spaced keys at s = 0, ¼, ½, ¾, 1 (Catmull-Rom tangents
+/// inside, the given end slopes in per-s units).
+fn keyed(k: &[f32; 5], s: f32, t_start: f32, t_end: f32) -> f32 {
+    const H: f32 = 0.25;
+    let s = s.clamp(0.0, 1.0);
+    let i = ((s / H) as usize).min(3);
+    let tan = |j: usize| match j {
+        0 => t_start,
+        4 => t_end,
+        _ => (k[j + 1] - k[j - 1]) / (2.0 * H),
+    };
+    let t = (s - i as f32 * H) / H;
+    let (t2, t3) = (t * t, t * t * t);
+    (2.0 * t3 - 3.0 * t2 + 1.0) * k[i]
+        + (t3 - 2.0 * t2 + t) * H * tan(i)
+        + (-2.0 * t3 + 3.0 * t2) * k[i + 1]
+        + (t3 - t2) * H * tan(i + 1)
+}
+
+/// Ankle (z, height) for a boot whose flat-foot ankle is at `z`, lowest point `clear` above the
+/// ground, pitched by `pitch` — rolling about the toe tip (toe down) or the heel (toe up), so a
+/// rocker keeps its contact edge planted instead of sinking/skating.
+fn boot_ankle(z: f32, clear: f32, pitch: f32, rig: &super::footman::LegRig) -> (f32, f32) {
+    let (h, (s, c)) = (rig.ankle_height, pitch.sin_cos());
+    if pitch >= 0.0 {
+        (z + rig.toe + h * s - rig.toe * c, clear + h * c + rig.toe * s)
+    } else {
+        (z - rig.heel + h * s + rig.heel * c, clear + h * c - rig.heel * s)
+    }
+}
+
+/// Two-bone sagittal IK for one leg. `hip` = hip joint (z, height), `ankle` = target. Returns the
+/// (hip, knee, foot) X rotations that land the ankle there with the boot at `pitch` (relative to
+/// the pelvis-independent leg frame).
+fn leg_ik(hip: Vec2, ankle: Vec2, pitch: f32, rig: &super::footman::LegRig) -> (f32, f32, f32) {
+    let (thigh, shin) = leg_dirs(hip, ankle, rig);
+    leg_rot(thigh, shin, pitch, rig)
+}
+
+/// Forward angle from straight down toward +Z (the sagittal bone direction the gait works in).
+fn fwd_angle(v: Vec2) -> f32 {
+    v.x.atan2(-v.y)
+}
+
+/// The (thigh, shin) forward angles that land the ankle on `ankle` from the hip joint `hip`.
+fn leg_dirs(hip: Vec2, ankle: Vec2, rig: &super::footman::LegRig) -> (f32, f32) {
     let upper = rig.knee.y.hypot(rig.knee.z);
     let lower = rig.foot.y.hypot(rig.foot.z);
-    let shin_rest = (-rig.foot.z).atan2(-rig.foot.y);
-    let stride = lerp(0.18, 0.32, run);
-    let lift = lerp(0.065, 0.20, run);
-    let leg = |phase: f32| {
-        let swing = phase.cos().max(0.0);
-        let z = stride * phase.sin();
-        let y = rig.ankle_height + lift * swing * swing - hips_y - rig.hip.y;
-        let distance = y.hypot(z).clamp((upper - lower).abs() + 0.001, upper + lower - 0.001);
-        let bend = ((distance * distance - upper * upper - lower * lower) / (2.0 * upper * lower))
-            .clamp(-1.0, 1.0).acos();
-        let thigh = (-z).atan2(-y) - (lower * bend.sin()).atan2(upper + lower * bend.cos());
-        let knee = bend - shin_rest;
-        (Jp::r(rx(thigh)), Jp::r(rx(knee)), Jp::r(rx(-thigh - knee)))
+    let d = ankle - hip;
+    let dist = d.length().clamp((upper - lower).abs() + 1e-3, upper + lower - 1e-3);
+    let open = ((upper * upper + dist * dist - lower * lower) / (2.0 * upper * dist)).clamp(-1.0, 1.0).acos();
+    let thigh_dir = fwd_angle(d) + open; // knee ahead of the hip→ankle line
+    let knee_pt = hip + upper * Vec2::new(thigh_dir.sin(), -thigh_dir.cos());
+    (thigh_dir, fwd_angle(hip + d.normalize_or_zero() * dist - knee_pt))
+}
+
+/// Bone forward angles → the hip/knee/foot X rotations (`rx(θ)` turns a bone by −θ in that
+/// angle), with the boot at world `pitch`.
+fn leg_rot(thigh_dir: f32, shin_dir: f32, pitch: f32, rig: &super::footman::LegRig) -> (f32, f32, f32) {
+    let thigh_rest = fwd_angle(Vec2::new(rig.knee.z, rig.knee.y));
+    let shin_rest = fwd_angle(Vec2::new(rig.foot.z, rig.foot.y));
+    let th = thigh_rest - thigh_dir;
+    let kn = shin_rest - th - shin_dir;
+    (th, kn, pitch - th - kn)
+}
+
+/// The hero's foot-locked locomotion at world ground speed `speed`, cycle phase `c`.
+/// `armed` (0..1): the sword is in hand (1) or slung on the back (0) — an empty sword hand pumps
+/// as freely as the shield arm.
+fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
+    let rig = super::footman::leg_rig();
+    let g = gait_at(speed.max(0.0) / hero_model_scale());
+    let (run, sprint) = (g.run, g.sprint);
+    let u_l = (c / std::f32::consts::TAU).rem_euclid(1.0);
+    let u_r = (u_l + 0.5).fract();
+    let (zl, cl, pl, kl) = leg_track(u_l, &g);
+    let (zr, cr, pr, kr) = leg_track(u_r, &g);
+    let al = boot_ankle(zl, cl, pl, &rig);
+    let ar = boot_ankle(zr, cr, pr, &rig);
+    // The stance targets a swing leg hands off from (toe-off) and to (strike).
+    let at = |u: f32| {
+        let (z, c, p, _) = leg_track(u, &g);
+        boot_ankle(z, c, p, &rig)
     };
-    (p.hip_l, p.knee_l, p.foot_l) = leg(c);
-    (p.hip_r, p.knee_r, p.foot_r) = leg(c + PI);
+    let (a_off, a_strike) = (at(g.duty - 1e-4), at(0.0));
+    let swing_s = |u: f32| (u >= g.duty).then(|| (u - g.duty) / (1.0 - g.duty));
+    // +1 when the LEFT boot is out front (its strike), −1 at the right strike.
+    let swing = (c).cos();
+
+    // ── Pelvis ──
+    // Vertical bob, once per step — the main carrier of weight. A walk vaults UP over the planted
+    // leg (highest at single-leg mid-stance, lowest in double support); a run sinks INTO the
+    // stance (lowest mid-stance, loaded knee) and peaks in the flight phase. Amplitudes follow
+    // human centre-of-mass excursion scaled to this ~1.9 m body: ~4-5 cm peak-to-peak walking,
+    // ~8-9 cm jogging, a little flatter in a full sprint.
+    let step = (2.0 * u_l).fract();
+    let crest = (TAU * (step - (g.duty + 0.5 * run))).cos(); // +1 at the top of the bob
+    let bob = lerp(0.022, lerp(0.045, 0.038, sprint), run) * crest;
+    let base = super::model::HIP_REST_Y - lerp(0.012, lerp(0.035, 0.05, sprint), run);
+    let sway = lerp(0.022, 0.012, run) * (kr - kl); // over the stance foot (left leg is −X)
+    // Hips work in all three planes: they yaw with the stride (the forward leg's hip swings
+    // forward), DROP on the swing-leg side while the other leg carries the weight, and tip
+    // forward a touch as the body loads into each stance.
+    let pel_yaw = lerp(0.10, lerp(0.12, 0.14, sprint), run) * swing; // + swings the left hip forward
+    let pel_drop = lerp(0.045, 0.075, run) * (kr - kl); // − = right (+X) hip low: left leg loaded
+    let pelvis = e3(run * (0.06 - 0.03 * crest), pel_yaw, pel_drop);
+    // Never ask a planted leg for more reach than it has: the hips sink at the far ends of a
+    // stride instead of the boot peeling off the ground (soft-min keeps it smooth).
+    let reach = 0.985 * (rig.knee.y.hypot(rig.knee.z) + rig.foot.y.hypot(rig.foot.z));
+    let hip_l = pelvis * rig.hip;
+    let hip_r = pelvis * Vec3::new(-rig.hip.x, rig.hip.y, rig.hip.z);
+    let cap = |a: (f32, f32), off: Vec3| {
+        let dz = a.0 - off.z;
+        a.1 + (reach * reach - dz * dz).max(0.0).sqrt() - off.y
+    };
+    let smin = |a: f32, b: f32| {
+        let k = 0.03;
+        let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
+        lerp(b, a, h) - k * h * (1.0 - h)
+    };
+    // Planted legs cap the hips directly; a swing leg only through the stance it is leaving /
+    // about to land in, phased in so the hips glide rather than jump at contact.
+    let leg_cap = |u: f32, a: (f32, f32), off: Vec3| match swing_s(u) {
+        None => cap(a, off),
+        Some(s) => (cap(a_off, off) + smoothstep(s / 0.3)).min(cap(a_strike, off) + 1.0 - smoothstep((s - 0.5) / 0.5)),
+    };
+    let hips_y = smin(smin(base + bob, leg_cap(u_l, al, hip_l)), leg_cap(u_r, ar, hip_r));
+    let hips_t = Vec3::new(sway, hips_y, 0.0);
+
+    let mut p = rest();
+    // The writer re-adds HIP_REST_Y − 1.05 (legacy 1.05-hip clips); store in that convention.
+    p.hips = Jp { t: Some(hips_t + Vec3::Y * (1.05 - super::model::HIP_REST_Y)), r: pelvis };
+    let leg = |off: Vec3, u: f32, a: (f32, f32), pitch: f32| {
+        let hip = Vec2::new(hips_t.z + off.z, hips_t.y + off.y);
+        let (th, kn, ft) = match swing_s(u) {
+            None => leg_ik(hip, Vec2::new(a.0, a.1), pitch, &rig),
+            Some(s) => {
+                let dirs = |t: (f32, f32)| {
+                    let (thigh, shin) = leg_dirs(hip, Vec2::new(t.0, t.1), &rig);
+                    (thigh, thigh - shin)
+                };
+                let (thigh, flex) = swing_leg(s, &g, dirs(a_off), dirs(a_strike));
+                leg_rot(thigh, thigh - flex, pitch, &rig)
+            }
+        };
+        // Legs live in the pelvis frame: undo the pelvis turn so the leg plane stays on the travel
+        // line and a planted boot never twists or skates with the hip swing. The sagittal IK
+        // ignores X, so the pelvis's side-to-side sway would carry the boots with it (a planted
+        // foot shuffling ±2 cm sideways every step reads as wobbly on the legs): abduct the leg
+        // against the sway so the feet keep their track and only the pelvis travels.
+        let leg_len = (hip.y - a.1).max(0.3);
+        let abduct = Quat::from_rotation_z((-(hips_t.x) / leg_len).clamp(-0.5, 0.5).asin());
+        (Jp::r(pelvis.inverse() * abduct * rx(th)), Jp::r(rx(kn)), Jp::r(rx(ft)))
+    };
+    (p.hip_l, p.knee_l, p.foot_l) = leg(hip_l, u_l, al, pl);
+    (p.hip_r, p.knee_r, p.foot_r) = leg(hip_r, u_r, ar, pr);
+
+    // ── Trunk: lean into the speed, shoulders counter-rotate the pelvis, head stays on the road ──
+    let lean = lerp(0.04, lerp(0.15, 0.28, sprint), run) + run * 0.035 * (1.0 - crest) * 0.5;
+    // Overlapping action: nothing moves in lock-step. The pelvis leads, the shoulders follow it a
+    // beat later, the arms later still, the elbows and the head last — identical in-phase sines on
+    // every joint are what read as stiff / robotic.
+    let shoulder = lerp(0.07, lerp(0.13, 0.17, sprint), run) * (c - 0.2).cos(); // + = right shoulder forward
+    // The trunk soaks up each landing a moment after the low point (and the head counters most
+    // of it so the gaze stays steady).
+    let absorb = lerp(0.015, 0.03, run) * -(TAU * (step - (g.duty + 0.5 * run)) - 0.7).cos();
+    // The trunk takes back most of the pelvic drop so the shoulders stay nearly level.
+    p.torso = Jp::r(
+        Quat::from_rotation_y(-pel_yaw - shoulder)
+            * e3(lean - lerp(0.0, 0.06, run) + absorb, 0.0, -0.75 * pel_drop),
+    );
+    let head_yaw = lerp(0.07, lerp(0.13, 0.17, sprint), run) * (c - 0.45).cos();
+    p.head = Jp::r(e3(-lean * 0.75 - 0.7 * absorb, head_yaw * 0.85, -0.25 * pel_drop));
+
+    // ── Arms: opposite arm to the forward leg (right/sword arm forward when the left boot is out
+    // front). Sprint-coaching rules of thumb: the swing comes from a relaxed shoulder with the
+    // elbows kept close to the body; the hand rises to about chin height just inside the
+    // shoulder, drifting toward (never across) the midline, and drops past the hip behind; the
+    // elbow is NOT locked at 90° — it closes to ~70° in front and opens past 90° behind, trailing
+    // the shoulder a beat (that lag is what reads as loose rather than robotic). A walk swings
+    // near-straight. ──
+    let amp = lerp(0.26, lerp(0.55, 0.72, sprint), run);
+    let back_bias = lerp(0.04, 0.18, run);
+    let flex_front = lerp(0.45, lerp(1.7, 1.85, sprint), run);
+    let flex_back = lerp(0.12, lerp(1.25, 1.2, sprint), run);
+    // One arm: `scale` trims the pump; `cross_f` drifts the front swing toward the midline and
+    // `cross_b` tucks the back swing toward the spine (a bent arm otherwise flings the fist out
+    // past the hip); `out` is the resting abduction (+ = away from the body); `elbow_fix` holds the
+    // elbow at a steady carry.
+    let arm = |fwd: f32, fwd_late: f32, side: f32, scale: f32, cross_f: f32, cross_b: f32, out: f32, elbow_fix: f32| {
+        let z = out - run * (cross_f * fwd.max(0.0) + cross_b * (-fwd).max(0.0));
+        let sh = e3(-scale * amp * fwd + back_bias, -0.2 * run * side, side * z);
+        let pump = -lerp(flex_back, flex_front, 0.5 + 0.5 * fwd_late);
+        let el = rx(lerp(pump, -0.5 * (flex_back + flex_front), elbow_fix));
+        (sh, el)
+    };
+    // The arm trails the leg phase a touch and the forearm the upper arm — enough to read as
+    // loose, not so much that the hands whip.
+    let arm_swing = (c - 0.15).cos();
+    let late = (c - 0.15 - 0.25).cos();
+    // Free (sword) arm: the full sprinter's pump.
+    let (sr, er) = arm(arm_swing, late, 1.0, lerp(1.0, 0.8, armed), 0.25, 0.4, lerp(0.0, -0.06, run), 0.0);
+    // Shield arm: a shield is CARRIED, not pumped — elbow held near 90° with the board upright on
+    // the outside of the forearm, riding the stride with only a small swing (pumping it flailed
+    // the board and drove it through the fist and thigh).
+    let (sl, el) = arm(-arm_swing, -late, -1.0, lerp(0.85, 0.3, run), 0.0, 0.0, lerp(0.0, 0.1, run), lerp(0.2, 1.0, run));
+    // The shoulder girdle travels with its arm (forward + a hair up on the front swing, back on
+    // the back swing) instead of the arm pivoting about a bolted-down socket.
+    let girdle = |rest: Vec3, fwd: f32| {
+        rest + Vec3::new(0.0, lerp(0.006, 0.014, run) * fwd.max(0.0), lerp(0.015, 0.03, run) * fwd)
+    };
+    p.sh_r = Jp { t: Some(girdle(rig.shoulder_r, arm_swing)), r: sr };
+    p.el_r = Jp::r(er);
+    p.sh_l = Jp { t: Some(girdle(rig.shoulder, -arm_swing)), r: sl };
+    p.el_l = Jp::r(el);
+    // With the blade in hand, the wrist rides the pump against it so the sword stays shouldered
+    // near-upright instead of fanning behind the head.
+    let wrist = armed * run * 0.85 * (lerp(1.0, 0.8, armed) * amp * arm_swing + (flex_front - flex_back) * 0.5 * late);
+    p.sword = Jp::r(rx(wrist) * sword_rest_r().slerp(posed_sword(-2.046, -0.52, 0.119).r, run));
+    p.shield = rest().shield;
     p
 }
 
-fn footman_loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
-    idle_pose(t).lerp(&footman_gait(wp, run), m)
+/// Preview/staging drivers (`FOREST_VIEW_ANIM`, `FOREST_ANIMTEST`, demos): play the gait at a
+/// world ground speed exactly as movement would (foot-locked phase advance).
+pub(crate) fn stage_gait(hero: &mut super::Hero, speed: f32, dt: f32) {
+    hero.moving = true;
+    hero.moving_amt = 1.0;
+    hero.gait_speed = speed;
+    hero.walk_phase += dt * gait_phase_rate(speed);
+}
+
+fn footman_loco_pose(t: f32, wp: f32, m: f32, speed: f32, armed: f32) -> Pose {
+    idle_pose(t).lerp(&footman_gait(wp, speed, armed), m)
 }
 
 /// Footman combat-stance locomotion with two extra axes driven by `movement` —
@@ -335,12 +640,12 @@ fn footman_loco_pose(t: f32, wp: f32, m: f32, run: f32) -> Pose {
 /// toward the movement while the torso/head counter-rotate to stay square on the target — the
 /// classic lower-body-aims-along-movement / upper-body-faces-target split every lock-on game
 /// uses, here as a differential yaw on the existing joints.
-pub(crate) fn stance_loco_pose(t: f32, wp: f32, m: f32, run: f32, back: f32, twist: f32) -> Pose {
-    let mut p = footman_loco_pose(t, wp, m, run);
+pub(crate) fn stance_loco_pose(t: f32, wp: f32, m: f32, speed: f32, back: f32, twist: f32, armed: f32) -> Pose {
+    let mut p = footman_loco_pose(t, wp, m, speed, armed);
     if back > 0.001 {
         // The same cycle run backward reads as stepping back; the mid-blend "gather step" as the
         // two phases cancel is exactly what a person does reversing direction.
-        p = p.lerp(&footman_loco_pose(t, -wp, m, run), back.clamp(0.0, 1.0));
+        p = p.lerp(&footman_loco_pose(t, -wp, m, speed, armed), back.clamp(0.0, 1.0));
     }
     if twist.abs() > 1e-3 {
         // Hips carry the legs AND the torso (rig: hips → torso, hips → hip_l/r), so yawing the
@@ -1006,6 +1311,95 @@ pub(crate) fn carry_pose() -> Pose {
     p
 }
 
+/// Which clip family [`hero_anim`] is playing — a change triggers the cross-fade.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Clip {
+    #[default]
+    Loco,
+    Air,
+    Attack(u8),
+    Charge,
+    Dash,
+    Roll,
+    Victory,
+}
+
+#[derive(Default)]
+pub struct ClipBlend {
+    clip: Clip,
+    last: Option<Pose>,
+    /// (pose to fade from, start time, duration).
+    from: Option<(Pose, f32, f32)>,
+    /// The airborne clip leads with the right leg (mirrored) this jump.
+    lead_right: bool,
+}
+
+/// Draw/sheathe bookkeeping. Drawing for a fight that's coming (a foe ringed, blows traded)
+/// plays the over-the-shoulder reach; an action straight from the slung carry (a swing, a block)
+/// draws instantly so combat never waits on a flourish. Sheathing waits until things have been
+/// calm for a moment (sooner when sprinting away).
+#[derive(Default)]
+pub struct Sheath {
+    drawn: bool,
+    /// Smoothed 0..1 of `drawn`, for the gait's arm carry.
+    armed: f32,
+    /// Progress (s) of a draw/sheathe reach in flight, and whether it ends drawn.
+    reach_t: Option<f32>,
+    to_drawn: bool,
+    calm_for: f32,
+}
+
+const SHEATHE_REACH: f32 = 0.55;
+const SHEATHE_DELAY: f32 = 1.6;
+const SHEATHE_DELAY_SPRINT: f32 = 0.4;
+
+impl Sheath {
+    fn update(&mut self, dt: f32, want: bool, action: bool, sprinting: bool) {
+        self.calm_for = if want { 0.0 } else { self.calm_for + dt };
+        if want && action && (!self.drawn || self.reach_t.is_some()) {
+            // Straight into a swing/block: the blade is simply in hand.
+            self.drawn = true;
+            self.reach_t = None;
+        } else if self.reach_t.is_none() {
+            let delay = if sprinting { SHEATHE_DELAY_SPRINT } else { SHEATHE_DELAY };
+            if want && !self.drawn {
+                (self.reach_t, self.to_drawn) = (Some(0.0), true);
+            } else if !want && self.drawn && self.calm_for > delay {
+                (self.reach_t, self.to_drawn) = (Some(0.0), false);
+            }
+        } else if want && !self.to_drawn {
+            // Trouble mid-sheathe: keep the blade out.
+            self.drawn = true;
+            self.reach_t = None;
+        }
+        if let Some(t) = self.reach_t.as_mut() {
+            *t += dt;
+            if *t >= 0.5 * SHEATHE_REACH {
+                self.drawn = self.to_drawn; // hand at the hilt: swap
+            }
+            if *t >= SHEATHE_REACH {
+                self.reach_t = None;
+            }
+        }
+        let target = if self.drawn { 1.0 } else { 0.0 };
+        self.armed += (target - self.armed) * (dt * 8.0).min(1.0);
+    }
+
+    /// 0→1→0 weight of the reach in flight.
+    fn reach(&self) -> Option<f32> {
+        self.reach_t.map(|t| (PI * (t / SHEATHE_REACH).clamp(0.0, 1.0)).sin())
+    }
+}
+
+/// Swap the two legs of a pose (the clips here are sagittal X turns, so a straight swap mirrors).
+fn mirror_legs(p: &Pose) -> Pose {
+    let mut m = *p;
+    (m.hip_l, m.hip_r) = (p.hip_r, p.hip_l);
+    (m.knee_l, m.knee_r) = (p.knee_r, p.knee_l);
+    (m.foot_l, m.foot_r) = (p.foot_r, p.foot_l);
+    m
+}
+
 pub fn hero_anim(
     time: Res<Time>,
     player: Res<super::PlayerRes>,
@@ -1017,6 +1411,12 @@ pub fn hero_anim(
     mut land_at: Local<f32>,
     // Smoothed block weight (0 = open, 1 = full defend) so the brace eases in/out.
     mut block_amt: Local<f32>,
+    // Clip cross-fade: the last pose written, the clip it came from, and an in-flight fade.
+    mut blend: Local<ClipBlend>,
+    // Sword in hand vs. slung on the back (+ the draw/sheathe reach in flight).
+    mut sheath: Local<Sheath>,
+    mut sword_vis: Query<(&HeroPart, &mut Visibility), Without<super::BackSword>>,
+    mut back_vis: Query<&mut Visibility, (With<super::BackSword>, Without<HeroPart>)>,
 ) {
     let Ok((hero, hh)) = hero_q.single() else { return };
     let now = time.elapsed_secs();
@@ -1052,6 +1452,21 @@ pub fn hero_anim(
     *block_amt += (block_target - *block_amt) * (dt * 10.0).min(1.0);
     let block_amt = block_amt.clamp(0.0, 1.0);
 
+    // ── Sword: drawn for a fight, slung on the back otherwise ──
+    let action = hero.attacking || hh.blocking || hero.charge_t >= 0.0 || hero.dash_t >= 0.0;
+    let want_drawn = action || hero.victory || hero.soft_pos.is_some() || now < hero.combat_until;
+    let sprinting = hero.gait_speed > super::SPEED * 1.3;
+    sheath.update(dt, want_drawn, action, sprinting);
+    for (part, mut vis) in &mut sword_vis {
+        if part.joint == Joint::Sword {
+            vis.set_if_neq(if sheath.drawn { Visibility::Inherited } else { Visibility::Hidden });
+        }
+    }
+    for mut vis in &mut back_vis {
+        vis.set_if_neq(if sheath.drawn { Visibility::Hidden } else { Visibility::Inherited });
+    }
+    let armed = sheath.armed;
+
     let attack = hero.attacking.then(|| attack_phase((hero.attack_t / hero.attack_dur).clamp(0.0, 1.0)));
     let gesture = dir.gesture.map(|g| gesture_pose(g, now - dir.gesture_start));
 
@@ -1069,13 +1484,39 @@ pub fn hero_anim(
             now,
             hero.walk_phase,
             moving,
-            hero.run_amt.clamp(0.0, 1.0),
+            hero.gait_speed,
             hero.back_amt,
             hero.strafe_twist,
+            armed,
         );
         guard_overlay(&mut p, hero.stance_amt, moving);
         p
     };
+    // ── Clip cross-fade ── Each clip below is continuous within itself, but switching between
+    // them (stride → jump at take-off, jump → stride on landing, a swing starting mid-run, the
+    // dash/charge entering) used to SNAP the whole rig in one frame. On a clip change, freeze the
+    // last written pose and ease from it into the new clip over a short, per-transition window.
+    let clip = if hero.victory {
+        Clip::Victory
+    } else if hero.roll_t >= 0.0 {
+        Clip::Roll
+    } else if hero.dash_t >= 0.0 {
+        Clip::Dash
+    } else if hero.attacking {
+        Clip::Attack(hero.attack_variant)
+    } else if hero.charge_t > CHARGE_GRACE && hero.on_ground {
+        Clip::Charge
+    } else if !hero.on_ground {
+        Clip::Air
+    } else {
+        Clip::Loco
+    };
+    if clip == Clip::Air && blend.clip != Clip::Air {
+        // Take-off: the leg in its swing (not the planted one) drives up into the leap.
+        let g = gait_at(hero.gait_speed / hero_model_scale());
+        let u_l = (hero.walk_phase / std::f32::consts::TAU).rem_euclid(1.0);
+        blend.lead_right = moving > 0.05 && u_l < g.duty;
+    }
     let pose = if hero.victory {
         victory_pose(now)
     } else if hero.roll_t >= 0.0 {
@@ -1108,15 +1549,54 @@ pub fn hero_anim(
         }
     } else if !hero.on_ground {
         let j = jump_pose(hero.vel_y);
-        if moving > 0.05 {
+        let j = if moving > 0.05 {
             j.lerp(&leap_pose(hero.vel_y), moving) // running leap
         } else {
             j
-        }
+        };
+        // Lead with whichever leg was swinging forward at take-off, so a running jump continues
+        // the stride instead of swapping legs mid-air.
+        if blend.lead_right { mirror_legs(&j) } else { j }
     } else if block_amt > 0.001 {
         brace(&loco, &defend_pose(now), block_amt, moving)
     } else {
         loco
+    };
+
+    if clip != blend.clip {
+        let dur = match (blend.clip, clip) {
+            (_, Clip::Attack(_)) | (_, Clip::Dash) => 0.07, // actions must stay snappy
+            (Clip::Air, Clip::Loco) => 0.09,                 // landing (the squash carries the rest)
+            (Clip::Loco, Clip::Air) => 0.12,                 // take-off into the jump/leap
+            (_, Clip::Victory) => 0.3,
+            _ => 0.14,
+        };
+        if let Some(last) = blend.last {
+            blend.from = Some((last, now, dur));
+        }
+        blend.clip = clip;
+    }
+    let pose = match blend.from {
+        Some((from, start, dur)) if now - start < dur => from.lerp(&pose, smoothstep((now - start) / dur)),
+        _ => {
+            blend.from = None;
+            pose
+        }
+    };
+    blend.last = Some(pose);
+    // The draw/sheathe reach: the sword hand goes up over the right shoulder to the slung hilt
+    // and back (the swap happens at the top, in `Sheath::update`).
+    let pose = match sheath.reach() {
+        Some(w) => {
+            let mut p = pose;
+            // Fist at the slung grip just under the crossguard (tuned against the viewer).
+            p.sh_r = p.sh_r.lerp(Jp::r(e3(-3.1, -0.4, 0.3)), w);
+            p.el_r = p.el_r.lerp(Jp::r(rx(-2.0)), w);
+            p.head = Jp::r(p.head.r * e3(0.0, -0.25 * w, 0.0)); // a glance at the hand
+            p.torso = Jp::r(p.torso.r * e3(-0.05 * w, -0.15 * w, 0.0));
+            p
+        }
+        None => pose,
     };
 
     // Landing squash: a quick crouch the instant the feet hit, easing back over `LAND_RECOVER`.
@@ -1128,7 +1608,13 @@ pub fn hero_anim(
     };
 
     for (part, mut tf) in &mut parts {
-        let jp = pose.get(part.joint);
+        let mut jp = pose.get(part.joint);
+        // Only the gait slides the shoulder girdle; every other clip leaves the shoulders' `t`
+        // unset, so pin them back to the bind offset instead of keeping the last stride's.
+        if jp.t.is_none() && matches!(part.joint, Joint::ShoulderL | Joint::ShoulderR) {
+            let rig = super::footman::leg_rig();
+            jp.t = Some(if part.joint == Joint::ShoulderL { rig.shoulder } else { rig.shoulder_r });
+        }
         if let Some(t) = jp.t {
             // Clips were authored when the hips sat at y = 1.05. The footman's hips are at
             // `HIP_REST_Y` (0.98); shift every absolute hip height by the same delta so crouches
@@ -1211,7 +1697,8 @@ fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<(Quat, Qua
 mod tests {
     use super::*;
 
-    fn sole(p: &Pose, right: bool) -> (Vec3, Vec3) {
+    /// Forward kinematics of one posed leg (rig space, ground at y = 0): (ankle, boot rotation).
+    fn ankle(p: &Pose, right: bool) -> (Vec3, Quat) {
         let rig = super::super::footman::leg_rig();
         let (hip, knee, foot) = if right {
             (p.hip_r, p.knee_r, p.foot_r)
@@ -1225,59 +1712,179 @@ mod tests {
         let hips = p.hips.t.unwrap() + Vec3::Y * (super::super::model::HIP_REST_Y - 1.05);
         let ankle = hips + p.hips.r * mirror(rig.hip)
             + hip_rotation * mirror(rig.knee) + knee_rotation * mirror(rig.foot);
-        let sole = ankle + foot_rotation * Vec3::new(0.0, -rig.ankle_height, 0.0);
-        (sole, foot_rotation * Vec3::Y)
+        (ankle, foot_rotation)
     }
 
+    /// The boot's heel and toe contact points.
+    fn heel_toe(p: &Pose, right: bool) -> (Vec3, Vec3) {
+        let rig = super::super::footman::leg_rig();
+        let (a, r) = ankle(p, right);
+        let h = rig.ankle_height;
+        (a + r * Vec3::new(0.0, -h, -rig.heel), a + r * Vec3::new(0.0, -h, rig.toe))
+    }
+
+    /// World ground speeds spanning a creep, a walk, the base jog and the sprint.
+    const SPEEDS: [f32; 7] = [0.5, 1.4, 2.4, 3.5, 4.4, 6.125, 7.0];
+
     #[test]
-    fn footman_supporting_boots_stay_grounded_through_walk_and_run() {
-        for run in [0.0, 0.25, 0.5, 0.75, 1.0] {
+    fn footman_boots_stay_grounded_through_every_gait() {
+        for v in SPEEDS {
+            let g = gait_at(v / hero_model_scale());
             let mut max_lift = 0.0_f32;
-            for frame in 0..120 {
-                let phase = std::f32::consts::TAU * frame as f32 / 120.0;
-                let p = footman_gait(phase, run);
+            for frame in 0..240 {
+                let phase = std::f32::consts::TAU * frame as f32 / 240.0;
+                let p = footman_gait(phase, v, 1.0);
                 for right in [false, true] {
-                    let leg_phase = phase + if right { PI } else { 0.0 };
-                    let (position, normal) = sole(&p, right);
-                    assert!(position.y >= -0.025, "boot penetrates ground: run={run}, phase={leg_phase}, y={}", position.y);
-                    if leg_phase.cos() <= 0.0 {
-                        assert!(position.y.abs() <= 0.025, "supporting boot floats: run={run}, phase={leg_phase}, y={}", position.y);
+                    let u = (phase / std::f32::consts::TAU + if right { 0.5 } else { 0.0 }).rem_euclid(1.0);
+                    let (heel, toe) = heel_toe(&p, right);
+                    let low = heel.y.min(toe.y);
+                    assert!(low >= -0.02, "boot penetrates ground: v={v}, u={u}, y={low}");
+                    if u < g.duty {
+                        assert!(low.abs() <= 0.02, "planted boot floats: v={v}, u={u}, y={low}");
                     }
-                    assert!(normal.dot(Vec3::Y) > 0.995, "sole must stay level during locomotion");
-                    max_lift = max_lift.max(position.y);
+                    max_lift = max_lift.max(low);
                 }
             }
-            assert!(max_lift > 0.05, "recovery foot must lift, not skate");
+            assert!(max_lift > 0.04, "recovery foot must lift, not skate (v={v})");
+        }
+    }
+
+    /// The moonwalk regression: while a boot is planted, its contact edge must stay put on the
+    /// ground as the body travels — the rig-space sweep cancels the root's real speed.
+    #[test]
+    fn planted_boot_does_not_skate() {
+        for v in SPEEDS {
+            let vm = v / hero_model_scale();
+            let g = gait_at(vm);
+            let rate = gait_phase_rate(v);
+            let dt = 1.0 / 240.0;
+            for frame in 0..200 {
+                let phase = std::f32::consts::TAU * frame as f32 / 200.0;
+                for right in [false, true] {
+                    let u = (phase / std::f32::consts::TAU + if right { 0.5 } else { 0.0 }).rem_euclid(1.0);
+                    let u2 = u + rate * dt / std::f32::consts::TAU;
+                    if u < 0.02 || u2 > g.duty - 0.02 {
+                        continue; // the touchdown / lift-off frames themselves
+                    }
+                    let a = heel_toe(&footman_gait(phase, v, 1.0), right);
+                    let b = heel_toe(&footman_gait(phase + rate * dt, v, 1.0), right);
+                    // Whichever edge carries the weight (the lower one; both when flat).
+                    let (pa, pb) = if a.0.y <= a.1.y { (a.0, b.0) } else { (a.1, b.1) };
+                    let slip = (pb.z - pa.z) / dt + vm;
+                    assert!(slip.abs() < 0.06 * vm + 0.05, "planted boot skates: v={v}, u={u}, slip={slip} m/s of {vm}");
+                    // …nor shuffle sideways with the pelvis sway (the "wobbly on its legs" read).
+                    let side = (pb.x - pa.x) / dt;
+                    assert!(side.abs() < 0.08, "planted boot shuffles sideways: v={v}, u={u}, {side} m/s");
+                }
+            }
+        }
+    }
+
+    /// Swing-leg joint angles stay inside human running ranges (the ankle-path IK once swung the
+    /// sprinting thigh to 136° and folded the knee to 154°).
+    #[test]
+    fn swing_joint_angles_stay_human() {
+        for (v, hip_max, knee_max) in [(1.4_f32, 40.0_f32, 75.0_f32), (3.5, 55.0, 105.0), (6.125, 75.0, 132.0)] {
+            let (mut hi, mut kn) = (0.0_f32, 0.0_f32);
+            for i in 0..200 {
+                let p = footman_gait(std::f32::consts::TAU * i as f32 / 200.0, v, 0.0);
+                let hip = p.hips.r * p.hip_l.r;
+                let thigh = hip * Vec3::NEG_Y;
+                let shin = hip * p.knee_l.r * Vec3::NEG_Y;
+                hi = hi.max(thigh.z.atan2(-thigh.y).to_degrees());
+                kn = kn.max(thigh.angle_between(shin).to_degrees());
+            }
+            assert!(hi < hip_max && hi > 0.5 * hip_max, "v={v}: peak hip flexion {hi}°");
+            assert!(kn < knee_max && kn > 0.5 * knee_max, "v={v}: peak knee flexion {kn}°");
         }
     }
 
     #[test]
+    fn sword_draws_for_a_fight_and_slings_when_calm() {
+        let dt = 1.0 / 60.0;
+        let mut sh = Sheath::default();
+        assert!(!sh.drawn);
+        // A swing from the slung carry: in hand at once, no reach flourish.
+        sh.update(dt, true, true, false);
+        assert!(sh.drawn && sh.reach().is_none());
+        // Calm: stays out through the delay, then the reach slings it at its midpoint.
+        let mut t = 0.0;
+        while sh.drawn {
+            sh.update(dt, false, false, false);
+            t += dt;
+            assert!(t < SHEATHE_DELAY + SHEATHE_REACH, "never sheathed");
+        }
+        assert!(t > SHEATHE_DELAY, "sheathed mid-fight");
+        // A foe ringed (no action yet): drawn via the reach.
+        for _ in 0..60 {
+            sh.update(dt, false, false, false);
+        }
+        sh.update(dt, true, false, false);
+        assert!(!sh.drawn && sh.reach().is_some());
+        for _ in 0..60 {
+            sh.update(dt, true, false, false);
+        }
+        assert!(sh.drawn && sh.reach().is_none());
+        // Sprinting away slings it sooner.
+        let mut t = 0.0;
+        while sh.drawn {
+            sh.update(dt, false, false, true);
+            t += dt;
+        }
+        assert!(t < SHEATHE_DELAY);
+    }
+
+    #[test]
+    fn cadence_reads_human() {
+        let steps = |v: f32| gait_phase_rate(v) / PI; // two steps per 2π
+        let walk = steps(super::super::SPEED);
+        assert!((1.8..2.6).contains(&walk), "walk cadence {walk}");
+        let jog = steps(3.2);
+        assert!((2.6..3.6).contains(&jog) && jog > walk, "jog cadence {jog}");
+        let sprint = steps(super::super::SPEED * super::super::SPRINT_MULT);
+        assert!((3.0..4.6).contains(&sprint) && sprint > jog, "sprint cadence {sprint}");
+        assert_eq!(gait_phase_rate(0.0), 0.0);
+    }
+
+    #[test]
     fn footman_gait_is_periodic_and_blends_back_to_idle() {
-        for run in [0.0, 0.5, 1.0] {
-            let a = footman_gait(0.0, run);
-            let b = footman_gait(std::f32::consts::TAU, run);
-            for j in [Joint::Hips, Joint::HipL, Joint::HipR, Joint::KneeL, Joint::KneeR, Joint::FootL, Joint::FootR] {
-                assert!(a.get(j).r.angle_between(b.get(j).r) < 0.001);
+        for v in SPEEDS {
+            let a = footman_gait(0.0, v, 1.0);
+            let b = footman_gait(std::f32::consts::TAU, v, 1.0);
+            for j in [Joint::Hips, Joint::Torso, Joint::ShoulderR, Joint::HipL, Joint::HipR, Joint::KneeL, Joint::KneeR, Joint::FootL, Joint::FootR] {
+                let d = a.get(j).r.angle_between(b.get(j).r);
+                assert!(d < 0.002, "gait not periodic at v={v}: joint {} off by {d}", j as u8);
             }
-            let stopped = stance_loco_pose(2.0, 1.7, 0.0, run, 0.0, 0.0);
+            let stopped = stance_loco_pose(2.0, 1.7, 0.0, v, 0.0, 0.0, 1.0);
             let idle = idle_pose(2.0);
             assert!(stopped.hips.t.unwrap().distance(idle.hips.t.unwrap()) < 0.0001);
             assert!(stopped.knee_l.r.angle_between(idle.knee_l.r) < 0.001);
         }
     }
 
+    /// Opposite arm to the forward leg — the old gait swung the sword arm WITH the same-side leg.
     #[test]
-    fn combat_guard_preserves_moving_footman_support_and_level_soles() {
+    fn arms_counter_swing_the_legs() {
+        for v in SPEEDS {
+            // Left heel strike: left boot out front → right (sword) arm forward (negative X).
+            let p = footman_gait(0.0, v, 1.0);
+            assert!(heel_toe(&p, false).0.z > heel_toe(&p, true).0.z);
+            let fwd = |q: Quat| (q * Vec3::NEG_Y).z;
+            assert!(fwd(p.sh_r.r) > fwd(p.sh_l.r), "sword arm must lead with the left leg (v={v})");
+        }
+    }
+
+    #[test]
+    fn combat_guard_preserves_moving_footman_support() {
         for back in [0.0, 1.0] {
             for twist in [-0.7, 0.0, 0.7] {
                 for frame in 0..120 {
                     let phase = std::f32::consts::TAU * frame as f32 / 120.0;
-                    let mut p = stance_loco_pose(2.0, phase, 1.0, 0.0, back, twist);
+                    let mut p = stance_loco_pose(2.0, phase, 1.0, 2.6, back, twist, 1.0);
                     guard_overlay(&mut p, 1.0, 1.0);
                     for right in [false, true] {
-                        let (position, normal) = sole(&p, right);
-                        assert!(position.y >= -0.025, "guard must not drive the moving boot into the ground");
-                        assert!(normal.dot(Vec3::Y) > 0.995, "guard must preserve level moving soles");
+                        let (heel, toe) = heel_toe(&p, right);
+                        assert!(heel.y.min(toe.y) >= -0.02, "guard must not drive the moving boot into the ground");
                     }
                 }
             }

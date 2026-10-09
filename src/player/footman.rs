@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, Face, TextureDimension, TextureFormat};
 
 use super::anim::sword_rest_r;
-use super::{HeroMesh, HeroPart, HeroWeapon, Joint};
+use super::{BackSword, HeroMesh, HeroPart, HeroWeapon, Joint};
 
 const BIN: &[u8] = include_bytes!("../../assets/models/footman.bin");
 
@@ -43,6 +43,15 @@ pub(crate) struct LegRig {
     pub knee: Vec3,
     pub foot: Vec3,
     pub ankle_height: f32,
+    /// Ankle → toe tip / heel back, along the foot (model metres). The gait rolls the boot over
+    /// these two edges (heel strike, toe-off) instead of skating a rigid flat sole.
+    pub toe: f32,
+    pub heel: f32,
+    /// Model metres → rig units (the `TARGET_RIG_HEIGHT` scale applied under the hero root).
+    pub scale: f32,
+    /// Shoulder joints' rest offsets in the torso (the gait slides them with the arm swing).
+    pub shoulder: Vec3,
+    pub shoulder_r: Vec3,
 }
 
 pub(crate) fn leg_rig() -> LegRig {
@@ -52,11 +61,24 @@ pub(crate) fn leg_rig() -> LegRig {
             let hip = pos_of(model, "HipL");
             let knee = pos_of(model, "KneeL");
             let foot = pos_of(model, "FootL");
+            let (mut toe, mut heel) = (0.0_f32, 0.0_f32);
+            for m in model.meshes.iter().filter(|m| m.joint == "FootL") {
+                for p in &m.positions {
+                    let v = m.xf.transform_point(Vec3::from_array(*p));
+                    toe = toe.max(v.z);
+                    heel = heel.max(-v.z);
+                }
+            }
             LegRig {
                 hip,
                 knee,
                 foot,
                 ankle_height: pos_of(model, "Hips").y + hip.y + knee.y + foot.y - model.min_y,
+                toe,
+                heel,
+                scale: TARGET_RIG_HEIGHT / (model.max_y - model.min_y).max(0.01),
+                shoulder: pos_of(model, "ShoulderL"),
+                shoulder_r: pos_of(model, "ShoulderR"),
             }
         };
         if let Some(gpu) = GPU.get() { measure(&gpu.model) } else { measure(&parse()) }
@@ -450,6 +472,39 @@ fn joint_of(name: &str) -> Option<Joint> {
     })
 }
 
+/// Where the slung sword sits in the torso joint's frame. The meshes keep their hand-sword
+/// transforms, so the holder carries `sword_rest_r` like the `Sword` joint does, turned so the blade
+/// (grip → `tip`) runs down-and-across the back, with the hilt just behind the right shoulder
+/// and clear of the backplate.
+fn back_sword_transform(model: &Model) -> Transform {
+    let blade = &model.meshes[model.blade];
+    let inner = Transform::from_rotation(sword_rest_r()) * blade.xf;
+    let dir = inner.transform_point(model.tip).normalize_or(Vec3::NEG_Y);
+    // Backplate depth: the rearmost torso vertex, in the torso joint's frame.
+    let back_z = model
+        .meshes
+        .iter()
+        .filter(|m| m.joint == "Torso")
+        .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p)).z))
+        .fold(0.0_f32, f32::min);
+    let shoulder = pos_of(model, "ShoulderR");
+    let want = Vec3::new(-0.8, -1.0, 0.0).normalize();
+    let turn = Quat::from_rotation_arc(dir, want);
+    // Roll about the blade so the flat lies against the back (crossguard across, not into it).
+    let roll = Quat::from_axis_angle(want, BACK_SWORD_ROLL);
+    Transform {
+        translation: Vec3::new(shoulder.x * 0.75, shoulder.y + 0.16, back_z - 0.035),
+        rotation: roll * turn * sword_rest_r(),
+        scale: Vec3::ONE,
+    }
+}
+
+/// Radius of the knee-pit mail filler (model metres; the greave's half-width is ~0.09).
+const KNEE_FILL_R: f32 = 0.08;
+
+/// Roll of the slung blade about its own axis (tuned against the viewer).
+const BACK_SWORD_ROLL: f32 = 0.0;
+
 fn pos_of(model: &Model, name: &str) -> Vec3 {
     model.joints.iter().find(|(n, _, _)| n == name).map(|(_, _, p)| *p).unwrap_or(Vec3::ZERO)
 }
@@ -512,6 +567,21 @@ pub fn spawn(
     let torso = spawn_joint(commands, hips, "Torso", Transform::from_translation(pos_of(&g.model, "Torso")));
     spawn_joint(commands, torso, "Head", Transform::from_translation(pos_of(&g.model, "Head")));
 
+    // The sheathed sword, slung diagonally across the back: hilt up behind the right shoulder,
+    // point down toward the left hip. Same meshes as the hand sword (not `HeroWeapon`, so the
+    // blade trail and the Director's weapon hide keep tracking the hand one).
+    if let Some(list) = by_joint.get("Sword") {
+        let back = commands.spawn((back_sword_transform(&g.model), Visibility::Hidden, BackSword)).id();
+        commands.entity(torso).add_child(back);
+        for &i in list {
+            let m = &g.model.meshes[i];
+            let leaf = commands
+                .spawn((Mesh3d(g.meshes[i].clone()), MeshMaterial3d(g.mats[m.mat].clone()), m.xf, HeroMesh))
+                .id();
+            commands.entity(back).add_child(leaf);
+        }
+    }
+
     let sh_l = spawn_joint(commands, torso, "ShoulderL", Transform::from_translation(pos_of(&g.model, "ShoulderL")));
     let el_l = spawn_joint(commands, sh_l, "ElbowL", Transform::from_translation(pos_of(&g.model, "ElbowL")));
     // Untagged hand at the fist. The animator rewrites the shield joint's translation every frame,
@@ -535,4 +605,25 @@ pub fn spawn(
     let hip_r = spawn_joint(commands, hips, "HipR", Transform::from_translation(pos_of(&g.model, "HipR")));
     let knee_r = spawn_joint(commands, hip_r, "KneeR", Transform::from_translation(pos_of(&g.model, "KneeR")));
     spawn_joint(commands, knee_r, "FootR", Transform::from_translation(pos_of(&g.model, "FootR")));
+
+    // Knee-pit filler. The thigh's mail stops at the knee pivot and the greave starts ~7 cm below
+    // it, so a bending knee opened a see-through slit at the back of the leg. A mail ball on the
+    // knee pivot sits inside the plates and only shows through that gap.
+    if let Some(chain) = g.model.mats.iter().position(|m| m.tex == "chain") {
+        let mut ball = Sphere::new(KNEE_FILL_R).mesh().ico(2).unwrap_or_else(|_| Sphere::new(KNEE_FILL_R).mesh().uv(12, 8));
+        let n = ball.count_vertices();
+        ball.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0, 1.0, 1.0, 1.0]; n]);
+        let ball = meshes.add(ball);
+        for (knee, side) in [(knee_l, 1.0_f32), (knee_r, -1.0)] {
+            let leaf = commands
+                .spawn((
+                    Mesh3d(ball.clone()),
+                    MeshMaterial3d(g.mats[chain].clone()),
+                    Transform::from_translation(Vec3::new(-0.006 * side, -0.035, -0.01)),
+                    HeroMesh,
+                ))
+                .id();
+            commands.entity(knee).add_child(leaf);
+        }
+    }
 }

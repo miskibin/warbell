@@ -73,8 +73,13 @@ const EXPLORE_PATH: [Vec2; 5] = [
     Vec2::new(-30.0, 28.0),
     Vec2::new(-36.0, 30.0),
 ];
-const EXPLORE_SPEED: f32 = 4.0; // world units / sec
-const STEP_FREQ: f32 = 7.0; // matches movement.rs leg cadence
+const EXPLORE_SPEED: f32 = crate::player::SPEED; // world units / sec — the WASD walk
+
+/// `FOREST_DEMO_SPEED=<u/s>` overrides the explore pace (e.g. `5.04` = the Shift sprint), so a
+/// clip can film the hero's walk / jog / sprint gait — the animator picks the gait from speed.
+fn explore_speed() -> f32 {
+    std::env::var("FOREST_DEMO_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(EXPLORE_SPEED)
+}
 
 /// Position + unit tangent at arc-length `d` along the polyline; `arrived` once past the end.
 fn sample_path(path: &[Vec2], d: f32) -> (Vec2, Vec2, bool) {
@@ -111,7 +116,7 @@ fn explore_drive(
     let rec = prog.as_ref().map_or(true, |p| p.recording);
     if rec {
         // Only step forward onto solid land — never walk out over a river (no terrain there).
-        let next = *dist + EXPLORE_SPEED * dt;
+        let next = *dist + explore_speed() * dt;
         let (np, _, _) = sample_path(&EXPLORE_PATH, next);
         if crate::worldmap::ground_at_world(np.x, np.y).is_some() {
             *dist = next;
@@ -126,11 +131,12 @@ fn explore_drive(
     hero.facing = dir.x.atan2(dir.y);
     hero.moving = walking;
     hero.moving_amt = if walking { 1.0 } else { 0.0 };
+    hero.gait_speed = 0.0;
     if walking {
-        hero.walk_phase += dt * STEP_FREQ;
+        crate::player::anim::stage_gait(&mut hero, explore_speed(), dt);
     }
-    let bob = hero.walk_phase.sin().abs() * 0.05 * hero.moving_amt;
-    htf.translation = Vec3::new(pos.x, y + bob, pos.y);
+    // The rig's hips own the bob (as in `movement`); the root just tracks the ground.
+    htf.translation = Vec3::new(pos.x, y, pos.y);
     htf.rotation = Quat::from_rotation_y(hero.facing);
 
     // Camera: in FreeRoam (no follow-cam runs) drive a bespoke third-person chase. In Play
