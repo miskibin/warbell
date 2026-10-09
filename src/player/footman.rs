@@ -49,6 +49,9 @@ pub(crate) struct LegRig {
     pub heel: f32,
     /// Model metres → rig units (the `TARGET_RIG_HEIGHT` scale applied under the hero root).
     pub scale: f32,
+    /// Shoulder joints' rest offsets in the torso (the gait slides them with the arm swing).
+    pub shoulder: Vec3,
+    pub shoulder_r: Vec3,
 }
 
 pub(crate) fn leg_rig() -> LegRig {
@@ -74,6 +77,8 @@ pub(crate) fn leg_rig() -> LegRig {
                 toe,
                 heel,
                 scale: TARGET_RIG_HEIGHT / (model.max_y - model.min_y).max(0.01),
+                shoulder: pos_of(model, "ShoulderL"),
+                shoulder_r: pos_of(model, "ShoulderR"),
             }
         };
         if let Some(gpu) = GPU.get() { measure(&gpu.model) } else { measure(&parse()) }

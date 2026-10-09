@@ -16,8 +16,12 @@ use crate::{blockers, steer, worldmap};
 
 use super::{FirstPerson, Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes};
 
-pub(crate) const SPEED: f32 = 3.5;
-pub(crate) const SPRINT_MULT: f32 = 1.75;
+/// WASD is a brisk WALK (≈1.8 m/s for this ~1.9 m body) and Shift a RUN (a jog, ≈4 m/s): the
+/// gait is cut from ground speed, and the old 3.5 / ×1.75 read as an unnaturally fast scurry.
+/// Still outruns every ork while running (fastest: scouts at 2.3), but a walking hero can be
+/// caught.
+pub(crate) const SPEED: f32 = 1.4;
+pub(crate) const SPRINT_MULT: f32 = 2.3;
 
 // ── Combat stance (the Witcher "Alert Near") ──
 // With a soft-target near (`hero.soft_pos`, picked by `softlock`), the body stays SQUARE TO THE

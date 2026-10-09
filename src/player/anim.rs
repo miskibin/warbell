@@ -331,15 +331,15 @@ struct Gait {
 }
 
 fn gait_at(v: f32) -> Gait {
-    let run = smoothstep((v - 1.6) / 2.0);
+    let run = smoothstep((v - 2.0) / 1.7);
     let sprint = smoothstep((v - 4.9) / 2.7);
     // Short creeping steps when barely moving, a full stride by a brisk walk.
-    let walk_sweep = lerp(0.40, 0.86, smoothstep(v / 1.5));
+    let walk_sweep = lerp(0.40, 0.9, smoothstep(v / 1.5));
     let k = |w: f32, j: f32, s: f32| lerp(lerp(w, j, run), s, sprint);
     Gait {
         sweep: k(walk_sweep, 0.78, 0.86),
         front: k(0.44, 0.36, 0.30),
-        duty: k(0.62, 0.28, 0.22),
+        duty: k(0.6, 0.28, 0.22),
         toe_off: k(0.38, 0.55, 0.75),
         strike: k(-0.22, -0.08, 0.0),
         run,
@@ -552,10 +552,20 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
 
     // ── Trunk: lean into the speed, shoulders counter-rotate the pelvis, head stays on the road ──
     let lean = lerp(0.04, lerp(0.15, 0.28, sprint), run) + run * 0.035 * (1.0 - crest) * 0.5;
-    let shoulder = lerp(0.07, lerp(0.13, 0.17, sprint), run) * swing; // + = right shoulder forward
+    // Overlapping action: nothing moves in lock-step. The pelvis leads, the shoulders follow it a
+    // beat later, the arms later still, the elbows and the head last — identical in-phase sines on
+    // every joint are what read as stiff / robotic.
+    let shoulder = lerp(0.07, lerp(0.13, 0.17, sprint), run) * (c - 0.2).cos(); // + = right shoulder forward
+    // The trunk soaks up each landing a moment after the low point (and the head counters most
+    // of it so the gaze stays steady).
+    let absorb = lerp(0.015, 0.03, run) * -(TAU * (step - (g.duty + 0.5 * run)) - 0.7).cos();
     // The trunk takes back most of the pelvic drop so the shoulders stay nearly level.
-    p.torso = Jp::r(Quat::from_rotation_y(-pel_yaw - shoulder) * e3(lean - lerp(0.0, 0.06, run), 0.0, -0.75 * pel_drop));
-    p.head = Jp::r(e3(-lean * 0.75, shoulder * 0.9, 0.0));
+    p.torso = Jp::r(
+        Quat::from_rotation_y(-pel_yaw - shoulder)
+            * e3(lean - lerp(0.0, 0.06, run) + absorb, 0.0, -0.75 * pel_drop),
+    );
+    let head_yaw = lerp(0.07, lerp(0.13, 0.17, sprint), run) * (c - 0.45).cos();
+    p.head = Jp::r(e3(-lean * 0.75 - 0.7 * absorb, head_yaw * 0.85, -0.25 * pel_drop));
 
     // ── Arms: opposite arm to the forward leg (right/sword arm forward when the left boot is out
     // front). Sprint-coaching rules of thumb: the swing comes from a relaxed shoulder with the
@@ -564,13 +574,12 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
     // elbow is NOT locked at 90° — it closes to ~70° in front and opens past 90° behind, trailing
     // the shoulder a beat (that lag is what reads as loose rather than robotic). A walk swings
     // near-straight. ──
-    let amp = lerp(0.20, lerp(0.52, 0.64, sprint), run);
-    let back_bias = 0.18 * run;
-    let flex_front = lerp(0.30, lerp(1.75, 1.95, sprint), run);
-    let flex_back = lerp(0.22, lerp(1.2, 1.1, sprint), run);
-    let tuck = lerp(0.04, -0.07, run); // + = away from the body
+    let amp = lerp(0.26, lerp(0.52, 0.64, sprint), run);
+    let back_bias = lerp(0.04, 0.18, run);
+    let flex_front = lerp(0.45, lerp(1.75, 1.95, sprint), run);
+    let flex_back = lerp(0.12, lerp(1.2, 1.1, sprint), run);
+    let tuck = lerp(0.0, -0.07, run); // + = away from the body
     let cross = 0.35 * run; // forward-swing drift toward the midline
-    let lag = 0.45 * run;
     // `scale` trims the pump; `inward` is how far the back swing tucks the arm toward the spine
     // (the bent arm otherwise flings the fist out past the hip); `elbow_fix` holds the elbow at a
     // steady carry (the shield arm: a big board flapping through a full pump reads as broken).
@@ -581,16 +590,23 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
         let el = rx(lerp(pump, -0.5 * (flex_back + flex_front), elbow_fix));
         (sh, el)
     };
-    let late = (c - lag).cos();
-    let (sr, er) = arm(swing, late, 1.0, lerp(1.0, 0.8, armed), 0.4, 0.0);
-    let (sl, el) = arm(-swing, -late, -1.0, 0.6, 0.1, 0.6);
-    p.sh_r = Jp::r(sr);
+    // The arm trails the leg phase a little; the forearm trails the upper arm.
+    let arm_swing = (c - 0.3).cos();
+    let late = (c - 0.3 - lerp(0.35, 0.45, run)).cos();
+    let (sr, er) = arm(arm_swing, late, 1.0, lerp(1.0, 0.8, armed), 0.4, 0.0);
+    let (sl, el) = arm(-arm_swing, -late, -1.0, lerp(0.85, 0.6, run), 0.1, lerp(0.2, 0.6, run));
+    // The shoulder girdle travels with its arm (forward + a hair up on the front swing, back on
+    // the back swing) instead of the arm pivoting about a bolted-down socket.
+    let girdle = |rest: Vec3, fwd: f32| {
+        rest + Vec3::new(0.0, lerp(0.006, 0.014, run) * fwd.max(0.0), lerp(0.015, 0.03, run) * fwd)
+    };
+    p.sh_r = Jp { t: Some(girdle(rig.shoulder_r, arm_swing)), r: sr };
     p.el_r = Jp::r(er);
-    p.sh_l = Jp::r(sl);
+    p.sh_l = Jp { t: Some(girdle(rig.shoulder, -arm_swing)), r: sl };
     p.el_l = Jp::r(el);
     // With the blade in hand, the wrist rides the pump against it so the sword stays shouldered
     // near-upright instead of fanning behind the head.
-    let wrist = armed * run * 0.85 * (lerp(1.0, 0.8, armed) * amp * swing + (flex_front - flex_back) * 0.5 * late);
+    let wrist = armed * run * 0.85 * (lerp(1.0, 0.8, armed) * amp * arm_swing + (flex_front - flex_back) * 0.5 * late);
     p.sword = Jp::r(rx(wrist) * sword_rest_r().slerp(posed_sword(-2.046, -0.52, 0.119).r, run));
     p.shield = rest().shield.lerp(posed_shield(0.924, 0.415, -0.121), run);
     p
@@ -1583,7 +1599,13 @@ pub fn hero_anim(
     };
 
     for (part, mut tf) in &mut parts {
-        let jp = pose.get(part.joint);
+        let mut jp = pose.get(part.joint);
+        // Only the gait slides the shoulder girdle; every other clip leaves the shoulders' `t`
+        // unset, so pin them back to the bind offset instead of keeping the last stride's.
+        if jp.t.is_none() && matches!(part.joint, Joint::ShoulderL | Joint::ShoulderR) {
+            let rig = super::footman::leg_rig();
+            jp.t = Some(if part.joint == Joint::ShoulderL { rig.shoulder } else { rig.shoulder_r });
+        }
         if let Some(t) = jp.t {
             // Clips were authored when the hips sat at y = 1.05. The footman's hips are at
             // `HIP_REST_Y` (0.98); shift every absolute hip height by the same delta so crouches
@@ -1803,11 +1825,12 @@ mod tests {
     #[test]
     fn cadence_reads_human() {
         let steps = |v: f32| gait_phase_rate(v) / PI; // two steps per 2π
-        assert!((1.4..2.7).contains(&steps(1.4)), "walk cadence {}", steps(1.4));
-        let jog = steps(super::super::SPEED);
-        assert!((2.6..3.8).contains(&jog), "jog cadence {jog}");
-        let sprint = steps(super::super::SPEED * super::super::SPRINT_MULT);
-        assert!((3.2..4.4).contains(&sprint) && sprint > jog, "sprint cadence {sprint}");
+        let walk = steps(super::super::SPEED);
+        assert!((1.8..2.6).contains(&walk), "walk cadence {walk}");
+        let run = steps(super::super::SPEED * super::super::SPRINT_MULT);
+        assert!((2.6..3.6).contains(&run) && run > walk, "run cadence {run}");
+        let sprint = steps(6.125); // a hasted / downhill-road top speed
+        assert!((3.2..4.5).contains(&sprint), "sprint cadence {sprint}");
         assert_eq!(gait_phase_rate(0.0), 0.0);
     }
 

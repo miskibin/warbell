@@ -84,8 +84,6 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
         "walk" => {
             crate::player::anim::stage_gait(&mut hero, crate::player::SPEED, dt);
         }
-        // A true walk (below the base speed, which is a jog for this body — see `anim::gait_at`).
-        "stroll" => crate::player::anim::stage_gait(&mut hero, 1.4, dt),
         "run" => {
             hero.run_amt = 1.0;
             crate::player::anim::stage_gait(&mut hero, crate::player::SPEED * crate::player::SPRINT_MULT, dt);

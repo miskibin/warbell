@@ -159,7 +159,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_MENU=1` | shoot the start screen |
 | `FOREST_FP=1` | boot straight into first-person (forces Play so the follow-cam eye-view can be captured; `player/camera.rs`). Also shows the FP reticle under a capture (no pointer lock needed) |
 | `FOREST_VMPOSE=swing:<variant 0-3>:<progress 0-1>\|block\|ready\|sprint` | freeze the FP viewmodel in one pose so a still frames it exactly (`player/viewmodel.rs`); pair with `FOREST_FP=1`. `FOREST_VMHIDE=1` hides the viewmodel but keeps its camera lean, for A/B diffs |
-| `FOREST_DEMO_SPEED=<u/s>` | pace of the `FOREST_DEMO=explore` walk (default 4.0; `6.125` = the Shift sprint). The hero's gait (walk/jog/sprint) is picked from speed, so this films any of them (`demo.rs`) |
+| `FOREST_DEMO_SPEED=<u/s>` | pace of the `FOREST_DEMO=explore` walk (default = the WASD walk, 1.4; `3.22` = the Shift run). The hero's gait (walk/jog/sprint) is picked from speed, so this films any of them (`demo.rs`) |
 | `FOREST_TPS=1` (+`_AZ`/`_PITCH` rad, `_DIST` units) | boot Play + **third-person** real follow-cam so a shot/clip frames the world like actual gameplay (NOT a god-cam `FOREST_CAM`); place the hero with `FOREST_HERO`, film a walk with `FOREST_DEMO=explore` (`player/mod.rs`, `player/camera.rs`) |
 | `FOREST_LOADTEST=1` | hold the boot loading veil up (even under a capture) so it can be shot (`loading.rs`); pair with `FOREST_SHOT`+`FOREST_MENU=1` |
 | `FOREST_PANEL=tree\|inv` | seed + open the upgrade-tree / satchel panel for a shot |
