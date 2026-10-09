@@ -499,6 +499,9 @@ fn back_sword_transform(model: &Model) -> Transform {
     }
 }
 
+/// Radius of the knee-pit mail filler (model metres; the greave's half-width is ~0.09).
+const KNEE_FILL_R: f32 = 0.08;
+
 /// Roll of the slung blade about its own axis (tuned against the viewer).
 const BACK_SWORD_ROLL: f32 = 0.0;
 
@@ -602,4 +605,25 @@ pub fn spawn(
     let hip_r = spawn_joint(commands, hips, "HipR", Transform::from_translation(pos_of(&g.model, "HipR")));
     let knee_r = spawn_joint(commands, hip_r, "KneeR", Transform::from_translation(pos_of(&g.model, "KneeR")));
     spawn_joint(commands, knee_r, "FootR", Transform::from_translation(pos_of(&g.model, "FootR")));
+
+    // Knee-pit filler. The thigh's mail stops at the knee pivot and the greave starts ~7 cm below
+    // it, so a bending knee opened a see-through slit at the back of the leg. A mail ball on the
+    // knee pivot sits inside the plates and only shows through that gap.
+    if let Some(chain) = g.model.mats.iter().position(|m| m.tex == "chain") {
+        let mut ball = Sphere::new(KNEE_FILL_R).mesh().ico(2).unwrap_or_else(|_| Sphere::new(KNEE_FILL_R).mesh().uv(12, 8));
+        let n = ball.count_vertices();
+        ball.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0, 1.0, 1.0, 1.0]; n]);
+        let ball = meshes.add(ball);
+        for (knee, side) in [(knee_l, 1.0_f32), (knee_r, -1.0)] {
+            let leaf = commands
+                .spawn((
+                    Mesh3d(ball.clone()),
+                    MeshMaterial3d(g.mats[chain].clone()),
+                    Transform::from_translation(Vec3::new(-0.006 * side, -0.035, -0.01)),
+                    HeroMesh,
+                ))
+                .id();
+            commands.entity(knee).add_child(leaf);
+        }
+    }
 }

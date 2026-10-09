@@ -497,12 +497,12 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
     let crest = (TAU * (step - (g.duty + 0.5 * run))).cos(); // +1 at the top of the bob
     let bob = lerp(0.022, lerp(0.045, 0.038, sprint), run) * crest;
     let base = super::model::HIP_REST_Y - lerp(0.012, lerp(0.035, 0.05, sprint), run);
-    let sway = lerp(0.03, 0.012, run) * (kr - kl); // over the stance foot (left leg is −X)
+    let sway = lerp(0.022, 0.012, run) * (kr - kl); // over the stance foot (left leg is −X)
     // Hips work in all three planes: they yaw with the stride (the forward leg's hip swings
     // forward), DROP on the swing-leg side while the other leg carries the weight, and tip
     // forward a touch as the body loads into each stance.
     let pel_yaw = lerp(0.10, lerp(0.12, 0.14, sprint), run) * swing; // + swings the left hip forward
-    let pel_drop = lerp(0.06, 0.075, run) * (kr - kl); // − = right (+X) hip low: left leg loaded
+    let pel_drop = lerp(0.045, 0.075, run) * (kr - kl); // − = right (+X) hip low: left leg loaded
     let pelvis = e3(run * (0.06 - 0.03 * crest), pel_yaw, pel_drop);
     // Never ask a planted leg for more reach than it has: the hips sink at the far ends of a
     // stride instead of the boot peeling off the ground (soft-min keeps it smooth).
@@ -544,8 +544,13 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
             }
         };
         // Legs live in the pelvis frame: undo the pelvis turn so the leg plane stays on the travel
-        // line and a planted boot never twists or skates with the hip swing.
-        (Jp::r(pelvis.inverse() * rx(th)), Jp::r(rx(kn)), Jp::r(rx(ft)))
+        // line and a planted boot never twists or skates with the hip swing. The sagittal IK
+        // ignores X, so the pelvis's side-to-side sway would carry the boots with it (a planted
+        // foot shuffling ±2 cm sideways every step reads as wobbly on the legs): abduct the leg
+        // against the sway so the feet keep their track and only the pelvis travels.
+        let leg_len = (hip.y - a.1).max(0.3);
+        let abduct = Quat::from_rotation_z((-(hips_t.x) / leg_len).clamp(-0.5, 0.5).asin());
+        (Jp::r(pelvis.inverse() * abduct * rx(th)), Jp::r(rx(kn)), Jp::r(rx(ft)))
     };
     (p.hip_l, p.knee_l, p.foot_l) = leg(hip_l, u_l, al, pl);
     (p.hip_r, p.knee_r, p.foot_r) = leg(hip_r, u_r, ar, pr);
@@ -1763,6 +1768,9 @@ mod tests {
                     let (pa, pb) = if a.0.y <= a.1.y { (a.0, b.0) } else { (a.1, b.1) };
                     let slip = (pb.z - pa.z) / dt + vm;
                     assert!(slip.abs() < 0.06 * vm + 0.05, "planted boot skates: v={v}, u={u}, slip={slip} m/s of {vm}");
+                    // …nor shuffle sideways with the pelvis sway (the "wobbly on its legs" read).
+                    let side = (pb.x - pa.x) / dt;
+                    assert!(side.abs() < 0.08, "planted boot shuffles sideways: v={v}, u={u}, {side} m/s");
                 }
             }
         }
