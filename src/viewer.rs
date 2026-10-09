@@ -119,6 +119,13 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
             hero.vel_y = (time.elapsed_secs() * 1.2).cos() * 6.5;
         }
         "victory" => hero.victory = true,
+        // Draw / sheathe loop: 3 s "in a fight" (combat window open), 3 s calm.
+        "draw" => {
+            let now = time.elapsed_secs();
+            if now % 6.0 < 3.0 {
+                hero.combat_until = now + 0.1;
+            }
+        }
         // Loop the Sand-Dash slide progress (0→1 along the blink) so a clip shows the dash-swipe lunge.
         "dash" => hero.dash_t = (time.elapsed_secs() * 0.5) % crate::player::DASH_TIME,
         "jump" => {

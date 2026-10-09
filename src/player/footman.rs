@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, Face, TextureDimension, TextureFormat};
 
 use super::anim::sword_rest_r;
-use super::{HeroMesh, HeroPart, HeroWeapon, Joint};
+use super::{BackSword, HeroMesh, HeroPart, HeroWeapon, Joint};
 
 const BIN: &[u8] = include_bytes!("../../assets/models/footman.bin");
 
@@ -467,6 +467,36 @@ fn joint_of(name: &str) -> Option<Joint> {
     })
 }
 
+/// Where the slung sword sits in the torso joint's frame. The meshes keep their hand-sword
+/// transforms, so the holder carries `sword_rest_r` like the `Sword` joint does, turned so the blade
+/// (grip → `tip`) runs down-and-across the back, with the hilt just behind the right shoulder
+/// and clear of the backplate.
+fn back_sword_transform(model: &Model) -> Transform {
+    let blade = &model.meshes[model.blade];
+    let inner = Transform::from_rotation(sword_rest_r()) * blade.xf;
+    let dir = inner.transform_point(model.tip).normalize_or(Vec3::NEG_Y);
+    // Backplate depth: the rearmost torso vertex, in the torso joint's frame.
+    let back_z = model
+        .meshes
+        .iter()
+        .filter(|m| m.joint == "Torso")
+        .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p)).z))
+        .fold(0.0_f32, f32::min);
+    let shoulder = pos_of(model, "ShoulderR");
+    let want = Vec3::new(-0.8, -1.0, 0.0).normalize();
+    let turn = Quat::from_rotation_arc(dir, want);
+    // Roll about the blade so the flat lies against the back (crossguard across, not into it).
+    let roll = Quat::from_axis_angle(want, BACK_SWORD_ROLL);
+    Transform {
+        translation: Vec3::new(shoulder.x * 0.75, shoulder.y + 0.16, back_z - 0.035),
+        rotation: roll * turn * sword_rest_r(),
+        scale: Vec3::ONE,
+    }
+}
+
+/// Roll of the slung blade about its own axis (tuned against the viewer).
+const BACK_SWORD_ROLL: f32 = 0.0;
+
 fn pos_of(model: &Model, name: &str) -> Vec3 {
     model.joints.iter().find(|(n, _, _)| n == name).map(|(_, _, p)| *p).unwrap_or(Vec3::ZERO)
 }
@@ -528,6 +558,21 @@ pub fn spawn(
     let hips = spawn_joint(commands, rig, "Hips", Transform::from_translation(pos_of(&g.model, "Hips")));
     let torso = spawn_joint(commands, hips, "Torso", Transform::from_translation(pos_of(&g.model, "Torso")));
     spawn_joint(commands, torso, "Head", Transform::from_translation(pos_of(&g.model, "Head")));
+
+    // The sheathed sword, slung diagonally across the back: hilt up behind the right shoulder,
+    // point down toward the left hip. Same meshes as the hand sword (not `HeroWeapon`, so the
+    // blade trail and the Director's weapon hide keep tracking the hand one).
+    if let Some(list) = by_joint.get("Sword") {
+        let back = commands.spawn((back_sword_transform(&g.model), Visibility::Hidden, BackSword)).id();
+        commands.entity(torso).add_child(back);
+        for &i in list {
+            let m = &g.model.meshes[i];
+            let leaf = commands
+                .spawn((Mesh3d(g.meshes[i].clone()), MeshMaterial3d(g.mats[m.mat].clone()), m.xf, HeroMesh))
+                .id();
+            commands.entity(back).add_child(leaf);
+        }
+    }
 
     let sh_l = spawn_joint(commands, torso, "ShoulderL", Transform::from_translation(pos_of(&g.model, "ShoulderL")));
     let el_l = spawn_joint(commands, sh_l, "ElbowL", Transform::from_translation(pos_of(&g.model, "ElbowL")));

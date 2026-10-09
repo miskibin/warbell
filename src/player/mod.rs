@@ -87,6 +87,12 @@ pub struct HeroMesh;
 #[derive(Component)]
 pub struct HeroWeapon;
 
+/// The sheathed sword slung across the hero's back (a copy of the hand sword's meshes under the
+/// torso). `anim::hero_anim` swaps it with the hand sword: drawn only for a fight, slung on the back
+/// otherwise (so a sprint pumps two free arms instead of waving a blade).
+#[derive(Component)]
+pub struct BackSword;
+
 /// The hero's hot per-frame state (mutated directly each frame, never via events).
 #[derive(Component)]
 pub struct Hero {
