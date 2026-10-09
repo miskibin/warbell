@@ -547,29 +547,40 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
     p.torso = Jp::r(Quat::from_rotation_y(-pel_yaw - shoulder) * e3(lean - lerp(0.0, 0.06, run), 0.0, lerp(0.02, 0.01, run) * (kr - kl)));
     p.head = Jp::r(e3(-lean * 0.75, shoulder * 0.9, 0.0));
 
-    // ── Arms: opposite arm to the forward leg. Right (sword) arm forward when the left boot is
-    // out front. A walk swings loose and near-straight; a run bends ~90° and pumps from the
-    // shoulder; the elbow closes on the forward swing. ──
-    // A run swings the upper arm mostly BEHIND the body (hand from the hip pocket on the back
-    // swing up to the chest on the front), elbow near 90°, opening on the back swing and closing
-    // on the front — not the forearms held up in front of the chest.
+    // ── Arms: opposite arm to the forward leg (right/sword arm forward when the left boot is out
+    // front). Sprint-coaching rules of thumb: the swing comes from a relaxed shoulder with the
+    // elbows kept close to the body; the hand rises to about chin height just inside the
+    // shoulder, drifting toward (never across) the midline, and drops past the hip behind; the
+    // elbow is NOT locked at 90° — it closes to ~70° in front and opens past 90° behind, trailing
+    // the shoulder a beat (that lag is what reads as loose rather than robotic). A walk swings
+    // near-straight. ──
     let amp = lerp(0.20, lerp(0.52, 0.64, sprint), run);
-    let back_bias = 0.2 * run;
-    let elbow = lerp(-0.25, lerp(-1.35, -1.5, sprint), run);
-    let close = lerp(0.10, 0.22, run);
-    let open = 0.25 * run;
-    let fwd_r = swing.max(0.0); // right arm in front
-    let fwd_l = (-swing).max(0.0);
-    let out = lerp(0.04, 0.10, run);
-    // The sword arm pumps a little less (it carries the weight) …
-    let pump_r = -lerp(1.0, 0.8, armed) * amp * swing + back_bias;
-    p.sh_r = Jp::r(e3(pump_r, 0.0, out));
-    p.el_r = Jp::r(rx(elbow - close * fwd_r + open * fwd_l));
-    p.sh_l = Jp::r(e3(amp * swing + back_bias, 0.0, -out));
-    p.el_l = Jp::r(rx(elbow - close * fwd_l + open * fwd_r));
-    // … and the wrist rides the pump against it, so the blade stays shouldered near-upright instead
-    // of fanning flat behind the head on the forward swing.
-    let wrist = armed * run * 0.85 * (-(pump_r - back_bias) + close * fwd_r - open * fwd_l);
+    let back_bias = 0.18 * run;
+    let flex_front = lerp(0.30, lerp(1.75, 1.95, sprint), run);
+    let flex_back = lerp(0.22, lerp(1.2, 1.1, sprint), run);
+    let tuck = lerp(0.04, -0.07, run); // + = away from the body
+    let cross = 0.35 * run; // forward-swing drift toward the midline
+    let lag = 0.45 * run;
+    // `scale` trims the pump; `inward` is how far the back swing tucks the arm toward the spine
+    // (the bent arm otherwise flings the fist out past the hip); `elbow_fix` holds the elbow at a
+    // steady carry (the shield arm: a big board flapping through a full pump reads as broken).
+    let arm = |fwd: f32, fwd_late: f32, side: f32, scale: f32, inward: f32, elbow_fix: f32| {
+        let z = tuck - cross * fwd.max(0.0) - inward * run * (-fwd).max(0.0);
+        let sh = e3(-scale * amp * fwd + back_bias, -0.2 * run * side, side * z);
+        let pump = -lerp(flex_back, flex_front, 0.5 + 0.5 * fwd_late);
+        let el = rx(lerp(pump, -0.5 * (flex_back + flex_front), elbow_fix));
+        (sh, el)
+    };
+    let late = (c - lag).cos();
+    let (sr, er) = arm(swing, late, 1.0, lerp(1.0, 0.8, armed), 0.4, 0.0);
+    let (sl, el) = arm(-swing, -late, -1.0, 0.6, 0.1, 0.6);
+    p.sh_r = Jp::r(sr);
+    p.el_r = Jp::r(er);
+    p.sh_l = Jp::r(sl);
+    p.el_l = Jp::r(el);
+    // With the blade in hand, the wrist rides the pump against it so the sword stays shouldered
+    // near-upright instead of fanning behind the head.
+    let wrist = armed * run * 0.85 * (lerp(1.0, 0.8, armed) * amp * swing + (flex_front - flex_back) * 0.5 * late);
     p.sword = Jp::r(rx(wrist) * sword_rest_r().slerp(posed_sword(-2.046, -0.52, 0.119).r, run));
     p.shield = rest().shield.lerp(posed_shield(0.924, 0.415, -0.121), run);
     p
