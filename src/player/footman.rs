@@ -527,6 +527,15 @@ fn gpu(
                 };
                 parts.entry(key.0).or_default().push(part);
             }
+            if let Some(lining) = shield_lining(&model) {
+                let leather = model.mats.iter().position(|m| m.tex == "leather").unwrap_or(0);
+                parts.entry("Shield".into()).or_default().push(Part {
+                    mat: leather,
+                    mesh: meshes.add(lining),
+                    xf: Transform::IDENTITY,
+                    blade: false,
+                });
+            }
             let b = &model.meshes[model.blade];
             parts.entry(b.joint.clone()).or_default().push(Part {
                 mat: b.mat,
@@ -613,6 +622,66 @@ fn back_sword_transform(model: &Model) -> Transform {
         rotation: roll * turn * sword_rest_r(),
         scale: Vec3::ONE,
     }
+}
+
+/// A leather lining over the inside of the shield board. The asset's back is bare planks, flat-shaded
+/// into facets, with the boss rivets poking through — fine at a glance from behind the knight, but in
+/// first person the raised shield shows exactly that side, filling a corner of the screen. Real heater
+/// shields were faced with leather or linen on the inside: this is the board's own inner surface
+/// (the wood triangles facing the gripping hand), welded smooth and stood a few mm off it toward the
+/// hand, inside the rim.
+fn shield_lining(model: &Model) -> Option<Mesh> {
+    let wood = model.mats.iter().position(|m| m.tex == "wood")?;
+    // The gripping hand, in the shield joint's frame: the inside is the side facing it.
+    let hand = shield_rest_r().inverse() * -SHIELD_REST_T;
+    // The board is curved round the forearm: its thin axis (z) points from the face to the hand.
+    let inward = Vec3::Z * if hand.z < 0.0 { -1.0 } else { 1.0 };
+    let (mut pos, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new());
+    for m in model.meshes.iter().filter(|m| m.joint == "Shield" && m.mat == wood) {
+        let base = pos.len() as u32;
+        let p: Vec<Vec3> = m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p))).collect();
+        // Normals by the inverse transpose (correct under any part scale).
+        let nm = Mat3::from(m.xf.compute_affine().matrix3).inverse().transpose();
+        let n: Vec<Vec3> = m.normals.iter().map(|n| (nm * Vec3::from_array(*n)).normalize_or_zero()).collect();
+        pos.extend(p);
+        nrm.extend(n);
+        for t in m.indices.chunks_exact(3) {
+            let v = [t[0], t[1], t[2]].map(|i| (base + i) as usize);
+            let inner = v.iter().all(|&i| nrm[i].dot(inward) > 0.2);
+            if inner {
+                idx.extend(v.map(|i| i as u32));
+            }
+        }
+    }
+    if idx.is_empty() {
+        return None;
+    }
+    // Keep only the used vertices, welded (the planks are flat-shaded: every facet has its own copy
+    // of a corner) so the lining is one smooth sheet, lifted off the board toward the hand.
+    let key = |p: Vec3| (p * 2000.0).round().as_ivec3();
+    let mut welded: HashMap<IVec3, u32> = HashMap::new();
+    let (mut p_out, mut n_sum, mut i_out): (Vec<Vec3>, Vec<Vec3>, Vec<u32>) = (Vec::new(), Vec::new(), Vec::new());
+    for &i in &idx {
+        let i = i as usize;
+        let w = *welded.entry(key(pos[i])).or_insert_with(|| {
+            p_out.push(pos[i] + inward * 0.008);
+            n_sum.push(Vec3::ZERO);
+            (p_out.len() - 1) as u32
+        });
+        n_sum[w as usize] += nrm[i];
+        i_out.push(w);
+    }
+    i_out = i_out.chunks_exact(3).filter(|t| t[0] != t[1] && t[1] != t[2] && t[0] != t[2]).flatten().copied().collect();
+    let n_out: Vec<[f32; 3]> = n_sum.iter().map(|n| n.normalize_or(inward).to_array()).collect();
+    let p_out: Vec<[f32; 3]> = p_out.iter().map(|p| p.to_array()).collect();
+    let n = p_out.len();
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, p_out);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, n_out);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0, 1.0, 1.0, 1.0]; n]);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 0.0]; n]);
+    mesh.insert_indices(Indices::U32(i_out));
+    Some(mesh)
 }
 
 /// Where the slung shield sits in the torso joint's frame: board face-out (away from the back),
@@ -840,3 +909,4 @@ pub fn spawn(
         }
     }
 }
+

@@ -2349,11 +2349,14 @@ pub fn hero_anim(
     let want_drawn = action || hero_mut.victory || (fight && !hero_mut.sprint_held);
     sheath.update(dt, want_drawn, action, hero_mut.sprint_held);
     hero_mut.weapons_drawn = sheath.drawn;
+    hero_mut.kit_reach = sheath.reach_t.is_some();
     let hero: &Hero = &hero_mut;
     let transit = sheath.shield_transit();
     // First person, sprinting: nothing of the kit may be in the frame, in the hand or slung (the
     // trunk, arms and weapons all swing past the eye at a run).
-    let fp_sprint = fp.blend > 0.5 && (hero_mut.gait_speed > 3.0 || hero_mut.run_amt > 0.3);
+    // Nor through a draw / sheathe reach: the hands swing over the shoulder past the eye, and the
+    // forearms are hidden for it (`camera::fp_body_visibility`) — a blade with no hand would float.
+    let fp_sprint = fp.blend > 0.5 && (hero_mut.gait_speed > 3.0 || hero_mut.run_amt > 0.3 || hero_mut.kit_reach);
     for (part, mut vis) in &mut sword_vis {
         if part.joint == Joint::Sword {
             vis.set_if_neq(if sheath.drawn && !fp_sprint { Visibility::Inherited } else { Visibility::Hidden });

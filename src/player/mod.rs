@@ -35,7 +35,7 @@ mod viewmodel;
 pub use camera::FirstPerson;
 /// Marker for solid buildings the third-person camera boom collides with (see [`boom`]).
 pub use boom::CameraOccluder;
-pub(crate) use camera::fp_body_visibility;
+pub(crate) use camera::{fp_body_visibility, fp_head_track, viewer_fp_cam};
 pub use viewmodel::ReticleTarget;
 /// Sand-Dash slide duration — re-exported so the standalone viewer (`viewer.rs`) can drive the
 /// dash-swipe preview at the real cadence. (`anim` reads it directly via `super::movement`.)
@@ -238,6 +238,9 @@ pub struct Hero {
     /// Sword (and shield) in hand for a fight — written by [`anim`] from the draw/sheathe state.
     /// No sprinting while drawn.
     pub weapons_drawn: bool,
+    /// A draw / sheathe reach is in flight (both hands back over the shoulder / at the flank) —
+    /// written by [`anim`]; first person hides the forearms through it (they swing past the lens).
+    pub kit_reach: bool,
     /// The player walked AWAY from the ringed foe (written by [`movement`]): the combat stance lets
     /// go so the hero turns and leaves instead of backpedalling face-on. Cleared by a swing / block,
     /// by stopping, or by stepping back toward the foe.
@@ -297,6 +300,7 @@ impl Hero {
             combat_until: 0.0,
             sprint_held: false,
             weapons_drawn: false,
+            kit_reach: false,
             disengaged: false,
             away_for: 0.0,
         }

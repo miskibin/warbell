@@ -111,6 +111,10 @@ const FP_FWD_OFF: f32 = 0.05;
 /// How far in front of the rig's head joint the FP eye sits (face, not skull centre — the head
 /// itself is hidden in first person).
 const FP_HEAD_FWD: f32 = 0.09;
+/// How far above the head joint the FP eye sits (world units). The joint is the neck pivot, ~0.11
+/// below the visor slit: an eye left on it looked out of the knight's throat, so every foe of his
+/// own height stood a head taller in first person.
+const FP_HEAD_UP: f32 = 0.11;
 /// `(forward, up)` seat of the FP eye off the head joint; `FOREST_FPHEAD="fwd,up"` overrides.
 fn fp_head_seat() -> (f32, f32) {
     static CELL: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
@@ -119,7 +123,23 @@ fn fp_head_seat() -> (f32, f32) {
             .ok()
             .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
             .unwrap_or_default();
-        (v.first().copied().unwrap_or(FP_HEAD_FWD), v.get(1).copied().unwrap_or(0.0))
+        (v.first().copied().unwrap_or(FP_HEAD_FWD), v.get(1).copied().unwrap_or(FP_HEAD_UP))
+    })
+}
+
+/// FP shield guard: how far the raised shield's shoulder is moved out to the shield side and down
+/// (rig units) while blocking. The third-person guard holds the board square in front of the face —
+/// from the eye that is a wall of planks (and the fist on its grip) over the middle of the screen.
+/// KCD-style, first person carries it in the lower-left: the foe stays in view over its rim.
+/// `FOREST_FPGUARD="out,down"` overrides.
+fn fp_guard_shift() -> (f32, f32) {
+    static CELL: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
+    *CELL.get_or_init(|| {
+        let v: Vec<f32> = std::env::var("FOREST_FPGUARD")
+            .ok()
+            .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+            .unwrap_or_default();
+        (v.first().copied().unwrap_or(0.16), v.get(1).copied().unwrap_or(0.14))
     })
 }
 
@@ -147,8 +167,13 @@ const FP_PITCH_LIMIT: f32 = 1.3;
 /// [`FP_CLOSE_RANGE`] to point-blank. Enemies are taller than the 1.32 FP eye and stop at melee
 /// range, so without this a big foe is one face filling the lens. Eased slowly (~3/s) so it reads
 /// as breathing room, never a zoom pump; scaled by the FP blend so third person is untouched.
-const FP_CLOSE_FOV_DEG: f32 = 8.0;
+const FP_CLOSE_FOV_DEG: f32 = 12.0;
 const FP_CLOSE_RANGE: f32 = 3.5;
+/// With the widen, the FP eye eases back this far (world units, level, away from the look) as the
+/// ringed foe closes — inside the hidden helm, so nothing of the knight comes into view. Lens and
+/// step back together keep a club-swinging ork at point-blank about a third smaller on screen
+/// without a fish-eye lens.
+const FP_CLOSE_PULL: f32 = 0.18;
 /// Resting first-person vertical FOV. Wider than the 50° third-person lens: at the eye you want
 /// peripheral vision, and the viewmodel's screen-space poses are authored against this value.
 pub const FP_FOV_DEG: f32 = 62.0;
@@ -531,11 +556,16 @@ pub fn fp_body_visibility(
     // the body simply leaves the view while running: hide the elbow subtrees (forearm, gauntlet,
     // hand) and the plates hung on the torso + hips. Hysteresis so a jog at the threshold doesn't
     // flicker the chest in and out.
+    // Shift in a fight first puts the weapons away (and stopping draws them again): that reach swings
+    // the bare forearms, gauntlets and elbow cops up over the shoulder, straight through the lens —
+    // hidden for its length too; the kit simply comes up from below the frame when it ends.
+    let mut reach = false;
     if let Ok(h) = hero_q.single() {
         let pace = h.gait_speed.max(h.run_amt * 5.0);
         *running = if *running { pace > 2.0 } else { pace > 2.6 };
+        reach = h.kit_reach;
     }
-    let run_hide = fp.blend > 0.5 && *running;
+    let run_hide = fp.blend > 0.5 && (*running || reach);
     let want_fore = if run_hide { Visibility::Hidden } else { Visibility::Inherited };
     for (p, mut vis) in &mut parts {
         let w = match p.joint {
@@ -569,15 +599,20 @@ pub fn fp_head_track(
     time: Res<Time>,
     mut fp: ResMut<FirstPerson>,
     hero_q: Query<&GlobalTransform, With<Hero>>,
-    hero_state: Query<&Hero>,
+    hero_state: Query<(&Hero, &super::HeroHealth)>,
     mut parts: Query<(&super::HeroPart, &mut Transform, &GlobalTransform)>,
+    mut guard: Local<f32>,
 ) {
     let Ok(root) = hero_q.single() else { return };
     // A sprint folds the trunk far forward, which carries the collar, shoulders and chest plate up
     // into the lens (the eye rides the head joint). First person keeps the trunk upright instead:
     // the gait still reads in the legs, bob and stride, the armour stays out of the frame.
-    let run = hero_state.single().map_or(0.0, |h| ((h.gait_speed - 1.8) / 2.4).clamp(0.0, 1.0).max(h.run_amt));
+    let run = hero_state.single().map_or(0.0, |(h, _)| ((h.gait_speed - 1.8) / 2.4).clamp(0.0, 1.0).max(h.run_amt));
     let dt = time.delta_secs().clamp(1e-4, 0.05);
+    // Eased like the animator's block weight, so the board slides aside as it comes up.
+    let blocking = hero_state.single().is_ok_and(|(_, hh)| hh.blocking);
+    *guard += (if blocking { 1.0 } else { 0.0 } - *guard) * (dt * 10.0).min(1.0);
+    let fpb = fp.blend.clamp(0.0, 1.0);
     let mut head = None;
     for (p, mut tf, gt) in &mut parts {
         match p.joint {
@@ -595,7 +630,12 @@ pub fn fp_head_track(
             // in the lower frame, the forearm never fills it).
             super::Joint::ShoulderL | super::Joint::ShoulderR if fp.blend > 0.01 => {
                 let (fwd, down) = fp_arm_reach();
-                tf.translation += Vec3::new(0.0, -down, fwd) * fp.blend.clamp(0.0, 1.0);
+                tf.translation += Vec3::new(0.0, -down, fwd) * fpb;
+                if p.joint == super::Joint::ShoulderL && *guard > 1e-3 {
+                    let (out, low) = fp_guard_shift();
+                    let side = tf.translation.x.signum();
+                    tf.translation += Vec3::new(side * out, -low, 0.0) * *guard * fpb;
+                }
             }
             _ => {}
         }
@@ -606,6 +646,41 @@ pub fn fp_head_track(
             Some(o) if o.distance(h) < 1.0 => o + (h - o) * k,
             _ => h,
         });
+    }
+}
+
+/// Model viewer first person (`FOREST_VIEW_FP=1`, `viewer.rs`): the eye on the previewed knight's
+/// head exactly as [`player_camera`] seats it, looking along his facing at `FOREST_FP_PITCH` (rad),
+/// at the FP lens — so FP framing (armour in the lens, a raised shield, a foe's size) is checked in
+/// seconds instead of a world boot.
+pub(crate) fn viewer_fp_cam(
+    mut fp: ResMut<FirstPerson>,
+    hero_q: Query<(&Hero, &GlobalTransform)>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
+) {
+    fp.active = true;
+    fp.blend = 1.0;
+    fp.pitch = std::env::var("FOREST_FP_PITCH").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let (Ok((hero, root)), Ok((mut tf, mut proj)), Some(off)) = (hero_q.single(), cam_q.single_mut(), fp.head_off)
+    else {
+        return;
+    };
+    let (ys, yc) = hero.facing.sin_cos();
+    let (fwd, up) = fp_head_seat();
+    let eye = root.translation() + off + Vec3::new(ys, 0.0, yc) * fwd + Vec3::Y * up;
+    // A previewed foe (`FOREST_VIEW_FOE_DIST`) brings in the close-quarters widen + step back.
+    let close = std::env::var("FOREST_VIEW_FOE").is_ok().then(|| {
+        let d: f32 = std::env::var("FOREST_VIEW_FOE_DIST").ok().and_then(|v| v.parse().ok()).unwrap_or(1.6);
+        ((FP_CLOSE_RANGE - d) / FP_CLOSE_RANGE).clamp(0.0, 1.0)
+    });
+    let close = close.unwrap_or(0.0);
+    let eye = eye - Vec3::new(ys, 0.0, yc) * FP_CLOSE_PULL * close;
+    let (ps, pc) = fp.pitch.sin_cos();
+    tf.translation = eye;
+    tf.look_at(eye + Vec3::new(ys * pc, ps, yc * pc), Vec3::Y);
+    if let Projection::Perspective(p) = &mut *proj {
+        p.fov = (FP_FOV_DEG + FP_CLOSE_FOV_DEG * close).to_radians();
+        p.near = 0.04;
     }
 }
 
@@ -771,7 +846,7 @@ pub fn player_camera(
     let (fpp_sin, fpp_cos) = fp.pitch.sin_cos();
     let head_off = fp.head_off;
     let fp_pose = fp_eye_rig(&mut fp.eye, &hero, look_yaw, time.delta_secs(), head_off);
-    let fp_eye = fp_pose.pos;
+    let fp_eye = fp_pose.pos - Vec3::new(fpy_sin, 0.0, fpy_cos) * FP_CLOSE_PULL * (fp.close_fov / FP_CLOSE_FOV_DEG);
     let fp_fwd = Vec3::new(fpy_sin * fpp_cos, fpp_sin, fpy_cos * fpp_cos);
     let fp_look = fp_eye + fp_fwd;
 

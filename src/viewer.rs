@@ -61,6 +61,14 @@ pub fn run() {
             .init_resource::<crate::cinematic::DirectorState>()
             .init_resource::<crate::player::FirstPerson>()
             .add_systems(Update, (anim_drive, crate::player::anim::hero_anim).chain())
+            // `FOREST_VIEW_FP=1`: look out of the knight's head, as first person does in game.
+            .add_systems(
+                Update,
+                (crate::player::fp_head_track, crate::player::fp_body_visibility, crate::player::viewer_fp_cam)
+                    .chain()
+                    .after(crate::player::anim::hero_anim)
+                    .run_if(|| std::env::var("FOREST_VIEW_FP").is_ok()),
+            )
             // Animal / biped models read their own driver; inert for the hero.
             .add_systems(Update, (quad_anim_drive, biped_anim_drive, townsfolk_haul_props));
         // Orks own their drive (gait phase included) — posed the same frame, as in game.
@@ -295,7 +303,8 @@ fn ork_anim_drive(
 ) {
     use crate::player::anim::ork::OrkBlow;
     let (now, dt) = (time.elapsed_secs(), time.delta_secs());
-    let mode = std::env::var("FOREST_VIEW_ANIM").unwrap_or_default();
+    // `FOREST_VIEW_FOE_ANIM` drives the foe facing a first-person preview (the hero takes `_ANIM`).
+    let mode = std::env::var("FOREST_VIEW_FOE_ANIM").or_else(|_| std::env::var("FOREST_VIEW_ANIM")).unwrap_or_default();
     // World speed (the root is unscaled here: rig units / s) — a grunt's patrol / charge in rig units.
     let speed = match mode.as_str() {
         "walk" => 1.75,
@@ -500,6 +509,40 @@ fn setup(
         ))
         .id();
     spawn_model(&mut commands, root, &mut meshes, &mut images, &mat, &mut creature_mats);
+    // First-person preview / a foe beside him: the knight at his in-game scale, plus an optional foe
+    // facing him `FOREST_VIEW_FOE_DIST` (default 1.6) in front — `FOREST_VIEW_FOE=grunt|scout|
+    // berserker|shaman` (frame both from the side with `FOREST_CAM` to compare heights).
+    if std::env::var("FOREST_VIEW_FP").is_ok() || std::env::var("FOREST_VIEW_FOE").is_ok() {
+        commands.entity(root).insert(Transform::from_scale(crate::player::HERO_SCALE_V));
+        if let Ok(foe) = std::env::var("FOREST_VIEW_FOE") {
+            use crate::orks::OrkVariant::*;
+            let variant = match foe.as_str() {
+                "scout" => Scout,
+                "berserker" => Berserker,
+                "shaman" => Shaman,
+                _ => Grunt,
+            };
+            let dist = std::env::var("FOREST_VIEW_FOE_DIST").ok().and_then(|v| v.parse().ok()).unwrap_or(1.6);
+            let ork = commands
+                .spawn((
+                    Transform::from_xyz(0.0, 0.0, dist)
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
+                        .with_scale(Vec3::splat(crate::orks::world_scale(variant))),
+                    Visibility::Visible,
+                    crate::biped::BipedDrive::default(),
+                    crate::orks::ork_motion(variant, 7),
+                ))
+                .id();
+            let h = crate::orks::ork_biped_meshes(variant, crate::orks::Faction::Red).upload(&mut meshes);
+            let (hip_dx, shoulder_dx, head_scale) = crate::orks::rig_dims(variant);
+            let shield_xf = Transform {
+                translation: Vec3::new(0.0, 0.0, 0.14),
+                rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
+                scale: Vec3::ONE,
+            };
+            crate::biped::spawn_biped(&mut commands, ork, &mat, h, head_scale, 1.0, hip_dx, shoulder_dx, -0.05, Some(shield_xf));
+        }
+    }
 }
 
 /// Spawn the model named by `FOREST_VIEW` under `root`. Add new models as `match` arms.

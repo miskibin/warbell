@@ -193,6 +193,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_SCENE=farm` (+`FOREST_SCENE_T=<s>`) | stage the **Ch.2 cutscene** (campaign screenplay: dawn farm, Farmer/Wat exchange, ~19 s, `scenes.rs::FarmMorning`): scripted actors, camera cuts, captions, letterbox + fades; `_T` freezes the clock at that second for a still (`FOREST_CLIP` starts it with recording). Camera/hero are scene-driven in PostUpdate, so it works in Play too |
 | `FOREST_MENU=1` | shoot the start screen |
 | `FOREST_FP=1` | boot straight into first-person (forces Play so the follow-cam eye-view can be captured; `player/camera.rs`). Also shows the FP reticle under a capture (no pointer lock needed) |
+| `FOREST_VIEW_FP=1` (+`FOREST_FP_PITCH=<rad>`, `FOREST_VIEW_FOE=grunt\|scout\|berserker\|shaman`, `_FOE_ANIM`, `_FOE_DIST`) | model viewer in **first person**: the eye on the previewed knight's head exactly as in game (`camera::viewer_fp_cam` + the real `fp_head_track`/`fp_body_visibility`), so armour-in-the-lens, the raised shield and a foe's on-screen size are checked in ~25 s instead of a world boot. `FOREST_VIEW_ANIM` drives the hero (`run`, `block`, `drawwalk`…), `_FOE_ANIM` the ork (`smash`, `guard`…); a foe brings in the close-quarters FOV widen + eye step-back. Without `_FP`, `FOREST_VIEW_FOE` + a side `FOREST_CAM` compares heights |
 | `FOREST_VMPOSE=swing:<variant 0-3>:<progress 0-1>\|block\|ready\|sprint` | freeze the FP viewmodel in one pose so a still frames it exactly (`player/viewmodel.rs`); pair with `FOREST_FP=1`. `FOREST_VMHIDE=1` hides the viewmodel but keeps its camera lean, for A/B diffs |
 | `FOREST_DEMO_PATH="x,z;x,z;…"` | explicit waypoint route for `FOREST_DEMO=explore` (overrides the lawn stroll / `FOREST_DEMO_TO` road run) — film footsteps / boot prints on a chosen ground (`demo.rs`). Pick routes with `FOOTING_PROBE="cx,cz,half,step" cargo test --release footing_probe -- --ignored --nocapture` (letter map of `footing::surface_at`) |
 | `FOREST_PRINTTEST="x,z"` (+`_SCALE=<k>`) | park rows of boot prints (mud / sand / snow × left, right, sprint) + a blood control mark on the ground at a world XZ ~4 s in, for a still of the print look (`footprints.rs`, shader `ground_mark.wesl` `KIND_BOOT`); `_SCALE` blows them up k× to inspect the relief. Use with `FOREST_CAM` + `FOREST_NOBLUR=1` (DoF smears them). `FOREST_FOOTLOG=1` logs every hero footfall (surface, foot side, position) — check surface switching / left-right alternation from a clip's log (`footing.rs`) |
@@ -404,9 +405,12 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   (Depth/Normal/MotionVector prepass + SSAO + DOF + godrays + outline + bloom) throws a hard **wgpu
   Validation Error → the app quits**. Don't re-attempt it. Anything "in front of the lens" (a FP
   weapon/arms view-model, a HUD-in-world overlay) must live in the ONE camera. **Oct 2026: first person now looks out of the REAL third-person rig** (`camera::fp_head_track`:
-  eye on the head joint, head + upper-arm/pauldron meshes hidden, torso bent by look pitch, shoulders
-  pushed forward/down in FP; tune with `FOREST_FPHEAD="fwd,up"`, `FOREST_FPARM="fwd,down"`,
-  `FOREST_FP_PITCH=<rad>`). The hero root is X-mirrored (`HERO_SCALE_V`; hero materials cull FRONT)
+  eye 0.11 above the head joint — the joint is the neck pivot, and an eye on it made every foe look a
+  head taller — head + upper-arm/pauldron meshes hidden, torso bent by look pitch, shoulders
+  pushed forward/down in FP, the blocking shield's shoulder moved out/down so the board sits lower-left
+  instead of over the screen centre; forearms + kit hidden at a run AND through a draw/sheathe reach
+  (`Hero::kit_reach`); tune with `FOREST_FPHEAD="fwd,up"`, `FOREST_FPARM="fwd,down"`,
+  `FOREST_FPGUARD="out,down"`, `FOREST_FP_PITCH=<rad>`; preview with `FOREST_VIEW_FP`). The hero root is X-mirrored (`HERO_SCALE_V`; hero materials cull FRONT)
   so the knight is right-handed. The viewmodel described next is legacy, hidden unless `FOREST_FPVM=1`.
   The (legacy) FP
   view-model (**rebuilt from scratch, Sept 2026** — the old one re-used the third-person rig's arms

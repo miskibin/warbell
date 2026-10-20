@@ -148,6 +148,11 @@ struct Stats {
     shaman: bool,
 }
 
+/// An ork's in-world root scale (the biped rig is authored at rig units).
+pub(crate) fn world_scale(v: OrkVariant) -> f32 {
+    BASE_SCALE * stats(v).scale * BIPED_SIZE_FIX
+}
+
 fn stats(v: OrkVariant) -> Stats {
     match v {
         // Brutes are bulked up so the warband reads as a hulking threat; the Scout stays
@@ -1867,7 +1872,7 @@ impl Armory {
         // Re-rigged onto the shared studio biped skeleton (`biped.rs`): the AI fills a `BipedDrive`
         // (via `ork_drive`) which `animate_biped` turns into the studio clips (idle/walk/run/attack).
         // `BIPED_SIZE_FIX` keeps the taller studio rig at the old ork's in-world height.
-        let scale = BASE_SCALE * st.scale * BIPED_SIZE_FIX;
+        let scale = world_scale(variant);
         let drive = crate::biped::BipedDrive { sitting: seated_rest, ..default() };
         let root = commands
             .spawn((
