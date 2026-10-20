@@ -26,6 +26,16 @@ use super::{aim_arm, e3, rest, rx, shield_gait_r, smoothstep, sword_rest_r, Jp, 
 /// ~6.5, so the fade only shows while he speeds up / slows down).
 const WALK_TO: f32 = 2.3;
 const RUN_FROM: f32 = 4.0;
+/// Mixamo's "Running" covers ~5.2 m/s at its own cadence; the knight sprints at ~6.5, which
+/// foot-locked played it as a quick patter of short steps (~4 a second). Lengthening the ground
+/// sweep can't fix that (the leg runs out of reach and the hips sink into a lunge); a faster runner
+/// spends LESS of each stride on the ground — so the run's stance is played in this share of its
+/// own time and the flight between steps stretched instead: same planted sweep, fewer, longer
+/// bounds (`FOREST_RUN_FLIGHT` overrides; 1 = the clip's own timing).
+fn run_stance_share() -> f32 {
+    static K: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *K.get_or_init(|| std::env::var("FOREST_RUN_FLIGHT").ok().and_then(|v| v.parse().ok()).unwrap_or(0.72))
+}
 
 /// 0 = the walk ... 1 = the run, at a ground speed of `v` model m/s.
 fn sprint_weight(v: f32) -> f32 {
@@ -58,8 +68,10 @@ struct Loop {
     /// Stance sweep speed (leg lengths / s at native playback) and the stride stretch on it.
     native: f32,
     stride: f32,
-    /// Fraction of the cycle a boot is planted (left: from phase 0; right: from 0.5).
+    /// Fraction of the cycle a boot is planted (left: from phase 0; right: from 0.5) in the clip,
+    /// and as played (the run's stance is compressed into a longer flight, [`run_stance_share`]).
     duty: f32,
+    play: f32,
 }
 
 impl Loop {
@@ -73,8 +85,8 @@ impl Loop {
 fn mix(v: f32) -> [(Loop, f32); 2] {
     let wr = if mixamo_run() { sprint_weight(v) } else { 0.0 };
     [
-        (Loop { clip: &mc::WALK, native: mc::WALK_SPEED, stride: 1.0, duty: mc::WALK_DUTY }, 1.0 - wr),
-        (Loop { clip: &mc::RUN, native: mc::RUN_SPEED, stride: 1.0, duty: mc::RUN_DUTY }, wr),
+        (Loop { clip: &mc::WALK, native: mc::WALK_SPEED, stride: 1.0, duty: mc::WALK_DUTY, play: mc::WALK_DUTY }, 1.0 - wr),
+        (Loop { clip: &mc::RUN, native: mc::RUN_SPEED, stride: 1.0, duty: mc::RUN_DUTY, play: mc::RUN_DUTY * run_stance_share() }, wr),
     ]
 }
 
@@ -83,7 +95,7 @@ fn mix(v: f32) -> [(Loop, f32); 2] {
 /// every loop is time-warped onto the weighted duty and stretched onto the weighted sweep: all of
 /// them then plant, sweep and lift together, and one phase rate pins the boot for all.
 fn shared(m: &[(Loop, f32); 2]) -> (f32, f32) {
-    m.iter().fold((0.0, 0.0), |(d, s), (l, w)| (d + l.duty * w, s + l.sweep() * w))
+    m.iter().fold((0.0, 0.0), |(d, s), (l, w)| (d + l.play * w, s + l.sweep() * w))
 }
 
 /// Gait-phase advance (rad/s) at `v` model m/s: the foot-lock contract — the shared stance (`duty` of

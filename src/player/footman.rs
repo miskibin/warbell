@@ -910,3 +910,80 @@ pub fn spawn(
     }
 }
 
+
+#[cfg(test)]
+mod export {
+    use super::*;
+
+    /// Write the knight as a static OBJ + MTL in a **T-pose** (arms straight out, no sword / shield),
+    /// for Mixamo's auto-rigger or a DCC: `FOOTMAN_OBJ=<out.obj> cargo test --release footman_obj
+    /// -- --ignored`. Model metres, feet on y = 0, facing +Z, right-handed as in game (the asset's
+    /// import mirror undone, winding flipped with it). Colours are per-material `Kd` (the cuirass
+    /// re-dressed as steel, as the game does).
+    #[test]
+    #[ignore]
+    fn footman_obj() {
+        let out = std::env::var("FOOTMAN_OBJ").unwrap_or_else(|_| "target/footman_tpose.obj".into());
+        let m = parse();
+        let parent = |n: &str| m.joints.iter().find(|(j, _, _)| j == n).map(|(_, p, _)| p.clone());
+        // Rest-pose world matrix per joint, with the shoulders turned so each arm points straight out.
+        let arm_out = |side: &str| -> Quat {
+            let sh = format!("Shoulder{side}");
+            let el = pos_of(&m, &format!("Elbow{side}"));
+            let hand = pos_of(&m, if side == "L" { "Shield" } else { "Sword" });
+            let dir = (el + hand).normalize_or(Vec3::NEG_Y);
+            let out = Vec3::new(pos_of(&m, &sh).x.signum(), 0.0, 0.0);
+            Quat::from_rotation_arc(dir, out)
+        };
+        let local = |n: &str| -> Mat4 {
+            let r = match n {
+                "ShoulderL" => arm_out("L"),
+                "ShoulderR" => arm_out("R"),
+                _ => Quat::IDENTITY,
+            };
+            Mat4::from_rotation_translation(r, pos_of(&m, n))
+        };
+        let world = |n: &str| -> Mat4 {
+            let mut chain = vec![n.to_string()];
+            while let Some(p) = parent(chain.last().unwrap()).filter(|p| !p.is_empty() && m.joints.iter().any(|(j, _, _)| j == p)) {
+                chain.push(p);
+            }
+            chain.iter().rev().fold(Mat4::IDENTITY, |acc, j| acc * local(j))
+        };
+        let skip = |j: &str| j == "Sword" || j == "Shield";
+        let mirror = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+        let lift = Mat4::from_translation(Vec3::new(0.0, -m.min_y, 0.0));
+        let mut obj = String::from("# Warbell knight, T-pose (footman.bin)\nmtllib footman_tpose.mtl\n");
+        let mut mtl = String::new();
+        for (i, mat) in m.mats.iter().enumerate() {
+            let breastplate = mat.tex == "leather" && mat.color == 0x6b4128 && m.meshes.iter().any(|ms| ms.mat == i && ms.joint == "Torso");
+            let c = if breastplate { 0xa3a6aa } else { mat.color };
+            let (r, g, b) = (((c >> 16) & 255) as f32 / 255.0, ((c >> 8) & 255) as f32 / 255.0, (c & 255) as f32 / 255.0);
+            mtl += &format!("newmtl m{i}_{}\nKd {r:.4} {g:.4} {b:.4}\nKs 0.1 0.1 0.1\nNs 20\n\n", if mat.tex.is_empty() { "plain" } else { mat.tex.as_str() });
+        }
+        let mut base = 1u32;
+        let mut parts = 0;
+        for (mi, ms) in m.meshes.iter().enumerate() {
+            if mi == m.blade || skip(&ms.joint) || parent(&ms.joint).is_some_and(|p| skip(&p)) {
+                continue;
+            }
+            let xf = lift * mirror * world(&ms.joint) * ms.xf.to_matrix();
+            obj += &format!("o part{mi}_{}\nusemtl m{}_{}\n", ms.joint, ms.mat, if m.mats[ms.mat].tex.is_empty() { "plain" } else { m.mats[ms.mat].tex.as_str() });
+            for p in &ms.positions {
+                let q = xf.transform_point3(Vec3::from_array(*p));
+                obj += &format!("v {:.5} {:.5} {:.5}\n", q.x, q.y, q.z);
+            }
+            // The mirror flips handedness: reverse each triangle so the faces still point out.
+            let flip = xf.determinant() < 0.0;
+            for t in ms.indices.chunks_exact(3) {
+                let (a, b, c) = (t[0] + base, t[1] + base, t[2] + base);
+                obj += &if flip { format!("f {a} {c} {b}\n") } else { format!("f {a} {b} {c}\n") };
+            }
+            base += ms.positions.len() as u32;
+            parts += 1;
+        }
+        std::fs::write(&out, obj).unwrap();
+        std::fs::write(std::path::Path::new(&out).with_file_name("footman_tpose.mtl"), mtl).unwrap();
+        println!("wrote {out}: {parts} parts, {} verts, {:.2} m tall", base - 1, m.max_y - m.min_y);
+    }
+}
