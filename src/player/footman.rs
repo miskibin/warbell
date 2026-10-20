@@ -795,6 +795,42 @@ fn pos_of(model: &Model, name: &str) -> Vec3 {
     model.joints.iter().find(|(n, _, _)| n == name).map(|(_, _, p)| *p).unwrap_or(Vec3::ZERO)
 }
 
+/// One piece of the footman's kit as a loose prop — `"Head"` (the helmet), `"Shield"` or `"Sword"` —
+/// at the hero's own size and handedness, NOT tagged `HeroMesh` (no hero system touches it). The
+/// returned root carries an identity transform: place it like any prop. Shield and sword come in
+/// their held attitude (the meshes are stored against the animator's rest pose).
+pub fn spawn_part_prop(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<crate::creature::CreatureMaterial>,
+    joint: &str,
+) -> Option<Entity> {
+    let g = gpu(meshes, images, materials);
+    let parts: Vec<usize> = (0..g.model.meshes.len()).filter(|&i| g.model.meshes[i].joint == joint).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let rig_scale = TARGET_RIG_HEIGHT / (g.model.max_y - g.model.min_y).max(0.01);
+    let rest = match joint {
+        "Shield" => Transform { translation: SHIELD_REST_T, rotation: shield_rest_r(), scale: Vec3::ONE },
+        "Sword" => Transform::from_rotation(sword_rest_r()),
+        _ => Transform::IDENTITY,
+    };
+    let root = commands.spawn((Transform::IDENTITY, Visibility::default())).id();
+    // The hero's mirrored scale: the footman materials cull FRONT faces for it.
+    let scaled = commands.spawn((Transform::from_scale(super::HERO_SCALE_V * rig_scale), Visibility::default())).id();
+    let posed = commands.spawn((rest, Visibility::default())).id();
+    commands.entity(root).add_child(scaled);
+    commands.entity(scaled).add_child(posed);
+    for i in parts {
+        let m = &g.model.meshes[i];
+        let leaf = commands.spawn((Mesh3d(g.meshes[i].clone()), MeshMaterial3d(g.mats[m.mat].clone()), m.xf)).id();
+        commands.entity(posed).add_child(leaf);
+    }
+    Some(root)
+}
+
 /// Spawn the footman under `root` (the hero entity, already carrying `HERO_SCALE`).
 pub fn spawn(
     commands: &mut Commands,
