@@ -17,6 +17,12 @@ BONES = {
     'upperarm_r': 'RightArm', 'lowerarm_r': 'RightForeArm', 'hand_r': 'RightHand',
     'index_r': 'RightHandIndex1', 'pinky_r': 'RightHandPinky1', 'middle_r': 'RightHandMiddle1',
 }
+# A character auto-rigged on the Mixamo page can come back with fewer finger chains (the knight's
+# gauntlets got only the index): without them the hand frame is the hand bone's own turn from bind.
+FINGERS = ('index_r', 'pinky_r', 'middle_r')
+# The right hand's bind-pose (index - pinky, middle - wrist) in the file frame (Y-up, facing +Z,
+# right arm along -X, palm down) — checked against clips that do carry the fingers.
+BIND_BLADE, BIND_EDGE = np.array([0.0, 0.0, 1.0]), np.array([-1.0, 0.0, 0.0])
 
 
 def qmul(a, b):
@@ -34,6 +40,12 @@ def qinv(q):
 
 def mq(q):  # mirror a world rotation across X
     return q * np.array([1, -1, -1, 1.0])
+
+
+def qrot(q, v):
+    u, w = q[..., :3], q[..., 3:]
+    t = 2 * np.cross(u, v)
+    return v + w * t + np.cross(u, t)
 
 
 def unit(v):
@@ -73,8 +85,11 @@ class Clip:
             self.stacks[st.name] = st
         nodes = list(self.scene.nodes)  # NB: iterating scene.nodes a second time crashes ufbx-python
         self.nodes = {n.name.replace('mixamorig:', ''): n for n in nodes}
+        self.bones = {k: v for k, v in BONES.items() if v in self.nodes or k not in FINGERS}
+        if len(self.bones) < len(BONES):
+            self.bones = {k: v for k, v in self.bones.items() if k not in FINGERS}
         # The T-pose (bind) reference = the unevaluated default pose.
-        self.tpose = {k: world(self.nodes[v]) for k, v in BONES.items()}
+        self.tpose = {k: world(self.nodes[v]) for k, v in self.bones.items()}
         self.stack = self.stacks['mixamo.com']
 
     def sample(self, fps=FPS):
@@ -82,11 +97,11 @@ class Clip:
         dur = self.stack.time_end - self.stack.time_begin
         n = int(round(dur * fps)) + 1
         ts = np.arange(n) / fps
-        out = {k: ([], []) for k in BONES}
+        out = {k: ([], []) for k in self.bones}
         for t in ts:
             ev = ufbx.evaluate_scene(self.scene, self.stack.anim, float(t))
             en = {x.name.replace('mixamorig:', ''): x for x in list(ev.nodes)}
-            for k, v in BONES.items():
+            for k, v in self.bones.items():
                 p, q = world(en[v])
                 out[k][0].append(p)
                 out[k][1].append(q)
@@ -99,7 +114,7 @@ class Baker:
     def __init__(self, clip):
         self.c = clip
         T = clip.tpose
-        self.ref = {n: T[n][1] for n in ('pelvis', 'spine_03', 'Head', 'foot_l', 'foot_r')}
+        self.ref = {n: T[n][1] for n in ('pelvis', 'spine_03', 'Head', 'foot_l', 'foot_r', 'hand_r')}
         self.legL = np.linalg.norm(T['calf_l'][0] - T['thigh_l'][0]) + np.linalg.norm(T['foot_l'][0] - T['calf_l'][0])
         self.tp_pelvis_y = T['pelvis'][0][1] / self.legL
 
@@ -114,8 +129,13 @@ class Baker:
             d = unit(a - h)
             v = k - h
             return unit((v - np.sum(v * d, -1, keepdims=True) * d) * M)
-        blade = unit((P['index_r'][0] - P['pinky_r'][0]) * M)
-        edge = (P['middle_r'][0] - P['hand_r'][0]) * M
+        if 'pinky_r' in P:
+            blade = unit((P['index_r'][0] - P['pinky_r'][0]) * M)
+            edge = (P['middle_r'][0] - P['hand_r'][0]) * M
+        else:
+            turn = qmul(P['hand_r'][1], qinv(np.broadcast_to(ref['hand_r'], P['hand_r'][1].shape)))
+            blade = unit(qrot(turn, np.broadcast_to(BIND_BLADE, turn[..., :3].shape)) * M)
+            edge = qrot(turn, np.broadcast_to(BIND_EDGE, turn[..., :3].shape)) * M
         edge = unit(edge - np.sum(edge * blade, -1, keepdims=True) * blade)
         cols = [pos('pelvis'), rot('pelvis'), rot('spine_03'), rot('Head'),
                 dirn('upperarm_r', 'lowerarm_r'), dirn('lowerarm_r', 'hand_r'), blade, edge,

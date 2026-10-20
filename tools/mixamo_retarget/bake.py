@@ -1,6 +1,6 @@
 """Bake the Mixamo walk / run / orc / dive-roll clips into src/player/anim/mixamo_clips.rs.
 
-    python -P tools/mixamo_retarget/bake.py <dir with Walking.fbx "Running Arms.fbx" "Orc Walk.fbx" "Mutant Run.fbx" "Dive Roll.fbx"> \
+    python -P tools/mixamo_retarget/bake.py <dir with Walking.fbx "Knight Running.fbx" "Orc Walk.fbx" "Mutant Run.fbx" "Dive Roll.fbx"> \
         src/player/anim/mixamo_clips.rs
 
 Frame layout: see tools/ual_retarget/bake.py (53 floats: pelvis, chest, head, arms, boots, in leg
@@ -32,7 +32,7 @@ import mx
 
 src_dir, out_path = sys.argv[1], sys.argv[2]
 
-# Mixamo "Running" with the page's arm space already applied: the bake adds no arm space of its own.
+# Mixamo "Running" downloaded on the knight's own auto-rig (arm space set on the page): the bake adds no arm space of its own.
 # Its heel kicks up to 0.83 leg lengths (seat height) — halved for a knight in plate.
 RUN_STRIDE = 1.0
 RUN_LIFT = 0.5
@@ -259,7 +259,7 @@ lines += [f'/// One walk loop ({len(Wc)} frames), frame 0 = left heel strike.',
           f'pub(super) const WALK_SPEED: f32 = {wsp:.4f}; // legs / s',
           f'pub(super) const WALK_DUTY: f32 = {wd:.4f};',
           f'pub(super) const WALK: [[f32; 53]; {len(Wc)}] = [', fmt(Wc), '];', '']
-b, R = load('Running Arms')
+b, R = load('Knight Running')
 print('Running')
 Rc, rsp, rd = cycle(in_place(R))
 Rc = symmetric(even_stance(sliders(Rc, b.tpose_frame(), stride=RUN_STRIDE, lift=RUN_LIFT, arm_space=RUN_ARM_SPACE, arm_swing=RUN_ARM_SWING), round(rd * len(Rc))))

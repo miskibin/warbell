@@ -126,7 +126,7 @@ pub struct Footfall {
 
 /// The hero's walk / sprint speeds (world u/s) — the gait 0..1 ramp between them.
 const WALK_SPEED: f32 = 1.4;
-const SPRINT_SPEED: f32 = 5.04;
+const SPRINT_SPEED: f32 = crate::player::SPEED * crate::player::SPRINT_MULT;
 
 pub fn gait_from_speed(speed: f32) -> f32 {
     ((speed - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0)

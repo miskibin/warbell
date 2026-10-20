@@ -17,11 +17,13 @@ use crate::{blockers, steer, worldmap};
 
 use super::{FirstPerson, Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes};
 
-/// WASD is a brisk WALK (≈1.8 m/s for this ~1.9 m body) and Shift a SPRINT (≈6.5 m/s): the gait
-/// is cut from ground speed. A sprinting hero outruns everything (wolves hunt at 3.8); a walking
-/// one can be caught by ork scouts, bosses and the snowman.
+/// WASD is a brisk WALK (≈1.8 m/s for this ~1.9 m body) and Shift a SPRINT (≈5.2 m/s — just over
+/// the Mixamo run's own pace, ~4.7 m/s, retargeted onto the knight: any faster and the foot-locked
+/// clip patters in quick short steps): the gait is cut from ground speed. A sprinting hero
+/// (4.06 u/s) outruns everything (wolves hunt at 3.8); a walking one can be caught by ork scouts,
+/// bosses and the snowman.
 pub(crate) const SPEED: f32 = 1.4;
-pub(crate) const SPRINT_MULT: f32 = 3.6;
+pub(crate) const SPRINT_MULT: f32 = 2.9;
 
 // ── Combat stance (the Witcher "Alert Near") ──
 // With a soft-target near (`hero.soft_pos`, picked by `softlock`), the body stays SQUARE TO THE
