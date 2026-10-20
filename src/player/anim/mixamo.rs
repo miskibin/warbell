@@ -1,6 +1,6 @@
 //! The hero's walk, run and dodge roll on Mixamo clips (`mixamo_clips`, baked by
-//! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Jogging / Running / Dive Roll; the run
-//! clips go through the bake's `sliders` — arm space, knee lift, stride — first).
+//! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Running / Dive Roll; the run goes through
+//! the bake's `sliders` — knee lift, stride, arm swing — first, its arm space set on Mixamo's page).
 //!
 //! Same recipe as the sword combo ([`super::swordplay`]): the clips are rig-free targets (pelvis and
 //! ankle positions in leg lengths, world-delta rotations, the limbs as directions), solved onto the
@@ -22,24 +22,14 @@ use super::mixamo_clips as mc;
 use super::swordplay::{aim_leg, Frame};
 use super::{aim_arm, e3, rest, rx, shield_gait_r, smoothstep, sword_rest_r, Jp, Pose, SHIELD_GAIT_T};
 
-/// Model m/s: the walk (below `WALK_TO`) fades into the jog by `JOG_FROM`, which fades into the
-/// tamed sprint from `RUN_FROM` to `RUN_TO` (the knight's sprint is ~6.5).
+/// Model m/s: the walk (below `WALK_TO`) fades into the run by `RUN_FROM` (the knight's sprint is
+/// ~6.5, so the fade only shows while he speeds up / slows down).
 const WALK_TO: f32 = 2.3;
-const JOG_FROM: f32 = 3.2;
 const RUN_FROM: f32 = 4.0;
-const RUN_TO: f32 = 5.4;
-/// Mixamo's "Jogging" is a short-strided trot at the speeds the knight runs: its stride is lengthened
-/// (pelvis + ankle travel x this) so the cadence stays a run's instead of a scurry.
-const JOG_STRIDE: f32 = 1.75;
 
-/// 0 = the walk ... 1 = the jog, at a ground speed of `v` model m/s.
-fn jog_weight(v: f32) -> f32 {
-    smoothstep((v - WALK_TO) / (JOG_FROM - WALK_TO))
-}
-
-/// 0 = walk / jog ... 1 = the sprint.
+/// 0 = the walk ... 1 = the run, at a ground speed of `v` model m/s.
 fn sprint_weight(v: f32) -> f32 {
-    smoothstep((v - RUN_FROM) / (RUN_TO - RUN_FROM))
+    smoothstep((v - WALK_TO) / (RUN_FROM - WALK_TO))
 }
 
 /// Mixamo clips own the run too unless `FOREST_RUN=curves` (then the walk fades into the original
@@ -54,7 +44,7 @@ pub(super) fn run_weight(v: f32) -> f32 {
     if mixamo_run() {
         return 0.0;
     }
-    smoothstep((v - WALK_TO) / (JOG_FROM + 0.2 - WALK_TO))
+    smoothstep((v - WALK_TO) / (3.4 - WALK_TO))
 }
 
 fn leg_len() -> f32 {
@@ -79,12 +69,11 @@ impl Loop {
     }
 }
 
-/// The loops in play at `v` model m/s with their weights (walk, jog, sprint), summing to 1.
-fn mix(v: f32) -> [(Loop, f32); 3] {
-    let (wj, wr) = if mixamo_run() { (jog_weight(v), sprint_weight(v)) } else { (0.0, 0.0) };
+/// The loops in play at `v` model m/s with their weights (walk, run), summing to 1.
+fn mix(v: f32) -> [(Loop, f32); 2] {
+    let wr = if mixamo_run() { sprint_weight(v) } else { 0.0 };
     [
-        (Loop { clip: &mc::WALK, native: mc::WALK_SPEED, stride: 1.0, duty: mc::WALK_DUTY }, (1.0 - wj) * (1.0 - wr)),
-        (Loop { clip: &mc::JOG, native: mc::JOG_SPEED, stride: JOG_STRIDE, duty: mc::JOG_DUTY }, wj * (1.0 - wr)),
+        (Loop { clip: &mc::WALK, native: mc::WALK_SPEED, stride: 1.0, duty: mc::WALK_DUTY }, 1.0 - wr),
         (Loop { clip: &mc::RUN, native: mc::RUN_SPEED, stride: 1.0, duty: mc::RUN_DUTY }, wr),
     ]
 }
@@ -93,7 +82,7 @@ fn mix(v: f32) -> [(Loop, f32); 3] {
 /// for different shares of the cycle would skate the boot wherever one is down and the other up, so
 /// every loop is time-warped onto the weighted duty and stretched onto the weighted sweep: all of
 /// them then plant, sweep and lift together, and one phase rate pins the boot for all.
-fn shared(m: &[(Loop, f32); 3]) -> (f32, f32) {
+fn shared(m: &[(Loop, f32); 2]) -> (f32, f32) {
     m.iter().fold((0.0, 0.0), |(d, s), (l, w)| (d + l.duty * w, s + l.sweep() * w))
 }
 
@@ -230,7 +219,7 @@ fn dress(mut p: Pose, run: f32, armed: f32, shield_back: f32) -> Pose {
     p
 }
 
-/// The Mixamo walk / jog / sprint at gait phase `c` (rad; the left heel strikes at 0 and the right at
+/// The Mixamo walk / run at gait phase `c` (rad; the left heel strikes at 0 and the right at
 /// pi) and ground speed `v` (model m/s), dressed with the knight's kit. With `FOREST_RUN=curves` only
 /// the walk (the caller fades it into the run curves with [`run_weight`]).
 pub(super) fn gait(c: f32, v: f32, armed: f32, shield_back: f32) -> Pose {
