@@ -9,10 +9,9 @@ lengths / world deltas from the Mixamo T-pose, mirrored onto our body frame).
 - WALK: one in-place loop, rotated so frame 0 is the LEFT heel strike (the game keys footstep
   sfx / dust on the gait phase crossing 0 and 0.5), plus the speed the stance boot sweeps back at
   (leg lengths / s) — the player plays the loop at ground speed / that, so the boots never skate.
-- RUN: Mixamo's "Running", downloaded with the page's Character Arm-Space lowered (arms carried
-  ~10-14 deg closer than the default) and NOT in place — `in_place` takes the forward travel off.
-  Made left/right symmetric, the stance evened, then dressed with [`sliders`] (the knobs Mixamo's
-  page lacks: knee lift, stride, arm swing).
+- RUN: Mixamo's "Running" downloaded on the knight's own Mixamo auto-rig (`Knight Running.fbx`), kept
+  exactly as Mixamo plays it: `in_place` takes the forward travel off, nothing else is touched
+  ([`sliders`] / `symmetric` / `even_stance` stay for clips cut from other characters).
 - ORC_WALK / ORC_RUN: Mixamo's "Orc Walk" (male, a heavy rolling waddle) and "Mutant Run" for the
   orks' patrol and charge — same treatment as the hero's run (one symmetric, evenly retimed loop from
   the left heel strike). The ork animator (`player/anim/ork.rs`) takes the legs, pelvis and trunk
@@ -32,12 +31,6 @@ import mx
 
 src_dir, out_path = sys.argv[1], sys.argv[2]
 
-# Mixamo "Running" downloaded on the knight's own auto-rig (arm space set on the page): the bake adds no arm space of its own.
-# Its heel kicks up to 0.83 leg lengths (seat height) — halved for a knight in plate.
-RUN_STRIDE = 1.0
-RUN_LIFT = 0.5
-RUN_ARM_SPACE = 0.0
-RUN_ARM_SWING = 1.0
 
 
 def load(name):
@@ -262,10 +255,10 @@ lines += [f'/// One walk loop ({len(Wc)} frames), frame 0 = left heel strike.',
 b, R = load('Knight Running')
 print('Running')
 Rc, rsp, rd = cycle(in_place(R))
-Rc = symmetric(even_stance(sliders(Rc, b.tpose_frame(), stride=RUN_STRIDE, lift=RUN_LIFT, arm_space=RUN_ARM_SPACE, arm_swing=RUN_ARM_SWING), round(rd * len(Rc))))
-rsp *= RUN_STRIDE
-lines += [f'/// One run loop ({len(Rc)} frames), frame 0 = left heel strike. Sliders: stride x{RUN_STRIDE},',
-          f'/// knee lift x{RUN_LIFT}, arm swing x{RUN_ARM_SWING} (arm space set on the Mixamo page).',
+# Downloaded on the knight's own rig, so it is kept exactly as Mixamo plays it: no sliders, no
+# mirroring, no retiming — only the travel taken out (the game moves the root).
+lines += [f'/// One run loop ({len(Rc)} frames), frame 0 = left heel strike: Mixamo "Running" on the',
+          '/// knight auto-rig, untouched.',
           f'pub(super) const RUN_SPEED: f32 = {rsp:.4f}; // legs / s',
           f'pub(super) const RUN_DUTY: f32 = {rd:.4f};',
           f'pub(super) const RUN: [[f32; 53]; {len(Rc)}] = [', fmt(Rc), '];', '']
