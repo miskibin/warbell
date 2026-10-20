@@ -9,6 +9,10 @@ lengths / world deltas from the Mixamo T-pose, mirrored onto our body frame).
 - WALK: one in-place loop, rotated so frame 0 is the LEFT heel strike (the game keys footstep
   sfx / dust on the gait phase crossing 0 and 0.5), plus the speed the stance boot sweeps back at
   (leg lengths / s) — the player plays the loop at ground speed / that, so the boots never skate.
+- JOG: Mixamo's "Jogging" (arms carried close, elbows bent — unlike "Running" / "Slow Run", which
+  throw the arms out to 40-108 deg and kick the heel to the seat), one stride cut out of the clip's
+  three, made left/right symmetric, then dressed with [`sliders`] — the knobs Mixamo's own page has
+  (arm space) plus the ones it lacks (knee lift, stride).
 - ROLL: the dive-roll's body shape in the pelvis's own frame (the pelvis turn + travel removed): the
   game's root does the somersault, the clip supplies the folding limbs.
 
@@ -23,6 +27,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mx
 
 src_dir, out_path = sys.argv[1], sys.argv[2]
+
+# The jog's sliders (see `sliders`). The game lengthens the stride further with speed at runtime.
+JOG_STRIDE = 1.0
+JOG_LIFT = 1.0
+JOG_ARM_SPACE = 0.0
+# Mixamo "Running" for the sprint, tamed: its arms flail out to ~108 deg and its heel kicks up to
+# 0.83 leg lengths (seat height) — swing the arms in and halve the kick.
+RUN_STRIDE = 1.0
+RUN_LIFT = 0.5
+RUN_ARM_SPACE = 70.0
+RUN_ARM_SWING = 0.7  # the raw pump reaches 93 deg behind the body
 
 
 def load(name):
@@ -54,7 +69,8 @@ def stance_runs(y, thr):
 
 
 def cycle(F):
-    """Drop the duplicated end frame, rotate to the left heel strike; -> frames, native speed (legs/s)."""
+    """Drop the duplicated end frame, rotate to the left heel strike; -> frames, native speed (legs/s),
+    duty factor (the fraction of the cycle a boot is planted)."""
     F = F[:-1]
     n = len(F)
     yl, yr = F[:, 34], F[:, 44]
@@ -70,7 +86,113 @@ def cycle(F):
         t = np.arange(L) / mx.FPS
         sp.append(-np.polyfit(t, F[idx, col], 1)[0])
     print(f'  cycle {n} frames, left stance {ln}, stance sweep speed L/R {sp[0]:.2f}/{sp[1]:.2f} legs/s')
-    return F, float(np.mean(sp))
+    return F, float(np.mean(sp)), ln / n
+
+
+def stride_cut(F):
+    """A clip holding several strides -> one: left heel strike .. the next (the middle stride, so
+    neither end is the clip's own start / stop), with the closing frame kept for `cycle` to drop."""
+    yl = F[:, 34]
+    thr = min(yl.min(), F[:, 44].min()) + 0.035
+    starts = sorted(s for s, _ in stance_runs(yl, thr))
+    if len(starts) < 2:
+        return F
+    i = max(0, len(starts) // 2 - 1)
+    a, b = starts[i], starts[i + 1]
+    return F[a:b + 1]
+
+
+def mirror_rows(F):
+    """Left <-> right: swap the limb slots and mirror across X (positions / directions x -> -x,
+    rotations (x, y, z, w) -> (x, -y, -z, w))."""
+    M = F.copy()
+    q = np.array([1, -1, -1, 1.0])
+    v = np.array([-1.0, 1.0, 1.0])
+    M[:, 0:3] = F[:, 0:3] * v
+    for s in (3, 7, 11):
+        M[:, s:s + 4] = F[:, s:s + 4] * q
+    for a, b in ((15, 27), (18, 30), (33, 43), (36, 46)):  # right <-> left (dirs / ankles / poles)
+        M[:, a:a + 3] = F[:, b:b + 3] * v
+        M[:, b:b + 3] = F[:, a:a + 3] * v
+    M[:, 21:24] = F[:, 21:24] * v
+    M[:, 24:27] = F[:, 24:27] * v
+    M[:, 39:43] = F[:, 49:53] * q
+    M[:, 49:53] = F[:, 39:43] * q
+    return M
+
+
+def symmetric(F):
+    """A loop whose second step is the mirror of its first (the clip's two legs differ a little, which
+    would show as skating on the weaker side): left strike .. right strike, then that mirrored."""
+    h = len(F) // 2
+    return np.concatenate([F[:h], mirror_rows(F[:h])])
+
+
+def even_stance(F, ln):
+    """Retime the left stance (frames 0..ln) so the planted ankle sweeps back at a constant speed: the
+    clip's boot brakes after the strike and surges before toe-off, which the game (one playback rate
+    for the whole stance) would show as the boot creeping on the ground. Every column is resampled
+    at the times where the ankle reaches evenly spaced points of its sweep."""
+    F = F.copy()
+    z = np.minimum.accumulate(F[:ln + 1, 35])  # monotonic (backward) sweep
+    if z[0] - z[-1] < 1e-4:
+        return F
+    want = np.linspace(z[0], z[-1], ln + 1)
+    t = np.interp(-want, -z, np.arange(ln + 1))
+    i0 = np.clip(np.floor(t).astype(int), 0, ln - 1)
+    a = (t - i0)[:, None]
+    seg = F[i0] * (1 - a) + F[i0 + 1] * a
+    for q in (3, 7, 11, 39, 49):  # quaternions: renormalise the lerp
+        seg[:, q:q + 4] /= np.linalg.norm(seg[:, q:q + 4], axis=1, keepdims=True)
+    for d in (15, 18, 21, 24, 27, 30, 36, 46):  # directions
+        seg[:, d:d + 3] /= np.linalg.norm(seg[:, d:d + 3], axis=1, keepdims=True)
+    F[:ln + 1] = seg
+    return F
+
+
+def rot_z(v, a):
+    c, s = np.cos(a)[:, None], np.sin(a)[:, None]
+    x, y = v[:, 0:1], v[:, 1:2]
+    return np.concatenate([x * c - y * s, x * s + y * c, v[:, 2:3]], 1)
+
+
+def rot_x(v, a):
+    c, s = np.cos(a)[:, None], np.sin(a)[:, None]
+    y, z = v[:, 1:2], v[:, 2:3]
+    return np.concatenate([v[:, 0:1], y * c - z * s, y * s + z * c], 1)
+
+
+def sliders(F, T, stride=1.0, lift=1.0, arm_space=0.0, arm_min=6.0, arm_swing=1.0):
+    """Mixamo-page style edits on a loop (frame 0 = left strike):
+    - stride: the boots' fore-aft travel (and the pelvis's) about their mean, x this;
+    - lift:   each boot's height above its contact height, x this (the knee follows through the IK);
+    - arm_space: degrees each upper arm is swung in toward the body about the forward axis (the
+      forearm turns with it, so the elbow keeps its bend), never closer than `arm_min` of spread;
+    - arm_swing: the upper arms' fore-aft pump (pitch off hanging) x this, forearms turning along."""
+    F = F.copy()
+    for zc in (35, 45):
+        m = F[:, zc].mean()
+        F[:, zc] = m + (F[:, zc] - m) * stride
+    F[:, 2] = F[:, 2].mean() + (F[:, 2] - F[:, 2].mean()) * stride
+    for yc in (34, 44):
+        c = F[:, yc].min()
+        F[:, yc] = c + (F[:, yc] - c) * lift
+    if arm_space:
+        for u, f in ((15, 18), (27, 30)):
+            out = np.sign(T[u])  # the T-pose arm points straight out: its x sign is "outward"
+            abd = np.degrees(np.arctan2(out * F[:, u], -F[:, u + 1]))
+            turn = np.radians(np.clip(np.minimum(arm_space, abd - arm_min), 0.0, None))
+            # A +Z turn swings a hanging arm toward +x: inward is the sign opposite to `out`.
+            a = -out * turn
+            F[:, u:u + 3] = rot_z(F[:, u:u + 3], a)
+            F[:, f:f + 3] = rot_z(F[:, f:f + 3], a)
+    if arm_swing != 1.0:
+        for u, f in ((15, 18), (27, 30)):
+            pitch = np.arctan2(F[:, u + 2], -F[:, u + 1])
+            a = -(arm_swing - 1.0) * pitch  # a +X turn lowers the pitch
+            F[:, u:u + 3] = rot_x(F[:, u:u + 3], a)
+            F[:, f:f + 3] = rot_x(F[:, f:f + 3], a)
+    return F
 
 
 def air(F, lo, hi):
@@ -106,7 +228,7 @@ def fmt(F):
 
 
 lines = [
-    "//! Generated by tools/mixamo_retarget/bake.py from Mixamo's Walking / Dive Roll",
+    "//! Generated by tools/mixamo_retarget/bake.py from Mixamo's Walking / Jogging / Dive Roll",
     "//! (X Bot, in place, 30 fps; free for use in games under Adobe's Mixamo terms). Layout: see",
     "//! `swordplay::Frame`. Do not edit by hand.",
     '',
@@ -120,10 +242,31 @@ lines.append('/// The Mixamo T-pose (the reference the clips are measured from).
 lines.append('pub(super) const TPOSE: [f32; 53] = [' + ', '.join(f'{v:.4f}' for v in b.tpose_frame()) + '];')
 lines.append('')
 print('Walking')
-Wc, wsp = cycle(W)
+Wc, wsp, wd = cycle(W)
 lines += [f'/// One walk loop ({len(Wc)} frames), frame 0 = left heel strike.',
           f'pub(super) const WALK_SPEED: f32 = {wsp:.4f}; // legs / s',
+          f'pub(super) const WALK_DUTY: f32 = {wd:.4f};',
           f'pub(super) const WALK: [[f32; 53]; {len(Wc)}] = [', fmt(Wc), '];', '']
+b, J = load('Jogging')
+print('Jogging')
+Jc, jsp, jd = cycle(stride_cut(J))
+Jc = symmetric(even_stance(sliders(Jc, b.tpose_frame(), stride=JOG_STRIDE, lift=JOG_LIFT, arm_space=JOG_ARM_SPACE), round(jd * len(Jc))))
+jsp *= JOG_STRIDE
+lines += [f'/// One jog loop ({len(Jc)} frames), frame 0 = left heel strike. Sliders: stride x{JOG_STRIDE},',
+          f'/// knee lift x{JOG_LIFT}, arm space {JOG_ARM_SPACE} deg in.',
+          f'pub(super) const JOG_SPEED: f32 = {jsp:.4f}; // legs / s',
+          f'pub(super) const JOG_DUTY: f32 = {jd:.4f};',
+          f'pub(super) const JOG: [[f32; 53]; {len(Jc)}] = [', fmt(Jc), '];', '']
+b, R = load('Running')
+print('Running')
+Rc, rsp, rd = cycle(R)
+Rc = symmetric(even_stance(sliders(Rc, b.tpose_frame(), stride=RUN_STRIDE, lift=RUN_LIFT, arm_space=RUN_ARM_SPACE, arm_min=12.0, arm_swing=RUN_ARM_SWING), round(rd * len(Rc))))
+rsp *= RUN_STRIDE
+lines += [f'/// One sprint loop ({len(Rc)} frames), frame 0 = left heel strike. Sliders: stride x{RUN_STRIDE},',
+          f'/// knee lift x{RUN_LIFT}, arm space {RUN_ARM_SPACE} deg in, arm swing x{RUN_ARM_SWING}.',
+          f'pub(super) const RUN_SPEED: f32 = {rsp:.4f}; // legs / s',
+          f'pub(super) const RUN_DUTY: f32 = {rd:.4f};',
+          f'pub(super) const RUN: [[f32; 53]; {len(Rc)}] = [', fmt(Rc), '];', '']
 b, D = load('Dive Roll')
 DB = body_frame(D, b.tp_pelvis_y)[33:73]
 lines += [f'/// The dive-roll\'s body shape ({len(DB)} frames: the dive, the tuck, the landing), in the pelvis frame.',

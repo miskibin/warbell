@@ -554,8 +554,9 @@ pub(crate) fn gait_phase_rate(world_speed: f32) -> f32 {
         if v < 1e-4 {
             return 0.0;
         }
-        // Both gaits start on the left heel strike, so one phase drives either; its rate is the
-        // Mixamo walk's below a jog and the original curves' above (each foot-locked on its own).
+        // All gaits start on the left heel strike, so one phase drives any of them; with the curve
+        // run (`FOREST_RUN=curves`) its rate is the Mixamo walk's below a jog and the curves' above
+        // (each foot-locked on its own).
         return lerp(mixamo::phase_rate(v), gait_phase_rate_curves(world_speed), mixamo::run_weight(v));
     }
     gait_phase_rate_curves(world_speed)
@@ -628,7 +629,7 @@ fn footman_gait(c: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
         if w >= 1.0 - 1e-3 {
             return footman_gait_curves(c, speed, armed, shield_back);
         }
-        let walk = mixamo::gait(c, armed, shield_back);
+        let walk = mixamo::gait(c, speed.max(0.0) / hero_model_scale(), armed, shield_back);
         if w <= 1e-3 {
             return walk;
         }
@@ -637,8 +638,8 @@ fn footman_gait(c: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
     footman_gait_curves(c, speed, armed, shield_back)
 }
 
-/// Mixamo clips drive the walk and the dodge roll (the default; the run and the jump stay on the
-/// original hand-built curves); `FOREST_GAIT=curves` brings back the curve walk and the procedural roll (A/B, and what
+/// Mixamo clips drive the walk, the run and the dodge roll (the default; the jump stays on the
+/// hand-built curves, and `FOREST_RUN=curves` puts the run back on them); `FOREST_GAIT=curves` brings back the curve walk and the procedural roll (A/B, and what
 /// the curve tests exercise).
 fn mixamo_gait() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

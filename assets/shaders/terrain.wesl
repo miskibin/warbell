@@ -1296,12 +1296,16 @@ fn fragment(
         if far_k > 0.001 {
             let fc_uv = (in.world_position.xz - forest.pbr_region.xy) * forest.pbr_region.zw;
             let fc = textureSampleLevel(far_cover_tex, far_cover_samp, fc_uv, 0.0);
-            let cn = ter_noise(in.world_position.xz * 2.3) * 0.6 + ter_noise(in.world_position.xz * 0.61 + vec2<f32>(7.0, 3.0)) * 0.4;
-            let k = clamp(fc.a * (0.7 + 0.6 * cn) * 1.6 * forest.pbr.y, 0.0, 1.0) * far_k;
+            // Clumps at sizes that survive distance (a 2u-scale mottle averages to flat colour by
+            // ~80u): tussocks ~1u, clumps ~3u, patches ~10u.
+            let wp2 = in.world_position.xz;
+            let cn = ter_noise(wp2 * 1.1) * 0.35 + ter_noise(wp2 * 0.33 + vec2<f32>(7.0, 3.0)) * 0.4
+                + ter_noise(wp2 * 0.1 + vec2<f32>(-4.0, 11.0)) * 0.25;
+            let k = clamp(fc.a * (0.6 + 0.8 * cn) * 2.0 * forest.pbr.y, 0.0, 1.0) * far_k;
             let fc_base = pbr_input.material.base_color;
             // A sward seen from afar is its blades AND the shade between them: darker than a card's
-            // albedo, deepest in the dense patches.
-            let blades = fc.rgb * mix(0.62, 0.95, cn) * (1.0 - 0.2 * fc.a);
+            // albedo, deepest in the dense patches, with sunlit tops on the clumps.
+            let blades = fc.rgb * mix(0.5, 1.05, smoothstep(0.2, 0.8, cn)) * (1.0 - 0.22 * fc.a);
             pbr_input.material.base_color = vec4<f32>(mix(fc_base.rgb, blades, k), fc_base.a);
             pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.93, k);
         }

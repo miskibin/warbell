@@ -1,5 +1,6 @@
-//! The hero's walk and dodge roll on Mixamo clips (`mixamo_clips`, baked by
-//! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Running / Jump / Dive Roll).
+//! The hero's walk, run and dodge roll on Mixamo clips (`mixamo_clips`, baked by
+//! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Jogging / Running / Dive Roll; the run
+//! clips go through the bake's `sliders` — arm space, knee lift, stride — first).
 //!
 //! Same recipe as the sword combo ([`super::swordplay`]): the clips are rig-free targets (pelvis and
 //! ankle positions in leg lengths, world-delta rotations, the limbs as directions), solved onto the
@@ -21,26 +22,95 @@ use super::mixamo_clips as mc;
 use super::swordplay::{aim_leg, Frame};
 use super::{aim_arm, e3, rest, rx, shield_gait_r, smoothstep, sword_rest_r, Jp, Pose, SHIELD_GAIT_T};
 
-/// Model m/s below which the gait is purely the Mixamo walk; above it the walk fades into the
-/// hand-built run curves (which own the jog and the sprint), fully by `RUN_FROM`.
+/// Model m/s: the walk (below `WALK_TO`) fades into the jog by `JOG_FROM`, which fades into the
+/// tamed sprint from `RUN_FROM` to `RUN_TO` (the knight's sprint is ~6.5).
 const WALK_TO: f32 = 2.3;
-const RUN_FROM: f32 = 3.6;
+const JOG_FROM: f32 = 3.2;
+const RUN_FROM: f32 = 4.0;
+const RUN_TO: f32 = 5.4;
+/// Mixamo's "Jogging" is a short-strided trot at the speeds the knight runs: its stride is lengthened
+/// (pelvis + ankle travel x this) so the cadence stays a run's instead of a scurry.
+const JOG_STRIDE: f32 = 1.75;
+
+/// 0 = the walk ... 1 = the jog, at a ground speed of `v` model m/s.
+fn jog_weight(v: f32) -> f32 {
+    smoothstep((v - WALK_TO) / (JOG_FROM - WALK_TO))
+}
+
+/// 0 = walk / jog ... 1 = the sprint.
+fn sprint_weight(v: f32) -> f32 {
+    smoothstep((v - RUN_FROM) / (RUN_TO - RUN_FROM))
+}
+
+/// Mixamo clips own the run too unless `FOREST_RUN=curves` (then the walk fades into the original
+/// hand-built run curves above a jog, as before).
+pub(super) fn mixamo_run() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_RUN").map(|v| v != "curves").unwrap_or(true))
+}
+
+/// Walk -> curve-run weight, for the `FOREST_RUN=curves` path.
+pub(super) fn run_weight(v: f32) -> f32 {
+    if mixamo_run() {
+        return 0.0;
+    }
+    smoothstep((v - WALK_TO) / (JOG_FROM + 0.2 - WALK_TO))
+}
 
 fn leg_len() -> f32 {
     let rig = super::super::footman::leg_rig();
     rig.knee.length() + rig.foot.length()
 }
 
-
-pub(super) fn run_weight(v: f32) -> f32 {
-    smoothstep((v - WALK_TO) / (RUN_FROM - WALK_TO))
+/// One locomotion loop and how it travels: the foot-lock numbers of a baked clip.
+struct Loop {
+    clip: &'static [[f32; 53]],
+    /// Stance sweep speed (leg lengths / s at native playback) and the stride stretch on it.
+    native: f32,
+    stride: f32,
+    /// Fraction of the cycle a boot is planted (left: from phase 0; right: from 0.5).
+    duty: f32,
 }
 
-/// Walk-loop phase advance (rad/s) at `v` model m/s: the foot-lock contract. A loop of `n` frames
-/// whose stance boot sweeps back at `native` leg-lengths/s plays at `v / (native x leg)` of its own speed.
+impl Loop {
+    /// Leg lengths the planted boot sweeps back through in one stance.
+    fn sweep(&self) -> f32 {
+        self.native * self.stride * self.duty * self.clip.len() as f32 / mc::FPS
+    }
+}
+
+/// The loops in play at `v` model m/s with their weights (walk, jog, sprint), summing to 1.
+fn mix(v: f32) -> [(Loop, f32); 3] {
+    let (wj, wr) = if mixamo_run() { (jog_weight(v), sprint_weight(v)) } else { (0.0, 0.0) };
+    [
+        (Loop { clip: &mc::WALK, native: mc::WALK_SPEED, stride: 1.0, duty: mc::WALK_DUTY }, (1.0 - wj) * (1.0 - wr)),
+        (Loop { clip: &mc::JOG, native: mc::JOG_SPEED, stride: JOG_STRIDE, duty: mc::JOG_DUTY }, wj * (1.0 - wr)),
+        (Loop { clip: &mc::RUN, native: mc::RUN_SPEED, stride: 1.0, duty: mc::RUN_DUTY }, wr),
+    ]
+}
+
+/// The blend's shared stance: (duty, sweep in leg lengths). Cross-fading loops whose boots are planted
+/// for different shares of the cycle would skate the boot wherever one is down and the other up, so
+/// every loop is time-warped onto the weighted duty and stretched onto the weighted sweep: all of
+/// them then plant, sweep and lift together, and one phase rate pins the boot for all.
+fn shared(m: &[(Loop, f32); 3]) -> (f32, f32) {
+    m.iter().fold((0.0, 0.0), |(d, s), (l, w)| (d + l.duty * w, s + l.sweep() * w))
+}
+
+/// Gait-phase advance (rad/s) at `v` model m/s: the foot-lock contract — the shared stance (`duty` of
+/// the cycle) must carry the planted boot back through the shared sweep at exactly the body's speed.
 pub(super) fn phase_rate(v: f32) -> f32 {
-    let l = leg_len();
-    TAU * v / (mc::WALK_SPEED * l) * mc::FPS / mc::WALK.len() as f32
+    let (duty, sweep) = shared(&mix(v));
+    TAU * v * duty / (sweep * leg_len())
+}
+
+/// Cycle phase `u` of a loop planted for `duty` (per half-cycle: stance, then swing) warped from the
+/// shared `common` duty.
+fn warp(u: f32, common: f32, duty: f32) -> f32 {
+    let u = u.rem_euclid(1.0);
+    let (base, s) = if u < 0.5 { (0.0, u) } else { (0.5, u - 0.5) };
+    let s = if s < common { s * duty / common } else { duty + (s - common) * (0.5 - duty) / (0.5 - common).max(1e-4) };
+    base + s
 }
 
 /// A looping clip at cycle phase `u` (0..1), Catmull-Rom between the baked keys.
@@ -160,10 +230,40 @@ fn dress(mut p: Pose, run: f32, armed: f32, shield_back: f32) -> Pose {
     p
 }
 
-/// The Mixamo walk at gait phase `c` (rad; the left heel strikes at 0 and the right at pi), dressed
-/// with the knight's kit. The caller fades it into the run curves with [`run_weight`].
-pub(super) fn gait(c: f32, armed: f32, shield_back: f32) -> Pose {
-    dress(solve(&sample_loop(&mc::WALK, c / TAU), true), 0.0, armed, shield_back)
+/// The Mixamo walk / jog / sprint at gait phase `c` (rad; the left heel strikes at 0 and the right at
+/// pi) and ground speed `v` (model m/s), dressed with the knight's kit. With `FOREST_RUN=curves` only
+/// the walk (the caller fades it into the run curves with [`run_weight`]).
+pub(super) fn gait(c: f32, v: f32, armed: f32, shield_back: f32) -> Pose {
+    let u = c / TAU;
+    let m = mix(v);
+    let (duty, sweep) = shared(&m);
+    // One frame, one solve: blending the gaits' FRAMES (not their solved joints) keeps the boots
+    // above the floor through the cross-fades.
+    let mut f: Option<(Frame, f32)> = None;
+    for (l, w) in &m {
+        if *w < 1e-3 {
+            continue;
+        }
+        let k = sample_loop(l.clip, warp(u, duty, l.duty));
+        let k = stretch(k, l.stride * sweep / l.sweep());
+        f = Some(match f {
+            None => (k, *w),
+            Some((acc, wa)) => (acc.lerp(&k, w / (wa + w)), wa + w),
+        });
+    }
+    let f = f.map(|(f, _)| f).unwrap_or_else(|| sample_loop(&mc::WALK, u));
+    let run = 1.0 - m[0].1;
+    dress(solve(&f, true), run, armed, shield_back)
+}
+
+/// A frame with its forward travel (pelvis + ankles, off the T-pose) lengthened by `k`.
+fn stretch(mut f: Frame, k: f32) -> Frame {
+    let tp = Frame::of(&mc::TPOSE);
+    f.pelvis.z = tp.pelvis.z + (f.pelvis.z - tp.pelvis.z) * k;
+    for i in 0..2 {
+        f.ankle[i].z = tp.ankle[i].z + (f.ankle[i].z - tp.ankle[i].z) * k;
+    }
+    f
 }
 
 /// The somersault's limbs at progress `u` (0..1) through the roll: the dive, the tuck, the landing.

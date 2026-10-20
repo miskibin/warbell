@@ -67,15 +67,21 @@ fn buffer_len() -> usize {
     1 + PUSHERS + N * N / 4
 }
 
+/// Create the shared buffer (idle). It must exist whether or not trampling is on — every undergrowth
+/// material binds it, and an unfilled handle binds a 1-byte placeholder that fails wgpu validation —
+/// so the standalone model viewer, which draws foliage without this plugin, calls it too.
+pub fn insert_buffer(app: &mut App) {
+    let mut buffers = app.world_mut().resource_mut::<Assets<ShaderBuffer>>();
+    let mut data = vec![[0.0f32; 4]; buffer_len()];
+    data[0] = [0.0, 0.0, CELL, N as f32];
+    let _ = buffers.insert(&TRAMPLE_BUF, ShaderBuffer::new(data, bevy::asset::RenderAssetUsages::default()));
+}
+
 pub struct GrassTramplePlugin;
 
 impl Plugin for GrassTramplePlugin {
     fn build(&self, app: &mut App) {
-        // The buffer exists whether or not trampling is on: every undergrowth material binds it.
-        let mut buffers = app.world_mut().resource_mut::<Assets<ShaderBuffer>>();
-        let mut data = vec![[0.0f32; 4]; buffer_len()];
-        data[0] = [0.0, 0.0, CELL, N as f32];
-        let _ = buffers.insert(&TRAMPLE_BUF, ShaderBuffer::new(data, bevy::asset::RenderAssetUsages::default()));
+        insert_buffer(app);
         if !enabled() {
             return;
         }

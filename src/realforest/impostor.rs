@@ -39,6 +39,15 @@ pub const IMP_FADE_IN: f32 = 10.0;
 const PUSH: f32 = 0.55;
 /// The far dissolve spans the last fraction of the tree draw distance.
 const FAR_FADE: f32 = 0.18;
+/// Impostor draw distance as a multiple of the old LOD1 tree range (`TREE_FAR` x render distance).
+/// A quad per tree in one merged mesh per chunk costs next to nothing far out, and past `TREE_FAR`
+/// whole valleys and hillside forests used to stand bald — so the trees now reach the fog.
+/// `FOREST_IMPFAR=<x>` overrides it (1 = the old range).
+const FAR_MUL: f32 = 2.4;
+/// Chunks nearer than this are always drawn (they cast the shadows onto what is on screen); farther
+/// ones are culled against the view frustum's sides only — the camera's `far` (230u at Normal)
+/// would otherwise frustum-cull every chunk past it.
+const ALWAYS_R: f32 = 140.0;
 /// Edge of one merged chunk (world units).
 const CHUNK: f32 = 64.0;
 const MAX_LAYERS: usize = 32;
@@ -184,6 +193,8 @@ struct ImpostorRes {
 struct Chunk {
     trees: Vec<Entity>,
     entity: Option<Entity>,
+    /// World bounds of the merged quads (for [`cull_chunks`]).
+    bounds: Option<bevy::camera::primitives::Aabb>,
 }
 
 #[derive(Resource, Default)]
@@ -203,7 +214,7 @@ impl Plugin for ImpostorPlugin {
         }
         app.init_resource::<Chunks>().add_systems(Startup, setup).add_systems(
             PostUpdate,
-            (track_trees, rebuild_chunks, sync_params)
+            (track_trees, rebuild_chunks, sync_params, cull_chunks)
                 .chain()
                 .after(bevy::transform::TransformSystems::Propagate),
         );
@@ -214,8 +225,13 @@ impl Plugin for ImpostorPlugin {
 fn distances() -> (f32, f32, f32) {
     let k = crate::quality::view_scale();
     let near = IMP_NEAR * crate::quality::ground_factor(k) - IMP_FADE_IN;
-    let far = super::TREE_FAR * k;
+    let far = super::TREE_FAR * k * far_mul();
     (near, far * (1.0 - FAR_FADE), far)
+}
+
+fn far_mul() -> f32 {
+    static V: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("FOREST_IMPFAR").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(FAR_MUL))
 }
 
 fn params(atlas: &Atlas) -> ImpostorParams {
@@ -299,6 +315,7 @@ fn rebuild_chunks(
     for k in dirty {
         let Some(chunk) = chunks.by_key.get_mut(&k) else { continue };
         let (mut pos, mut uv0, mut uv1, mut col, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         for &e in &chunk.trees {
             let Ok((gt, imp, vis, sway, stump)) = trees.get(e) else { continue };
             if stump || *vis == Visibility::Hidden {
@@ -313,6 +330,9 @@ fn rebuild_chunks(
             let rs = m.w * s;
             let cw = Quat::from_rotation_y(yaw) * (m.truncate() * s);
             let i0 = pos.len() as u32;
+            // The vertex stage turns the quad to the eye and pushes it out: bound the whole sphere.
+            lo = lo.min(base + cw - Vec3::splat(rs * (1.0 + PUSH)));
+            hi = hi.max(base + cw + Vec3::splat(rs * (1.0 + PUSH)));
             for (cu, cv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
                 pos.push((base + cw + Vec3::new(cu * rs, cv * rs, cu * rs)).to_array());
                 uv0.push([cu, cv]);
@@ -337,6 +357,7 @@ fn rebuild_chunks(
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
         mesh.insert_indices(Indices::U32(idx));
         let handle = meshes.add(mesh);
+        chunk.bounds = Some(bevy::camera::primitives::Aabb::from_min_max(lo, hi));
         match chunk.entity {
             Some(ent) => {
                 commands.entity(ent).try_insert(Mesh3d(handle));
@@ -350,10 +371,34 @@ fn rebuild_chunks(
                             MeshMaterial3d(res.material.clone()),
                             Transform::IDENTITY,
                             Visibility::default(),
+                            bevy::camera::visibility::NoFrustumCulling,
                         ))
                         .id(),
                 );
             }
+        }
+    }
+}
+
+/// Cull the chunks ourselves (they carry `NoFrustumCulling`): near ones always draw, far ones only
+/// when their bounds meet the view frustum's sides — ignoring its far plane, which sits well inside
+/// the impostors' reach.
+fn cull_chunks(
+    chunks: Res<Chunks>,
+    cam: Query<(&GlobalTransform, &bevy::camera::primitives::Frustum), With<Camera3d>>,
+    mut vis: Query<&mut Visibility>,
+) {
+    let Ok((cam_gt, frustum)) = cam.single() else { return };
+    let eye = cam_gt.translation();
+    for chunk in chunks.by_key.values() {
+        let (Some(e), Some(b)) = (chunk.entity, chunk.bounds) else { continue };
+        let Ok(mut v) = vis.get_mut(e) else { continue };
+        let c = Vec3::from(b.center);
+        let near = (eye - c).abs() - Vec3::from(b.half_extents);
+        let show = near.max(Vec3::ZERO).length() < ALWAYS_R || frustum.intersects_obb(&b, &bevy::math::Affine3A::IDENTITY, true, false);
+        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != want {
+            *v = want;
         }
     }
 }

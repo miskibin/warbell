@@ -51,6 +51,7 @@ pub fn run() {
         .add_plugins(bevy::pbr::MaterialPlugin::<crate::realforest::foliage::FoliageMaterial>::default())
         .add_systems(PreStartup, crate::realforest::build_kit)
         .add_systems(Startup, setup);
+    crate::grass_trample::insert_buffer(&mut app);
 
     // `FOREST_VIEW_ANIM=idle|walk|block|attack` drives the REAL game animator on the previewed
     // model (otherwise it shows the static rest pose). Reuses `hero_anim` so what you see matches
@@ -118,7 +119,9 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
         }
         "run" => {
             hero.run_amt = 1.0;
-            crate::player::anim::stage_gait(&mut hero, crate::player::SPEED * crate::player::SPRINT_MULT, dt);
+            // `FOREST_VIEW_SPEED=<world u/s>` previews the gait at any pace (default: the sprint).
+            let v = std::env::var("FOREST_VIEW_SPEED").ok().and_then(|v| v.parse().ok());
+            crate::player::anim::stage_gait(&mut hero, v.unwrap_or(crate::player::SPEED * crate::player::SPRINT_MULT), dt);
         }
         "block" | "defend" => hh.blocking = true,
         "blockwalk" => {
