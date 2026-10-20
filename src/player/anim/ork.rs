@@ -29,6 +29,8 @@ use std::sync::OnceLock;
 
 use bevy::prelude::*;
 
+use super::mixamo_clips as mc;
+use super::swordplay::Frame;
 use super::{action_over_loco, e3, lerp, rest, rx, sit_pose, smoothstep, Jp, Pose};
 use crate::biped::BipedDrive;
 
@@ -179,8 +181,12 @@ impl OrkMotion {
         // shuffles with short steps instead of freezing mid-stride.
         d.run_amt = ss(1.9, 2.8, self.speed);
         let run = d.run_amt;
-        let duty = lerp(WALK_DUTY, RUN_DUTY, run);
-        let cadence = (TAU * self.speed * duty / lerp(0.66, 0.82, run)).clamp(4.0, 13.0);
+        let cadence = if mixamo_gait() {
+            mx_cadence(self.speed, run)
+        } else {
+            let duty = lerp(WALK_DUTY, RUN_DUTY, run);
+            (TAU * self.speed * duty / lerp(0.66, 0.82, run)).clamp(4.0, 13.0)
+        };
         self.stride = self.speed * TAU / cadence;
         d.walk_phase += cadence * dt;
         if d.walk_phase > TAU * 64.0 {
@@ -491,6 +497,137 @@ fn gait(c: f32, run: f32, stride: f32, e: f32, b: &OrkBuild) -> Pose {
     p
 }
 
+// ── Mixamo gait ─────────────────────────────────────────────────────────────────────────
+
+/// The orks walk and charge on Mixamo's "Orc Walk" / "Mutant Run" (`mixamo_clips`, baked by
+/// `tools/mixamo_retarget/bake.py`) unless `FOREST_ORK_GAIT=curves` (the hand-built [`gait`]).
+pub(crate) fn mixamo_gait() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_ORK_GAIT").map(|v| v != "curves").unwrap_or(true))
+}
+
+/// Rig leg length (hip → ankle at full stretch): the clips' unit.
+const LEG: f32 = THIGH + SHIN;
+
+/// A baked loop: frames, the planted ankle's sweep speed at native rate (legs / s), the share of
+/// the cycle a foot is down.
+struct MxLoop {
+    clip: &'static [[f32; 53]],
+    native: f32,
+    duty: f32,
+}
+
+impl MxLoop {
+    /// Legs the planted ankle sweeps back through in one stance.
+    fn sweep(&self) -> f32 {
+        self.native * self.duty * self.clip.len() as f32 / mc::FPS
+    }
+    /// Native cycle rate (rad / s).
+    fn rate(&self) -> f32 {
+        TAU * mc::FPS / self.clip.len() as f32
+    }
+}
+
+fn mx_loops() -> [MxLoop; 2] {
+    [
+        MxLoop { clip: &mc::ORC_WALK, native: mc::ORC_WALK_SPEED, duty: mc::ORC_WALK_DUTY },
+        MxLoop { clip: &mc::ORC_RUN, native: mc::ORC_RUN_SPEED, duty: mc::ORC_RUN_DUTY },
+    ]
+}
+
+/// The walk ⇄ charge blend's shared (duty, sweep in legs, native rate) at run weight `run`: both
+/// loops are time-warped onto one duty and stretched onto one sweep, so one phase rate pins the
+/// planted foot for both (as the hero's `mixamo::gait`).
+fn mx_shared(run: f32) -> (f32, f32, f32) {
+    let [w, r] = mx_loops();
+    (lerp(w.duty, r.duty, run), lerp(w.sweep(), r.sweep(), run), lerp(w.rate(), r.rate(), run))
+}
+
+/// Gait-phase rate (rad / s) at `speed` rig units / s: foot-locked, but never slower than half the
+/// clips' own cadence — a prowl at a crawl takes short steps ([`mx_gait`] shortens the sweep to
+/// match) instead of a slow-motion stride.
+fn mx_cadence(speed: f32, run: f32) -> f32 {
+    let (duty, sweep, native) = mx_shared(run);
+    (TAU * speed * duty / (sweep * LEG)).clamp(0.5 * native, 2.0 * native)
+}
+
+/// The lowest each loop's ankles reach above their T-pose height (legs): the planted height.
+fn mx_floor(i: usize) -> [f32; 2] {
+    static FLOOR: [OnceLock<[f32; 2]>; 2] = [const { OnceLock::new() }; 2];
+    *FLOOR[i].get_or_init(|| {
+        let tp = Frame::of(&mc::TPOSE);
+        let clip = mx_loops()[i].clip;
+        let lo = |k: usize| clip.iter().map(|r| Frame::of(r).ankle[k].y - tp.ankle[k].y).fold(f32::MAX, f32::min);
+        [lo(0), lo(1)]
+    })
+}
+
+/// Walk ⇄ charge on the Mixamo loops at gait phase `c` (left heel strike at 0): the clips own the
+/// legs (two-bone IK onto their ankle paths, knees where theirs point), the pelvis's bob / sway /
+/// roll and the trunk; the ork keeps its own carriage on top — wider, toed-out feet, the pelvis
+/// tipped and the trunk hunched by build — and its own arms ([`arms_at`]: the club and the off
+/// fist), which the blows take over. `stride` is the ground covered per cycle ([`OrkMotion`]).
+fn mx_gait(c: f32, run: f32, stride: f32, e: f32, b: &OrkBuild) -> Pose {
+    let st = Stance::of(b.heavy);
+    let tp = Frame::of(&mc::TPOSE);
+    let (duty, sweep, _) = mx_shared(run);
+    // The planted foot must sweep back exactly what the body covers while it is down.
+    let k = (stride * duty / (sweep * LEG)).clamp(0.2, 1.8);
+    let u = c / TAU;
+    let loops = mx_loops();
+    let ws = [1.0 - run, run];
+    let mut f: Option<(Frame, f32)> = None;
+    let mut floor = [0.0f32; 2];
+    for (i, l) in loops.iter().enumerate() {
+        let w = ws[i];
+        if w < 1e-3 {
+            continue;
+        }
+        let fl = mx_floor(i);
+        floor = [floor[0] + fl[0] * w, floor[1] + fl[1] * w];
+        let fr = super::mixamo::sample_loop(l.clip, super::mixamo::warp(u, duty, l.duty));
+        let fr = super::mixamo::stretch(fr, k * sweep / l.sweep());
+        f = Some(match f {
+            None => (fr, w),
+            Some((acc, wa)) => (acc.lerp(&fr, w / (wa + w)), wa + w),
+        });
+    }
+    let Some((f, wsum)) = f else { return gait(c, run, stride, e, b) };
+    let floor = floor.map(|x| x / wsum);
+
+    let mut p = rest();
+    let pelvis = e3(st.tilt, 0.0, 0.0) * f.pelvis_r;
+    // Half the build's crouch on top of the clip's own hip travel (the orc walk already sits low).
+    let hips_t = Vec3::new(0.0, 1.05 - 0.5 * (1.05 - st.hy), 0.0) + (f.pelvis - tp.pelvis) * LEG;
+    p.hips = Jp { t: Some(hips_t), r: pelvis };
+    for (i, side) in [(0usize, -1.0f32), (1, 1.0)] {
+        let d = f.ankle[i] - tp.ankle[i];
+        let lift = (d.y - floor[i]).max(0.0) * LEG;
+        let ankle = Vec3::new(side * (b.hdx + st.width) + d.x * LEG, ANKLE_Y + lift, d.z * LEG);
+        let toe = Quat::from_rotation_y(side * st.toe);
+        let (h, kn, ft) = leg(hips_t, pelvis, b.hdx, side, ankle, toe * f.pole[i], toe * f.foot[i]);
+        if side < 0.0 {
+            (p.hip_l, p.knee_l, p.foot_l) = (h, kn, ft);
+        } else {
+            (p.hip_r, p.knee_r, p.foot_r) = (h, kn, ft);
+        }
+    }
+    // The build's hunch on top of the walk. "Mutant Run" folds the trunk near level, which laid the
+    // guard's stood-up club out flat ahead like a lance: a charge keeps two thirds of its bend.
+    let chest_w = e3(st.tilt + lerp(0.6, 0.15, run) * st.lean, 0.0, 0.0) * f.chest.slerp(Quat::IDENTITY, 0.35 * run);
+    let trunk = pelvis.inverse() * chest_w;
+    p.torso = Jp::r(trunk);
+    let (ct, cr) = chest(hips_t, pelvis, trunk);
+    p.head = look(cr, 0.0, 0.08);
+    // The off arm swings against its leg at ease (on guard it holds up); the club bobs with the step.
+    let ul = u.rem_euclid(1.0);
+    let sw = (TAU * ul).cos() * (1.0 - e);
+    let bob = (TAU * 2.0 * (ul - duty * 0.5)).cos();
+    let swing = Vec3::new(0.0, 0.06 * (-sw).max(0.0), -0.22 * sw * (1.0 + 0.4 * run) + 0.08 * (1.0 - e) + 0.12 * run);
+    arms_at(&mut p, b, ct, cr, e, swing, Vec3::new(0.0, 0.015 * bob, 0.0));
+    p
+}
+
 // ── Blows ───────────────────────────────────────────────────────────────────────────────
 
 /// One blow keyframe: hips (position, pelvis), trunk, gaze, the feet (front: z, lift, pitch; back:
@@ -716,10 +853,18 @@ pub(crate) fn ork_pose(d: &BipedDrive, m: &OrkMotion, now: f32) -> Pose {
             idle(t, b).lerp(&guard(t, b), e)
         }
     });
+    let walk = |d: &BipedDrive| {
+        let run = d.run_amt.clamp(0.0, 1.0);
+        if mixamo_gait() {
+            mx_gait(d.walk_phase, run, m.stride, e, b)
+        } else {
+            gait(d.walk_phase, run, m.stride, e, b)
+        }
+    };
     let base = match (still, moving > 0.001) {
         (Some(s), false) => s,
-        (Some(s), true) => s.lerp(&gait(d.walk_phase, d.run_amt.clamp(0.0, 1.0), m.stride, e, b), moving),
-        (None, _) => gait(d.walk_phase, d.run_amt.clamp(0.0, 1.0), m.stride, e, b),
+        (Some(s), true) => s.lerp(&walk(d), moving),
+        (None, _) => walk(d),
     };
 
     let ks = keys(b);
@@ -920,9 +1065,20 @@ mod tests {
         }
         let swept = (d.walk_phase - c0) / TAU * m.stride;
         assert!((swept - speed / scale).abs() < 0.03, "{swept} vs {}", speed / scale);
-        assert!(m.stride * WALK_DUTY < 0.9, "stance sweep clamped: {}", m.stride * WALK_DUTY);
-        // Mid-stance (left leg) the sole is on the ground.
-        let (a, _, _, _) = fk(&gait(TAU * 0.4 * WALK_DUTY, 0.0, m.stride, 0.0, &HEAVY), &HEAVY);
-        assert!((a.y - ANKLE_Y).abs() < 0.01, "{a}");
+        if mixamo_gait() {
+            // The Mixamo walk plays its own stride, within the stretch it allows.
+            let (duty, sweep, _) = mx_shared(0.0);
+            let k = m.stride * duty / (sweep * LEG);
+            assert!((0.5..1.5).contains(&k), "stride stretched x{k}");
+            for u in [0.1, 0.25, 0.4] {
+                let (a, _, _, _) = fk(&mx_gait(TAU * u * duty, 0.0, m.stride, 0.0, &HEAVY), &HEAVY);
+                assert!((a.y - ANKLE_Y).abs() < 0.015, "mid-stance sole off the ground at {u}: {a}");
+            }
+        } else {
+            assert!(m.stride * WALK_DUTY < 0.9, "stance sweep clamped: {}", m.stride * WALK_DUTY);
+            // Mid-stance (left leg) the sole is on the ground.
+            let (a, _, _, _) = fk(&gait(TAU * 0.4 * WALK_DUTY, 0.0, m.stride, 0.0, &HEAVY), &HEAVY);
+            assert!((a.y - ANKLE_Y).abs() < 0.01, "{a}");
+        }
     }
 }

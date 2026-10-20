@@ -95,7 +95,7 @@ pub(super) fn phase_rate(v: f32) -> f32 {
 
 /// Cycle phase `u` of a loop planted for `duty` (per half-cycle: stance, then swing) warped from the
 /// shared `common` duty.
-fn warp(u: f32, common: f32, duty: f32) -> f32 {
+pub(super) fn warp(u: f32, common: f32, duty: f32) -> f32 {
     let u = u.rem_euclid(1.0);
     let (base, s) = if u < 0.5 { (0.0, u) } else { (0.5, u - 0.5) };
     let s = if s < common { s * duty / common } else { duty + (s - common) * (0.5 - duty) / (0.5 - common).max(1e-4) };
@@ -103,7 +103,7 @@ fn warp(u: f32, common: f32, duty: f32) -> f32 {
 }
 
 /// A looping clip at cycle phase `u` (0..1), Catmull-Rom between the baked keys.
-fn sample_loop(clip: &[[f32; 53]], u: f32) -> Frame {
+pub(super) fn sample_loop(clip: &[[f32; 53]], u: f32) -> Frame {
     let n = clip.len() as isize;
     let x = u.rem_euclid(1.0) * n as f32;
     let i = x.floor() as isize;
@@ -246,7 +246,7 @@ pub(super) fn gait(c: f32, v: f32, armed: f32, shield_back: f32) -> Pose {
 }
 
 /// A frame with its forward travel (pelvis + ankles, off the T-pose) lengthened by `k`.
-fn stretch(mut f: Frame, k: f32) -> Frame {
+pub(super) fn stretch(mut f: Frame, k: f32) -> Frame {
     let tp = Frame::of(&mc::TPOSE);
     f.pelvis.z = tp.pelvis.z + (f.pelvis.z - tp.pelvis.z) * k;
     for i in 0..2 {
