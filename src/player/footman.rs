@@ -548,6 +548,23 @@ fn back_sword_transform(model: &Model) -> Transform {
 /// the backplate far enough to clear the slung sword. The board's axes are read off the mesh: the
 /// thinnest extent is the face normal, and the face is the side AWAY from the gripping hand.
 fn back_shield_transform(model: &Model) -> Transform {
+    let Some((board, centre, half_t)) = shield_board(model) else { return Transform::IDENTITY };
+    // A casual sling: top canted toward the left shoulder and leaning a touch off the back.
+    let rot = Quat::from_rotation_z(0.18) * Quat::from_rotation_x(0.08) * board;
+    let back_z = model
+        .meshes
+        .iter()
+        .filter(|m| m.joint == "Torso")
+        .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p)).z))
+        .fold(0.0_f32, f32::min);
+    let shoulder = pos_of(model, "ShoulderL");
+    let want = Vec3::new(0.0, shoulder.y - 0.2, back_z - 0.065 - half_t);
+    Transform { translation: want - rot * centre, rotation: rot, scale: Vec3::ONE }
+}
+
+/// The shield board's frame in its joint's space: the rotation that stands it broad end up with its
+/// face toward −Z, its centre, and its half thickness.
+fn shield_board(model: &Model) -> Option<(Quat, Vec3, f32)> {
     let pts: Vec<Vec3> = model
         .meshes
         .iter()
@@ -555,7 +572,7 @@ fn back_shield_transform(model: &Model) -> Transform {
         .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p))))
         .collect();
     if pts.is_empty() {
-        return Transform::IDENTITY;
+        return None;
     }
     let (lo, hi) = pts.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(a, b), p| (a.min(*p), b.max(*p)));
     let (ext, centre) = (hi - lo, (hi + lo) * 0.5);
@@ -580,18 +597,7 @@ fn back_shield_transform(model: &Model) -> Transform {
     let side = up.cross(face);
     let local = Mat3::from_cols(side, up, face);
     let target = Mat3::from_cols(Vec3::NEG_X, Vec3::Y, Vec3::NEG_Z);
-    // A casual sling: top canted toward the left shoulder and leaning a touch off the back.
-    let rot = Quat::from_rotation_z(0.18) * Quat::from_rotation_x(0.08) * Quat::from_mat3(&(target * local.transpose()));
-    let back_z = model
-        .meshes
-        .iter()
-        .filter(|m| m.joint == "Torso")
-        .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p)).z))
-        .fold(0.0_f32, f32::min);
-    let half_t = 0.5 * ext[order[0]];
-    let shoulder = pos_of(model, "ShoulderL");
-    let want = Vec3::new(0.0, shoulder.y - 0.2, back_z - 0.065 - half_t);
-    Transform { translation: want - rot * centre, rotation: rot, scale: Vec3::ONE }
+    Some((Quat::from_mat3(&(target * local.transpose())), centre, 0.5 * ext[order[0]]))
 }
 
 /// Radius of the knee-pit mail filler (model metres; the greave's half-width is ~0.09).
@@ -671,8 +677,9 @@ pub fn spawn_part_prop(
         return None;
     }
     let rig_scale = TARGET_RIG_HEIGHT / (g.model.max_y - g.model.min_y).max(0.01);
+    // The shield stands on its own: board centre at the origin, broad end up, face toward −Z.
     let rest = match joint {
-        "Shield" => Transform { translation: SHIELD_REST_T, rotation: shield_rest_r(), scale: Vec3::ONE },
+        "Shield" => shield_board(&g.model).map_or(Transform::IDENTITY, |(r, c, _)| Transform::from_rotation(r).with_translation(-(r * c))),
         "Sword" => Transform::from_rotation(sword_rest_r()),
         _ => Transform::IDENTITY,
     };
