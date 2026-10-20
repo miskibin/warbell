@@ -106,6 +106,7 @@ mod outline;
 mod palette;
 mod particles;
 mod anim_lod; // skinned crowd animation LOD: park far / off-screen skins (npc_skin, animal_skin)
+mod anim_budget; // animation budget (UE URO): far / off-screen skins re-pose every few frames, staggered
 mod autolod; // meshopt auto-LOD: simplified far twins of kit props / statics / skins
 mod audio_capture; // FOREST_CLIP: the game's own audio mirrored offline, frame-locked, into <dir>/audio.wav
 mod water_ssr; // water screen-space reflections: rivers/lake/sea mirror the banks, trees and buildings
@@ -361,7 +362,7 @@ fn main() {
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
             // shared studio rig+animator for non-hero bipeds (orcs/peasants) + the realistic skinned
             // townsfolk drawn over it
-            (biped::BipedPlugin, npc_skin::NpcSkinPlugin, lipsync::LipSyncPlugin, animal_skin::AnimalSkinPlugin),
+            (biped::BipedPlugin, npc_skin::NpcSkinPlugin, lipsync::LipSyncPlugin, animal_skin::AnimalSkinPlugin, anim_budget::AnimBudgetPlugin),
             quadruped::QuadrupedPlugin, // shared studio quadruped rig+animator (wildlife mammals)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog

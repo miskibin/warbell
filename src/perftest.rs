@@ -94,6 +94,28 @@ impl Plugin for PerftestPlugin {
             // (always present); we just read them here.
             .add_systems(Startup, perf_setup)
             .add_systems(Update, (perf_tick, perf_sample.before(perf_exit), perf_exit, perf_keep_hero_alive, perf_state_watch));
+        // Material churn: every `Assets<M>::get_mut` marks the material modified, which re-prepares
+        // its bind group on the render thread and re-specializes every entity drawing it. Counted
+        // per type (events/s + distinct assets) so a system touching materials every frame shows up.
+        app.init_resource::<MatChurn>().add_systems(
+            Last,
+            (
+                mat_churn::<StandardMaterial>,
+                mat_churn::<crate::creature::CreatureMaterial>,
+                mat_churn::<crate::realforest::foliage::FoliageMaterial>,
+                mat_churn::<crate::terrain::TerrainMaterial>,
+                mat_churn::<crate::realforest::impostor::ImpostorMaterial>,
+                mat_churn::<crate::water::WaterMaterial>,
+                mat_churn::<crate::combat_fx::HpBarMaterial>,
+                mat_churn::<crate::combat_marks::MarkMaterial>,
+                mat_churn::<crate::realforest::reskin::ReskinMaterial>,
+                mat_churn::<crate::alpine::snowkit::SnowKitMaterial>,
+                mat_churn::<crate::vista::FallsMaterial>,
+                mat_churn::<crate::clouds::CloudSkyMaterial>,
+                mat_churn_report,
+            )
+                .chain(),
+        );
         // FOREST_PERFROAM=1: also drive the hero on a wide circuit so the follow-cam streams every
         // biome — exercises the position-reactive systems (groundcover/atmosphere/weather/footsteps)
         // that an idle-hero test leaves dormant. Gated to Modal::None like the rest of the sim.
@@ -728,4 +750,63 @@ fn mesh_upload_diag(
         );
         *acc = None;
     }
+}
+
+/// Per material type: (modified events, distinct assets modified) since the last report.
+#[derive(Resource, Default)]
+struct MatChurn {
+    by_type: std::collections::BTreeMap<&'static str, (u32, bevy::platform::collections::HashSet<bevy::asset::UntypedAssetId>)>,
+    last: f32,
+}
+
+fn mat_churn<M: Asset>(mut events: MessageReader<AssetEvent<M>>, mut churn: ResMut<MatChurn>) {
+    let name = std::any::type_name::<M>().rsplit("::").next().unwrap_or("?");
+    for ev in events.read() {
+        if let AssetEvent::Modified { id } = ev {
+            let e = churn.by_type.entry(name).or_default();
+            e.0 += 1;
+            e.1.insert(id.untyped());
+        }
+    }
+}
+
+fn mat_churn_report(
+    time: Res<Time<Real>>,
+    mut churn: ResMut<MatChurn>,
+    std_mats: Res<Assets<StandardMaterial>>,
+    users: Query<(&MeshMaterial3d<StandardMaterial>, Option<&Name>, Option<&ChildOf>)>,
+    names: Query<&Name>,
+) {
+    let now = time.elapsed_secs();
+    let dt = now - churn.last;
+    if dt < 5.0 {
+        return;
+    }
+    churn.last = now;
+    // Name the churned StandardMaterials: how many meshes draw each, its colours, and a user's name.
+    if let Some((_, ids)) = churn.by_type.get("StandardMaterial") {
+        for id in ids.iter().take(12) {
+            let Ok(tid) = id.try_typed::<StandardMaterial>() else { continue };
+            let mut n = 0;
+            let mut who = String::new();
+            for (m, nm, parent) in &users {
+                if m.0.id() == tid {
+                    n += 1;
+                    if who.is_empty() {
+                        who = nm.map(|x| x.to_string()).or_else(|| parent.and_then(|p| names.get(p.parent()).ok()).map(|x| format!("child of {x}"))).unwrap_or_default();
+                    }
+                }
+            }
+            let desc = std_mats.get(tid).map(|m| format!("base {:?} emissive {:?}", m.base_color.to_srgba(), m.emissive)).unwrap_or_default();
+            info!("MATCHURN   std {id:?}: {n} users e.g. '{who}' {desc}");
+        }
+    }
+    let line: Vec<String> = churn
+        .by_type
+        .iter()
+        .filter(|(_, (n, _))| *n > 0)
+        .map(|(t, (n, ids))| format!("{t} {:.0}/s over {} assets", *n as f32 / dt, ids.len()))
+        .collect();
+    info!("MATCHURN {}", if line.is_empty() { "none".into() } else { line.join(" | ") });
+    churn.by_type.clear();
 }

@@ -112,6 +112,7 @@ enum ToggleId {
     GodRays,
     MotionBlur,
     EyeAdaptation,
+    DynamicResolution,
     Vsync,
     Mute,
 }
@@ -386,6 +387,7 @@ fn graphics_pane(p: &mut Pane<'_>, fonts: &UiFonts, quality: GraphicsQuality, s:
     check_row(p, fonts, "God rays", ToggleId::GodRays, s.god_rays);
     check_row(p, fonts, "Motion blur", ToggleId::MotionBlur, s.motion_blur);
     check_row(p, fonts, "Eye adaptation", ToggleId::EyeAdaptation, s.eye_adaptation);
+    check_row(p, fonts, "Dynamic resolution", ToggleId::DynamicResolution, s.dynamic_resolution);
 }
 
 fn display_pane(p: &mut Pane<'_>, fonts: &UiFonts, w: &WindowSettings) {
@@ -688,6 +690,8 @@ fn on_toggle_change(
         ToggleId::GodRays => set_custom(&mut quality, || settings.god_rays = on),
         ToggleId::MotionBlur => set_custom(&mut quality, || settings.motion_blur = on),
         ToggleId::EyeAdaptation => set_custom(&mut quality, || settings.eye_adaptation = on),
+        // Not part of the look (it only acts when the GPU falls behind): never flips to Custom.
+        ToggleId::DynamicResolution => settings.dynamic_resolution = on,
         ToggleId::Vsync => window.vsync = on, // window setting — independent of the render preset
         ToggleId::Mute => audio.muted = on,   // audio setting
     }
@@ -789,6 +793,7 @@ fn sync_controls(
             ToggleId::GodRays => settings.god_rays,
             ToggleId::MotionBlur => settings.motion_blur,
             ToggleId::EyeAdaptation => settings.eye_adaptation,
+            ToggleId::DynamicResolution => settings.dynamic_resolution,
             ToggleId::Vsync => window.vsync,
             ToggleId::Mute => audio.muted,
         };

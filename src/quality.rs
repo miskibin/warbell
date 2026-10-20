@@ -429,6 +429,11 @@ pub struct GraphicsSettings {
     /// (deep forest shade <-> open glade) without flattening night into day.
     #[serde(default = "default_true")]
     pub eye_adaptation: bool,
+    /// Dynamic resolution: when the GPU can't hold 60 fps, the 3D render scale dips (down to 60% of
+    /// [`Self::render_scale`]) and climbs back as soon as there is headroom ([`DynRes`]). The UI and
+    /// the post passes stay at full resolution. Does nothing on a GPU that keeps up.
+    #[serde(default = "default_true")]
+    pub dynamic_resolution: bool,
     /// Render distance (see [`ViewDistance`]). Not part of any preset — a preset fill keeps it.
     /// `#[serde(default)]` = Normal for configs saved before it existed.
     #[serde(default)]
@@ -469,6 +474,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             render_scale: 1.0,
             undergrowth: Undergrowth::Medium,
             eye_adaptation: true,
+            dynamic_resolution: true,
             view_distance: ViewDistance::Normal,
         },
         GraphicsQuality::Ultra => GraphicsSettings {
@@ -485,6 +491,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             render_scale: 1.0,
             undergrowth: Undergrowth::High,
             eye_adaptation: true,
+            dynamic_resolution: true,
             view_distance: ViewDistance::Normal,
         },
         // Low: tuned for integrated GPUs — SSAO/bloom/DoF/outline off (each strips a whole pass),
@@ -503,6 +510,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             render_scale: 0.6,
             undergrowth: Undergrowth::Low,
             eye_adaptation: false,
+            dynamic_resolution: true,
             view_distance: ViewDistance::Normal,
         },
         GraphicsQuality::Custom => preset_settings(GraphicsQuality::High),
@@ -547,6 +555,11 @@ struct RenderDefaults {
 /// config, so the hardware-detection system must not overwrite it.
 #[derive(Resource)]
 struct QualityLockedByEnv;
+
+fn occlusion_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_OCCLUSION").map(|v| v != "0").unwrap_or(false))
+}
 
 pub struct QualityPlugin;
 
@@ -619,7 +632,8 @@ impl Plugin for QualityPlugin {
             )
             // Render-scale follows the settings AND the window size; self-gates internally, so it
             // stays ungated (it must catch window resizes, not just setting toggles).
-            .add_systems(Update, apply_render_scale)
+            .init_resource::<DynRes>()
+            .add_systems(Update, (drive_dynamic_resolution, apply_render_scale).chain())
             // Window mode / vsync / resolution → primary window. Self-gated.
             .add_systems(Update, apply_window_settings);
     }
@@ -813,6 +827,7 @@ fn fill_settings_from_preset(quality: Res<GraphicsQuality>, mut settings: ResMut
     let mut want = preset_settings(*quality);
     env_overrides(&mut want);
     want.view_distance = settings.view_distance; // render distance isn't part of a preset
+    want.dynamic_resolution = settings.dynamic_resolution; // nor is dynamic resolution
     if *settings != want {
         *settings = want;
     }
@@ -1063,6 +1078,14 @@ fn apply_quality(
             e.remove::<DepthPrepass>();
             e.remove::<ContactShadows>();
         }
+        // GPU two-phase occlusion culling (the HZB test every AAA engine runs): meshes whose bounds
+        // sit wholly behind last frame's depth skip their vertex work in every later pass. Needs
+        // the depth prepass. `FOREST_OCCLUSION=0` turns it off (A/B).
+        if needs_depth && occlusion_enabled() {
+            e.insert(bevy::render::occlusion_culling::OcclusionCulling);
+        } else {
+            e.remove::<bevy::render::occlusion_culling::OcclusionCulling>();
+        }
     }
 
     // Ground relief: push the terrain-detail level's bump / quality-lane / variety into every
@@ -1100,12 +1123,107 @@ fn apply_quality(
 /// passes' UVs (black, flickering blotches in the water reflections) and the frame read blurred /
 /// over-sharpened. Clamp 0.3..1.0 (an old saved 2.0 lands on 1.0).
 fn render_scale_for(settings: &GraphicsSettings) -> f32 {
-    if let Some(v) =
-        std::env::var("FOREST_RENDERSCALE").ok().and_then(|s| s.trim().parse::<f32>().ok())
-    {
-        return v.clamp(0.3, 1.0);
+    if let Some(v) = env_render_scale() {
+        return v;
     }
     settings.render_scale.clamp(0.3, 1.0)
+}
+
+fn env_render_scale() -> Option<f32> {
+    std::env::var("FOREST_RENDERSCALE").ok().and_then(|s| s.trim().parse::<f32>().ok()).map(|v| v.clamp(0.3, 1.0))
+}
+
+/// **Dynamic resolution** (the console / Unreal staple): the live fraction of the player's render
+/// scale the 3D passes draw at. Driven from the GPU's own per-pass timestamps (`RenderDiagnosticsPlugin`,
+/// the same numbers the F2 overlay shows), so it only reacts when the GPU is the bottleneck — a
+/// CPU-bound frame (the usual case on a discrete card) never loses resolution. Cost ≈ scale², so a
+/// step is sized by √(budget / gpu). `MainPassResolutionOverride` is a viewport inside full-size
+/// targets: changing it reallocates nothing, so steps are cheap and can come every half second.
+/// `FOREST_DYNRES=0` turns it off; it also stays off under a capture or a `FOREST_RENDERSCALE` override.
+#[derive(Resource)]
+pub struct DynRes {
+    pub factor: f32,
+    timer: f32,
+}
+
+impl Default for DynRes {
+    fn default() -> Self {
+        Self { factor: 1.0, timer: 0.0 }
+    }
+}
+
+/// GPU frame budget (ms): 60 fps less a margin for the passes the timers don't see (present, UI
+/// composite) and for timer noise.
+const DYNRES_BUDGET_MS: f64 = 14.5;
+/// Lowest fraction of the player's render scale it may drop to, and the absolute floor.
+const DYNRES_MIN_FACTOR: f32 = 0.6;
+const DYNRES_MIN_SCALE: f32 = 0.4;
+/// Re-evaluate this often (seconds).
+const DYNRES_PERIOD: f32 = 0.5;
+
+fn dynres_allowed(settings: &GraphicsSettings) -> bool {
+    static ENV: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let env_ok = *ENV.get_or_init(|| {
+        std::env::var("FOREST_DYNRES").map(|v| v != "0").unwrap_or(true)
+            && std::env::var_os("FOREST_SHOT").is_none()
+            && std::env::var_os("FOREST_CLIP").is_none()
+    });
+    env_ok && settings.dynamic_resolution && env_render_scale().is_none()
+}
+
+/// Sum of the top-level GPU pass timers (ms), or `None` when the GPU can't timestamp.
+fn gpu_frame_ms(diag: &bevy::diagnostic::DiagnosticsStore) -> Option<f64> {
+    let mut sum = 0.0;
+    let mut any = false;
+    for d in diag.iter() {
+        let p = d.path().as_str();
+        let Some(name) = p.strip_prefix("render/").and_then(|n| n.strip_suffix("/elapsed_gpu")) else { continue };
+        if name.contains('/') || d.measurement().is_none_or(|m| m.time.elapsed().as_millis() > 500) {
+            continue; // nested spans are inside their parent's time; stale = didn't run lately
+        }
+        if let Some(ms) = d.smoothed() {
+            sum += ms;
+            any = true;
+        }
+    }
+    any.then_some(sum)
+}
+
+fn drive_dynamic_resolution(
+    time: Res<Time<Real>>,
+    settings: Res<GraphicsSettings>,
+    diag: Option<Res<bevy::diagnostic::DiagnosticsStore>>,
+    mut dyn_res: ResMut<DynRes>,
+) {
+    if !dynres_allowed(&settings) {
+        if dyn_res.factor != 1.0 {
+            dyn_res.factor = 1.0;
+        }
+        return;
+    }
+    dyn_res.timer += time.delta_secs();
+    if dyn_res.timer < DYNRES_PERIOD {
+        return;
+    }
+    dyn_res.timer = 0.0;
+    let Some(gpu) = diag.as_deref().and_then(gpu_frame_ms) else { return };
+    let base = settings.render_scale.clamp(0.3, 1.0);
+    let min = (DYNRES_MIN_FACTOR).max(DYNRES_MIN_SCALE / base).min(1.0);
+    let f = dyn_res.factor;
+    // Timers measure the CURRENT scale; scale cost ~ factor², so the factor that would fit is
+    // f·√(budget/gpu). Drop at once (a hitch is worse than a softer frame), climb in small steps.
+    let fit = f * (DYNRES_BUDGET_MS / gpu.max(0.1)).sqrt() as f32;
+    let next = if gpu > DYNRES_BUDGET_MS {
+        fit.max(f - 0.15)
+    } else if gpu < DYNRES_BUDGET_MS * 0.75 {
+        (f + 0.05).min(fit)
+    } else {
+        f
+    };
+    let next = (next.clamp(min, 1.0) * 20.0).round() / 20.0; // 5% steps: no churn on timer noise
+    if (next - f).abs() > 1e-3 {
+        dyn_res.factor = next;
+    }
 }
 
 /// Drive Bevy's [`MainPassResolutionOverride`] from the window size × the render-scale: the
@@ -1120,8 +1238,9 @@ fn apply_render_scale(
     cam: Query<Entity, With<Camera3d>>,
     mut commands: Commands,
     mut last: Local<Option<UVec2>>,
+    dyn_res: Res<DynRes>,
 ) {
-    let scale = render_scale_for(&settings);
+    let scale = render_scale_for(&settings) * dyn_res.factor;
     let Ok(win) = windows.single() else {
         return;
     };

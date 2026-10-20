@@ -10,8 +10,13 @@
 //!
 //! Only entities that cast to begin with are touched: a capped one carries [`ShadowCapped`], and only
 //! those get their `NotShadowCaster` lifted again. Skinned meshes have their own flip
-//! (`anim_lod::shadow_flip`); creature / foliage materials are left alone (multi-part rigs would
-//! lose their shadow piece by piece). `FOREST_SHADOWLOD=0` turns it off (A/B).
+//! (`anim_lod::shadow_flip`); foliage materials are left alone.
+//!
+//! Procedural creatures (orks, the part-built animals: `CreatureMaterial` rigs of 10-40 parts) get a
+//! flat cutoff instead ([`cap_creature_shadows`]): every part is tested every frame against the same
+//! distance, so a whole rig drops / regains its shadow together rather than piece by piece. They
+//! filled the far cascade with ~300 casters at 60-260u in the village (each part a shadow draw).
+//! `FOREST_SHADOWLOD=0` turns it off (A/B).
 
 use bevy::camera::primitives::Aabb;
 use bevy::light::NotShadowCaster;
@@ -38,7 +43,10 @@ impl Plugin for ShadowLodPlugin {
         if std::env::var("FOREST_SHADOWLOD").as_deref() == Ok("0") {
             return;
         }
-        app.add_systems(PostUpdate, cap_shadows.after(bevy::transform::TransformSystems::Propagate));
+        app.add_systems(
+            PostUpdate,
+            (cap_shadows, cap_creature_shadows).after(bevy::transform::TransformSystems::Propagate),
+        );
     }
 }
 
@@ -68,6 +76,36 @@ fn cap_shadows(
         if !off && d2 > (cut * (1.0 + HYST)).powi(2) {
             commands.entity(e).try_insert((NotShadowCaster, ShadowCapped));
         } else if capped && d2 < (cut * (1.0 - HYST)).powi(2) {
+            commands.entity(e).try_remove::<(NotShadowCaster, ShadowCapped)>();
+        }
+    }
+}
+
+/// Creature rigs stop casting past this (base units; skinned people / animals stop at 38).
+const CREATURE_SHADOW_FAR: f32 = 50.0;
+const CREATURE_SHADOW_NEAR: f32 = 46.0;
+
+#[allow(clippy::type_complexity)]
+fn cap_creature_shadows(
+    mut commands: Commands,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    parts: Query<
+        (Entity, &GlobalTransform, Has<NotShadowCaster>, Has<ShadowCapped>),
+        (With<Mesh3d>, With<MeshMaterial3d<crate::creature::CreatureMaterial>>, Without<crate::player::HeroMesh>),
+    >,
+) {
+    let Some(eye) = cam.iter().next().map(|t| t.translation()) else { return };
+    let k = 1.0 + (crate::quality::view_scale() - 1.0).max(0.0) * 0.5;
+    let (far2, near2) = ((CREATURE_SHADOW_FAR * k).powi(2), (CREATURE_SHADOW_NEAR * k).powi(2));
+    for (e, tf, off, capped) in &parts {
+        if off && !capped {
+            continue; // never cast to begin with (eyes, smoke, the viewmodel…)
+        }
+        // Horizontal distance: a rig's parts share it to within a body length, so they flip together.
+        let d2 = tf.translation().xz().distance_squared(eye.xz());
+        if !off && d2 > far2 {
+            commands.entity(e).try_insert((NotShadowCaster, ShadowCapped));
+        } else if capped && d2 < near2 {
             commands.entity(e).try_remove::<(NotShadowCaster, ShadowCapped)>();
         }
     }

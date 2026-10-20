@@ -86,6 +86,11 @@ debug = 0
 # `vendor/bevy_render/src/camera.rs` (`DirtySpecializations::iter_to_queue`) and
 # `vendor/bevy_render/src/render_phase/mod.rs` (`BinnedRenderPhase::add`), both marked WARBELL PATCH.
 # Drop this once Bevy ships the fix.
+#
+# Second patch (WARBELL PATCH in `vendor/bevy_animation/src/lib.rs`): `AnimationTickSkip`, a set of
+# animation players `animate_targets` leaves un-evaluated this frame — the hook for the game's
+# animation budget (`src/anim_budget.rs`). Not a bug fix; keep it across Bevy upgrades.
 [patch.crates-io]
 bevy_render = { path = "vendor/bevy_render" }
+bevy_animation = { path = "vendor/bevy_animation" }
 

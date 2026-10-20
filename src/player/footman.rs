@@ -343,6 +343,17 @@ struct Gpu {
     model: Model,
     meshes: Vec<Handle<Mesh>>,
     mats: Vec<Handle<crate::creature::CreatureMaterial>>,
+    /// Per joint: the draws to spawn under it — every part of one material merged into one mesh
+    /// (its transform baked in), the sword blade kept apart (`HeroWeapon`).
+    parts: HashMap<String, Vec<Part>>,
+}
+
+/// One draw under a joint: (material index, mesh, local transform, is the blade).
+struct Part {
+    mat: usize,
+    mesh: Handle<Mesh>,
+    xf: Transform,
+    blade: bool,
 }
 
 static GPU: OnceLock<Gpu> = OnceLock::new();
@@ -449,7 +460,7 @@ fn gpu(
                 })
             })
             .collect();
-        let mesh_handles = model
+        let mesh_handles: Vec<Handle<Mesh>> = model
             .meshes
             .iter()
             .map(|m| {
@@ -465,14 +476,75 @@ fn gpu(
                 meshes.add(mesh)
             })
             .collect();
+        // The model is ~230 rigid parts, which drawn one entity each cost ~230 draws in the main
+        // pass, the prepass and every shadow cascade (~1100 for one character — a crowd's worth of
+        // render-thread binning) and ~230 transform propagations. Parts that share a joint move
+        // together, so per joint every part of one material becomes one mesh: same look, a few
+        // dozen draws. (Per-joint hides — first person — still work: they act on whole joints.)
+        let parts = {
+            // `FOREST_HEROMERGE=0`: one draw per part again (A/B).
+            let merge = std::env::var("FOREST_HEROMERGE").map(|v| v != "0").unwrap_or(true);
+            let mut groups: HashMap<(String, usize, usize), Vec<usize>> = HashMap::new();
+            for (i, m) in model.meshes.iter().enumerate() {
+                if i != model.blade {
+                    groups.entry((m.joint.clone(), m.mat, if merge { 0 } else { i })).or_default().push(i);
+                }
+            }
+            let mut parts: HashMap<String, Vec<Part>> = HashMap::new();
+            let mut keys: Vec<(String, usize, usize)> = groups.keys().cloned().collect();
+            keys.sort();
+            for key in keys {
+                let list = &groups[&key];
+                let part = if list.len() == 1 {
+                    let i = list[0];
+                    Part { mat: key.1, mesh: mesh_handles[i].clone(), xf: model.meshes[i].xf, blade: false }
+                } else {
+                    let mut merged: Option<Mesh> = None;
+                    for &i in list {
+                        let Some(src) = meshes.get(&mesh_handles[i]) else { continue };
+                        let xf = model.meshes[i].xf;
+                        let mut one = src.clone().transformed_by(xf);
+                        // A mirrored part (negative scale) drawn as its own entity has its winding
+                        // flipped by the renderer; baked into a shared mesh it must be flipped here.
+                        if xf.scale.x * xf.scale.y * xf.scale.z < 0.0 {
+                            if let Some(Indices::U32(idx)) = one.indices_mut() {
+                                for t in idx.chunks_exact_mut(3) {
+                                    t.swap(1, 2);
+                                }
+                            }
+                        }
+                        match merged.as_mut() {
+                            None => merged = Some(one),
+                            Some(acc) => {
+                                if let Err(e) = acc.merge(&one) {
+                                    warn!("footman: merging {:?} part {i} failed: {e}", key);
+                                }
+                            }
+                        }
+                    }
+                    let Some(merged) = merged else { continue };
+                    Part { mat: key.1, mesh: meshes.add(merged), xf: Transform::IDENTITY, blade: false }
+                };
+                parts.entry(key.0).or_default().push(part);
+            }
+            let b = &model.meshes[model.blade];
+            parts.entry(b.joint.clone()).or_default().push(Part {
+                mat: b.mat,
+                mesh: mesh_handles[model.blade].clone(),
+                xf: b.xf,
+                blade: true,
+            });
+            parts
+        };
         let _ = TIP.set(model.tip);
         info!(
-            "footman: {} meshes, {:.2}u tall (rig scale {:.3})",
+            "footman: {} meshes in {} draws, {:.2}u tall (rig scale {:.3})",
             model.meshes.len(),
+            parts.values().map(Vec::len).sum::<usize>(),
             model.max_y - model.min_y,
             TARGET_RIG_HEIGHT / (model.max_y - model.min_y)
         );
-        Gpu { model, meshes: mesh_handles, mats }
+        Gpu { model, meshes: mesh_handles, mats, parts }
     });
     GPU.get().unwrap()
 }
@@ -677,11 +749,6 @@ pub fn spawn(
         .id();
     commands.entity(root).add_child(rig);
 
-    let mut by_joint: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (i, m) in g.model.meshes.iter().enumerate() {
-        by_joint.entry(m.joint.as_str()).or_default().push(i);
-    }
-
     let spawn_joint = |commands: &mut Commands, parent: Entity, name: &str, xf: Transform| -> Entity {
         let mut ec = commands.spawn((xf, Visibility::Visible));
         if let Some(j) = joint_of(name) {
@@ -689,21 +756,13 @@ pub fn spawn(
         }
         let id = ec.id();
         commands.entity(parent).add_child(id);
-        if let Some(list) = by_joint.get(name) {
-            for &i in list {
-                let m = &g.model.meshes[i];
-                let mut le = commands.spawn((
-                    Mesh3d(g.meshes[i].clone()),
-                    MeshMaterial3d(g.mats[m.mat].clone()),
-                    m.xf,
-                    HeroMesh,
-                ));
-                if i == g.model.blade {
-                    le.insert(HeroWeapon);
-                }
-                let leaf = le.id();
-                commands.entity(id).add_child(leaf);
+        for p in g.parts.get(name).into_iter().flatten() {
+            let mut le = commands.spawn((Mesh3d(p.mesh.clone()), MeshMaterial3d(g.mats[p.mat].clone()), p.xf, HeroMesh));
+            if p.blade {
+                le.insert(HeroWeapon);
             }
+            let leaf = le.id();
+            commands.entity(id).add_child(leaf);
         }
         id
     };
@@ -715,29 +774,23 @@ pub fn spawn(
     // The sheathed sword, slung diagonally across the back: hilt up behind the right shoulder,
     // point down toward the left hip. Same meshes as the hand sword (not `HeroWeapon`, so the
     // blade trail and the Director's weapon hide keep tracking the hand one).
-    if let Some(list) = by_joint.get("Sword") {
+    if let Some(list) = g.parts.get("Sword") {
         let back = commands.spawn((back_sword_transform(&g.model), Visibility::Hidden, BackSword)).id();
         commands.entity(torso).add_child(back);
-        for &i in list {
-            let m = &g.model.meshes[i];
-            let leaf = commands
-                .spawn((Mesh3d(g.meshes[i].clone()), MeshMaterial3d(g.mats[m.mat].clone()), m.xf, HeroMesh))
-                .id();
+        for p in list {
+            let leaf = commands.spawn((Mesh3d(p.mesh.clone()), MeshMaterial3d(g.mats[p.mat].clone()), p.xf, HeroMesh)).id();
             commands.entity(back).add_child(leaf);
         }
     }
 
     // The shield slung on the back with the sword: same meshes as the hand board, laid face-out over
     // the slung sword, hilt still showing above the right shoulder.
-    if let Some(list) = by_joint.get("Shield") {
+    if let Some(list) = g.parts.get("Shield") {
         let slot = back_shield_transform(&g.model);
         let back = commands.spawn((slot, Visibility::Hidden, BackShield { slot })).id();
         commands.entity(torso).add_child(back);
-        for &i in list {
-            let m = &g.model.meshes[i];
-            let leaf = commands
-                .spawn((Mesh3d(g.meshes[i].clone()), MeshMaterial3d(g.mats[m.mat].clone()), m.xf, HeroMesh))
-                .id();
+        for p in list {
+            let leaf = commands.spawn((Mesh3d(p.mesh.clone()), MeshMaterial3d(g.mats[p.mat].clone()), p.xf, HeroMesh)).id();
             commands.entity(back).add_child(leaf);
         }
     }
