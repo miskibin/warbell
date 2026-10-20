@@ -193,7 +193,7 @@ impl Plugin for ScenesPlugin {
                     .chain(),
             )
             .add_systems(Update, (drive_farm_audio, farm_hammers, fort_mouths.after(drive_fort_scene)))
-            .add_systems(Update, (cabin::mouths, cabin::seat_fit).after(cabin::drive))
+            .add_systems(Update, (cabin::mouths, cabin::seat_fit, cabin::wat_kneel_hold).after(cabin::drive))
             // Pin the staged hero LAST (after locomotion/gravity have run) and just before transforms
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(
@@ -1093,6 +1093,9 @@ struct FarmLookSaved {
     /// The game ran TAA (swapped for SMAA through the film) / the SMAA preset it had, if any.
     taa: bool,
     smaa: Option<bevy::anti_alias::smaa::SmaaPreset>,
+    /// The film brought its own bokeh (and the depth it reads) to a camera the preset had none on.
+    added_dof: bool,
+    added_depth: bool,
 }
 
 /// One camera setup: eye, look-at, vertical FOV (degrees), DOF sharp half-band (world units).
@@ -1182,17 +1185,20 @@ fn farm_camera(
             Option<&bevy::anti_alias::smaa::Smaa>,
             &mut Transform,
             &mut Projection,
-            &mut crate::dof::Dof,
+            Option<&mut crate::dof::Dof>,
             Option<&mut crate::filmgrade::FilmGrade>,
             Option<&mut bevy::post_process::motion_blur::MotionBlur>,
             Option<&mut bevy::anti_alias::taa::TemporalAntiAliasing>,
+            Has<bevy::core_pipeline::prepass::DepthPrepass>,
         ),
         (With<Camera3d>, Without<crate::player::Hero>),
     >,
+    mut ibl: Query<&mut bevy::light::EnvironmentMapLight, With<Camera3d>>,
+    mut ambient: ResMut<GlobalAmbientLight>,
     mut saved: Local<Option<FarmLookSaved>>,
     mut last_eye: Local<Option<Vec3>>,
 ) {
-    let Ok((cam_e, smaa, mut c, mut proj, mut dof, mut grade, mut blur, taa)) = cam.single_mut() else { return };
+    let Ok((cam_e, smaa, mut c, mut proj, mut dof, mut grade, mut blur, taa, has_depth)) = cam.single_mut() else { return };
     let had_taa = taa.is_some();
     if !is_cutscene(state.active) {
         if last_eye.take().is_some() {
@@ -1205,8 +1211,10 @@ fn farm_camera(
             if let Projection::Perspective(p) = &mut *proj {
                 p.fov = sv.fov;
             }
-            (dof.range, dof.far_ramp, dof.max_radius) = sv.dof;
-            dof.lens = 0.0;
+            if let Some(dof) = dof.as_mut() {
+                (dof.range, dof.far_ramp, dof.max_radius) = sv.dof;
+                dof.lens = 0.0;
+            }
             if let (Some(g), Some(was)) = (grade.as_mut(), sv.grade) {
                 **g = was;
             }
@@ -1225,6 +1233,12 @@ fn farm_camera(
                 Some(preset) => e.try_insert(bevy::anti_alias::smaa::Smaa { preset }),
                 None => e.try_remove::<bevy::anti_alias::smaa::Smaa>(),
             };
+            if sv.added_dof {
+                e.try_remove::<crate::dof::Dof>();
+            }
+            if sv.added_depth {
+                e.try_remove::<bevy::core_pipeline::prepass::DepthPrepass>();
+            }
         }
         return;
     }
@@ -1265,11 +1279,22 @@ fn farm_camera(
         let fov = if let Projection::Perspective(p) = &*proj { p.fov } else { 50f32.to_radians() };
         *saved = Some(FarmLookSaved {
             fov,
-            dof: (dof.range, dof.far_ramp, dof.max_radius),
+            dof: dof.as_ref().map_or((0.0, 0.0, 0.0), |d| (d.range, d.far_ramp, d.max_radius)),
             grade: grade.as_deref().copied(),
             taa: had_taa,
             smaa: smaa.map(|s| s.preset),
+            added_dof: dof.is_none(),
+            added_depth: !has_depth,
         });
+        // The lens is half the look: a preset that skips bokeh (Low) still shoots the film with it.
+        // `quality.rs` only re-applies on a settings change, so these hold until handed back.
+        let mut e = commands.entity(cam_e);
+        if dof.is_none() {
+            e.try_insert(crate::dof::default_dof());
+        }
+        if !has_depth {
+            e.try_insert(bevy::core_pipeline::prepass::DepthPrepass);
+        }
         // The film is shot through SMAA, not TAA: under the capture harness's per-frame stall TAA
         // reprojects moving people with stale motion vectors (the same fault that shuts motion blur
         // above) and smears every walking or gesturing figure soft. SMAA keeps them crisp.
@@ -1290,24 +1315,35 @@ fn farm_camera(
     // shoots through a thin lens (`band` is its aperture): a wide shot stays sharp to the horizon and
     // only a close subject throws the background — the banded model blurred the ground in front of
     // and behind every wide into a tilt-shift miniature.
-    dof.focal = focus.unwrap_or_else(|| eye.distance(at));
-    dof.range = band;
-    dof.far_ramp = 16.0;
-    dof.max_radius = if thin { 4.5 } else { 7.0 };
-    dof.lens = if thin { band } else { 0.0 };
+    if let Some(dof) = dof.as_mut() {
+        dof.focal = focus.unwrap_or_else(|| eye.distance(at));
+        dof.range = band;
+        dof.far_ramp = 16.0;
+        // Below deck everything is within a few metres, so the cabin film opens the aperture
+        // wider: the hull behind a close face melts the way a fast lens does in lamplight.
+        dof.max_radius = if ship { 9.0 } else if thin { 4.5 } else { 7.0 };
+        dof.lens = if ship { band * 1.5 } else if thin { band } else { 0.0 };
+    }
     if let Some(g) = grade.as_mut() {
         g.grain = 0.045;
         g.vignette = 0.42;
         g.aberration = if thin { 0.0012 } else { 0.0035 };
         g.time = now.fract() * 17.0;
         if ship {
-            // Lamplight in a storm: amber highlights, the night blue in the shadows, a heavy vignette.
-            g.grain = 0.05;
-            g.vignette = 0.52;
+            // Lamplight in a storm, shot on fast stock: amber highlights, the night blue in the
+            // shadows, heavy grain and vignette, colour held back and the blacks crushed rather
+            // than lifted — period drama, not a game render.
+            g.grain = 0.09;
+            g.vignette = 0.56;
             g.highlight_tint = Vec3::new(1.12, 0.98, 0.82);
-            g.shadow_tint = Vec3::new(0.84, 0.95, 1.18);
+            g.shadow_tint = Vec3::new(0.9, 0.97, 1.1);
             g.split = 0.7;
-            g.vibrance = 0.1;
+            g.vibrance = 0.0;
+            g.saturation = 0.8;
+            g.contrast = 1.1;
+            g.toe = 0.006;
+            g.toe_tint = Vec3::new(0.85, 0.92, 1.0);
+            g.clarity = 0.6;
             g.halation = 0.7;
             g.streak = 0.5;
             g.weave = 0.45;
@@ -1321,6 +1357,15 @@ fn farm_camera(
             g.halation = 0.5;
             g.streak = 0.7;
             g.weave = 0.45;
+        }
+    }
+    if ship {
+        // Below deck the night sky's blue fill doesn't reach: a dim neutral bounce instead
+        // (`advance_sky` writes both afresh every frame, so the open air comes back by itself).
+        ambient.color = Color::srgb(0.72, 0.68, 0.66);
+        ambient.brightness = 110.0;
+        for mut env in &mut ibl {
+            env.intensity = 90.0;
         }
     }
 }
