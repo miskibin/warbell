@@ -26,6 +26,7 @@ pub use combat::ATTACK_DURATION;
 mod health;
 pub(crate) mod model;
 mod footman;
+pub(crate) use footman::spawn_part_prop;
 mod movement;
 pub(crate) use movement::{SPEED, SPRINT_MULT};
 mod softlock;
