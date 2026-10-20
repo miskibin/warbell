@@ -157,7 +157,7 @@ pub fn spawn_piece(commands: &mut Commands, name: &str, tf: Transform) -> Option
 /// x 14..20), and the four lean-tos against the OUTSIDE face of the east curtain (x 28.65), fronts
 /// east: stand-ins for their place inside the walls (backs flat on the stone, the same fit; the
 /// curtain shows once the walls are built, e.g. `FOREST_DEFEND=1`).
-pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 83] = [
+pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 95] = [
     ("town_granary", Vec2::new(-25.0, -29.0), 0.0, Vec2::new(1.75, 2.25)),
     ("town_smithy", Vec2::new(-16.0, -29.0), 0.0, Vec2::ZERO),
     ("town_tavern", Vec2::new(-5.5, -29.0), 0.0, Vec2::new(3.3, 2.5)),
@@ -248,6 +248,19 @@ pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 83] = [
     ("decor_guild_banner", Vec2::new(2e+01, -74.0), 0.0, Vec2::ZERO),
     ("decor_guild_goods", Vec2::new(2e+01, -74.0), 0.0, Vec2::ZERO),
     ("decor_laundry", Vec2::new(2e+01, -74.0), 0.0, Vec2::ZERO),
+    // village_huts.py: the twelve settler huts in a row at z -82, front (+Z) toward the castle.
+    ("town_hut_0", Vec2::new(-33.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_1", Vec2::new(-27.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_2", Vec2::new(-21.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_3", Vec2::new(-15.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_4", Vec2::new(-9.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_5", Vec2::new(-3.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_6", Vec2::new(3.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_7", Vec2::new(9.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_8", Vec2::new(15.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_9", Vec2::new(21.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_10", Vec2::new(27.0, -82.0), 0.0, Vec2::ZERO),
+    ("town_hut_11", Vec2::new(33.0, -82.0), 0.0, Vec2::ZERO),
 ];
 
 /// Lays the showcase out once the kit has loaded; a world rebuild clears it (`BiomeEntity`) and

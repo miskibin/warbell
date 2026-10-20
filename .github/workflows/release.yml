@@ -64,7 +64,9 @@ jobs:
         run: cargo build --release
 
       - name: Test game logic and regression coverage
-        run: cargo test --workspace --release --locked
+        # Lib/bin/test targets only: the dev-tool examples (pack_forest_textures links intel_tex_2's
+        # C++ kernels) fail to link on Linux (__gxx_personality_v0) and aren't shipped.
+        run: cargo test --workspace --release --locked --lib --bins --tests
 
       # The game loads WGSL/audio/fonts from assets/ next to the exe
       # (or via BEVY_ASSET_ROOT), so ship the folder alongside the binary.
