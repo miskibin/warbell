@@ -37,6 +37,13 @@ python3 tools/cutscene/cabin_audio.py mix /tmp/cabin_v.mp4 cabin.mp4
   (piorun) → F z góry na Wata → G1 profil → G2 najazd z kąta giermka (tarcza za głową) → H1 pasek
   dopięty → H2 szeroki w czerń.
 - Napisy: wszystkie kwestie z nagrań `a1_harrow_01…04`, `a1_wat_01…02`, cięte na pauzach.
+- Blockouty nie są gołymi kolorami: każda część dostaje skan CC0 z `assets/forest_pbr`
+  (`s_timber` drewno, `s_iron` żelazo, `s_cloth` hamak/liny) z UV rzutowanymi po osiach w układzie
+  statku (`cabin::skin_part`; słoje wzdłuż dłuższego boku, deska/belka mieści się w jednej desce
+  skanu), kolor wierzchołka zostaje jako odcień. Prawdziwy `cs_cabin` w kicie i tak je zastąpi.
+- Obiektyw: DoF thin-lens jest wymuszony na czas filmu także na presecie Low (wstawiany `Dof` +
+  `DepthPrepass`, oddawane po scenie), w kajucie szersza przysłona (`lens = band·1.5`, do 9 px);
+  grade „taśma”: mocne ziarno, winieta, przygaszone kolory, przyciśnięte czernie, halacja.
 
 ## Brakujące assety (scena jest zbudowana tak, jakby były — po wrzuceniu wchodzą same)
 
@@ -60,7 +67,7 @@ Skrzynia (`chest_wood_*`) i skrzynka (`wooden_crate_01`) są już w kicie i są 
 | look | co | teraz |
 |---|---|---|
 | `harrow` | Ser Godric Harrow: ~50 lat, zmęczona twarz (jedyna twarz w prologu w kadrze od razu), siwiejąca broda, **pełna zbroja płytowa jak rycerz gracza, bez hełmu** (hełm leży na stole) | zastępstwo: `guard` (najwyższy w obsadzie) — w kolczudze, nie w płytach |
-| `wat` | Wat, giermek, ~40 lat, kaftan, twarz widoczna (gracz zna ją od P.0) | zastępstwo: `villager_m` |
+| `wat` | Wat, giermek, ~40 lat, kaftan, twarz widoczna (gracz zna ją od P.0) | zastępstwo: `archer` (inna twarz niż `guard`) |
 
 Wystarczy dodać look o tej nazwie do `LOOKS` — `cabin::look()` sam go podmieni.
 
@@ -92,3 +99,10 @@ Pętla `cs_ship_cabin` (skrzypienie, deszcz, lampa) już jest i gra pod całą s
 - krople / strugi deszczu na szybach okien rufowych (dziś deszcz to smugi w powietrzu za oknami);
 - piorun widoczny w oknie (dziś tylko błysk światła + rozjaśnienie deszczu);
 - piana / wyższa fala za rufą (morze z gry jest spokojne jak na sztorm).
+
+### Tekstury (opcjonalne — dziś blockouty noszą skany z gry)
+
+- deski pokładowe / poszycie statku ze smołowanymi szparami (np. Poly Haven `wood_planks_dirt`,
+  `old_planks_02`) — `s_timber` to deski z wiejskiej szopy, nie okrętowe;
+- ciemne, natłuszczone drewno mebli (blat stołu z plamami, wytarte poręcze);
+- płótno żaglowe na hamak (dziś juta `s_cloth`).

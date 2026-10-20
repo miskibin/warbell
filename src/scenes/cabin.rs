@@ -16,14 +16,14 @@
 //! **Asset slots** (`docs/superpowers/specs/2026-10-20-p0-below-deck-cutscene.md`): every piece that
 //! should be a real asset is looked up first and stands in with a blockout only while it's missing:
 //! kit models `cs_cabin` / `cs_cabin_table` / `cs_cabin_chair` / `cs_cabin_hammock` /
-//! `cs_cabin_lantern`, the NPC looks `harrow` / `wat` (stand-ins: guard / villager), the music
+//! `cs_cabin_lantern`, the NPC looks `harrow` / `wat` (stand-ins: guard / archer), the music
 //! `below_deck.ogg` and the cabin SFX in `assets/cutscene/ship_cabin.cues` (missing files are skipped).
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
 
-use super::{cube, cylr, env, merged, SceneAssets, SceneId, SceneProp, SceneState, IRON, WOOD, WOOD_DARK};
+use super::{cube, cylr, env, SceneAssets, SceneId, SceneProp, SceneState, IRON, WOOD, WOOD_DARK};
 
 /// Deep night, the storm's.
 pub(super) const SKY: f32 = 0.82;
@@ -56,15 +56,19 @@ const PELVIS_UP: f32 = 0.09;
 const TABLE: Vec2 = Vec2::new(1.3, -0.35);
 const TABLE_TOP: f32 = 0.6;
 /// Wat kneels at Harrow's left leg, facing him (+X).
-const WAT_AT: Vec2 = Vec2::new(0.12, 0.86);
+const WAT_AT: Vec2 = Vec2::new(0.02, 0.86);
 const WAT_YAW: f32 = FRAC_PI_2;
 /// The lantern's hook on the beam between them.
 const LANTERN_HOOK: Vec3 = Vec3::new(0.45, BEAMS, 0.3);
 
-/// Look-at marks for the coverage (approximate: head heights of the seated / kneeling bodies).
-const HARROW_HEAD: Vec3 = Vec3::new(0.95, 1.17, 0.75);
-const WAT_HEAD: Vec3 = Vec3::new(0.3, 0.78, 0.86);
-const STRAP: Vec3 = Vec3::new(0.55, 0.22, 0.88);
+/// Look-at marks for the coverage, measured off the posed stand-in bodies (head bones; Wat's hands
+/// on the greave) — the `Fixing_Kneeling` crouch carries his head low and forward, over the work.
+const HARROW_HEAD: Vec3 = Vec3::new(0.87, 1.05, 0.75);
+const WAT_HEAD: Vec3 = Vec3::new(0.41, 0.6, 0.82);
+const STRAP: Vec3 = Vec3::new(0.45, 0.25, 0.84);
+/// The helmet on the table's near corner, by his right hand; the shield hung on the hull behind his head.
+const HELM_AT: Vec3 = Vec3::new(1.02, TABLE_TOP - 0.02, 0.04);
+const SHIELD_AT: Vec3 = Vec3::new(HALF_W - 0.13, 1.12, 1.07);
 
 // ── Lines ───────────────────────────────────────────────────────────────────────────────
 
@@ -176,12 +180,170 @@ fn local(x: f32, y: f32, z: f32) -> Transform {
 
 // ── Setup ───────────────────────────────────────────────────────────────────────────────
 
-/// A kit model if the kit has it, else the blockout — parented to the ship frame.
+/// What a blockout part is made of: the CC0 scan it wears (`assets/forest_pbr`), or none.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Surf {
+    Wood,
+    Iron,
+    Cloth,
+    Plain,
+}
+
+impl Surf {
+    const ALL: [Surf; 4] = [Surf::Wood, Surf::Iron, Surf::Cloth, Surf::Plain];
+    fn set(self) -> &'static str {
+        match self {
+            Surf::Wood => "s_timber",
+            Surf::Iron => "s_iron",
+            Surf::Cloth => "s_cloth",
+            Surf::Plain => "",
+        }
+    }
+    /// Units per texture repeat.
+    fn tile(self) -> f32 {
+        match self {
+            Surf::Wood => 1.1,
+            Surf::Iron => 0.5,
+            Surf::Cloth => 0.45,
+            Surf::Plain => 1.0,
+        }
+    }
+    /// The blockout colour that wears the scan's own colour × `gain`; others keep their offset
+    /// from it, so the plank-to-plank shading survives.
+    fn reference(self) -> (u32, f32) {
+        match self {
+            Surf::Wood => (0x5b3d24, 0.62),
+            Surf::Iron => (IRON, 0.75),
+            Surf::Cloth => (0xa89a7c, 0.8),
+            Surf::Plain => (0xffffff, 1.0),
+        }
+    }
+}
+
+/// The blockouts' materials, one per [`Surf`]: the scans, or the shared vertex-colour material
+/// where a set fails to load.
+pub(super) struct Skins([Handle<StandardMaterial>; 4]);
+
+fn skins(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>, assets: &SceneAssets) -> Skins {
+    Skins(Surf::ALL.map(|s| match s {
+        Surf::Plain => assets.prop_mat.clone(),
+        s => match crate::realforest::pbr_material(images, s.set(), false) {
+            Ok(m) => std_mats.add(m),
+            Err(e) => {
+                warn!("cabin: {} scan missing, flat colour instead — {e}", s.set());
+                assets.prop_mat.clone()
+            }
+        },
+    }))
+}
+
+/// A part's surface from its colour: pale = paper, wax, bone (no scan); grey = iron; else `base`.
+fn surf_of(part: &Mesh, base: Surf) -> Surf {
+    use bevy::mesh::VertexAttributeValues as V;
+    let Ok(V::Float32x4(c)) = part.try_attribute(Mesh::ATTRIBUTE_COLOR) else { return base };
+    let s = Vec3::from_slice(&c[0][..3]).powf(1.0 / 2.2);
+    let (mx, mn) = (s.max_element(), s.min_element());
+    match () {
+        _ if base == Surf::Cloth => base,
+        _ if mx > 0.6 => Surf::Plain,
+        _ if (mx - mn) / mx.max(1e-3) < 0.25 => Surf::Iron,
+        _ => base,
+    }
+}
+
+/// `s_timber`'s layout: grain along v, five boards across u, each clean over this width from its
+/// zone start (`tools/blender_forest/wayside_models.py` `TIMBER_ZONES`).
+const BOARD_ZONES: [f32; 5] = [0.017, 0.217, 0.417, 0.617, 0.817];
+const BOARD_W: f32 = 0.165;
+/// Faces narrower than this (planks, beams, legs) sit inside one scanned board; wider ones (a table
+/// top, a door) show the scan's boards side by side.
+const ONE_BOARD: f32 = 0.3;
+
+/// Facet one part and box-project its UVs: v (the grain) along the part's longest side, from a
+/// per-part offset so neighbouring boards don't repeat. Box projection rather than world triplanar:
+/// the set rocks with the ship, and the grain must ride it rather than swim across it.
+fn skin_part(mut m: Mesh, surf: Surf, seed: u32) -> Mesh {
+    use bevy::mesh::VertexAttributeValues as V;
+    m.duplicate_vertices();
+    m.compute_flat_normals();
+    let (Ok(V::Float32x3(pos)), Ok(V::Float32x3(nrm))) = (m.try_attribute(Mesh::ATTRIBUTE_POSITION), m.try_attribute(Mesh::ATTRIBUTE_NORMAL)) else {
+        return m;
+    };
+    let (lo, hi) = pos.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
+    let ext = hi - lo;
+    let off = Vec2::new(h01(seed), h01(seed ^ 0x5bd1));
+    let tile = surf.tile();
+    let uv: Vec<[f32; 2]> = pos
+        .iter()
+        .zip(nrm)
+        .map(|(p, n)| {
+            let (p, n) = (Vec3::from(*p), Vec3::from(*n).abs());
+            let (b, c) = if n.x >= n.y && n.x >= n.z {
+                (2, 1)
+            } else if n.y >= n.z {
+                (0, 2)
+            } else {
+                (0, 1)
+            };
+            let (v, u) = if ext[b] >= ext[c] { (b, c) } else { (c, b) };
+            let along = p[v] / tile + off.y;
+            if surf == Surf::Wood && ext[u] < ONE_BOARD {
+                let zone = BOARD_ZONES[(h01(seed ^ 0x1f3) * 5.0) as usize % 5];
+                let w = (ext[u] / tile).min(BOARD_W);
+                [zone + (BOARD_W - w) * off.x + (p[u] - lo[u]) / ext[u].max(1e-4) * w, along]
+            } else {
+                [p[u] / tile + off.x, along]
+            }
+        })
+        .collect();
+    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+    if surf != Surf::Plain {
+        let (hex, gain) = surf.reference();
+        let r = crate::palette::lin(hex);
+        if let Ok(V::Float32x4(c)) = m.try_attribute(Mesh::ATTRIBUTE_COLOR) {
+            let c: Vec<[f32; 4]> = c
+                .iter()
+                .map(|c| [0, 1, 2, 3].map(|i| if i == 3 { c[3] } else { (c[i] / r[i].max(1e-4)).clamp(0.3, 1.6) * gain }))
+                .collect();
+            m.insert_attribute(Mesh::ATTRIBUTE_COLOR, c);
+        }
+    }
+    m
+}
+
+/// Spawn blockout parts under `parent`, one textured mesh per surface; returns the meshes.
+fn spawn_skinned(commands: &mut Commands, meshes: &mut Assets<Mesh>, skins: &Skins, parent: Entity, parts: Vec<Mesh>, base: Surf) -> Vec<Entity> {
+    let mut groups: [Vec<Mesh>; 4] = Default::default();
+    for (i, p) in parts.into_iter().enumerate() {
+        let s = surf_of(&p, base);
+        groups[s as usize].push(skin_part(p, s, i as u32 * 31 + 5));
+    }
+    let mut out = Vec::new();
+    for (s, g) in groups.into_iter().enumerate() {
+        if g.is_empty() {
+            continue;
+        }
+        let mut m = crate::meshkit::merged(g);
+        if let Err(e) = m.generate_tangents() {
+            warn!("cabin: tangents — {e}");
+        }
+        let e = commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(skins.0[s].clone()), Transform::IDENTITY)).id();
+        commands.entity(parent).add_child(e);
+        out.push(e);
+    }
+    out
+}
+
+/// A kit model if the kit has it, else the textured blockout — parented to the ship frame.
 #[allow(clippy::too_many_arguments)]
-fn slot(commands: &mut Commands, meshes: &mut Assets<Mesh>, assets: &SceneAssets, ship: Entity, kit: &str, tf: Transform, blockout: fn() -> Mesh) {
+fn slot(commands: &mut Commands, meshes: &mut Assets<Mesh>, skins: &Skins, ship: Entity, kit: &str, tf: Transform, blockout: fn() -> Vec<Mesh>, base: Surf) {
     let e = match crate::realforest::get().and_then(|k| k.spawn_static(commands, kit, tf)) {
         Some(e) => e,
-        None => commands.spawn((Mesh3d(meshes.add(blockout())), MeshMaterial3d(assets.prop_mat.clone()), tf)).id(),
+        None => {
+            let e = commands.spawn((tf, Visibility::default())).id();
+            spawn_skinned(commands, meshes, skins, e, blockout(), base);
+            e
+        }
     };
     commands.entity(ship).add_child(e);
 }
@@ -217,14 +379,15 @@ pub(super) fn setup(
     let ship = commands.spawn((ship_xf(0.0), Visibility::default(), Ship, SceneProp)).id();
 
     // The shell + furniture.
-    slot(commands, meshes, assets, ship, "cs_cabin", Transform::IDENTITY, shell_mesh);
-    slot(commands, meshes, assets, ship, "cs_cabin_table", local(TABLE.x, 0.0, TABLE.y), table_mesh);
+    let sk = skins(images, std_mats, assets);
+    slot(commands, meshes, &sk, ship, "cs_cabin", Transform::IDENTITY, shell_mesh, Surf::Wood);
+    slot(commands, meshes, &sk, ship, "cs_cabin_table", local(TABLE.x, 0.0, TABLE.y), table_mesh, Surf::Wood);
     slot(
-        commands, meshes, assets, ship, "cs_cabin_chair",
+        commands, meshes, &sk, ship, "cs_cabin_chair",
         local(CHAIR.x, 0.0, CHAIR.y).with_rotation(Quat::from_rotation_y(CHAIR_YAW)),
-        chair_mesh,
+        chair_mesh, Surf::Wood,
     );
-    slot(commands, meshes, assets, ship, "cs_cabin_hammock", Transform::IDENTITY, hammock_mesh);
+    slot(commands, meshes, &sk, ship, "cs_cabin_hammock", Transform::IDENTITY, hammock_mesh, Surf::Cloth);
     // Sea chest under the port hull; casks and a crate in the forward-starboard corner.
     let chest_tf = local(-1.72, 0.0, 0.25).with_rotation(Quat::from_rotation_y(FRAC_PI_2));
     if has_kit("chest_wood_body") {
@@ -234,28 +397,29 @@ pub(super) fn setup(
             }
         }
     } else {
-        slot(commands, meshes, assets, ship, "-", chest_tf, sea_chest_mesh);
+        slot(commands, meshes, &sk, ship, "-", chest_tf, sea_chest_mesh, Surf::Wood);
     }
-    slot(commands, meshes, assets, ship, "wooden_crate_01", local(1.62, 0.0, -1.25).with_scale(Vec3::splat(0.55)), crate_mesh);
-    slot(commands, meshes, assets, ship, "-", local(1.05, 0.0, -1.38), casks_mesh);
-    slot(commands, meshes, assets, ship, "-", local(TABLE.x, TABLE_TOP, TABLE.y), table_dressing_mesh);
+    slot(commands, meshes, &sk, ship, "wooden_crate_01", local(1.62, 0.0, -1.25).with_scale(Vec3::splat(0.55)), crate_mesh, Surf::Wood);
+    slot(commands, meshes, &sk, ship, "-", local(1.05, 0.0, -1.38), casks_mesh, Surf::Wood);
+    slot(commands, meshes, &sk, ship, "-", local(TABLE.x, TABLE_TOP, TABLE.y), table_dressing_mesh, Surf::Plain);
 
     // Harrow's own kit: the helmet on the table, the shield hung on the hull behind his chair.
     if let Some(helm) = crate::player::spawn_part_prop(commands, meshes, images, creature_mats, "Head") {
-        commands.entity(helm).insert(local(TABLE.x - 0.08, TABLE_TOP - 0.02, TABLE.y + 0.18).with_rotation(Quat::from_rotation_y(-2.2)));
+        commands.entity(helm).insert((Name::new("cabin_helm"), Transform::from_translation(HELM_AT).with_rotation(Quat::from_rotation_y(-2.2))));
         commands.entity(ship).add_child(helm);
     }
     if let Some(shield) = crate::player::spawn_part_prop(commands, meshes, images, creature_mats, "Shield") {
-        commands.entity(shield).insert(
-            local(HALF_W - 0.12, 0.62, CHAIR.y + 0.1).with_rotation(Quat::from_rotation_y(-FRAC_PI_2) * Quat::from_rotation_x(0.12)),
-        );
+        commands.entity(shield).insert((
+            Name::new("cabin_shield"),
+            Transform::from_translation(SHIELD_AT).with_rotation(Quat::from_rotation_y(FRAC_PI_2) * Quat::from_rotation_x(-0.1)),
+        ));
         commands.entity(ship).add_child(shield);
     }
 
     // The lantern: a pivot on the hook, swung by `drive` against the ship's roll.
     let glow = std_mats.add(StandardMaterial {
         base_color: Color::srgb(0.9, 0.62, 0.3),
-        emissive: LinearRgba::rgb(6.0, 3.1, 1.0),
+        emissive: LinearRgba::rgb(2.6, 1.25, 0.38),
         ..default()
     });
     let pivot = commands
@@ -267,7 +431,6 @@ pub(super) fn setup(
                     k.attach_static_with(&mut e, "cs_cabin_lantern", Transform::IDENTITY, bevy::light::NotShadowCaster);
                 }
             } else {
-                l.spawn((Mesh3d(meshes.add(lantern_mesh())), MeshMaterial3d(assets.prop_mat.clone()), Transform::IDENTITY, bevy::light::NotShadowCaster));
                 l.spawn((Mesh3d(meshes.add(Cuboid::new(0.1, 0.15, 0.1))), MeshMaterial3d(glow.clone()), local(0.0, -0.41, 0.0), bevy::light::NotShadowCaster));
             }
             l.spawn((
@@ -284,6 +447,11 @@ pub(super) fn setup(
             ));
         })
         .id();
+    if !has_kit("cs_cabin_lantern") {
+        for e in spawn_skinned(commands, meshes, &sk, pivot, lantern_mesh(), Surf::Iron) {
+            commands.entity(e).insert(bevy::light::NotShadowCaster);
+        }
+    }
     commands.entity(ship).add_child(pivot);
 
     // The candle on the table: a flame card + a small warm light.
@@ -310,8 +478,8 @@ pub(super) fn setup(
     let moon = commands
         .spawn((
             SpotLight {
-                color: Color::srgb(0.6, 0.7, 1.0),
-                intensity: 60_000.0,
+                color: Color::srgb(0.72, 0.8, 1.0),
+                intensity: 22_000.0,
                 range: 14.0,
                 shadow_maps_enabled: true,
                 outer_angle: 0.62,
@@ -336,7 +504,14 @@ pub(super) fn setup(
             Lightning { base: 4_000_000.0 },
         ))
         .id();
-    commands.entity(ship).add_children(&[moon, lightning]);
+    // What the glass lets in, soft: models a face turned to the windows.
+    let window_fill = commands
+        .spawn((
+            PointLight { color: Color::srgb(0.74, 0.8, 1.0), intensity: 9_000.0, range: 2.6, radius: 0.5, shadow_maps_enabled: false, ..default() },
+            local(0.75, 1.2, HALF_D - 0.12),
+        ))
+        .id();
+    commands.entity(ship).add_children(&[moon, lightning, window_fill]);
 
     // Rain past the stern windows: two stacked sheets scrolled down (`drive`).
     let rain_mat = std_mats.add(StandardMaterial {
@@ -361,7 +536,7 @@ pub(super) fn setup(
     }
 
     // The cast. Their own looks once they exist in the NPC cast; until then a guard (the tallest
-    // man in the cast — "Harrow was taller") and a plain villager.
+    // man in the cast — "Harrow was taller") and the archer (a different face from the guard).
     let harrow = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, Vec2::ZERO, 0.0, None, 21);
     commands.entity(harrow).insert((
         ns::SkinRequest(look("harrow", ns::GUARD)),
@@ -371,7 +546,7 @@ pub(super) fn setup(
         SeatFit::default(),
     ));
     let wat = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, Vec2::ZERO, 0.0, None, 33);
-    commands.entity(wat).insert((ns::SkinRequest(look("wat", ns::VILLAGER_M)), ns::SkinClip("Fixing_Kneeling"), Role::Wat, super::HeadLook::default()));
+    commands.entity(wat).insert((ns::SkinRequest(look("wat", ns::ARCHER)), ns::SkinClip("Fixing_Kneeling"), Role::Wat, super::HeadLook::default()));
 
     // Letterbox, the fade and the title card on black.
     super::spawn_letterbox(commands);
@@ -418,7 +593,7 @@ fn harrow_beat(t: f32) -> (&'static str, Vec3) {
 
 /// Wat never stops working; he looks up twice — "No, Ser." and the last line.
 fn wat_head(t: f32) -> Vec3 {
-    let up = env(t, &[(30.7, 0.0), (31.2, 0.5), (32.6, 0.5), (33.2, 0.1), (36.4, 0.1), (36.9, 0.45), (41.6, 0.45), (42.2, 0.0)]);
+    let up = env(t, &[(30.7, 0.0), (31.2, 0.85), (32.6, 0.85), (33.2, 0.1), (36.4, 0.1), (36.9, 0.7), (41.6, 0.7), (42.2, 0.0)]);
     Vec3::new(0.0, up, 0.0)
 }
 
@@ -548,6 +723,35 @@ pub(super) fn seat_fit(
     }
 }
 
+/// `Fixing_Kneeling` kneels down, works and stands back up in one 4.1 s cycle; Wat never gets up. His
+/// playhead is driven off the scene clock, eased back and forth inside the down-on-one-knee stretch
+/// (0.75–3.15 s), so the hands keep working at the strap the whole scene and a still is repeatable.
+pub(super) fn wat_kneel_hold(
+    state: Res<SceneState>,
+    q: Query<(&Role, &crate::npc_skin::Skinned)>,
+    children: Query<&Children>,
+    mut players: Query<&mut bevy::animation::AnimationPlayer>,
+) {
+    if state.active != Some(SceneId::ShipCabin) {
+        return;
+    }
+    const DOWN: (f32, f32) = (0.75, 3.15);
+    let span = DOWN.1 - DOWN.0;
+    let at = DOWN.0 + span * (0.5 - 0.5 * (PI * state.clock.max(0.0) * 0.8 / span).cos());
+    for (role, sk) in &q {
+        if *role != Role::Wat {
+            continue;
+        }
+        for e in children.iter_descendants(sk.inst()) {
+            if let Ok(mut p) = players.get_mut(e) {
+                for (_, a) in p.playing_animations_mut() {
+                    a.seek_to(at).pause();
+                }
+            }
+        }
+    }
+}
+
 /// Harrow's and Wat's mouths follow their lines' loudness (see `lipsync`).
 pub(super) fn mouths(
     mut commands: Commands,
@@ -589,34 +793,34 @@ fn shot_local(t: f32) -> (Vec3, Vec3, f32, f32, Option<f32>) {
     let ease = |u: f32| u * u * (3.0 - 2.0 * u);
     let v = Vec3::new;
     let (eye, at, fov, band, focus_on) = match t {
-        // A · the cabin: lantern swinging in the foreground, the squire at his master's leg, the
-        //     stern windows behind them full of rain.
-        t if t < 7.5 => (v(-1.85, 1.42, -1.45).lerp(v(-1.62, 1.36, -1.22), ease(lin(4.6, 7.5))), v(0.6, 0.85, 0.65), 60.0, 0.12, Some(HARROW_HEAD)),
+        // A · the cabin from the door: the lantern swinging over them, the squire at his master's
+        //     leg, the stern windows behind them full of rain.
+        t if t < 7.5 => (v(-1.05, 1.4, -1.45).lerp(v(-0.85, 1.34, -1.25), ease(lin(4.6, 7.5))), v(0.6, 0.72, 0.7), 58.0, 0.12, Some(HARROW_HEAD)),
         // B · "Tighter." — low over Wat's shoulder, up at Harrow (the squire's eye).
-        t if t < 10.0 => (v(-0.72, 0.98, 0.62), HARROW_HEAD, 34.0, 0.9, Some(HARROW_HEAD)),
+        t if t < 10.0 => (v(-0.25, 0.76, 0.6), HARROW_HEAD, 36.0, 0.9, Some(HARROW_HEAD)),
         // C · "…every day for fifteen years…" — the hands at the strap.
-        t if t < 13.0 => (v(0.12, 0.5, 1.55).lerp(v(0.2, 0.47, 1.45), lin(10.0, 13.0)), STRAP, 28.0, 1.0, Some(STRAP)),
-        // C2 · "…and it's still wrong." / "Yes, Ser." — Wat's face, three-quarter, eyes on the work.
-        t if t < 17.0 => (v(0.78, 0.72, 1.48).lerp(v(0.74, 0.72, 1.4), lin(13.0, 17.0)), WAT_HEAD, 30.0, 0.9, Some(WAT_HEAD)),
-        // D · "Forty peasants and a Reeve." — Harrow from his right, the helmet on the table below.
-        t if t < 25.2 => (v(0.35, 0.92, -0.95).lerp(v(0.42, 0.95, -0.82), lin(17.0, 25.2)), HARROW_HEAD, 36.0, 0.8, Some(HARROW_HEAD)),
-        // E · "Do you know what they said about me in the city?" — he turns to the windows; his
-        //     profile against the rain, the lightning on "Before it burned?".
-        t if t < 30.8 => (v(-1.1, 1.12, 0.52).lerp(v(-0.92, 1.12, 0.58), lin(25.2, 30.8)), v(1.0, 1.15, 0.95), 34.0, 0.6, Some(HARROW_HEAD)),
+        t if t < 13.0 => (v(0.66, 0.52, 1.2).lerp(v(0.64, 0.5, 1.15), lin(10.0, 13.0)), STRAP + v(0.0, 0.04, 0.0), 36.0, 1.0, Some(STRAP)),
+        // C2 · "…and it's still wrong." / "Yes, Ser." — Wat's face, low, eyes on the work.
+        t if t < 17.0 => (v(0.66, 0.66, 1.46).lerp(v(0.63, 0.66, 1.4), lin(13.0, 17.0)), WAT_HEAD + v(0.0, 0.0, 0.0), 34.0, 0.9, Some(WAT_HEAD)),
+        // D · "Forty peasants and a Reeve." — Harrow from his right, the helmet at his hand.
+        t if t < 25.2 => (v(0.2, 0.92, -0.55).lerp(v(0.26, 0.93, -0.45), lin(17.0, 25.2)), v(0.92, 0.86, 0.45), 40.0, 0.8, Some(HARROW_HEAD)),
+        // E · "Do you know what they said about me in the city?" — he turns to the windows; from the
+        //     glass, his face, and the lightning on "Before it burned?" behind the lens.
+        t if t < 30.8 => (v(0.42, 1.12, 1.46).lerp(v(0.46, 1.11, 1.4), lin(25.2, 30.8)), HARROW_HEAD, 34.0, 0.6, Some(HARROW_HEAD)),
         // F · "No, Ser." — down on Wat from beside his master's head.
-        t if t < 33.2 => (v(0.88, 1.2, 0.6), WAT_HEAD, 34.0, 0.9, Some(WAT_HEAD)),
-        // G1 · "Neither do I." — the profile again, tighter.
-        t if t < 36.2 => (v(-0.62, 1.12, 0.62), v(1.0, 1.15, 0.85), 28.0, 0.7, Some(HARROW_HEAD)),
+        t if t < 33.2 => (v(0.9, 1.02, 0.46), WAT_HEAD, 38.0, 0.9, Some(WAT_HEAD)),
+        // G1 · "Neither do I." — the face at the window again, tighter.
+        t if t < 36.2 => (v(0.52, 1.1, 1.32), HARROW_HEAD, 28.0, 0.7, Some(HARROW_HEAD)),
         // G2 · "Nobody looks at the man behind the shield, Wat. That's the point of you." — the
         //      squire's angle, pushing in; the shield on the hull behind his head.
         t if t < 41.8 => {
             let k = ease(lin(36.2, 41.8));
-            (v(-0.28, 0.82, 0.6).lerp(v(0.02, 0.85, 0.66), k), HARROW_HEAD, 32.0 - 5.0 * k, 1.0, Some(HARROW_HEAD))
+            (v(0.0, 0.86, 1.24).lerp(v(0.2, 0.88, 1.12), k), HARROW_HEAD + v(0.15, 0.0, 0.12), 36.0 - 6.0 * k, 1.0, Some(HARROW_HEAD))
         }
         // H1 · the strap cinched.
-        t if t < 44.6 => (v(0.22, 0.48, 1.5), STRAP, 26.0, 1.0, Some(STRAP)),
+        t if t < 44.6 => (v(0.6, 0.48, 1.13), STRAP + v(0.0, 0.03, 0.0), 32.0, 1.0, Some(STRAP)),
         // H2 · the cabin from the stern corner, the lantern swinging, into black.
-        _ => (v(-1.6, 1.45, 1.35).lerp(v(-1.68, 1.5, 1.2), lin(44.6, END)), v(0.6, 0.7, 0.2), 58.0, 0.12, Some(HARROW_HEAD)),
+        _ => (v(-1.45, 1.45, 1.3).lerp(v(-1.52, 1.5, 1.18), lin(44.6, END)), v(0.6, 0.7, 0.3), 58.0, 0.12, Some(HARROW_HEAD)),
     };
     (eye, at, fov, band, focus_on.map(|p| eye.distance(p)))
 }
@@ -653,7 +857,7 @@ fn cube_r(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, hex: u32) -> Mesh {
 
 /// The great cabin: plank floor, deck beams and deckhead, the hull's ceiling planks and frames each
 /// side, the forward bulkhead with its door, the stern wall with three leaded windows over a bench.
-fn shell_mesh() -> Mesh {
+fn shell_mesh() -> Vec<Mesh> {
     let mut p = Vec::new();
     // floor
     p.push(cube(2.0 * HALF_W + 0.3, 0.1, 2.0 * HALF_D + 0.3, Vec3::new(0.0, -0.1, 0.0), 0x2b1d12));
@@ -726,21 +930,21 @@ fn shell_mesh() -> Mesh {
     p.push(cube(3.1, 0.07, 0.44, Vec3::new(0.0, 0.42, HALF_D - 0.22), 0x5c3f27));
     p.push(cube(3.1, 0.38, 0.04, Vec3::new(0.0, 0.2, HALF_D - 0.44), 0x4e3520));
     p.push(cube(1.2, 0.08, 0.38, Vec3::new(-0.9, 0.49, HALF_D - 0.22), 0x6a3a2e)); // a cushion
-    merged(p)
+    p
 }
 
 /// A heavy trestle table (origin on the floor under its centre).
-fn table_mesh() -> Mesh {
+fn table_mesh() -> Vec<Mesh> {
     let mut p = vec![cube(0.72, 0.05, 1.0, Vec3::new(0.0, TABLE_TOP - 0.025, 0.0), 0x6b4a2c)];
     for (x, z) in [(-0.3f32, -0.42f32), (0.3, -0.42), (-0.3, 0.42), (0.3, 0.42)] {
         p.push(cube(0.06, TABLE_TOP - 0.05, 0.06, Vec3::new(x, (TABLE_TOP - 0.05) * 0.5, z), WOOD_DARK));
     }
     p.push(cube(0.05, 0.05, 0.84, Vec3::new(0.0, 0.14, 0.0), WOOD_DARK));
-    merged(p)
+    p
 }
 
 /// Harrow's chair (origin on the floor under the seat, facing +Z: the back at −Z).
-fn chair_mesh() -> Mesh {
+fn chair_mesh() -> Vec<Mesh> {
     let mut p = vec![
         cube(0.46, 0.05, 0.44, Vec3::new(0.0, CHAIR_SEAT - 0.025, 0.0), 0x5a3b22),
         cube(0.46, 0.62, 0.05, Vec3::new(0.0, CHAIR_SEAT + 0.31, -0.22), 0x4f331e),
@@ -752,11 +956,11 @@ fn chair_mesh() -> Mesh {
         p.push(cube(0.05, 0.04, 0.42, Vec3::new(x, CHAIR_SEAT + 0.22, 0.0), WOOD_DARK)); // arms
         p.push(cube(0.04, 0.22, 0.04, Vec3::new(x, CHAIR_SEAT + 0.11, 0.18), WOOD_DARK));
     }
-    merged(p)
+    p
 }
 
 /// Wat's hammock, slung along the port hull in the forward corner, ropes to the beams.
-fn hammock_mesh() -> Mesh {
+fn hammock_mesh() -> Vec<Mesh> {
     let (x, z0, z1, top, sag) = (-HALF_W + 0.4, -HALF_D + 0.15, -0.05, 1.5, 0.36);
     let mut p = Vec::new();
     let n = 12;
@@ -772,24 +976,24 @@ fn hammock_mesh() -> Mesh {
     for z in [z0, z1] {
         p.push(cylr(0.012, BEAMS - top, Vec3::new(x, (BEAMS + top) * 0.5, z), Quat::IDENTITY, 0x9a8a68));
     }
-    merged(p)
+    p
 }
 
-fn sea_chest_mesh() -> Mesh {
-    merged(vec![
+fn sea_chest_mesh() -> Vec<Mesh> {
+    vec![
         cube(0.8, 0.42, 0.46, Vec3::new(0.0, 0.21, 0.0), 0x5a3a20),
         cube(0.82, 0.08, 0.48, Vec3::new(0.0, 0.46, 0.0), 0x4a301b),
         cube(0.84, 0.04, 0.03, Vec3::new(0.0, 0.3, 0.24), IRON),
         cube(0.84, 0.04, 0.03, Vec3::new(0.0, 0.3, -0.24), IRON),
-    ])
+    ]
 }
 
-fn crate_mesh() -> Mesh {
-    merged(vec![cube(0.8, 0.8, 0.8, Vec3::new(0.0, 0.4, 0.0), 0x7a5a36)])
+fn crate_mesh() -> Vec<Mesh> {
+    vec![cube(0.8, 0.8, 0.8, Vec3::new(0.0, 0.4, 0.0), 0x7a5a36)]
 }
 
 /// Two casks lashed in the forward corner.
-fn casks_mesh() -> Mesh {
+fn casks_mesh() -> Vec<Mesh> {
     let mut p = Vec::new();
     for (i, x) in [-0.22f32, 0.22].into_iter().enumerate() {
         p.push(cylr(0.19, 0.5, Vec3::new(x, 0.25, 0.0), Quat::IDENTITY, if i == 0 { WOOD } else { 0x5e4026 }));
@@ -797,13 +1001,13 @@ fn casks_mesh() -> Mesh {
             p.push(cylr(0.2, 0.03, Vec3::new(x, y, 0.0), Quat::IDENTITY, IRON));
         }
     }
-    merged(p)
+    p
 }
 
 /// What's on the table (origin = table top centre): a sea chart weighted open, the sealed letter to
 /// the Reeve, a pewter cup, an inkwell, the candle in its holder (its flame is a separate card).
-fn table_dressing_mesh() -> Mesh {
-    merged(vec![
+fn table_dressing_mesh() -> Vec<Mesh> {
+    vec![
         cube_r(0.4, 0.004, 0.32, Vec3::new(-0.08, 0.002, -0.12), Quat::from_rotation_y(0.2), 0xcbb98f),
         cylr(0.025, 0.36, Vec3::new(-0.05, 0.025, 0.08), Quat::from_rotation_z(FRAC_PI_2) * Quat::from_rotation_x(0.2), 0xbfa97a),
         cube_r(0.16, 0.012, 0.1, Vec3::new(0.2, 0.006, 0.12), Quat::from_rotation_y(-0.35), 0xd9cfb4),
@@ -812,12 +1016,12 @@ fn table_dressing_mesh() -> Mesh {
         cylr(0.022, 0.04, Vec3::new(0.05, 0.02, -0.33), Quat::IDENTITY, 0x1c1a1a),
         cylr(0.045, 0.012, Vec3::new(0.18, 0.006, -0.3), Quat::IDENTITY, 0x6f5a3c),
         cylr(0.02, 0.13, Vec3::new(0.18, 0.075, -0.3), Quat::IDENTITY, 0xe6dcc0),
-    ])
+    ]
 }
 
 /// The hanging lantern (origin at the hook, hanging down −Y): chain, cap, cage, base. The glowing
 /// horn panes are a separate emissive box.
-fn lantern_mesh() -> Mesh {
+fn lantern_mesh() -> Vec<Mesh> {
     let mut p = vec![
         cylr(0.008, 0.22, Vec3::new(0.0, -0.11, 0.0), Quat::IDENTITY, IRON),
         super::cone_m(0.1, 0.09, Vec3::new(0.0, -0.27, 0.0), Quat::IDENTITY, 0x2f2f33),
@@ -827,7 +1031,7 @@ fn lantern_mesh() -> Mesh {
     for (x, z) in [(-0.065f32, -0.065f32), (0.065, -0.065), (-0.065, 0.065), (0.065, 0.065)] {
         p.push(cylr(0.007, 0.19, Vec3::new(x, -0.405, z), Quat::IDENTITY, IRON));
     }
-    merged(p)
+    p
 }
 
 /// One rain sheet: thin falling streaks in the air beyond the stern windows.
