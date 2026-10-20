@@ -19,7 +19,7 @@
  30.50  audio/footsteps/wood-1.ogg  0.32  video pan=0.15
  31.02  audio/footsteps/wood-2.ogg  0.32  video pan=-0.15
  31.54  audio/footsteps/wood-3.ogg  0.32  video pan=0.15
- 31.60  audio/day-hymn-1.ogg  0.3  video trim=8,26 lowpass=420 fadein=3.0 fadeout=46.0,2.4
+ 31.60  audio/day-hymn-1.ogg  0.55  video trim=8,26 lowpass=600 fadein=3.0 fadeout=46.0,2.4
  32.06  audio/footsteps/wood-4.ogg  0.32  video pan=-0.15
  32.65  audio/sfx/cutscene/cs_paper_rustle.ogg  0.4  video
  33.60  audio/footsteps/wood-1.ogg  0.32  video pan=0.15
@@ -43,7 +43,7 @@
  69.70  audio/sfx/cutscene/cs_armour_shift.ogg  0.3  video
  72.20  audio/vo/campaign/a1_harrow_08.ogg  1.0  trim=0.0,1.51
  74.40  audio/sfx/cutscene/cs_door_creak.ogg  0.5  video pan=-0.3
- 74.60  audio/day-hymn-1.ogg  0.24  video trim=24,40 lowpass=1100 pan=-0.25 fadein=1.4 fadeout=82.5,3.0
+ 74.60  audio/day-hymn-1.ogg  0.4  video trim=24,40 lowpass=1400 pan=-0.25 fadein=1.4 fadeout=82.5,3.0
  75.10  audio/footsteps/wood-1.ogg  0.32  video pan=0.15
  75.62  audio/footsteps/wood-2.ogg  0.32  video pan=-0.15
  76.14  audio/footsteps/wood-3.ogg  0.32  video pan=0.15

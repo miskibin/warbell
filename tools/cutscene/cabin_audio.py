@@ -87,8 +87,8 @@ def gen():
     # The hymn below: heard through the deck as Wat crosses to the door (it's what stops him there),
     # under "Forty peasants…", gone when Harrow turns to the windows; then plainer through the open
     # door once Wat has gone, staying with Harrow alone into the black.
-    rows.append((31.6, HYMN, 0.3, "video trim=8,26 lowpass=420 fadein=3.0 fadeout=46.0,2.4"))
-    rows.append((74.6, HYMN, 0.24, f"video trim=24,40 lowpass=1100 pan=-0.25 fadein=1.4 fadeout={BLACK - 3.0:.1f},3.0"))
+    rows.append((31.6, HYMN, 0.55, "video trim=8,26 lowpass=600 fadein=3.0 fadeout=46.0,2.4"))
+    rows.append((74.6, HYMN, 0.4, f"video trim=24,40 lowpass=1400 pan=-0.25 fadein=1.4 fadeout={BLACK - 3.0:.1f},3.0"))
     # Music: A1-1 enters as Harrow turns to the storm for the city (~-28 dB, ducked under the voices
     # in `mix`), and goes out with the picture.
     rows.append((46.6, MUSIC, 0.22, f"video fadein=3.0 fadeout={BLACK - 2.5:.1f},2.5"))
