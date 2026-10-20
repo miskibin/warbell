@@ -27,12 +27,17 @@
 //! **`FortArrival` (screenplay P.3, "the bell in the tower") is a VIDEO rig, not a game feature:** it
 //! exists only to film the cutscene as a pre-rendered clip (`FOREST_SCENE=fort` + `FOREST_CLIP`, then
 //! `tools/cutscene/fort_audio.py mix`). No in-game trigger, skip or save hook — on purpose.
+//!
+//! **`ShipCabin` (screenplay P.0, "Below Deck", the game's first scene)** is the same kind of video
+//! rig (`FOREST_SCENE=cabin`), set aboard the ship off Wreck Cove — see [`cabin`].
 
 use bevy::prelude::*;
 
 use crate::orks::{Faction, OrkVariant};
 use crate::siege::InvaderArmory;
 use crate::meshkit::{merged_flat as merged, tinted_hex as tinted};
+
+mod cabin;
 
 // ── Public tags ──────────────────────────────────────────────────────────────────────
 
@@ -61,11 +66,14 @@ pub enum SceneId {
     /// Screenplay P.3 "Fort i dzwon w wieży": Pip, Maud and the knight walk into the ruined fort at
     /// golden hour. Video rig only (`FOREST_SCENE=fort`) — never triggered by the game.
     FortArrival,
+    /// Screenplay P.0 "Na pokładzie": Harrow and Wat in the stern cabin, a storm outside, three days
+    /// out from Kell. Video rig only (`FOREST_SCENE=cabin`) — never triggered by the game.
+    ShipCabin,
 }
 
-/// The two scripted, letterboxed cutscenes (vs. the looped trailer tableaus).
+/// The scripted, letterboxed cutscenes (vs. the looped trailer tableaus).
 fn is_cutscene(id: Option<SceneId>) -> bool {
-    matches!(id, Some(SceneId::FarmMorning | SceneId::FortArrival))
+    matches!(id, Some(SceneId::FarmMorning | SceneId::FortArrival | SceneId::ShipCabin))
 }
 
 /// What the F1 panel asks for vs. what's currently staged. `clock` is seconds since the active scene
@@ -163,6 +171,7 @@ impl Plugin for ScenesPlugin {
                 "mason" | "threestones" | "stones" => Some(SceneId::Mason),
                 "farm" | "farmmorning" | "ch2" | "protection" => Some(SceneId::FarmMorning),
                 "fort" | "fortarrival" | "p3" => Some(SceneId::FortArrival),
+                "cabin" | "ship" | "shipcabin" | "p0" | "belowdeck" => Some(SceneId::ShipCabin),
                 _ => None,
             };
         }
@@ -179,10 +188,12 @@ impl Plugin for ScenesPlugin {
                     drive_farm_scene,
                     drive_fort_scene,
                     fort_birds,
+                    cabin::drive,
                 )
                     .chain(),
             )
             .add_systems(Update, (drive_farm_audio, farm_hammers, fort_mouths.after(drive_fort_scene)))
+            .add_systems(Update, (cabin::mouths, cabin::seat_fit).after(cabin::drive))
             // Pin the staged hero LAST (after locomotion/gravity have run) and just before transforms
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(
@@ -239,6 +250,7 @@ fn apply_scene_change(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    (mut images, mut std_mats): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
     old: Query<Entity, Or<(With<SceneActor>, With<SceneProp>)>>,
     prog: Option<Res<crate::capture::ClipProgress>>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
@@ -392,6 +404,10 @@ fn apply_scene_change(
         SceneId::FortArrival => {
             pin_sky(&mut clock, FORT_SKY);
             setup_fort_arrival(&mut commands, &mut meshes, &mut creature_mats, &assets, fonts.as_deref());
+        }
+        SceneId::ShipCabin => {
+            pin_sky(&mut clock, cabin::SKY);
+            cabin::setup(&mut commands, &mut meshes, &mut images, &mut creature_mats, &mut std_mats, &assets, fonts.as_deref());
         }
         SceneId::BarrelPeek => {
             pin_sky(&mut clock, 0.82);
@@ -1020,6 +1036,7 @@ fn drive_farm_audio(
         *cue_scene = state.active;
         *cues = parse_cues(match state.active {
             Some(SceneId::FortArrival) => include_str!("../assets/cutscene/fort_arrival.cues"),
+            Some(SceneId::ShipCabin) => include_str!("../assets/cutscene/ship_cabin.cues"),
             _ => include_str!("../assets/cutscene/farm_morning.cues"),
         });
         *next = 0;
@@ -1214,17 +1231,24 @@ fn farm_camera(
     let t = state.clock.max(0.0);
     let now = time.elapsed_secs();
     let fort = state.active == Some(SceneId::FortArrival);
+    let ship = state.active == Some(SceneId::ShipCabin);
+    let mut up = Vec3::Y;
     let ((eye, at, fov_deg, band), focus) = if fort {
         fort_shot(t)
+    } else if ship {
+        let (shot, ship_up) = cabin::camera(t);
+        up = ship_up;
+        shot
     } else {
         (farm_shot(t, world_y_at(FARM)), None)
     };
+    let thin = fort || ship;
     // Handheld: slow, tiny, incommensurate drifts on position and aim (never a shake).
     let h = |f: f32, ph: f32| (now * f + ph).sin();
     let sway = Vec3::new(h(0.9, 0.0) + 0.5 * h(2.3, 1.0), h(1.1, 2.0) * 0.6, h(0.7, 4.0)) * 0.012;
     let aim = Vec3::new(h(1.3, 3.0), h(0.8, 5.0) * 0.7, h(1.7, 1.5)) * 0.01;
     c.translation = eye + sway;
-    c.look_at(at + aim, Vec3::Y);
+    c.look_at(at + aim, up);
     // Motion blur stays shut for the whole film: under the capture harness's per-frame encode stall
     // its motion vectors go stale and smear random frames (not just cuts) into radial streaks. On a
     // hard cut TAA's history is dropped too, or it ghosts the old shot in.
@@ -1269,13 +1293,25 @@ fn farm_camera(
     dof.focal = focus.unwrap_or_else(|| eye.distance(at));
     dof.range = band;
     dof.far_ramp = 16.0;
-    dof.max_radius = if fort { 4.5 } else { 7.0 };
-    dof.lens = if fort { band } else { 0.0 };
+    dof.max_radius = if thin { 4.5 } else { 7.0 };
+    dof.lens = if thin { band } else { 0.0 };
     if let Some(g) = grade.as_mut() {
         g.grain = 0.045;
         g.vignette = 0.42;
-        g.aberration = if fort { 0.0012 } else { 0.0035 };
+        g.aberration = if thin { 0.0012 } else { 0.0035 };
         g.time = now.fract() * 17.0;
+        if ship {
+            // Lamplight in a storm: amber highlights, the night blue in the shadows, a heavy vignette.
+            g.grain = 0.05;
+            g.vignette = 0.52;
+            g.highlight_tint = Vec3::new(1.12, 0.98, 0.82);
+            g.shadow_tint = Vec3::new(0.84, 0.95, 1.18);
+            g.split = 0.7;
+            g.vibrance = 0.1;
+            g.halation = 0.7;
+            g.streak = 0.5;
+            g.weave = 0.45;
+        }
         if fort {
             // Golden hour: warmer highlights, a cooler blue in the shade, a touch more split.
             g.highlight_tint = Vec3::new(1.13, 1.0, 0.80);
@@ -1686,7 +1722,32 @@ fn setup_fort_arrival(
             });
     }
 
-    // Letterbox (2.39:1 on a 16:9 frame) + fade-from-black, as in the farm scene.
+    spawn_letterbox(commands);
+    // The act card, on the black after the fade.
+    if let Some(f) = fonts {
+        commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                GlobalZIndex(39),
+                SceneProp,
+            ))
+            .with_children(|p| {
+                p.spawn((crate::ui::fonts::label(&f.display, "ACT I \u{2014} THE TOLL", 86.0, Color::srgba(0.92, 0.87, 0.76, 0.0)), FortTitle));
+            });
+    }
+}
+
+/// Letterbox (2.39:1 on a 16:9 frame) + the fade-from-black overlay the scene drives.
+fn spawn_letterbox(commands: &mut Commands) {
     for top in [true, false] {
         commands.spawn((
             Node {
@@ -1710,27 +1771,6 @@ fn setup_fort_arrival(
         FarmFade,
         SceneProp,
     ));
-    // The act card, on the black after the fade.
-    if let Some(f) = fonts {
-        commands
-            .spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(0.0),
-                    top: Val::Px(0.0),
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                GlobalZIndex(39),
-                SceneProp,
-            ))
-            .with_children(|p| {
-                p.spawn((crate::ui::fonts::label(&f.display, "ACT I \u{2014} THE TOLL", 86.0, Color::srgba(0.92, 0.87, 0.76, 0.0)), FortTitle));
-            });
-    }
 }
 
 /// The well's mouth / the ruin's broken gable / the bell — what Pip points at as he names it.
@@ -1974,7 +2014,7 @@ fn fort_head_look(
     globals: Query<&GlobalTransform>,
     mut tfs: Query<&mut Transform>,
 ) {
-    if state.active != Some(SceneId::FortArrival) {
+    if !matches!(state.active, Some(SceneId::FortArrival | SceneId::ShipCabin)) {
         return;
     }
     for (mut hl, sk, root) in &mut roots {
