@@ -2254,8 +2254,14 @@ impl LegChain {
     /// lowest heel / toe point. The one nearest the ground is the planted one — a swinging toe can
     /// dip a finger below it, and following that would float the boot that carries the weight.
     fn boot_height(&self) -> f32 {
+        let [a, b] = self.boot_lows();
+        if a.abs() < b.abs() { a } else { b }
+    }
+
+    /// Each boot's lowest heel / toe point (rig space, root origin on the ground), left then right.
+    fn boot_lows(&self) -> [f32; 2] {
         let rig = super::footman::leg_rig();
-        let mut near = f32::MAX;
+        let mut lows = [0.0; 2];
         for (i, [hip, knee, foot]) in self.leg.iter().enumerate() {
             let mirror = |v: Vec3| if i == 1 { Vec3::new(-v.x, v.y, v.z) } else { v };
             let hip_r = self.hips.rotation * *hip;
@@ -2267,11 +2273,18 @@ impl LegChain {
                 .into_iter()
                 .map(|p| (ankle + foot_r * p).y)
                 .fold(f32::MAX, f32::min);
-            if low.abs() < near.abs() {
-                near = low;
-            }
+            lows[i] = low;
         }
-        near
+        lows
+    }
+
+    /// The chain of a pose as `hero_anim` writes it (the hips at the footman's own rest height).
+    fn of_pose(p: &Pose) -> LegChain {
+        let t = p.hips.t.unwrap_or(Vec3::new(0.0, 1.05, 0.0));
+        LegChain {
+            hips: Transform::from_translation(t + Vec3::Y * (super::model::HIP_REST_Y - 1.05)).with_rotation(p.hips.r),
+            leg: [[p.hip_l.r, p.knee_l.r, p.foot_l.r], [p.hip_r.r, p.knee_r.r, p.foot_r.r]],
+        }
     }
 }
 
@@ -2614,8 +2627,11 @@ pub fn hero_anim(
     // the hips to match, so the knight kept ending up standing a hand's breadth in the air. Whatever
     // the pose, while he is on the ground the lowest boot point is brought onto it: the hips ride
     // the difference (low-passed, so a change of the planted boot doesn't pop).
+    // Not the Mixamo run, though: it has real flight (both boots up), which this pulled back down
+    // into a squat; it is grounded once, as a whole loop, in `mixamo::direct`.
     let grounded = hero.on_ground && hero.roll_t < 0.0 && hero.dash_t < 0.0;
-    let want = if grounded { (-legs.boot_height()).clamp(-GROUND_FIX_MAX, GROUND_FIX_MAX) } else { 0.0 };
+    let flight = if matches!(clip, Clip::Loco) && mixamo_gait() { mixamo::owns_height(hero.gait_speed / hero_model_scale()) * moving } else { 0.0 };
+    let want = if grounded { (-legs.boot_height()).clamp(-GROUND_FIX_MAX, GROUND_FIX_MAX) * (1.0 - flight) } else { 0.0 };
     let k = (dt * if grounded { 40.0 } else { 10.0 }).min(1.0);
     *ground_adj += (want - *ground_adj) * k;
     if ground_adj.abs() > 1e-4 {
