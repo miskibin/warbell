@@ -1,5 +1,5 @@
 //! The hero's walk, run and dodge roll on Mixamo clips (`mixamo_clips`, baked by
-//! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Dive Roll and "Fast Run" cut on the
+//! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Dive Roll and "Running" cut on the
 //! knight's own auto-rig).
 //!
 //! Same recipe as the sword combo ([`super::swordplay`]): the clips are rig-free targets (pelvis and
