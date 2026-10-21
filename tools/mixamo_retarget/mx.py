@@ -108,6 +108,13 @@ class Clip:
         return ts, {k: (np.array(a), np.array(b)) for k, (a, b) in out.items()}
 
 
+# Bones whose rotations a clip cut on the knight's own Mixamo auto-rig hands straight to the game's
+# joints (`mixamo::direct`): Hips, Torso, Head, the legs (thigh, shin, boot) and the arms (upper,
+# fore), left then right.
+DIRECT = ('pelvis', 'spine_03', 'Head', 'thigh_l', 'calf_l', 'foot_l', 'thigh_r', 'calf_r', 'foot_r',
+          'upperarm_l', 'lowerarm_l', 'upperarm_r', 'lowerarm_r')
+
+
 class Baker:
     """Bake one Mixamo clip into the 53-float frame layout (see ual_retarget/bake.py)."""
 
@@ -145,6 +152,14 @@ class Baker:
         F = np.concatenate(cols, -1)
         assert F.shape[1] == 53
         return F
+
+    def direct(self, P):
+        """Each DIRECT bone's world turn from its bind pose (x, y, z, w; mirrored into our body
+        frame), 4 floats a bone: on a rig whose bind pose IS the knight's T-pose these are exactly the
+        turns to put on the matching joints."""
+        T = self.c.tpose
+        cols = [mq(qmul(P[n][1], qinv(np.broadcast_to(T[n][1], P[n][1].shape)))) for n in DIRECT]
+        return np.concatenate(cols, -1)
 
     def tpose_frame(self):
         T = self.c.tpose

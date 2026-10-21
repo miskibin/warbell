@@ -1,11 +1,14 @@
 //! The hero's walk, run and dodge roll on Mixamo clips (`mixamo_clips`, baked by
-//! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Running / Dive Roll; the run goes through
-//! the bake's `sliders` — knee lift, stride, arm swing — first, its arm space set on Mixamo's page).
+//! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Dive Roll and "Fast Run" cut on the
+//! knight's own auto-rig).
 //!
 //! Same recipe as the sword combo ([`super::swordplay`]): the clips are rig-free targets (pelvis and
 //! ankle positions in leg lengths, world-delta rotations, the limbs as directions), solved onto the
 //! footman with two-bone IK, so his own proportions and armour sit on the motion. What is new here:
 //!
+//! - **run** is cut on the knight's OWN Mixamo auto-rig (the T-pose `footman_obj` export), so it is
+//!   not solved at all: [`direct`] puts each Mixamo bone's turn straight on the matching joint —
+//!   exactly the motion the Mixamo page shows on him.
 //! - **walk / run** are in-place loops played at the speed the ground goes by: the planted boot sweeps
 //!   back at `native speed × playback rate`, so choosing the rate = ground speed / native speed pins
 //!   it to the ground (no skating). Both loops start on the left heel strike, so one phase drives
@@ -37,6 +40,12 @@ fn sprint_weight(v: f32) -> f32 {
 pub(super) fn mixamo_run() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("FOREST_RUN").map(|v| v != "curves").unwrap_or(true))
+}
+
+/// How much of the pose at `v` model m/s is the Mixamo run, which keeps its own height (its
+/// flight), so `hero_anim`'s per-frame grounding stands aside by this much.
+pub(super) fn owns_height(v: f32) -> f32 {
+    if mixamo_run() { sprint_weight(v) } else { 0.0 }
 }
 
 /// Walk -> curve-run weight, for the `FOREST_RUN=curves` path.
@@ -219,6 +228,80 @@ fn dress(mut p: Pose, run: f32, armed: f32, shield_back: f32) -> Pose {
     p
 }
 
+/// The run's bone turns ([`mc::RUN_BONES`]) at loop phase `u`, slerped between frames.
+fn run_bones(u: f32) -> [Quat; 13] {
+    let n = mc::RUN_BONES.len();
+    let x = u.rem_euclid(1.0) * n as f32;
+    let (i, s) = (x.floor() as usize % n, x.fract());
+    let q = |r: &[f32; 52], b: usize| Quat::from_xyzw(r[4 * b], r[4 * b + 1], r[4 * b + 2], r[4 * b + 3]).normalize();
+    std::array::from_fn(|b| q(&mc::RUN_BONES[i], b).slerp(q(&mc::RUN_BONES[(i + 1) % n], b), s))
+}
+
+/// A shoulder's world turn in the T-pose the knight was exported (and auto-rigged) in: the arm
+/// swung from hanging to straight out sideways (`footman::export::footman_obj`).
+fn tpose_shoulder(right: bool) -> Quat {
+    let (el, hand) = super::super::footman::arm_bind()[if right { 0 } else { 1 }];
+    let out = if right { Vec3::X } else { Vec3::NEG_X };
+    Quat::from_rotation_arc((el + hand).normalize_or(Vec3::NEG_Y), out)
+}
+
+/// A pose straight off the Mixamo bones: every joint takes its bone's world turn from the bind
+/// pose (the knight's own T-pose, so bone and joint start aligned), turned into the joint's local
+/// rotation through the rig's hierarchy; the hips ride the clip's pelvis travel. No IK, no
+/// retiming — the clip as Mixamo plays it on him.
+fn direct(f: &Frame, b: &[Quat; 13]) -> Pose {
+    let mut p = direct_raw(f, b);
+    if let Some(t) = &mut p.hips.t {
+        t.y += run_floor();
+    }
+    p
+}
+
+/// The run's hips lift (model m) that puts its lowest boot point over the whole loop on the
+/// ground: the clip's own height, flight and all, set once against the knight's real legs (the
+/// Mixamo hips bone needn't sit where the footman's does).
+fn run_floor() -> f32 {
+    static FLOOR: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *FLOOR.get_or_init(|| {
+        let n = 96;
+        let low = (0..n)
+            .map(|i| {
+                let u = i as f32 / n as f32;
+                let p = direct_raw(&sample_loop(&mc::RUN, u), &run_bones(u));
+                let [a, b] = super::LegChain::of_pose(&p).boot_lows();
+                a.min(b)
+            })
+            .fold(f32::MAX, f32::min);
+        -low
+    })
+}
+
+fn direct_raw(f: &Frame, b: &[Quat; 13]) -> Pose {
+    let [hips, chest, head, th_l, sn_l, ft_l, th_r, sn_r, ft_r, ua_l, fa_l, ua_r, fa_r] = *b;
+    let tp = Frame::of(&mc::TPOSE);
+    let hip_rest = super::super::model::HIP_REST_Y;
+    let mut p = rest();
+    let t = Vec3::new(0.0, hip_rest, 0.0) + (f.pelvis - tp.pelvis) * leg_len();
+    p.hips = Jp { t: Some(t + Vec3::Y * (1.05 - hip_rest)), r: hips };
+    p.torso = Jp::r(hips.inverse() * chest);
+    p.head = Jp::r(chest.inverse() * head);
+    p.hip_l = Jp::r(hips.inverse() * th_l);
+    p.knee_l = Jp::r(th_l.inverse() * sn_l);
+    p.foot_l = Jp::r(sn_l.inverse() * ft_l);
+    p.hip_r = Jp::r(hips.inverse() * th_r);
+    p.knee_r = Jp::r(th_r.inverse() * sn_r);
+    p.foot_r = Jp::r(sn_r.inverse() * ft_r);
+    let (tl, tr) = (tpose_shoulder(false), tpose_shoulder(true));
+    let (sl, sr) = (ua_l * tl, ua_r * tr);
+    p.sh_l = Jp::r(chest.inverse() * sl);
+    p.el_l = Jp::r(sl.inverse() * fa_l * tl);
+    p.sh_r = Jp::r(chest.inverse() * sr);
+    p.el_r = Jp::r(sr.inverse() * fa_r * tr);
+    p.sword = Jp::r(sword_rest_r());
+    p.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
+    p
+}
+
 /// The Mixamo walk / run at gait phase `c` (rad; the left heel strikes at 0 and the right at
 /// pi) and ground speed `v` (model m/s), dressed with the knight's kit. With `FOREST_RUN=curves` only
 /// the walk (the caller fades it into the run curves with [`run_weight`]).
@@ -226,23 +309,27 @@ pub(super) fn gait(c: f32, v: f32, armed: f32, shield_back: f32) -> Pose {
     let u = c / TAU;
     let m = mix(v);
     let (duty, sweep) = shared(&m);
-    // One frame, one solve: blending the gaits' FRAMES (not their solved joints) keeps the boots
-    // above the floor through the cross-fades.
-    let mut f: Option<(Frame, f32)> = None;
-    for (l, w) in &m {
-        if *w < 1e-3 {
-            continue;
+    let [(walk, ww), (run, wr)] = &m;
+    let at = |l: &Loop| warp(u, duty, l.duty);
+    let frame = |l: &Loop| stretch(sample_loop(l.clip, at(l)), l.stride * sweep / l.sweep());
+    // The walk is solved onto the rig; the run is the knight's own clip, taken bone for bone.
+    let p = if *wr < 1e-3 {
+        solve(&frame(walk), true)
+    } else {
+        let r = direct(&frame(run), &run_bones(at(run)));
+        if *ww < 1e-3 {
+            r
+        } else {
+            // Blending two differently built poses joint by joint can dip a boot: lift it back out.
+            let mut p = solve(&frame(walk), true).lerp(&r, *wr);
+            let [a, b] = super::LegChain::of_pose(&p).boot_lows();
+            if let Some(t) = &mut p.hips.t {
+                t.y += (-a.min(b)).max(0.0);
+            }
+            p
         }
-        let k = sample_loop(l.clip, warp(u, duty, l.duty));
-        let k = stretch(k, l.stride * sweep / l.sweep());
-        f = Some(match f {
-            None => (k, *w),
-            Some((acc, wa)) => (acc.lerp(&k, w / (wa + w)), wa + w),
-        });
-    }
-    let f = f.map(|(f, _)| f).unwrap_or_else(|| sample_loop(&mc::WALK, u));
-    let run = 1.0 - m[0].1;
-    dress(solve(&f, true), run, armed, shield_back)
+    };
+    dress(p, *wr, armed, shield_back)
 }
 
 /// A frame with its forward travel (pelvis + ankles, off the T-pose) lengthened by `k`.

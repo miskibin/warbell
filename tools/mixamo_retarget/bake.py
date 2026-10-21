@@ -252,16 +252,28 @@ lines += [f'/// One walk loop ({len(Wc)} frames), frame 0 = left heel strike.',
           f'pub(super) const WALK_SPEED: f32 = {wsp:.4f}; // legs / s',
           f'pub(super) const WALK_DUTY: f32 = {wd:.4f};',
           f'pub(super) const WALK: [[f32; 53]; {len(Wc)}] = [', fmt(Wc), '];', '']
-b, R = load('Knight Fast Run')
+rc = mx.Clip(os.path.join(src_dir, 'Knight Fast Run.fbx'))
+b = mx.Baker(rc)
+ts, P = rc.sample()
+R = np.concatenate([b.frames(ts, P), b.direct(P)], -1)  # the bone turns ride along through the cycle cut
 print('Running')
 Rc, rsp, rd = cycle(in_place(R))
+Rc, Rd = Rc[:, :53], Rc[:, 53:]
+for q in range(0, Rd.shape[1], 4):  # one hemisphere frame to frame, so the game's lerp never flips
+    for i in range(1, len(Rd)):
+        if np.dot(Rd[i, q:q + 4], Rd[i - 1, q:q + 4]) < 0:
+            Rd[i, q:q + 4] *= -1
+print('  right arm bind x (body frame):', (b.c.tpose['upperarm_r'][0] * mx.M)[0])
 # Downloaded on the knight's own rig, so it is kept exactly as Mixamo plays it: no sliders, no
 # mirroring, no retiming — only the travel taken out (the game moves the root).
 lines += [f'/// One run loop ({len(Rc)} frames), frame 0 = left heel strike: Mixamo "Fast Run" on the',
           '/// knight auto-rig, untouched.',
           f'pub(super) const RUN_SPEED: f32 = {rsp:.4f}; // legs / s',
           f'pub(super) const RUN_DUTY: f32 = {rd:.4f};',
-          f'pub(super) const RUN: [[f32; 53]; {len(Rc)}] = [', fmt(Rc), '];', '']
+          f'pub(super) const RUN: [[f32; 53]; {len(Rc)}] = [', fmt(Rc), '];',
+          '/// The same frames as bone turns from the bind (T-)pose, 4 floats (x, y, z, w) a bone: Hips,',
+          '/// Spine2, Head, thigh / shin / foot L then R, upper / fore arm L then R (`mixamo::direct`).',
+          f'pub(super) const RUN_BONES: [[f32; {Rd.shape[1]}]; {len(Rd)}] = [', fmt(Rd), '];', '']
 for name, tag in (('Orc Walk', 'ORC_WALK'), ('Mutant Run', 'ORC_RUN')):
     b, O = load(name)
     print(name)
