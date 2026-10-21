@@ -689,6 +689,23 @@ fn shield_lining(model: &Model) -> Option<Mesh> {
 /// the backplate far enough to clear the slung sword. The board's axes are read off the mesh: the
 /// thinnest extent is the face normal, and the face is the side AWAY from the gripping hand.
 fn back_shield_transform(model: &Model) -> Transform {
+    let Some((board, centre, half_t)) = shield_board(model) else { return Transform::IDENTITY };
+    // A casual sling: top canted toward the left shoulder and leaning a touch off the back.
+    let rot = Quat::from_rotation_z(0.18) * Quat::from_rotation_x(0.08) * board;
+    let back_z = model
+        .meshes
+        .iter()
+        .filter(|m| m.joint == "Torso")
+        .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p)).z))
+        .fold(0.0_f32, f32::min);
+    let shoulder = pos_of(model, "ShoulderL");
+    let want = Vec3::new(0.0, shoulder.y - 0.2, back_z - 0.065 - half_t);
+    Transform { translation: want - rot * centre, rotation: rot, scale: Vec3::ONE }
+}
+
+/// The shield board's frame in its joint's space: the rotation that stands it broad end up with its
+/// face toward −Z, its centre, and its half thickness.
+fn shield_board(model: &Model) -> Option<(Quat, Vec3, f32)> {
     let pts: Vec<Vec3> = model
         .meshes
         .iter()
@@ -696,7 +713,7 @@ fn back_shield_transform(model: &Model) -> Transform {
         .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p))))
         .collect();
     if pts.is_empty() {
-        return Transform::IDENTITY;
+        return None;
     }
     let (lo, hi) = pts.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(a, b), p| (a.min(*p), b.max(*p)));
     let (ext, centre) = (hi - lo, (hi + lo) * 0.5);
@@ -721,18 +738,7 @@ fn back_shield_transform(model: &Model) -> Transform {
     let side = up.cross(face);
     let local = Mat3::from_cols(side, up, face);
     let target = Mat3::from_cols(Vec3::NEG_X, Vec3::Y, Vec3::NEG_Z);
-    // A casual sling: top canted toward the left shoulder and leaning a touch off the back.
-    let rot = Quat::from_rotation_z(0.18) * Quat::from_rotation_x(0.08) * Quat::from_mat3(&(target * local.transpose()));
-    let back_z = model
-        .meshes
-        .iter()
-        .filter(|m| m.joint == "Torso")
-        .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p)).z))
-        .fold(0.0_f32, f32::min);
-    let half_t = 0.5 * ext[order[0]];
-    let shoulder = pos_of(model, "ShoulderL");
-    let want = Vec3::new(0.0, shoulder.y - 0.2, back_z - 0.065 - half_t);
-    Transform { translation: want - rot * centre, rotation: rot, scale: Vec3::ONE }
+    Some((Quat::from_mat3(&(target * local.transpose())), centre, 0.5 * ext[order[0]]))
 }
 
 /// Radius of the knee-pit mail filler (model metres; the greave's half-width is ~0.09).
@@ -793,6 +799,43 @@ pub(crate) fn hand_l_bind() -> Vec3 {
 
 fn pos_of(model: &Model, name: &str) -> Vec3 {
     model.joints.iter().find(|(n, _, _)| n == name).map(|(_, _, p)| *p).unwrap_or(Vec3::ZERO)
+}
+
+/// One piece of the footman's kit as a loose prop — `"Head"` (the helmet), `"Shield"` or `"Sword"` —
+/// at the hero's own size and handedness, NOT tagged `HeroMesh` (no hero system touches it). The
+/// returned root carries an identity transform: place it like any prop. Shield and sword come in
+/// their held attitude (the meshes are stored against the animator's rest pose).
+pub fn spawn_part_prop(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<crate::creature::CreatureMaterial>,
+    joint: &str,
+) -> Option<Entity> {
+    let g = gpu(meshes, images, materials);
+    let parts: Vec<usize> = (0..g.model.meshes.len()).filter(|&i| g.model.meshes[i].joint == joint).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let rig_scale = TARGET_RIG_HEIGHT / (g.model.max_y - g.model.min_y).max(0.01);
+    // The shield stands on its own: board centre at the origin, broad end up, face toward −Z.
+    let rest = match joint {
+        "Shield" => shield_board(&g.model).map_or(Transform::IDENTITY, |(r, c, _)| Transform::from_rotation(r).with_translation(-(r * c))),
+        "Sword" => Transform::from_rotation(sword_rest_r()),
+        _ => Transform::IDENTITY,
+    };
+    let root = commands.spawn((Transform::IDENTITY, Visibility::default())).id();
+    // The hero's mirrored scale: the footman materials cull FRONT faces for it.
+    let scaled = commands.spawn((Transform::from_scale(super::HERO_SCALE_V * rig_scale), Visibility::default())).id();
+    let posed = commands.spawn((rest, Visibility::default())).id();
+    commands.entity(root).add_child(scaled);
+    commands.entity(scaled).add_child(posed);
+    for i in parts {
+        let m = &g.model.meshes[i];
+        let leaf = commands.spawn((Mesh3d(g.meshes[i].clone()), MeshMaterial3d(g.mats[m.mat].clone()), m.xf)).id();
+        commands.entity(posed).add_child(leaf);
+    }
+    Some(root)
 }
 
 /// Spawn the footman under `root` (the hero entity, already carrying `HERO_SCALE`).

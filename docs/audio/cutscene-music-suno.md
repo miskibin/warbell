@@ -29,7 +29,7 @@ po dzwonie są diegetyczne (z lasu), nie w partyturze. Dlatego #3 „Dusk Bell�
 
 | Scena | Muzyka | Poziom / wejście |
 |---|---|---|
-| P.0 Kajuta (Harrow) | **A1-1 Below Deck** | wchodzi na „Do you know what they said about me in the city?”, ~-28 dB pod głosem; w części grywalnej (zadania giermka) brak muzyki, tylko statek i deszcz; wraca 4 s na „Sleep, Wat…” → czerń |
+| P.0 Kajuta (Harrow) | **A1-1 Below Deck** | nie leci pod żadną kwestią. Jedna nuta w ciszy po sprzączce, zanim padnie list; potem nic — hymn przez pokład jest jedyną muzyką. Dwie nuty dopiero na ostatnim ujęciu, kiedy Harrow zostaje sam, ścięte czernią, i tylko gdy hymn już zszedł. Część grywalna bez partytury |
 | P.1 Piorun | **cisza** | zero partytury: deszcz, kadłub, dzwon okrętowy jako jeden z pięciu dźwięków; każdy błysk ma twarde cięcie dźwięku |
 | Plaża (walka) | muzyka bojowa z gry | — |
 | P.2 Rozkazy Maud | **A1-2 Wreck Cove** | wchodzi po „Nobody argues with a man who lived through that.” pod czytanie listu, ~-26 dB; **urywa się** przed „A bell? We haven't got a roof.” (żart w ciszy), wraca na drugą kopertę |
@@ -50,9 +50,44 @@ Lyrics we wszystkich: `[instrumental]`. Exclude styles: `vocals, choir, epic, tr
 
 | # | Nazwa | Suno style |
 |---|---|---|
-| A1-1 | Below Deck | intimate medieval underscore, solo low cello, long held notes with space between, faint creaking wood texture, distant rain, no percussion, 50 bpm, weary and private, minimal, film score, instrumental |
+| A1-1 | Below Deck | solo low cello, dry close-mic, a few separate notes then real silence, no drone, no pad, no ambience, no rain, no percussion, no melody, no hall, medieval, instrumental, the rests are the piece |
 | A1-2 | Wreck Cove | sparse medieval ambient underscore, solo bowed nyckelharpa over low cello drone, soft sea wash, no percussion, 60 bpm, grey dawn, numb rather than sad, lots of silence between phrases, cinematic, instrumental |
 | A1-3 | The Toll (act card) | short medieval title sting, one low string chord swelling and fading, a single held viola note above, no melody, no percussion, dark and quiet, 15 seconds, cinematic, instrumental |
 | A1-4 | Walls at Dusk | quiet communal medieval underscore, low strings and hurdy-gurdy drone, slow rising line, people getting ready at dusk, steady not heroic, no percussion, 62 bpm, fades to nothing at the end, instrumental |
 | A1-5 | Three Stalls and a Goat | gentle rustic medieval folk, soft hurdy-gurdy, wooden flute, light frame drum, relieved tired morning, quietly hopeful, 80 bpm, understated, not cheerful, instrumental |
 | A1-5b | Three Stalls (oud) | gentle rustic medieval folk, faint oud and soft desert hand drum over hurdy-gurdy drone, tired and warm, 78 bpm, understated, instrumental |
+
+### A1-1 — wklejka
+
+Poprzedni prompt (wiolonczela + skrzypienie + deszcz, „weary”) schodził w podkład. Deszcz i kadłub
+już są w miksie kajuty. Ten utwór ma być tylko nutami i przerwami. Exclude:
+`vocals, choir, pad, drone, ambient, rain, ocean, epic, trailer, orchestra, reverb`.
+
+Style:
+
+```text
+solo low cello, dry close-mic, a few separate notes then real silence, no drone, no pad, no ambience, no rain, no percussion, no melody, no hall, medieval, instrumental, the rests are the piece
+```
+
+Lyrics:
+
+```text
+[Instrumental]
+
+[Silence]
+
+[One low note. Stop completely.]
+
+[Silence]
+
+[Two quiet notes. End. Silence.]
+
+[Silence]
+
+[One short note, no swell. Silence until the end.]
+```
+
+Suno i tak często dosypuje pad. Take z ciągłym tonem wyrzucić. Zostawić same nuty i wyciąć
+cokolwiek stoi między nimi. W filmie nuta nie wchodzi pod tekst ani razem z hymnem: jedna po
+kliknięciu sprzączki, zanim Harrow odezwie się o liście; dwie na samym końcu, na Harrowie
+samym, ucięte czernią, bez crescenda.

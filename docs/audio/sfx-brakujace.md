@@ -35,8 +35,15 @@ Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
 | ⬜ | `life_sfx_hen` | single hen clucking nearby | 1.5 s |
 | ✅ | `cs_ship_cabin` | inside a wooden sailing ship's cabin at night in a storm, constant timber creaking and groaning, heavy rain drumming on canvas overhead, muffled waves slapping the hull, an oil lantern squeaking as it swings on its hook, no music, no voices | 20 s, loop |
 | ⬜ | `cs_wreck_strike` | wooden sailing ship hits a reef in a violent night storm: sharp close thunder crack, hull timbers splintering and groaning, a ship's bell clanging wildly, distant panicked shouting with no clear words, a heavy wave crashing over the deck | 8 s |
+| ⬜ | `cs_strap_cinch` | close-up: a leather strap pulled tight through an iron buckle on a steel greave, creak of leather, small metal clink, quiet cabin | 1.0 s |
+| ⬜ | `cs_armour_shift` | a seated man in full plate armour turning in a wooden chair, soft steel plates sliding and clinking, leather creak, close | 1.5 s |
+| ⬜ | `cs_thunder_far` | distant thunder rolling a few kilometres away over the sea at night, heard from inside a wooden ship, no rain | 5 s |
+| ⬜ | `cs_wave_slam` | heavy wave slamming against a wooden ship's hull heard from inside the cabin, deep thud, timbers groan, water rushing off | 3 s |
+| ⬜ | `cs_paper_rustle` | a folded, wax-sealed parchment letter picked up off a wooden table, dry paper rustle, close, quiet room | 0.8 s |
+| ⬜ | `cs_door_creak` | an old wooden ship's cabin door: iron latch lifted, then the door swung slowly open on creaking iron hinges | 2.0 s |
 
 ## Uwagi
+- `cs_strap_cinch`, `cs_armour_shift`, `cs_thunder_far`, `cs_wave_slam`, `cs_paper_rustle`, `cs_door_creak` — cutscenka P.0 „Below Deck” (`tools/cutscene/cabin_audio.py`): **stereo**, -18 LUFS, w `assets/audio/sfx/cutscene/`; cue'y już są w `ship_cabin.cues`, plik wchodzi sam.
 - `life_sfx_bench_sit` — Firefly, variation 1 → `life_sfx_bench_sit.ogg`, variation 3 → `life_sfx_bench_sit_2.ogg` (gra losuje; każdy klucz może mieć warianty `_2`…`_4`).
 - `life_sfx_hammer` — Firefly, „hammering a nail into timber, four strikes, variation 2” (1.0 s).
 - Pętle (loop) muszą się bezszwowo zapętlać — poproś generator o „seamless loop” albo daj 2× dłuższy plik, przytnę sam.

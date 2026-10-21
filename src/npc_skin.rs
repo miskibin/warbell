@@ -103,6 +103,11 @@ pub struct SkinRequest(pub u8);
 #[derive(Component, Default, Clone, Copy, PartialEq)]
 pub struct SkinClip(pub &'static str);
 
+/// With a [`SkinClip`]: hold that clip at this playhead (seconds) instead of playing it — a cutscene
+/// scrubbing a one-shot (a kneel, a lift) off its own clock.
+#[derive(Component, Clone, Copy, PartialEq)]
+pub struct ClipSeek(pub f32);
+
 /// A root whose skin child is attached. `player` / hands fill in once the glTF instance is ready.
 #[derive(Component)]
 pub struct Skinned {
@@ -707,7 +712,7 @@ fn drive_skins(
     time: Res<Time>,
     cam: Query<(&GlobalTransform, &VisibleEntities), With<Camera3d>>,
     cast: Res<NpcCast>,
-    mut roots: Query<(&mut Skinned, &BipedDrive, &GlobalTransform, Has<crate::dying::Dying>, Option<&SkinClip>)>,
+    mut roots: Query<(&mut Skinned, &BipedDrive, &GlobalTransform, Has<crate::dying::Dying>, Option<&SkinClip>, Option<&ClipSeek>)>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     mut props: Query<&mut Transform>,
     mut prop_vis: Query<&mut Visibility>,
@@ -721,7 +726,7 @@ fn drive_skins(
     }
     let cam_p = cam.iter().next().map(|(g, _)| g.translation());
     let on_screen = crate::anim_lod::on_screen_set(cam.iter().next().map(|(_, v)| v));
-    for (mut sk, d, gt, dying, hint) in &mut roots {
+    for (mut sk, d, gt, dying, hint, seek) in &mut roots {
         let Some(pe) = sk.player else { continue };
         let Ok((mut player, mut tr)) = players.get_mut(pe) else { continue };
         let p = gt.translation();
@@ -845,6 +850,13 @@ fn drive_skins(
         }
         for (_, a) in player.playing_animations_mut() {
             a.set_speed(if far { 0.0 } else { rate });
+        }
+        // A director scrubbing the scripted clip: its playhead is set, not played (the outgoing
+        // clip of a cross-fade keeps running out underneath).
+        if let (Some(&ClipSeek(at)), Some(&node)) = (seek, look.nodes.get(sk.clip)) {
+            if let Some(a) = player.animation_mut(node) {
+                a.seek_to(at).set_speed(0.0);
+            }
         }
     }
 }
