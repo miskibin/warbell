@@ -128,13 +128,17 @@ Cel: pokazać Harrowa raz, z bliska, i dać graczowi *zrobić* coś jako giermek
    w pełnej zbroi bez hełmu; hełm na stole. Twarz widać — jedyna osoba w prologu, której twarz jest
    w kadrze od razu. **Wat (gracz, twarz widoczna, kaftan) klęczy przy nim** `[A:Fixing_Kneeling]`
    i dopina nagolennik. Kamera za Watem, nisko — perspektywa giermka.
-   > HARROW: Tighter. *(pauza)* You've done that strap every day for fifteen years and it's still
-   > wrong.
+   > HARROW: Tighter.
+   > WAT: There.
+   > HARROW: Letter's on the table. Take it down to the Reeve.
+   > *(hymn spod pokładu; Wat staje w drzwiach)*
+   > HARROW: Forty peasants and a Reeve. Nobody looks at the man behind the shield, Wat.
+   > They didn't look in the city, before it burned. That's the point of you.
    > WAT: Yes, Ser.
-   > HARROW: Forty peasants and a Reeve. That's what the Crown sends a man after the eastern
-   > campaign. *(patrzy w okno)* Do you know what they said about me in the city? Before it burned?
-   > WAT: No, Ser.
-   > HARROW: Neither do I. Nobody looks at the man behind the shield, Wat. That's the point of you.
+   > HARROW: Stop hovering.
+   >
+   > Tagi ElevenLabs i cięcia (werdykt o pasku, uraza do Korony, zagadka o mieście):
+   > `docs/audio/elevenlabs-p0-poklad.md`.
 3. **Interakcja (gracz steruje Watem, kamera TPS, kajuta + korytarz pod pokładem):** trzy drobne
    zadania giermka, każde jedno `E`: **zapiąć naramiennik** (Harrow: „Left. It's *always* the left.”
    — ziarno: Wat zna każdy pasek), **odnieść hełm na skrzynię** `[A:PickUp_Table]`, **zanieść list
