@@ -155,7 +155,8 @@ fn drive_mouths(
             continue; // shut and already written: don't touch (keeps change detection quiet)
         }
         if let Some(v) = w.weights_mut().first_mut() {
-            *v = jaw.0.min(1.0) * 0.9;
+            // (a scripted scene may ask past 1.0: the morph target extrapolates, a wider-open jaw)
+            *v = jaw.0.min(4.0) * 0.9;
         }
     }
 }
