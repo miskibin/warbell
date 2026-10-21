@@ -721,7 +721,7 @@ const JOG: RunCurves = RunCurves {
     ],
 };
 
-/// The hero's sprint (~5.2 m/s): the measured run morphed — the stance cut to a quarter of the
+/// The hero's sprint (~5.7 m/s): the measured run morphed — the stance cut to a quarter of the
 /// cycle, the thigh driving ~15 deg higher (to ~57), the push-off a little less far behind, the
 /// stance knee stiffer and the swing fold ~10 % deeper, still peaking with the thigh forward.
 const SPRINT: RunCurves = RunCurves {

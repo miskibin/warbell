@@ -263,3 +263,18 @@ pub(super) fn roll(u: f32) -> Pose {
     p.hips = Jp { t: Some(Vec3::new(0.0, 0.74, 0.0)), r: Quat::IDENTITY };
     p
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Shift sprint plays the run clip at exactly its own rate, as on the Mixamo page (re-tune
+    /// `SPRINT_MULT` when the run clip is swapped).
+    #[test]
+    fn sprint_plays_the_run_at_native_rate() {
+        let v = crate::player::SPEED * crate::player::SPRINT_MULT / super::super::hero_model_scale();
+        let native = TAU * mc::FPS / mc::RUN.len() as f32;
+        let k = phase_rate(v) / native;
+        assert!((k - 1.0).abs() < 0.01, "sprint plays the run at {k}x");
+    }
+}
