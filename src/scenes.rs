@@ -255,6 +255,7 @@ fn apply_scene_change(
     prog: Option<Res<crate::capture::ClipProgress>>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     fonts: Option<Res<crate::ui::fonts::UiFonts>>,
+    server: Res<AssetServer>,
 ) {
     if state.want == state.active {
         // A clip's warm-up frames don't count: the scene starts when recording does.
@@ -407,7 +408,7 @@ fn apply_scene_change(
         }
         SceneId::ShipCabin => {
             pin_sky(&mut clock, cabin::SKY);
-            cabin::setup(&mut commands, &mut meshes, &mut images, &mut creature_mats, &mut std_mats, &assets, fonts.as_deref());
+            cabin::setup(&mut commands, &mut meshes, &mut images, &mut creature_mats, &mut std_mats, &assets, fonts.as_deref(), &server);
         }
         SceneId::BarrelPeek => {
             pin_sky(&mut clock, 0.82);
@@ -1327,14 +1328,14 @@ fn farm_camera(
     if let Some(g) = grade.as_mut() {
         g.grain = 0.045;
         g.vignette = 0.42;
-        g.aberration = if thin { 0.0012 } else { 0.0035 };
+        g.aberration = if ship { 0.003 } else if thin { 0.0012 } else { 0.0035 };
         g.time = now.fract() * 17.0;
         if ship {
             // Lamplight in a storm, shot on fast stock: amber highlights, the night blue in the
             // shadows, heavy grain and vignette, colour held back and the blacks crushed rather
             // than lifted — period drama, not a game render.
-            g.grain = 0.09;
-            g.vignette = 0.56;
+            g.grain = 0.15;
+            g.vignette = 0.66;
             g.highlight_tint = Vec3::new(1.12, 0.98, 0.82);
             g.shadow_tint = Vec3::new(0.9, 0.97, 1.1);
             g.split = 0.7;
@@ -1362,10 +1363,12 @@ fn farm_camera(
     if ship {
         // Below deck the night sky's blue fill doesn't reach: a dim neutral bounce instead
         // (`advance_sky` writes both afresh every frame, so the open air comes back by itself).
-        ambient.color = Color::srgb(0.72, 0.68, 0.66);
-        ambient.brightness = 110.0;
+        // Dark: the storm is the light. A lightning flash throws the cold white fill up for a moment.
+        let fl = cabin::flash(t);
+        ambient.color = Color::srgb(0.72 + 0.2 * fl, 0.68 + 0.26 * fl, 0.66 + 0.34 * fl);
+        ambient.brightness = 38.0 + 900.0 * fl;
         for mut env in &mut ibl {
-            env.intensity = 90.0;
+            env.intensity = 30.0 + 700.0 * fl;
         }
     }
 }
