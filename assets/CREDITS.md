@@ -70,3 +70,5 @@ Single leather/hiking-boot steps sliced out of longer takes (onset-detected, tai
 | `assets/audio/body-thud-{1,2,3}.ogg` (`impactSoft_medium_000..002`), `body-thud-heavy-{1,2}.ogg` (`impactSoft_heavy_000..001`) — Impact Sounds | the low body-weight thud under a connecting blow | Kenney | CC0 1.0 | https://kenney.nl/assets/impact-sounds |
 
 All peak-normalised to −1 dBFS, mono, with a short fade-out.
+
+| `assets/models/ship_caravel.glb` — "Caravel Ship" (textures downscaled to 1024, spec-gloss converted to metal-rough) | the ship seen from outside in the P.0 cabin cutscene (`scenes/cabin.rs`) | Ginny Sutton (suttonj94) | CC-BY 4.0 | https://sketchfab.com/3d-models/caravel-ship-c9819a0e8a57429f888b74978219fb7a |

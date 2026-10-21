@@ -34,11 +34,11 @@ use super::{cube, cylr, env, SceneAssets, SceneId, SceneProp, SceneState, IRON, 
 
 /// Deep night, the storm's.
 pub(super) const SKY: f32 = 0.82;
-pub(super) const END: f32 = 86.0;
+pub(super) const END: f32 = 133.6;
 /// Title card on black, then the picture fades up.
 const TITLE: (f32, f32, f32, f32) = (0.9, 1.9, 3.5, 4.4);
 const FADE_IN: (f32, f32) = (4.6, 6.4);
-const FADE_OUT: (f32, f32) = (83.5, 85.5);
+const FADE_OUT: (f32, f32) = (130.9, 133.4);
 
 // ── The set, in the ship's frame: +Z aft (the stern windows), +Y up, floor at y = 0 ───────────
 
@@ -99,51 +99,70 @@ const SHIELD_AT: Vec3 = Vec3::new(HALF_W - 0.13, 1.12, 1.07);
 
 // ── Lines ───────────────────────────────────────────────────────────────────────────────
 
-/// The VO as `cabin_audio.py` lays it in: (start s, clip, trim from..to s, speaker). The takes are
-/// split at their own pauses (silencedetect: `a1_harrow_01` "Tighter." 0–0.81 | 2.47–7.6, `_02`
-/// 0–2.52 | 3.13–7.2, `_03` 0.35–2.80 | 3.30–4.43, `_04` 0–1.41 | 3.02–5.89 | 6.50–7.84, `_07`
-/// 0–1.16 | 1.75–2.75 | 3.30–5.92) so the beats between phrases are the scene's, not the take's.
-/// Read here only for the mouths and the captions.
-pub(super) const VO: [(f32, &str, f32, f32, Role); 14] = [
-    (12.2, "audio/vo/campaign/a1_harrow_01.ogg", 0.0, 0.9, Role::Harrow), // "Tighter."
-    (14.85, "audio/vo/campaign/a1_harrow_01.ogg", 2.4, 7.6, Role::Harrow), // "You've done that strap every day for fifteen years and it's still wrong."
-    (21.3, "audio/vo/campaign/a1_wat_01.ogg", 0.0, 0.94, Role::Wat), // "Yes, Ser."
-    (23.6, "audio/vo/campaign/a1_wat_05.ogg", 0.0, 2.0, Role::Wat), // (effort) "Hnn." (exhales) "There."
-    (26.6, "audio/vo/campaign/a1_harrow_07.ogg", 0.0, 5.92, Role::Harrow), // (sighs) "The letter. To the Reeve. Today, if the sea allows."
-    (39.0, "audio/vo/campaign/a1_harrow_02.ogg", 0.0, 2.6, Role::Harrow), // "Forty peasants and a Reeve."
-    (42.4, "audio/vo/campaign/a1_harrow_02.ogg", 3.0, 7.2, Role::Harrow), // "That's what the Crown sends a man after the eastern campaign."
-    (49.6, "audio/vo/campaign/a1_harrow_03.ogg", 0.0, 2.95, Role::Harrow), // "Do you know what they said about me in the city?"
-    (53.6, "audio/vo/campaign/a1_harrow_03.ogg", 3.2, 4.43, Role::Harrow), // "Before it burned?"
-    (57.0, "audio/vo/campaign/a1_wat_02.ogg", 0.0, 0.92, Role::Wat), // "No, Ser."
-    (59.4, "audio/vo/campaign/a1_harrow_04.ogg", 0.0, 1.5, Role::Harrow), // "Neither do I."
-    (62.6, "audio/vo/campaign/a1_harrow_04.ogg", 2.9, 5.95, Role::Harrow), // "Nobody looks at the man behind the shield, Wat."
-    (66.6, "audio/vo/campaign/a1_harrow_04.ogg", 6.4, 7.84, Role::Harrow), // "That's the point of you."
-    (72.2, "audio/vo/campaign/a1_harrow_08.ogg", 0.0, 1.51, Role::Harrow), // "Stop hovering."
+/// The VO, one clip per spoken beat of the recording (`p0_cabin_NN.ogg`, cut from the one-take
+/// ElevenLabs session at its own pauses and laid out by `tools/cutscene/cabin_mix.py`):
+/// (start s, clip, trim from..to s, speaker). Read here only for the mouths and the captions; the
+/// soundtrack is mixed offline from the same timeline.
+pub(super) const VO: &[(f32, &str, f32, f32, Role)] = &[
+    (8.97, "audio/vo/campaign/p0_cabin_01.ogg", 0.0, 0.93, Role::Harrow), // "Tighter."
+    (10.51, "audio/vo/campaign/p0_cabin_02.ogg", 0.0, 8.49, Role::Harrow), // "Left buckle's always stiff. Fifteen years you've strapped me into this iron, Wat, and you still treat it like it's going to bite you."
+    (19.31, "audio/vo/campaign/p0_cabin_03.ogg", 0.0, 3.75, Role::Wat), // "Rust from the salt, Ser. Hnn. There."
+    (23.67, "audio/vo/campaign/p0_cabin_04.ogg", 0.0, 4.57, Role::Harrow), // "Stand up. You're making my knees ache just looking at you."
+    (29.95, "audio/vo/campaign/p0_cabin_05a.ogg", 0.0, 3.28, Role::Harrow), // "Listen to them. Singing."
+    (42.64, "audio/vo/campaign/p0_cabin_05b.ogg", 0.0, 2.27, Role::Harrow), // "Wait till they see the island."
+    (45.27, "audio/vo/campaign/p0_cabin_06.ogg", 0.0, 1.46, Role::Wat), // "Have you seen it, Ser? Kell?"
+    (46.99, "audio/vo/campaign/p0_cabin_07.ogg", 0.0, 5.53, Role::Harrow), // "Nobody's seen Kell in a hundred years, Wat. That's why the King's giving it to me."
+    (52.78, "audio/vo/campaign/p0_cabin_08.ogg", 0.0, 8.77, Role::Harrow), // "You take one city too roughly in the east, and suddenly the Crown discovers a desperate need for your talents on a wet rock at the edge of the map."
+    (61.81, "audio/vo/campaign/p0_cabin_09.ogg", 0.0, 3.06, Role::Wat), // "They made you Lord Commissioner, Ser."
+    (65.13, "audio/vo/campaign/p0_cabin_10.ogg", 0.0, 5.87, Role::Harrow), // "Over forty seasick turnip-farmers and a village Reeve. A glorious command."
+    (71.81, "audio/vo/campaign/p0_cabin_11.ogg", 0.0, 5.48, Role::Harrow), // "Take the parchment to the woman downstairs. The Reeve. Tell her we sight land at dawn."
+    (79.80, "audio/vo/campaign/p0_cabin_12.ogg", 0.0, 1.57, Role::Wat), // "Which one, Ser?"
+    (81.73, "audio/vo/campaign/p0_cabin_13.ogg", 0.0, 5.53, Role::Harrow), // "The one without the royal wax, Wat. I keep forgetting I didn't hire you for your reading."
+    (89.17, "audio/vo/campaign/p0_cabin_14.ogg", 0.0, 3.18, Role::Harrow), // "Did she ask about me? When you brought the water down?"
+    (92.81, "audio/vo/campaign/p0_cabin_15.ogg", 0.0, 4.79, Role::Wat), // "She asked why the great Ser Godric Harrow hasn't come out of his cabin since we sailed."
+    (97.86, "audio/vo/campaign/p0_cabin_16.ogg", 0.0, 2.86, Role::Harrow), // "And what did my loyal squire tell her?"
+    (101.08, "audio/vo/campaign/p0_cabin_17.ogg", 0.0, 2.67, Role::Wat), // "That you were resting after the campaign, Ser."
+    (104.56, "audio/vo/campaign/p0_cabin_18.ogg", 0.0, 10.48, Role::Harrow), // "Good man. Let them keep singing to the suit of armour in their heads. The moment I walk down there without that helmet on, I'm just an old butcher with bad knees."
+    (115.75, "audio/vo/campaign/p0_cabin_19.ogg", 0.0, 7.93, Role::Harrow), // "Nobody looks at the man inside the iron, Wat. They just want to know the iron is there. Go on. Stop hovering."
 ];
 
-/// Captions: (start s, duration s, speaker, line) — verbatim, one per phrase of the [`VO`].
-const LINES: [(f32, f32, &str, &str); 16] = [
-    (12.2, 0.9, "Harrow", "Tighter."),
-    (14.9, 5.3, "Harrow", "You've done that strap every day for fifteen years and it's still wrong."),
-    (21.3, 1.1, "Wat", "Yes, Ser."),
-    (23.6, 2.1, "Wat", "Hnn\u{2026} There."),
-    (26.6, 1.3, "Harrow", "The letter."),
-    (28.3, 1.3, "Harrow", "To the Reeve."),
-    (29.85, 2.8, "Harrow", "Today, if the sea allows."),
-    (39.0, 2.6, "Harrow", "Forty peasants and a Reeve."),
-    (42.5, 4.2, "Harrow", "That's what the Crown sends a man after the eastern campaign."),
-    (49.9, 2.6, "Harrow", "Do you know what they said about me in the city?"),
-    (53.65, 1.3, "Harrow", "Before it burned?"),
-    (57.0, 1.0, "Wat", "No, Ser."),
-    (59.4, 1.6, "Harrow", "Neither do I."),
-    (62.7, 3.0, "Harrow", "Nobody looks at the man behind the shield, Wat."),
-    (66.65, 1.5, "Harrow", "That's the point of you."),
-    (72.2, 1.6, "Harrow", "Stop hovering."),
+/// Captions: (start s, duration s, speaker, line) -- verbatim, one per sentence of the [`VO`].
+const LINES: &[(f32, f32, &str, &str)] = &[
+    (9.00, 0.84, "Harrow", "Tighter."),
+    (10.54, 1.72, "Harrow", "Left buckle's always stiff."),
+    (12.26, 6.68, "Harrow", "Fifteen years you've strapped me into this iron, Wat, and you still treat it like it's going to bite you."),
+    (19.34, 3.66, "Wat", "Rust from the salt, Ser. Hnn. There."),
+    (23.70, 4.48, "Harrow", "Stand up. You're making my knees ache just looking at you."),
+    (29.98, 3.19, "Harrow", "Listen to them. Singing."),
+    (42.67, 2.18, "Harrow", "Wait till they see the island."),
+    (45.30, 1.37, "Wat", "Have you seen it, Ser? Kell?"),
+    (47.02, 2.89, "Harrow", "Nobody's seen Kell in a hundred years, Wat."),
+    (49.91, 2.55, "Harrow", "That's why the King's giving it to me."),
+    (52.81, 8.68, "Harrow", "You take one city too roughly in the east, and suddenly the Crown discovers a desperate need for your talents on a wet rock at the edge of the map."),
+    (61.84, 2.97, "Wat", "They made you Lord Commissioner, Ser."),
+    (65.16, 4.28, "Harrow", "Over forty seasick turnip-farmers and a village Reeve."),
+    (69.44, 1.50, "Harrow", "A glorious command."),
+    (71.84, 3.42, "Harrow", "Take the parchment to the woman downstairs. The Reeve."),
+    (75.26, 1.97, "Harrow", "Tell her we sight land at dawn."),
+    (79.83, 1.48, "Wat", "Which one, Ser?"),
+    (81.76, 2.16, "Harrow", "The one without the royal wax, Wat."),
+    (83.92, 3.28, "Harrow", "I keep forgetting I didn't hire you for your reading."),
+    (89.20, 1.22, "Harrow", "Did she ask about me?"),
+    (90.42, 1.87, "Harrow", "When you brought the water down?"),
+    (92.84, 4.70, "Wat", "She asked why the great Ser Godric Harrow hasn't come out of his cabin since we sailed."),
+    (97.89, 2.77, "Harrow", "And what did my loyal squire tell her?"),
+    (101.11, 2.58, "Wat", "That you were resting after the campaign, Ser."),
+    (104.59, 4.45, "Harrow", "Good man. Let them keep singing to the suit of armour in their heads."),
+    (109.04, 5.94, "Harrow", "The moment I walk down there without that helmet on, I'm just an old butcher with bad knees."),
+    (115.78, 3.30, "Harrow", "Nobody looks at the man inside the iron, Wat."),
+    (119.08, 3.52, "Harrow", "They just want to know the iron is there. Go on."),
+    (122.59, 1.03, "Harrow", "Stop hovering."),
 ];
 
-/// Lightning strikes outside the stern: (time, strength). A far one over the window insert, the big
-/// one just before "Before it burned?", one more over Harrow alone at the end.
-const STRIKES: [(f32, f32); 5] = [(5.4, 0.55), (18.9, 0.2), (47.6, 0.35), (53.1, 1.0), (80.6, 0.6)];
+/// Lightning outside the stern: (time, strength). Thunder rolls in ~1.2 s behind each (the mix). The
+/// big ones: over the ship while the hymn plays, the door, the window before "Nobody looks...", and the
+/// reveal as the camera backs out of the stern.
+const STRIKES: &[(f32, f32)] = &[(5.4, 0.55), (16.0, 0.25), (36.8, 0.8), (49.0, 0.3), (68.0, 0.35), (89.6, 0.6), (99.5, 0.3), (113.6, 1.0), (126.4, 0.5), (129.9, 0.9)];
 
 // ── Components ──────────────────────────────────────────────────────────────────────────
 
@@ -159,6 +178,11 @@ pub(super) struct Ship;
 
 #[derive(Component)]
 pub(super) struct Lantern;
+
+/// The ship seen from outside (CC-BY "Medieval Ship" by Juoda, Sketchfab): shown only for the
+/// exterior shots, so it never encloses the cabin the interior is filmed in.
+#[derive(Component)]
+pub(super) struct ShipModel;
 
 /// The cabin door's pivot on its hinge.
 #[derive(Component)]
@@ -191,11 +215,77 @@ pub(super) struct Rain {
 }
 
 #[derive(Component)]
+pub(super) struct ExtRain {
+    phase: f32,
+}
+
+#[derive(Component)]
 pub(super) struct Title;
 
 /// The seat fit: world offset that rests Harrow's real pelvis on the chair.
 #[derive(Component, Default)]
 pub(super) struct SeatFit(Vec3);
+
+/// The exterior ship (CC-BY "Caravel Ship", Sketchfab) is a different ship from the cabin's, moored
+/// out to sea off its stern: the exterior shots are cut to it, so nothing has to line up with the
+/// cabin set. Model units: ~74 across the beam, bow toward +Z; scaled to a ~7 m caravel with its
+/// waterline (model y 10) on the rig's origin, and centred.
+const MODEL_SCALE: f32 = 0.1;
+const MODEL_AT: Vec3 = Vec3::new(0.74, -1.0, 1.0);
+/// How far astern of the cabin ship the exterior ship lies, and its heading relative to it.
+const EXT_DIST: f32 = 90.0;
+const EXT_YAW: f32 = 0.9;
+/// The finale's exterior shot (the camera has backed out of the stern window and cut to the sea).
+const EXT_FINAL: f32 = 130.0;
+
+/// The exterior shots: the ship over the hymn, and the pull-back finale.
+fn ext_shot(t: f32) -> bool {
+    (at::SHIP.0..at::SHIP.1).contains(&t) || t >= EXT_FINAL
+}
+
+fn ext_roll(t: f32) -> f32 {
+    0.05 * (TAU * t / 6.1).sin() + 0.015 * (TAU * t / 2.7 + 0.4).sin()
+}
+fn ext_pitch(t: f32) -> f32 {
+    0.028 * (TAU * t / 4.8 + 1.1).sin()
+}
+
+/// The exterior ship's place on the sea, level (the camera's frame).
+fn ext_flat() -> Transform {
+    let (p, yaw) = anchor();
+    let aft = Quat::from_rotation_y(yaw) * Vec3::Z;
+    Transform {
+        translation: Vec3::new(p.x + aft.x * EXT_DIST, crate::worldmap::SEA_Y, p.y + aft.z * EXT_DIST),
+        rotation: Quat::from_rotation_y(yaw + EXT_YAW),
+        scale: Vec3::ONE,
+    }
+}
+
+/// The same, rocking in the swell (the ship itself).
+fn ext_xf(t: f32) -> Transform {
+    let f = ext_flat();
+    Transform {
+        translation: f.translation + Vec3::Y * 0.3 * (TAU * t / 5.3).sin(),
+        rotation: f.rotation * Quat::from_rotation_x(ext_pitch(t)) * Quat::from_rotation_z(ext_roll(t)),
+        scale: Vec3::ONE,
+    }
+}
+
+/// The exterior shots in the exterior ship's level frame: (eye, look-at, fov, aperture, focus point).
+fn shot_ext(t: f32) -> (Vec3, Vec3, f32, f32, Option<Vec3>) {
+    let lin = |t0: f32, t1: f32| ((t - t0) / (t1 - t0)).clamp(0.0, 1.0);
+    let ease = |u: f32| u * u * (3.0 - 2.0 * u);
+    let v = Vec3::new;
+    if t < EXT_FINAL {
+        // The hymn rising through her hull: low off the stern quarter, the dark sail, the stern lantern, a slow drift in.
+        let k = ease(lin(at::SHIP.0, at::SHIP.1));
+        (v(8.5, 1.5, -17.0).lerp(v(6.0, 2.2, -13.5), k), v(0.0, 3.6, -1.0), 46.0 - 4.0 * k, 0.12, Some(v(0.0, 2.5, -5.0)))
+    } else {
+        // The pull-back: she's a small lit shape in the dark, the camera drawing away and up.
+        let k = ease(lin(EXT_FINAL, END));
+        (v(-14.0, 3.0, -22.0).lerp(v(-34.0, 9.0, -50.0), k), v(0.0, 4.2, 0.0), 40.0 + 6.0 * k, 0.12, Some(v(0.0, 3.0, -4.0)))
+    }
+}
 
 // ── The ship's motion ───────────────────────────────────────────────────────────────────
 
@@ -418,6 +508,7 @@ pub(super) fn setup(
     std_mats: &mut Assets<StandardMaterial>,
     assets: &SceneAssets,
     fonts: Option<&crate::ui::fonts::UiFonts>,
+    server: &AssetServer,
 ) {
     use crate::npc_skin as ns;
     let (p, _) = anchor();
@@ -502,14 +593,14 @@ pub(super) fn setup(
             l.spawn((
                 PointLight {
                     color: Color::srgb(1.0, 0.64, 0.33),
-                    intensity: 90_000.0,
+                    intensity: 70_000.0,
                     range: 8.0,
                     radius: 0.04,
                     shadow_maps_enabled: true,
                     ..default()
                 },
                 local(0.0, -0.41, 0.0),
-                FlameLight { base: 90_000.0, phase: 0.0 },
+                FlameLight { base: 70_000.0, phase: 0.0 },
             ));
         })
         .id();
@@ -575,7 +666,7 @@ pub(super) fn setup(
         .spawn((
             SpotLight {
                 color: Color::srgb(0.72, 0.8, 1.0),
-                intensity: 22_000.0,
+                intensity: 5_000.0,
                 range: 14.0,
                 shadow_maps_enabled: true,
                 outer_angle: 0.62,
@@ -597,13 +688,38 @@ pub(super) fn setup(
                 ..default()
             },
             local(-1.4, 3.4, 7.5).looking_at(Vec3::new(0.6, 0.6, 0.0), Vec3::Y),
-            Lightning { base: 4_000_000.0 },
+            Lightning { base: 9_000_000.0 },
         ))
+        .id();
+    // The exterior ship, out to sea off the stern: the model, a stern lantern, a faint cold moon and a
+    // bolt-light so a flash lights her sail and hull; its own rain round the camera's side.
+    let rig = commands
+        .spawn((ext_xf(0.0), Visibility::default(), ShipModel, SceneProp))
+        .with_children(|r| {
+            r.spawn((
+                WorldAssetRoot(server.load(GltfAssetLabel::Scene(0).from_asset("models/ship_caravel.glb"))),
+                Transform::from_translation(MODEL_AT).with_scale(Vec3::splat(MODEL_SCALE)),
+            ));
+            r.spawn((
+                SpotLight { color: Color::srgb(0.6, 0.7, 1.0), intensity: 9_000_000.0, range: 120.0, shadow_maps_enabled: true, outer_angle: 0.5, inner_angle: 0.2, ..default() },
+                Transform::from_xyz(-16.0, 24.0, -34.0).looking_at(Vec3::new(0.0, 3.0, 0.0), Vec3::Y),
+            ));
+            r.spawn((
+                SpotLight { color: Color::srgb(0.8, 0.88, 1.0), intensity: 0.0, range: 160.0, shadow_maps_enabled: true, outer_angle: 0.6, inner_angle: 0.3, ..default() },
+                Transform::from_xyz(10.0, 26.0, -30.0).looking_at(Vec3::new(0.0, 4.0, 0.0), Vec3::Y),
+                Lightning { base: 2_500_000_000.0 },
+            ));
+            r.spawn((
+                PointLight { color: Color::srgb(1.0, 0.62, 0.3), intensity: 900_000.0, range: 14.0, radius: 0.2, shadow_maps_enabled: false, ..default() },
+                Transform::from_xyz(0.0, 3.2, -9.0),
+                FlameLight { base: 900_000.0, phase: 3.3 },
+            ));
+        })
         .id();
     // What the glass lets in, soft: models a face turned to the windows.
     let window_fill = commands
         .spawn((
-            PointLight { color: Color::srgb(0.74, 0.8, 1.0), intensity: 9_000.0, range: 2.6, radius: 0.5, shadow_maps_enabled: false, ..default() },
+            PointLight { color: Color::srgb(0.74, 0.8, 1.0), intensity: 2_500.0, range: 2.6, radius: 0.5, shadow_maps_enabled: false, ..default() },
             local(0.75, 1.2, HALF_D - 0.12),
         ))
         .id();
@@ -629,6 +745,20 @@ pub(super) fn setup(
             ))
             .id();
         commands.entity(ship).add_child(e);
+    }
+
+    // Rain round the exterior camera: the same sheet blown up, standing in the exterior ship's frame.
+    for i in 0..2 {
+        let e = commands
+            .spawn((
+                Mesh3d(sheet.clone()),
+                MeshMaterial3d(rain_mat.clone()),
+                Transform::IDENTITY,
+                bevy::light::NotShadowCaster,
+                ExtRain { phase: i as f32 },
+            ))
+            .id();
+        commands.entity(rig).add_child(e);
     }
 
     // The cast. Their own looks once they exist in the NPC cast; until then a guard (the tallest
@@ -671,47 +801,72 @@ pub(super) fn setup(
 // ── Per-frame ───────────────────────────────────────────────────────────────────────────
 
 /// Lightning brightness 0..1 at `t`: a double flicker and a ragged decay per strike.
-fn flash(t: f32) -> f32 {
+pub(super) fn flash(t: f32) -> f32 {
     STRIKES
         .iter()
         .map(|&(t0, k)| k * env(t - t0, &[(-0.01, 0.0), (0.03, 1.0), (0.09, 0.15), (0.14, 0.9), (0.22, 0.3), (0.32, 0.6), (0.9, 0.0)]))
         .fold(0.0, f32::max)
 }
 
+/// Beats of the scene on its clock (s): where the dialogue and the business hang. Mirrors the
+/// soundtrack's timeline (`tools/cutscene/cabin_mix.py`).
+mod at {
+    /// "Stand up." - Wat gets off his knee (the kneel clip's rise).
+    pub const RISE: (f32, f32) = (24.5, 25.7);
+    /// The ship shot over the hymn (Harrow's "Listen to them. Singing." ends 33.2).
+    pub const SHIP: (f32, f32) = (33.17, 42.6);
+    /// Wat to the table, his hand over the two envelopes ("Which one, Ser?"), the grab.
+    pub const TO_TABLE: (f32, f32) = (77.4, 79.2);
+    pub const REACH: (f32, f32) = (79.4, 80.5);
+    pub const GRAB: (f32, f32) = (85.4, 86.6);
+    pub const TO_DOOR: (f32, f32) = (87.5, 89.5);
+    /// "Go on. Stop hovering." - the door opens, Wat goes out, Harrow is left with the lantern.
+    pub const DOOR: f32 = 124.0;
+    pub const OUT: (f32, f32) = (124.7, 127.9);
+    /// The camera backs out through the stern window.
+    pub const PULLBACK: (f32, f32) = (128.8, 130.0);
+}
+
 /// Harrow's beat: (clip, head yaw/pitch/roll; yaw + = his left, the stern windows). Down at the
-/// strap; a glance at the letter on the table at his right; after Wat as he goes to the door; eyes on
-/// the deck while the hymn comes up through it; round to the windows for the city; back to Wat at
-/// the door for the last lines; away to the windows again to send him off.
+/// strap; up for "Stand up"; eyes on the deck while the hymn comes up through it; the letter on the
+/// table at his right; after Wat as he goes to the door; round to the windows for the city; back to
+/// Wat at the door; and to the glass again for "Nobody looks at the man inside the iron".
 fn harrow_beat(t: f32) -> (&'static str, Vec3) {
-    let clip = if (39.0..46.4).contains(&t) { "Sitting_Talking_Loop" } else { "Sitting_Idle_Loop" };
+    // The long speeches get the talking loop; short lines stay on the idle.
+    let talking = VO.iter().any(|&(s, _, _, d, r)| r == Role::Harrow && d > 4.5 && t >= s - 0.1 && t < s + d);
+    let clip = if talking { "Sitting_Talking_Loop" } else { "Sitting_Idle_Loop" };
     let yaw = env(
         t,
         &[
-            (26.0, 0.0), (26.7, -1.0), (29.2, -1.0), (29.9, -0.25), (31.2, -0.35), (32.0, -0.9), (33.6, -0.9),
-            (35.4, -0.75), (36.4, -0.75), (37.4, -0.1), (46.6, -0.1), (47.4, 1.05), (58.8, 1.05), (59.5, -0.75),
-            (69.6, -0.75), (70.6, 1.05),
+            (0.0, 0.0), (23.6, 0.0),
+            (30.0, -0.12), (44.8, -0.12), (45.4, 0.0), (52.6, 0.0), // the hymn at the deck; Wat; Kell
+            (53.6, 1.05), (64.8, 1.05), (65.6, 0.0),                // the Crown's rock: the glass; then the farmers
+            (71.2, -1.0), (76.6, -1.0), (77.6, -0.3), (79.2, -0.9), // the letter on the table, Wat crossing to it
+            (86.4, -0.9), (88.6, -0.4), (89.8, -0.75), (104.0, -0.75), // "the one without the royal wax" ... Wat at the door
+            (104.9, -0.2), (113.4, -0.2), (114.8, 1.05), (127.0, 1.05), // "bad knees" -> the glass, thunder
         ],
     );
     let pitch = env(
         t,
         &[
-            (7.4, -0.32), (8.0, -0.42), (25.6, -0.42), (26.7, -0.3), (29.2, -0.3), (29.9, -0.05), (36.4, 0.0),
-            (37.4, -0.28), (39.0, -0.18), (46.6, -0.12), (47.4, 0.06), (58.8, 0.06), (59.5, 0.05), (70.6, 0.06),
+            (0.0, -0.1), (7.4, -0.1), (8.0, -0.42), (23.4, -0.42), (24.6, -0.08), (29.6, -0.08), (30.6, -0.3), (42.4, -0.3),
+            (45.0, -0.1), (52.6, -0.1), (53.6, 0.06), (64.8, 0.06), (66.0, -0.1), (71.0, -0.12), (71.8, -0.3), (77.4, -0.3), (78.0, -0.05),
+            (82.0, -0.12), (89.0, -0.05), (104.0, -0.05), (104.9, 0.0), (113.4, 0.0), (114.8, 0.06), (127.0, 0.06),
         ],
     );
     (clip, Vec3::new(yaw, pitch, 0.0))
 }
 
 /// Wat's blocking at `t`: (floor spot, facing yaw, clip, scrubbed playhead). Kneeling at the greave
-/// until the strap is home; up (the rest of the kneel clip) on "Today…"; round the lantern to the
-/// table; the letter lifted; to the door, where the hymn stops him; turned back to his master on
-/// "Before it burned?"; turned away and out through the door after "Stop hovering."
+/// until the strap is home ("Hnn. There."); up (the rest of the kneel clip) on "Stand up"; stood at
+/// his master's side through the hymn and the talk; round the lantern to the table when sent for the
+/// letter, his hand hovering over the two envelopes; the right one lifted; to the door, where the
+/// flash stops him; turned back to his master to answer; turned away and out through the door after
+/// "Stop hovering."
 fn wat_track(t: f32) -> (Vec2, f32, &'static str, Option<f32>) {
     // `Fixing_Kneeling` kneels down, works and stands back up in one 4.1 s cycle; down on one knee
-    // 0.75–3.15 s. Held there (eased back and forth so the hands keep working), then let up.
+    // 0.75-3.15 s. Held there (eased back and forth so the hands keep working), then let up.
     const DOWN: (f32, f32) = (0.75, 3.15);
-    const RISE: (f32, f32) = (29.4, 30.4);
-    const PICK: (f32, f32) = (32.2, 33.5);
     const FACE_HARROW: f32 = 0.79;
     let span = DOWN.1 - DOWN.0;
     let lin = |t0: f32, t1: f32| ((t - t0) / (t1 - t0)).clamp(0.0, 1.0);
@@ -733,33 +888,41 @@ fn wat_track(t: f32) -> (Vec2, f32, &'static str, Option<f32>) {
         let c = at(d + 0.25) - at(d - 0.25);
         (at(d), c.x.atan2(c.y))
     };
+    // The PickUp_Table playhead: reach, hover over the envelopes, then the grab.
+    let pick = {
+        let reach = 0.28 * lin(at::REACH.0, at::REACH.1);
+        let hover = 0.012 * (t * 5.0).sin() * (1.0 - lin(at::GRAB.0 - 0.3, at::GRAB.0));
+        reach + hover + 0.39 * lin(at::GRAB.0, at::GRAB.1)
+    };
     match t {
-        t if t < RISE.0 => (WAT_AT, WAT_YAW, "Fixing_Kneeling", Some(DOWN.0 + span * (0.5 - 0.5 * (PI * t * 0.8 / span).cos()))),
-        t if t < RISE.1 => (WAT_AT, WAT_YAW, "Fixing_Kneeling", Some(DOWN.1 + (4.1 - DOWN.1) * lin(RISE.0, RISE.1))),
-        t if t < PICK.0 => {
-            let (p, yaw) = walk(&[WAT_AT, PAST_KNEES, TABLE_SPOT], RISE.1, PICK.0 - 0.1);
-            (p, WAT_YAW + (yaw - WAT_YAW) * smooth(lin(RISE.1, RISE.1 + 0.5)), "Walk_Loop", None)
+        t if t < at::RISE.0 => (WAT_AT, WAT_YAW, "Fixing_Kneeling", Some(DOWN.0 + span * (0.5 - 0.5 * (PI * t * 0.8 / span).cos()))),
+        t if t < at::RISE.1 => (WAT_AT, WAT_YAW, "Fixing_Kneeling", Some(DOWN.1 + (4.1 - DOWN.1) * lin(at::RISE.0, at::RISE.1))),
+        t if t < at::TO_TABLE.0 => (WAT_AT, WAT_YAW, "Idle_Loop", None),
+        t if t < at::TO_TABLE.1 => {
+            let (p, yaw) = walk(&[WAT_AT, PAST_KNEES, TABLE_SPOT], at::TO_TABLE.0, at::TO_TABLE.1);
+            (p, WAT_YAW + (yaw - WAT_YAW) * smooth(lin(at::TO_TABLE.0, at::TO_TABLE.0 + 0.5)), "Walk_Loop", None)
         }
-        t if t < PICK.1 => {
+        t if t < at::TO_DOOR.0 => {
             let a = TABLE_SPOT - PAST_KNEES;
             let came = a.x.atan2(a.y);
-            (TABLE_SPOT, came + (WAT_YAW - came) * smooth(lin(PICK.0, PICK.0 + 0.35)), "PickUp_Table", Some(0.67 * lin(PICK.0, PICK.1 - 0.3)))
+            (TABLE_SPOT, came + (WAT_YAW - came) * smooth(lin(at::TO_TABLE.1, at::TO_TABLE.1 + 0.35)), "PickUp_Table", Some(pick))
         }
-        t if t < 35.6 => {
-            let (p, yaw) = walk(&[TABLE_SPOT, DOOR_SPOT], PICK.1, 35.5);
+        t if t < at::TO_DOOR.1 + 0.1 => {
+            let (p, yaw) = walk(&[TABLE_SPOT, DOOR_SPOT], at::TO_DOOR.0, at::TO_DOOR.1);
             (p, yaw, "Walk_Loop", None)
         }
-        // At the door, his back to the room; turned back on "Before it burned?".
-        t if t < 74.2 => {
+        // At the door: his back to the room as the flash stops him, then round to his master to
+        // answer ("She asked why..."), and turned away again after "Stop hovering."
+        t if t < at::DOOR - 0.6 => {
             let a = DOOR_SPOT - TABLE_SPOT;
             let came = a.x.atan2(a.y).rem_euclid(TAU);
-            let yaw = if t < 45.0 { came + (PI - came) * smooth(lin(35.5, 36.3)) } else { PI + (FACE_HARROW - PI) * smooth(lin(55.0, 55.9)) };
+            let yaw = if t < 91.6 { came + (PI - came) * smooth(lin(at::TO_DOOR.1, at::TO_DOOR.1 + 0.8)) } else { PI + (FACE_HARROW - PI) * smooth(lin(91.6, 92.6)) };
             (DOOR_SPOT, yaw, "Idle_Loop", None)
         }
-        t if t < 75.0 => (DOOR_SPOT, FACE_HARROW + (PI - FACE_HARROW) * smooth(lin(74.2, 74.9)), "Idle_Loop", None),
+        t if t < at::OUT.0 => (DOOR_SPOT, FACE_HARROW + (PI - FACE_HARROW) * smooth(lin(at::DOOR - 0.6, at::DOOR + 0.3)), "Idle_Loop", None),
         _ => {
-            let (p, yaw) = walk(&[DOOR_SPOT, Vec2::new(DOOR_X, -HALF_D), Vec2::new(DOOR_X, -HALF_D - 1.55)], 75.0, 78.1);
-            (p, yaw, if t < 78.1 { "Walk_Loop" } else { "Idle_Loop" }, None)
+            let (p, yaw) = walk(&[DOOR_SPOT, Vec2::new(DOOR_X, -HALF_D), Vec2::new(DOOR_X, -HALF_D - 1.55)], at::OUT.0, at::OUT.1);
+            (p, yaw, if t < at::OUT.1 { "Walk_Loop" } else { "Idle_Loop" }, None)
         }
     }
 }
@@ -769,15 +932,19 @@ fn smooth(u: f32) -> f32 {
 }
 
 /// Wat's head (body frame): on the work while he kneels; dipped, listening, at the door; on his
-/// master once he turns (looking down at a seated man), eyes dropping after "That's the point of you."
+/// master once he turns (looking down at a seated man), eyes dropping after "They just want to know
+/// the iron is there."
 fn wat_head(t: f32) -> Vec3 {
-    let pitch = env(t, &[(35.6, 0.0), (36.4, -0.18), (55.0, -0.18), (55.9, -0.2), (67.8, -0.2), (68.8, -0.42), (74.2, -0.42), (75.0, 0.0)]);
+    let pitch = env(
+        t,
+        &[(26.0, 0.0), (30.0, -0.12), (44.0, -0.12), (45.0, 0.0), (78.0, 0.0), (79.0, -0.3), (86.8, -0.3), (87.6, 0.0), (89.4, 0.0), (90.0, -0.18), (104.0, -0.2), (119.0, -0.2), (120.0, -0.42), (124.0, -0.42), (124.7, 0.0)],
+    );
     Vec3::new(0.0, pitch, 0.0)
 }
 
 /// The door's swing (radians, out into the passage) as Wat goes.
 fn door_open(t: f32) -> f32 {
-    1.45 * smooth(((t - 74.5) / 1.1).clamp(0.0, 1.0))
+    1.45 * smooth(((t - at::DOOR) / 1.1).clamp(0.0, 1.0))
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -799,12 +966,19 @@ pub(super) fn drive(
     mut bolt: Query<(&mut SpotLight, &Lightning)>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut fade: Query<&mut BackgroundColor, With<super::FarmFade>>,
-    mut title: Query<&mut TextColor, With<Title>>,
+    (mut title, mut rig, mut ext_rain): (
+        Query<&mut TextColor, With<Title>>,
+        Query<&mut Transform, (With<ShipModel>, Without<Ship>, Without<Role>, Without<Lantern>, Without<Rain>, Without<Flame>, Without<Door>, Without<ExtRain>)>,
+        Query<(&mut Transform, &ExtRain), (Without<ShipModel>, Without<Ship>, Without<Role>, Without<Lantern>, Without<Rain>, Without<Flame>, Without<Door>)>,
+    ),
 ) {
     if state.active != Some(SceneId::ShipCabin) {
         return;
     }
     let t = state.clock.max(0.0);
+    for mut tf in &mut rig {
+        *tf = ext_xf(t);
+    }
     let (dt, now) = (time.delta_secs(), time.elapsed_secs());
     let xf = ship_xf(t);
     for mut tf in &mut ship {
@@ -869,6 +1043,12 @@ pub(super) fn drive(
         }
     }
 
+    for (mut tf, r) in &mut ext_rain {
+        // 6x the sheet, standing on the camera's side of the ship: it falls at the same pace.
+        tf.translation = Vec3::new(0.0, RAIN_Y0 * 6.0 - drop * 6.0 + r.phase * RAIN_H * 6.0 + 8.0, -18.0);
+        tf.scale = Vec3::new(6.0, 6.0, 6.0);
+    }
+
     match LINES.iter().find(|(s, d, ..)| t >= *s && t < s + d) {
         Some((s, d, who, text)) => subs.force(now, Some(who), text, s + d - t),
         None => subs.force(now, None, "", 0.0),
@@ -925,7 +1105,8 @@ pub(super) fn letter_follow(
     joints: Query<&GlobalTransform>,
     mut letter: Query<&mut Transform, With<Letter>>,
 ) {
-    const TAKEN: f32 = 32.75;
+    // The grab: where the lift's playhead passes 0.40 (see `wat_track`).
+    const TAKEN: f32 = at::GRAB.0 + (0.12 / 0.39) * (at::GRAB.1 - at::GRAB.0);
     if state.active != Some(SceneId::ShipCabin) {
         return;
     }
@@ -958,7 +1139,7 @@ pub(super) fn mouths(
     if clips.is_empty() {
         *clips = VO.iter().map(|vo| (server.load(vo.1), None)).collect();
     }
-    for ((h, env), vo) in clips.iter_mut().zip(&VO) {
+    for ((h, env), vo) in clips.iter_mut().zip(VO.iter()) {
         if env.is_none() {
             *env = sources.get(&*h).map(|s| crate::lipsync::envelope(s, vo.2, vo.3));
         }
@@ -967,7 +1148,7 @@ pub(super) fn mouths(
     for (e, role) in &actors {
         let open = clips
             .iter()
-            .zip(&VO)
+            .zip(VO.iter())
             .filter(|(_, vo)| vo.4 == *role)
             .filter_map(|((_, env), vo)| env.as_deref().map(|env| crate::lipsync::sample(env, t - vo.0)))
             .fold(0.0, f32::max);
@@ -977,7 +1158,7 @@ pub(super) fn mouths(
 
 // ── Coverage ────────────────────────────────────────────────────────────────────────────
 
-/// The shot at `t` in the ship's frame: (eye, look-at, vertical fov°, thin-lens aperture, focus
+/// The shot at `t` in the ship's frame: (eye, look-at, vertical fov deg, thin-lens aperture, focus
 /// distance). The camera rides the ship, so the cabin holds still and the sea moves.
 fn shot_local(t: f32) -> (Vec3, Vec3, f32, f32, Option<f32>) {
     let lin = |t0: f32, t1: f32| ((t - t0) / (t1 - t0)).clamp(0.0, 1.0);
@@ -988,76 +1169,115 @@ fn shot_local(t: f32) -> (Vec3, Vec3, f32, f32, Option<f32>) {
         let (p, ..) = wat_track(t);
         v(p.x, WAT_STAND_H, p.y)
     };
+    // Wat stood at his master's side (his head), for the reaction close-ups.
+    let wat_stand = v(WAT_AT.x, WAT_STAND_H, WAT_AT.y);
     let (eye, at, fov, band, focus_on) = match t {
-        // ── I. The strap ──
-        // A · the cabin from the door: the lantern swinging over them, the squire at his master's
-        //     leg, the stern windows behind them full of rain. Nobody speaks.
-        t if t < 10.0 => (v(-1.05, 1.4, -1.45).lerp(v(-0.82, 1.32, -1.2), ease(lin(4.6, 10.0))), v(0.6, 0.72, 0.7), 58.0, 0.12, Some(HARROW_HEAD)),
-        // C · the hands at the strap: a pull, the buckle won't sit.
-        t if t < 12.0 => (v(0.66, 0.52, 1.2).lerp(v(0.64, 0.5, 1.15), lin(10.0, 12.0)), STRAP + v(0.0, 0.04, 0.0), 36.0, 1.0, Some(STRAP)),
-        // B · "Tighter." — low over Wat's shoulder, up at Harrow (the squire's eye).
-        t if t < 13.2 => (v(-0.25, 0.76, 0.6), HARROW_HEAD, 36.0, 0.9, Some(HARROW_HEAD)),
-        // C · Wat hauls on it.
-        t if t < 14.8 => (v(0.62, 0.5, 1.14), STRAP + v(0.0, 0.03, 0.0), 34.0, 1.0, Some(STRAP)),
-        // B2 · "You've done that strap every day for fifteen years and it's still wrong." — pushing
-        //      in on him; the shield on the hull behind his head.
-        t if t < 20.4 => {
-            let k = ease(lin(14.8, 20.4));
+        // -- I. The strap --
+        // A: the cabin from the door: the lantern swinging over them, the squire at his master's
+        //    leg, the stern windows behind them full of rain. Nobody speaks.
+        t if t < 8.9 => (v(-1.05, 1.4, -1.45).lerp(v(-0.82, 1.32, -1.2), ease(lin(4.6, 8.9))), v(0.6, 0.72, 0.7), 58.0, 0.12, Some(HARROW_HEAD)),
+        // B: "Tighter." - low over Wat's shoulder, up at Harrow (the squire's eye).
+        t if t < 10.5 => (v(-0.25, 0.76, 0.6), HARROW_HEAD, 36.0, 0.9, Some(HARROW_HEAD)),
+        // B2: "Left buckle's always stiff. Fifteen years you've strapped me into this iron..." -
+        //     pushing in on him; the shield on the hull behind his head.
+        t if t < 16.2 => {
+            let k = ease(lin(10.5, 16.2));
             (v(0.0, 0.86, 1.24).lerp(v(0.2, 0.88, 1.12), k), HARROW_HEAD + v(0.15, 0.0, 0.12), 34.0 - 4.0 * k, 1.0, Some(HARROW_HEAD))
         }
-        // C2 · "Yes, Ser." — Wat's face, low, eyes on the work.
-        t if t < 23.4 => (v(0.66, 0.66, 1.46).lerp(v(0.63, 0.66, 1.4), lin(20.4, 23.4)), WAT_HEAD, 34.0, 0.9, Some(WAT_HEAD)),
-        // H1 · "Hnn. There." — the buckle home.
-        t if t < 26.0 => (v(0.6, 0.48, 1.13), STRAP + v(0.0, 0.03, 0.0), 32.0, 1.0, Some(STRAP)),
-        // ── II. The letter ──
-        // D · "The letter. To the Reeve. Today, if the sea allows." — Harrow from his right, his eyes
-        //     going to the table: the helmet, the sealed letter by it.
-        t if t < 29.4 => (v(0.2, 0.92, -0.55).lerp(v(0.24, 0.93, -0.48), lin(26.0, 29.4)), v(0.92, 0.86, 0.45), 40.0, 0.8, Some(HARROW_HEAD)),
-        // W1 · from the stern corner: Wat gets up, goes round the lantern to the table, takes the letter.
-        t if t < 33.6 => {
-            let k = ease(lin(29.6, 32.4));
-            (v(-1.45, 1.45, 1.3), v(0.25, 0.75, 0.6).lerp(v(0.75, 0.82, -0.25), k), 50.0, 0.3, Some(wat))
+        // C: the hands at the strap, hauling on it.
+        t if t < 19.2 => (v(0.62, 0.5, 1.14).lerp(v(0.6, 0.49, 1.13), lin(16.2, 19.2)), STRAP + v(0.0, 0.03, 0.0), 34.0, 1.0, Some(STRAP)),
+        // C2: "Rust from the salt, Ser." - Wat's face, low, eyes on the work.
+        t if t < 21.8 => (v(0.66, 0.66, 1.46).lerp(v(0.63, 0.66, 1.4), lin(19.2, 21.8)), WAT_HEAD, 34.0, 0.9, Some(WAT_HEAD)),
+        // H1: "Hnn. There." - the buckle home.
+        t if t < 23.6 => (v(0.6, 0.48, 1.13), STRAP + v(0.0, 0.03, 0.0), 32.0, 1.0, Some(STRAP)),
+        // -- II. The hymn --
+        // WR: "Stand up. You're making my knees ache just looking at you." - wide from the stern
+        //     corner: Wat comes up off his knee.
+        t if t < 27.0 => (v(-1.45, 1.45, 1.3), v(0.3, 0.8, 0.7), 50.0, 0.3, Some(wat)),
+        // D2: "Listen to them. Singing." - Harrow from the door end, eyes on the deck, the hymn
+        //     coming up through it; pushing in.
+        t if t < at::SHIP.0 => {
+            let k = ease(lin(27.0, at::SHIP.0));
+            (v(0.0, 1.25, -1.25).lerp(v(0.1, 1.22, -1.05), k), HARROW_HEAD, 30.0 - 5.0 * k, 0.8, Some(HARROW_HEAD))
         }
-        // W2 · from the stern windows: Wat to the door with it — and he stops there; the hymn
-        //      coming up through the deck.
-        t if t < 38.8 => (v(-0.6, 1.35, 1.35), wat.lerp(v(-0.9, 1.2, -1.4), 0.6), 44.0, 0.45, Some(wat)),
-        // D2 · "Forty peasants and a Reeve. That's what the Crown sends a man after the eastern
-        //      campaign." — Harrow from the door end, listening down to the hymn, pushing in. (The
-        //      lantern hangs on the straight line from Wat to him: the lens sits starboard of it.)
-        t if t < 46.6 => {
-            let k = ease(lin(38.8, 46.6));
-            (v(0.0, 1.25, -1.25).lerp(v(0.1, 1.22, -1.05), k), HARROW_HEAD, 28.0 - 4.0 * k, 0.8, Some(HARROW_HEAD))
+        // SHIP: the ship from astern in the storm - the lit stern windows, the rain, the sea heaving,
+        //       a flash on the glass; the settlers' hymn rising through the hull. A slow drift in.
+        t if t < at::SHIP.1 => {
+            let k = ease(lin(at::SHIP.0, at::SHIP.1));
+            (v(9.0, 0.9, 15.0).lerp(v(6.2, 1.3, 11.0), k), v(0.2, 1.2, -1.0), 48.0 - 4.0 * k, 0.9, Some(v(0.1, 0.9, 1.7)))
         }
-        // ── III. The city ──
-        // The storm in the stern windows, a far flash.
-        t if t < 49.4 => (v(0.95, 1.18, 1.25), v(1.25, 0.8, 6.0), 50.0, 0.25, None),
-        // E · "Do you know what they said about me in the city?" — he's turned to the windows; from
-        //     the glass, his face, and the lightning on "Before it burned?" behind the lens.
-        t if t < 55.4 => (v(0.42, 1.12, 1.46).lerp(v(0.46, 1.11, 1.4), lin(49.4, 55.4)), HARROW_HEAD, 34.0, 0.6, Some(HARROW_HEAD)),
-        // F · "No, Ser." — Wat turned back at the door, past his master's shoulder.
-        t if t < 58.6 => (v(1.05, 1.12, 0.3), WAT_DOOR_HEAD, 30.0, 0.8, Some(WAT_DOOR_HEAD)),
-        // G1 · "Neither do I." — Harrow turns from the glass to him: low, from Wat's side of the lantern.
-        t if t < 62.4 => (v(-0.3, 1.12, -1.0), HARROW_HEAD, 26.0, 0.8, Some(HARROW_HEAD)),
-        // G2 · "Nobody looks at the man behind the shield, Wat." — over Wat's right shoulder.
-        t if t < 66.4 => (v(-1.48, 1.45, -1.29).lerp(v(-1.42, 1.44, -1.24), lin(62.4, 66.4)), HARROW_HEAD, 36.0, 0.8, Some(HARROW_HEAD)),
-        // H · "That's the point of you." — on Wat, a slow push; his eyes go down.
-        t if t < 70.6 => {
+        // -- III. Kell --
+        // G2: "Wait till they see the island." - from the door end, Harrow listening.
+        t if t < 45.0 => (v(-1.48, 1.45, -1.29), HARROW_HEAD, 36.0, 0.8, Some(HARROW_HEAD)),
+        // Wat over his master's shoulder: "Have you seen it, Ser? Kell?"
+        t if t < 46.9 => (v(1.15, 1.28, 0.2), wat_stand, 30.0, 0.8, Some(wat_stand)),
+        // G1: "Nobody's seen Kell in a hundred years, Wat. That's why the King's giving it to me."
+        t if t < 52.6 => (v(-0.3, 1.12, -1.0), HARROW_HEAD, 26.0, 0.8, Some(HARROW_HEAD)),
+        // E: "You take one city too roughly in the east..." - his face from the glass.
+        t if t < 61.6 => {
+            let k = ease(lin(52.6, 61.6));
+            (v(0.42, 1.12, 1.46).lerp(v(0.48, 1.11, 1.38), k), HARROW_HEAD, 36.0 - 6.0 * k, 0.6, Some(HARROW_HEAD))
+        }
+        // "They made you Lord Commissioner, Ser."
+        t if t < 65.0 => (v(1.15, 1.28, 0.2), wat_stand, 27.0, 0.8, Some(wat_stand)),
+        // G2: "Over forty seasick turnip-farmers and a village Reeve. A glorious command."
+        t if t < 71.7 => (v(-1.48, 1.45, -1.29).lerp(v(-1.42, 1.44, -1.24), lin(65.0, 71.7)), HARROW_HEAD, 36.0, 0.8, Some(HARROW_HEAD)),
+        // D: "Take the parchment to the woman downstairs." - Harrow from his right, his eyes going to the
+        //    table: the helmet, the two envelopes.
+        t if t < 77.4 => (v(0.2, 0.92, -0.55).lerp(v(0.24, 0.93, -0.48), lin(71.7, 77.4)), v(0.92, 0.86, 0.45), 40.0, 0.8, Some(HARROW_HEAD)),
+        // W1: from the stern corner: Wat round the lantern to the table.
+        t if t < 79.4 => (v(-1.45, 1.45, 1.3), wat.lerp(v(0.75, 0.82, -0.25), 0.4), 50.0, 0.3, Some(wat)),
+        // His hand over the two envelopes: "Which one, Ser?"
+        t if t < 81.7 => (v(0.45, 1.0, 0.3), v(1.0, 0.7, -0.38), 32.0, 1.0, Some(v(1.0, 0.7, -0.38))),
+        // "The one without the royal wax, Wat. I keep forgetting I didn't hire you for your reading."
+        t if t < 85.0 => (v(-0.3, 1.12, -1.0), HARROW_HEAD, 24.0, 0.8, Some(HARROW_HEAD)),
+        // The letter lifted and Wat away with it, to the door - the flash stops him there.
+        t if t < 92.6 => (v(-0.6, 1.35, 1.35), wat.lerp(v(-0.9, 1.2, -1.4), 0.6), 44.0, 0.45, Some(wat)),
+        // F: "She asked why the great Ser Godric Harrow..." - Wat turned back at the door, past his
+        //    master's shoulder.
+        t if t < 97.9 => (v(1.05, 1.12, 0.3), WAT_DOOR_HEAD, 30.0, 0.8, Some(WAT_DOOR_HEAD)),
+        // "And what did my loyal squire tell her?"
+        t if t < 100.9 => (v(-0.3, 1.12, -1.0), HARROW_HEAD, 26.0, 0.8, Some(HARROW_HEAD)),
+        // "That you were resting after the campaign, Ser." - Wat, closer.
+        t if t < 104.4 => (v(1.0, 1.14, 0.45), WAT_DOOR_HEAD, 25.0, 0.8, Some(WAT_DOOR_HEAD)),
+        // E2: "Good man. Let them keep singing... an old butcher with bad knees." - he turns to the glass
+        //     (and the big flash); a slow push on his face.
+        t if t < 115.4 => {
+            let k = ease(lin(104.4, 115.4));
+            (v(0.42, 1.12, 1.46).lerp(v(0.5, 1.1, 1.3), k), HARROW_HEAD, 34.0 - 8.0 * k, 0.6, Some(HARROW_HEAD))
+        }
+        // G2: "Nobody looks at the man inside the iron, Wat." - over Wat's right shoulder.
+        t if t < 119.4 => (v(-1.48, 1.45, -1.29).lerp(v(-1.42, 1.44, -1.24), lin(115.4, 119.4)), HARROW_HEAD, 36.0, 0.8, Some(HARROW_HEAD)),
+        // H: "They just want to know the iron is there." - Wat, a slow push; his eyes go down.
+        t if t < 122.2 => {
             let face = WAT_DOOR_HEAD - v(0.0, 0.08, 0.0);
-            (v(-0.25, 1.12, -0.45).lerp(v(-0.4, 1.15, -0.6), ease(lin(66.4, 70.6))), face, 32.0, 0.9, Some(face))
+            (v(-0.25, 1.12, -0.45).lerp(v(-0.4, 1.15, -0.6), ease(lin(119.4, 122.2))), face, 32.0, 0.9, Some(face))
         }
-        // I · "Stop hovering." — Harrow back at the window.
-        t if t < 74.2 => (v(0.52, 1.1, 1.32), HARROW_HEAD, 30.0, 0.7, Some(HARROW_HEAD)),
-        // J · Wat goes: from behind him, down the passage's length — the door, the hold's lamplight
-        //     at the far end, his back against it.
-        t if t < 78.6 => (v(-0.72, 1.45, 0.25), v(-1.0, 1.05, -3.0), 40.0, 0.4, Some(wat)),
-        // K · Harrow alone with the lantern, from the door he left by; into black.
-        _ => (v(-0.85, 1.34, -1.25).lerp(v(-1.0, 1.4, -1.48), ease(lin(78.6, END))), v(0.6, 0.72, 0.7), 46.0 + 10.0 * lin(78.6, END), 0.15, Some(HARROW_HEAD)),
+        // I: "Go on. Stop hovering." - Harrow back at the window.
+        t if t < 124.4 => (v(0.52, 1.1, 1.32), HARROW_HEAD, 30.0, 0.7, Some(HARROW_HEAD)),
+        // J: Wat goes: from behind him, down the passage's length - the door, the hold's lamplight
+        //    at the far end, his back against it.
+        t if t < at::PULLBACK.0 => (v(-0.72, 1.45, 0.25), v(-1.0, 1.05, -3.0), 40.0, 0.4, Some(wat)),
+        // K: Harrow alone with the lantern; the camera backs out through the middle stern window into
+        //    the storm (and cuts to the ship from outside, `shot_ext`) - the hymn swelling.
+        _ => {
+            let k = lin(at::PULLBACK.0, at::PULLBACK.1);
+            let kk = k * k * (3.0 - 2.0 * k);
+            let eye = v(0.05 + 0.1 * kk, 1.15, 1.2 + 1.2 * kk);
+            (eye, v(0.35, 0.9, -1.0).lerp(v(0.0, 1.2, -3.0), kk), 40.0 + 8.0 * kk, 0.3, Some(HARROW_HEAD))
+        }
     };
     (eye, at, fov, band, focus_on.map(|p| eye.distance(p)))
 }
 
 /// The shot in the world: ((eye, look-at, fov, aperture), focus) + the ship's up for `look_at`.
 pub(super) fn camera(t: f32) -> ((super::Cam, Option<f32>), Vec3) {
+    if ext_shot(t) {
+        let f = ext_flat();
+        let (eye, at, fov, band, focus) = shot_ext(t);
+        let (e, a) = (f.transform_point(eye), f.transform_point(at));
+        return (((e, a, fov, band), focus.map(|p| e.distance(f.transform_point(p)))), Vec3::Y);
+    }
     let xf = ship_xf(t);
     let (eye, at, fov, band, focus) = shot_local(t);
     (((xf.transform_point(eye), xf.transform_point(at), fov, band), focus), xf.rotation * Vec3::Y)
@@ -1176,6 +1396,12 @@ fn shell_mesh() -> Vec<Mesh> {
             p.push(cube(w, 0.02, 0.03, Vec3::new(cx, y, zs), 0x262422));
         }
     }
+    // The roof's taffrail (the hull below it is the exterior ship model, `ShipModel`).
+    p.push(cube(2.0 * HALF_W + 0.5, 0.05, 0.05, Vec3::new(0.0, BEAMS + 0.55, HALF_D + 0.17), 0x2a1c10)); // taffrail
+    for k in 0..9u32 {
+        let x = -2.0 + k as f32 * 0.5;
+        p.push(cube(0.05, 0.36, 0.05, Vec3::new(x, BEAMS + 0.38, HALF_D + 0.17), 0x2a1c10));
+    }
     // the stern bench under the windows
     p.push(cube(3.1, 0.07, 0.44, Vec3::new(0.0, 0.42, HALF_D - 0.22), 0x5c3f27));
     p.push(cube(3.1, 0.38, 0.04, Vec3::new(0.0, 0.2, HALF_D - 0.44), 0x4e3520));
@@ -1262,6 +1488,9 @@ fn table_dressing_mesh() -> Vec<Mesh> {
         cylr(0.025, 0.36, Vec3::new(-0.05, 0.025, 0.08), Quat::from_rotation_z(FRAC_PI_2) * Quat::from_rotation_x(0.2), 0xbfa97a),
         cylr(0.032, 0.09, Vec3::new(-0.2, 0.045, 0.3), Quat::IDENTITY, 0x8d8f92),
         cylr(0.022, 0.04, Vec3::new(0.05, 0.02, -0.33), Quat::IDENTITY, 0x1c1a1a),
+        cube_r(0.17, 0.012, 0.11, Vec3::new(-0.22, 0.012, -0.2), Quat::from_rotation_y(0.5), 0xe9e1cb), // the other letter, under the Crown's red wax
+        cube_r(0.172, 0.004, 0.014, Vec3::new(-0.22, 0.019, -0.2), Quat::from_rotation_y(0.5), 0xb8923a),
+        cylr(0.024, 0.008, Vec3::new(-0.22, 0.02, -0.2), Quat::IDENTITY, 0x9a1612),
         cylr(0.045, 0.012, Vec3::new(0.18, 0.006, -0.3), Quat::IDENTITY, 0x6f5a3c),
         cylr(0.02, 0.13, Vec3::new(0.18, 0.075, -0.3), Quat::IDENTITY, 0xe6dcc0),
     ]
@@ -1279,7 +1508,11 @@ fn sconce_mesh() -> Vec<Mesh> {
 
 /// The sealed letter to the Reeve (origin at its centre): folded paper, the red wax seal.
 fn letter_mesh() -> Vec<Mesh> {
-    vec![cube(0.16, 0.012, 0.1, Vec3::ZERO, 0xd9cfb4), cylr(0.018, 0.006, Vec3::new(0.0, 0.008, 0.0), Quat::IDENTITY, 0x8a1d18)]
+    vec![
+        cube(0.16, 0.012, 0.1, Vec3::ZERO, 0xd9cfb4),
+        cube(0.17, 0.003, 0.008, Vec3::new(0.0, 0.007, 0.0), 0x6b5a3c), // the string it is tied with
+        cylr(0.014, 0.005, Vec3::new(0.0, 0.009, 0.0), Quat::IDENTITY, 0x4f4d4a), // a plain grey seal: no royal wax
+    ]
 }
 
 /// The cabin door's leaf (origin on its hinge, the port jamb; the leaf runs +X): boards, two iron
