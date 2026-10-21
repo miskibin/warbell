@@ -6,6 +6,9 @@ Aktu I) + barki misji dopisane 2026-10-14. **Nagrane 2026-10-14 i pocięte:** 13
 Tekst w tabelach to prompt ElevenLabs (tagi v3 w nawiasach kwadratowych). Te tagi nie są napisami: przed
 wyświetleniem jako napis trzeba je usunąć.
 
+Retake kajuty P.0 (inny tekst, nowe klucze `p0_*`, starych `a1_harrow_01`–`04` nie nadpisuje):
+`docs/audio/elevenlabs-p0-poklad.md`.
+
 ## Użyte głosy — NIE ZMIENIAĆ przy dogrywkach
 
 | Postać | Głos ElevenLabs (biblioteka) | Ustawienia (z nazwy pliku) |
