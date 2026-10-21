@@ -193,7 +193,7 @@ impl Plugin for ScenesPlugin {
                     .chain(),
             )
             .add_systems(Update, (drive_farm_audio, farm_hammers, fort_mouths.after(drive_fort_scene)))
-            .add_systems(Update, (cabin::mouths, cabin::seat_fit, cabin::letter_follow, cabin::crew_follow).after(cabin::drive))
+            .add_systems(Update, (cabin::mouths, cabin::seat_fit, cabin::letter_follow, cabin::crew_follow, cabin::mouth_cavity).after(cabin::drive))
             // Pin the staged hero LAST (after locomotion/gravity have run) and just before transforms
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(

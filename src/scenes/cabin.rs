@@ -34,11 +34,11 @@ use super::{cube, cylr, env, SceneAssets, SceneId, SceneProp, SceneState, IRON, 
 
 /// Deep night, the storm's.
 pub(super) const SKY: f32 = 0.82;
-pub(super) const END: f32 = 133.6;
+pub(super) const END: f32 = 143.6;
 /// Title card on black, then the picture fades up.
 const TITLE: (f32, f32, f32, f32) = (0.9, 1.9, 3.5, 4.4);
 const FADE_IN: (f32, f32) = (4.6, 6.4);
-const FADE_OUT: (f32, f32) = (130.9, 133.4);
+const FADE_OUT: (f32, f32) = (140.9, 143.4);
 
 // ── The set, in the ship's frame: +Z aft (the stern windows), +Y up, floor at y = 0 ───────────
 
@@ -162,7 +162,7 @@ const LINES: &[(f32, f32, &str, &str)] = &[
 /// Lightning outside the stern: (time, strength). Thunder rolls in ~1.2 s behind each (the mix). The
 /// big ones: over the ship while the hymn plays, the door, the window before "Nobody looks...", and the
 /// reveal as the camera backs out of the stern.
-const STRIKES: &[(f32, f32)] = &[(5.4, 0.55), (16.0, 0.25), (36.8, 0.8), (49.0, 0.3), (68.0, 0.35), (89.6, 0.6), (99.5, 0.3), (113.6, 1.0), (126.4, 0.5), (129.9, 0.9)];
+const STRIKES: &[(f32, f32)] = &[(5.4, 0.55), (16.0, 0.25), (36.8, 0.8), (49.0, 0.3), (68.0, 0.35), (89.6, 0.6), (99.5, 0.3), (113.6, 1.0), (126.4, 0.5), (129.9, 0.9), (136.0, 0.3), (141.0, 0.4)];
 
 // ── Components ──────────────────────────────────────────────────────────────────────────
 
@@ -221,6 +221,12 @@ pub(super) struct Crew {
     at: Vec3,
     yaw: f32,
 }
+
+/// The dark inside of an actor's mouth (a flat ellipsoid on the head joint) that shows between the lips as the
+/// `jaw_open` morph drops the chin: the townsfolk skins have no mouth cavity, so a morph alone only stretches
+/// a closed mouth.
+#[derive(Component)]
+pub(super) struct Cavity(Entity, Vec3, Quat);
 
 #[derive(Component)]
 pub(super) struct ExtRain {
@@ -292,9 +298,12 @@ fn shot_ext(t: f32) -> (Vec3, Vec3, f32, f32, Option<Vec3>) {
         let k = ease(lin(at::SHIP.0, at::SHIP.1));
         (v(9.5, 4.6, -19.0).lerp(v(6.5, 5.0, -15.0), k), v(0.0, 3.0, -4.5), 46.0 - 4.0 * k, 0.12, Some(v(0.0, 2.5, -5.0)))
     } else {
-        // The pull-back: she's a small lit shape in the dark, the camera drawing away and up.
-        let k = ease(lin(EXT_FINAL, END));
-        (v(-14.0, 3.0, -22.0).lerp(v(-34.0, 9.0, -50.0), k), v(0.0, 4.2, 0.0), 40.0 + 6.0 * k, 0.12, Some(v(0.0, 3.0, -4.0)))
+        // The pull-back, then a very slow orbit round her (the settlers' hymn carrying the last 14 s): a small lit
+        // shape in the dark, the camera drawing away and circling from the port quarter round to her stern.
+        let k = lin(EXT_FINAL, END);
+        let kk = k * k * (3.0 - 2.0 * k);
+        let (r, a, h) = (26.0 + 8.0 * kk, -2.14 + 0.6 * k, 4.0 + 4.0 * kk);
+        (v(r * a.cos(), h, r * a.sin()), v(0.0, 4.2, 0.0), 40.0 + 4.0 * kk, 0.12, Some(v(0.0, 3.0, -4.0)))
     }
 }
 
@@ -635,9 +644,9 @@ pub(super) fn setup(
         .id();
     let candle_light = commands
         .spawn((
-            PointLight { color: Color::srgb(1.0, 0.7, 0.4), intensity: 7_000.0, range: 3.0, shadow_maps_enabled: false, ..default() },
+            PointLight { color: Color::srgb(1.0, 0.7, 0.4), intensity: 16_000.0, range: 3.0, shadow_maps_enabled: false, ..default() },
             Transform::from_translation(candle + Vec3::Y * 0.05),
-            FlameLight { base: 7_000.0, phase: 1.7 },
+            FlameLight { base: 16_000.0, phase: 1.7 },
         ))
         .id();
     commands.entity(ship).add_children(&[flame, candle_light]);
@@ -1168,6 +1177,64 @@ pub(super) fn crew_follow(state: Res<SceneState>, mut crew: Query<(&Crew, &mut T
     }
 }
 
+/// Where the mouth slit is, from the head joint, in the skins' mesh space at the bind pose (metres): found
+/// from the baked `jaw_open` morph (it fades out at the lip seam, y 1.708 on the guard, head joint at 1.748).
+const MOUTH_FROM_HEAD: Vec3 = Vec3::new(0.0, -0.040, 0.118);
+/// The chin drop of the `jaw_open` morph at weight 1 (m).
+const JAW_DROP: f32 = 0.0139;
+
+/// Give each speaker a mouth cavity on the head joint, and open it with `MouthOpen`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn mouth_cavity(
+    mut commands: Commands,
+    state: Res<SceneState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    ibs: Res<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    roots: Query<(Entity, &crate::npc_skin::Skinned, Option<&Cavity>, Option<&crate::lipsync::MouthOpen>), With<Role>>,
+    skinned: Query<&bevy::mesh::skinning::SkinnedMesh>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    mut tfs: Query<&mut Transform>,
+) {
+    if state.active != Some(SceneId::ShipCabin) {
+        return;
+    }
+    for (e, sk, cav, open) in &roots {
+        if let Some(Cavity(c, base, rot)) = cav {
+            // the gap the chin leaves: the slit sits at the head joint + MOUTH_FROM_HEAD, the opening hangs below it
+            let w = open.map_or(0.0, |o| o.0) * 0.9;
+            let gap = (JAW_DROP * w * 0.9).max(0.0);
+            if let Ok(mut tf) = tfs.get_mut(*c) {
+                tf.scale = if gap < 0.0015 { Vec3::ZERO } else { Vec3::new(0.040, gap * 1.2, 0.02) };
+                tf.translation = *base + *rot * Vec3::new(0.0, -gap * 0.5, 0.0);
+            }
+            continue;
+        }
+        let Some(m) = sk.mouth() else { warn!("CAVITY no mouth entity yet"); continue };
+        // (the morph weights sit on the mesh node; the SkinnedMesh on it or on its primitive children)
+        let sm = std::iter::once(m).chain(children.iter_descendants(m)).find_map(|d| skinned.get(d).ok());
+        let (Some(sm), Some(head)) = (sm, children.iter_descendants(sk.inst()).find(|&d| names.get(d).is_ok_and(|n| n.as_str() == "head"))) else { continue };
+        let Some(i) = sm.joints.iter().position(|&j| j == head) else { continue };
+        let Some(ib) = ibs.get(&sm.inverse_bindposes).and_then(|b| b.get(i).copied()) else { continue };
+        let lin = bevy::math::Mat3::from_mat4(ib);
+        let local = lin * MOUTH_FROM_HEAD;
+        let rot = Quat::from_mat3(&bevy::math::Mat3::from_cols(lin.x_axis.normalize(), lin.y_axis.normalize(), lin.z_axis.normalize()));
+        let mat = mats.add(StandardMaterial { base_color: Color::srgb(0.035, 0.008, 0.008), perceptual_roughness: 1.0, reflectance: 0.0, ..default() });
+        let c = commands
+            .spawn((
+                Mesh3d(meshes.add(Sphere::new(0.5).mesh().ico(2).unwrap())),
+                MeshMaterial3d(mat),
+                Transform { translation: local, rotation: rot, scale: Vec3::ZERO },
+                bevy::light::NotShadowCaster,
+            ))
+            .id();
+        info!("CAVITY spawned for {:?}: local {:?} rot {:?}", e, local, rot);
+        commands.entity(head).add_child(c);
+        commands.entity(e).try_insert(Cavity(c, local, rot));
+    }
+}
+
 /// Harrow's and Wat's mouths follow their lines' loudness (see `lipsync`).
 pub(super) fn mouths(
     mut commands: Commands,
@@ -1198,7 +1265,8 @@ pub(super) fn mouths(
             .fold(0.0, f32::max);
         // The recording is smooth ElevenLabs speech: its loudness envelope barely breathes, so the raw jaw
         // hardly parts. Any voiced frame opens the mouth a good way, loud syllables all the way.
-        let open = if open > 0.015 { 1.0 + 1.6 * (open * 2.5).min(1.0) } else { 0.0 };
+        let force = std::env::var("FOREST_MOUTHFORCE").ok().and_then(|v| v.parse::<f32>().ok());
+        let open = if let Some(f) = force { f } else if open > 0.015 { 0.45 + 0.95 * (open * 2.5).min(1.0) } else { 0.0 };
         commands.entity(e).try_insert(crate::lipsync::MouthOpen(open));
         if std::env::var_os("FOREST_MOUTHLOG").is_some() {
             info!("MOUTH t={t:.2} {role:?} open={open:.2} envs_loaded={}", clips.iter().filter(|c| c.1.is_some()).count());
@@ -1278,7 +1346,10 @@ fn shot_local(t: f32) -> (Vec3, Vec3, f32, f32, Option<f32>) {
         // W1: from the stern corner: Wat round the lantern to the table.
         t if t < 79.4 => (v(-1.45, 1.45, 1.3), wat.lerp(v(0.75, 0.82, -0.25), 0.4), 50.0, 0.3, Some(wat)),
         // His hand over the two envelopes: "Which one, Ser?"
-        t if t < 81.7 => (v(0.45, 1.0, 0.3), v(1.0, 0.7, -0.38), 32.0, 1.0, Some(v(1.0, 0.7, -0.38))),
+        t if t < 82.0 => {
+            let k = ease(lin(79.4, 82.0));
+            (v(0.95, 1.55, -0.1).lerp(v(1.0, 1.38, -0.2), k), v(1.08, 0.62, -0.42), 36.0 - 5.0 * k, 1.0, Some(v(1.08, 0.62, -0.42)))
+        }
         // "The one without the royal wax, Wat. I keep forgetting I didn't hire you for your reading."
         t if t < 85.0 => (v(-0.3, 1.12, -1.0), HARROW_HEAD, 24.0, 0.8, Some(HARROW_HEAD)),
         // The letter lifted and Wat away with it, to the door - the flash stops him there.
@@ -1329,7 +1400,11 @@ pub(super) fn camera(t: f32) -> ((super::Cam, Option<f32>), Vec3) {
         return (((e, a, fov, band), focus.map(|p| e.distance(f.transform_point(p)))), Vec3::Y);
     }
     let xf = ship_xf(t);
-    let (eye, at, fov, band, focus) = shot_local(t);
+    let (mut eye, mut at, mut fov, band, focus) = shot_local(t);
+    // Look-dev: `FOREST_CABIN_CAM="ex,ey,ez,lx,ly,lz,fov"` (ship frame) replaces the interior shot.
+    if let Some(v) = std::env::var("FOREST_CABIN_CAM").ok().and_then(|c| c.split(',').map(|n| n.trim().parse::<f32>().ok()).collect::<Option<Vec<_>>>()).filter(|v| v.len() == 7) {
+        (eye, at, fov) = (Vec3::new(v[0], v[1], v[2]), Vec3::new(v[3], v[4], v[5]), v[6]);
+    }
     (((xf.transform_point(eye), xf.transform_point(at), fov, band), focus), xf.rotation * Vec3::Y)
 }
 
@@ -1538,9 +1613,9 @@ fn table_dressing_mesh() -> Vec<Mesh> {
         cylr(0.025, 0.36, Vec3::new(-0.05, 0.025, 0.08), Quat::from_rotation_z(FRAC_PI_2) * Quat::from_rotation_x(0.2), 0xbfa97a),
         cylr(0.032, 0.09, Vec3::new(-0.2, 0.045, 0.3), Quat::IDENTITY, 0x8d8f92),
         cylr(0.022, 0.04, Vec3::new(0.05, 0.02, -0.33), Quat::IDENTITY, 0x1c1a1a),
-        cube_r(0.17, 0.012, 0.11, Vec3::new(-0.22, 0.012, -0.2), Quat::from_rotation_y(0.5), 0xe9e1cb), // the other letter, under the Crown's red wax
-        cube_r(0.172, 0.004, 0.014, Vec3::new(-0.22, 0.019, -0.2), Quat::from_rotation_y(0.5), 0xb8923a),
-        cylr(0.024, 0.008, Vec3::new(-0.22, 0.02, -0.2), Quat::IDENTITY, 0x9a1612),
+        cube_r(0.24, 0.014, 0.16, Vec3::new(-0.22, 0.012, -0.2), Quat::from_rotation_y(0.5), 0xe9e1cb), // the other letter, under the Crown's red wax
+        cube_r(0.242, 0.004, 0.02, Vec3::new(-0.22, 0.021, -0.2), Quat::from_rotation_y(0.5), 0xb8923a),
+        cylr(0.034, 0.01, Vec3::new(-0.22, 0.024, -0.2), Quat::IDENTITY, 0x9a1612),
         cylr(0.045, 0.012, Vec3::new(0.18, 0.006, -0.3), Quat::IDENTITY, 0x6f5a3c),
         cylr(0.02, 0.13, Vec3::new(0.18, 0.075, -0.3), Quat::IDENTITY, 0xe6dcc0),
     ]
@@ -1559,9 +1634,9 @@ fn sconce_mesh() -> Vec<Mesh> {
 /// The sealed letter to the Reeve (origin at its centre): folded paper, the red wax seal.
 fn letter_mesh() -> Vec<Mesh> {
     vec![
-        cube(0.16, 0.012, 0.1, Vec3::ZERO, 0xd9cfb4),
-        cube(0.17, 0.003, 0.008, Vec3::new(0.0, 0.007, 0.0), 0x6b5a3c), // the string it is tied with
-        cylr(0.014, 0.005, Vec3::new(0.0, 0.009, 0.0), Quat::IDENTITY, 0x4f4d4a), // a plain grey seal: no royal wax
+        cube(0.22, 0.014, 0.14, Vec3::ZERO, 0xd9cfb4),
+        cube(0.23, 0.003, 0.011, Vec3::new(0.0, 0.009, 0.0), 0x6b5a3c), // the string it is tied with
+        cylr(0.02, 0.006, Vec3::new(0.0, 0.011, 0.0), Quat::IDENTITY, 0x4f4d4a), // a plain grey seal: no royal wax
     ]
 }
 
