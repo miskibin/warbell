@@ -1401,7 +1401,7 @@ fn drive_forest_look(
     }
 }
 
-fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<StandardMaterial, String> {
+pub(crate) fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<StandardMaterial, String> {
     if set == "glow" {
         return Ok(StandardMaterial { base_color: Color::LinearRgba(LinearRgba::rgb(2.5, 2.5, 2.5)), unlit: true, ..default() });
     }
