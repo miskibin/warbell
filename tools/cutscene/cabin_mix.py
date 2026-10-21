@@ -54,7 +54,7 @@ L = [
  ("18", "H", 55.65, 66.10, 0.9, "Good man. Let them keep singing to the suit of armour in their heads. The moment I walk down there without that helmet on, I'm just an old butcher with bad knees."),
  ("19", "H", 66.10, 73.82, 0.8, "Nobody looks at the man inside the iron, Wat. They just want to know the iron is there. Go on. Stop hovering."),
 ]
-OUTRO = 10.0
+OUTRO = 20.0
 fade = int(0.008 * SR)
 clips, timeline, t = [], [], 0.0
 for cid, who, a, b, gap, txt in L:
@@ -197,7 +197,7 @@ def thunder(t, x, lufs, lpf=None):
 FLASHES = [  # (flash t, strength, thunder take, thunder LUFS, lowpass) -- thunder rolls in 1.2 s behind the flash; the scene reads the same list
     (5.4, 0.55, th3, -40, 700), (16.0, 0.25, th3, -44, 600), (36.8, 0.8, th3, -27, 3000), (49.0, 0.3, th3, -44, 700),
     (68.0, 0.35, th3, -42, 800), (89.6, 0.6, th3, -27, 2500), (99.5, 0.3, th3, -42, 800), (113.6, 1.0, th4, -24, None),
-    (126.4, 0.5, th3, -33, 1200), (129.9, 0.9, th4, -26, None)]
+    (126.4, 0.5, th3, -33, 1200), (129.9, 0.9, th4, -26, None), (136.0, 0.3, th3, -41, 900), (141.0, 0.4, th3, -38, 1000)]
 for ft, k, take, lufs, lpf in FLASHES:
     thunder(ft + 1.2, take, lufs, lpf)
 json.dump([(f[0], f[1]) for f in FLASHES], open(OUT + "/flashes.json", "w"))
@@ -216,6 +216,6 @@ voice = np.stack([dry, dry], 1)
 mix = voice + mu + HYM + (CAB + WI) + SFX
 pk = np.abs(mix).max()
 mix *= db(-2.0) / pk if pk > db(-2.0) else 1.0
-sf.write(OUT + "/p0_cabin_mix_v7.wav", mix, SR)
+sf.write(OUT + "/p0_cabin_mix_v8.wav", mix, SR)
 print("total", round(total, 2), "break", round(t_h0, 2), "->", round(t_h0 + BREAK, 2), "peak before", round(20 * np.log10(pk), 1))
-json.dump([dict(id=a, who=b, start=c, end=d, text=e) for a, b, c, d, e in timeline], open(OUT + "/timeline_v7.json", "w"), indent=1)
+json.dump([dict(id=a, who=b, start=c, end=d, text=e) for a, b, c, d, e in timeline], open(OUT + "/timeline_v8.json", "w"), indent=1)
