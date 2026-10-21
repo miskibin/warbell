@@ -226,7 +226,7 @@ pub(super) struct Crew {
 /// `jaw_open` morph drops the chin: the townsfolk skins have no mouth cavity, so a morph alone only stretches
 /// a closed mouth.
 #[derive(Component)]
-pub(super) struct Cavity(Entity, Vec3, Quat);
+pub(super) struct Cavity(Entity, Vec3, Quat, f32);
 
 #[derive(Component)]
 pub(super) struct ExtRain {
@@ -1179,7 +1179,18 @@ pub(super) fn crew_follow(state: Res<SceneState>, mut crew: Query<(&Crew, &mut T
 
 /// Where the mouth slit is, from the head joint, in the skins' mesh space at the bind pose (metres): found
 /// from the baked `jaw_open` morph (it fades out at the lip seam, y 1.708 on the guard, head joint at 1.748).
-const MOUTH_FROM_HEAD: Vec3 = Vec3::new(0.0, -0.040, 0.118);
+fn mouth_from_head(role: Role) -> (Vec3, f32) {
+    let (mut c, mut hw) = match role {
+        Role::Harrow => (Vec3::new(0.0, -0.034, 0.072), 0.030),
+        Role::Wat => (Vec3::new(0.0, -0.034, 0.070), 0.027),
+    };
+    // look-dev: FOREST_CAVITY_H / FOREST_CAVITY_W="dy,dz,half_width"
+    let var = if role == Role::Harrow { "FOREST_CAVITY_H" } else { "FOREST_CAVITY_W" };
+    if let Some(v) = std::env::var(var).ok().and_then(|c| c.split(',').map(|n| n.trim().parse::<f32>().ok()).collect::<Option<Vec<_>>>()).filter(|v| v.len() == 3) {
+        (c, hw) = (Vec3::new(0.0, v[0], v[1]), v[2]);
+    }
+    (c, hw)
+}
 /// The chin drop of the `jaw_open` morph at weight 1 (m).
 const JAW_DROP: f32 = 0.0139;
 
@@ -1191,22 +1202,29 @@ pub(super) fn mouth_cavity(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     ibs: Res<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
-    roots: Query<(Entity, &crate::npc_skin::Skinned, Option<&Cavity>, Option<&crate::lipsync::MouthOpen>), With<Role>>,
+    roots: Query<(Entity, &crate::npc_skin::Skinned, &Role, Option<&Cavity>, Option<&crate::lipsync::MouthOpen>)>,
     skinned: Query<&bevy::mesh::skinning::SkinnedMesh>,
     children: Query<&Children>,
     names: Query<&Name>,
     mut tfs: Query<&mut Transform>,
+    globals: Query<&GlobalTransform>,
 ) {
     if state.active != Some(SceneId::ShipCabin) {
         return;
     }
-    for (e, sk, cav, open) in &roots {
-        if let Some(Cavity(c, base, rot)) = cav {
+    for (e, sk, role, cav, open) in &roots {
+        if let Some(Cavity(c, base, rot, hw)) = cav {
             // the gap the chin leaves: the slit sits at the head joint + MOUTH_FROM_HEAD, the opening hangs below it
             let w = open.map_or(0.0, |o| o.0) * 0.9;
             let gap = (JAW_DROP * w * 0.9).max(0.0);
+            if std::env::var_os("FOREST_CAVITY_DEBUG").is_some() {
+                if let (Ok(cg), Ok(rg)) = (globals.get(*c), globals.get(e)) {
+                    let hg = children.iter_descendants(sk.inst()).find(|&d| names.get(d).is_ok_and(|n| n.as_str() == "head")).and_then(|h| globals.get(h).ok());
+                    info!("CAVDBG {:?} root {:?} head {:?} cav {:?} head_scale {:?}", role, rg.translation(), hg.map(|g| g.translation()), cg.translation(), hg.map(|g| g.to_scale_rotation_translation().0));
+                }
+            }
             if let Ok(mut tf) = tfs.get_mut(*c) {
-                tf.scale = if gap < 0.0015 { Vec3::ZERO } else { Vec3::new(0.040, gap * 1.2, 0.02) };
+                tf.scale = if std::env::var_os("FOREST_CAVITY_DEBUG").is_some() { Vec3::new(*hw * 2.0, 0.002, 0.2) } else if gap < 0.0015 { Vec3::ZERO } else { Vec3::new(*hw * 2.0, gap * 1.1, 0.036) };
                 tf.translation = *base + *rot * Vec3::new(0.0, -gap * 0.5, 0.0);
             }
             continue;
@@ -1218,9 +1236,11 @@ pub(super) fn mouth_cavity(
         let Some(i) = sm.joints.iter().position(|&j| j == head) else { continue };
         let Some(ib) = ibs.get(&sm.inverse_bindposes).and_then(|b| b.get(i).copied()) else { continue };
         let lin = bevy::math::Mat3::from_mat4(ib);
-        let local = lin * MOUTH_FROM_HEAD;
+        let (off, hw) = mouth_from_head(*role);
+        let local = lin * off;
         let rot = Quat::from_mat3(&bevy::math::Mat3::from_cols(lin.x_axis.normalize(), lin.y_axis.normalize(), lin.z_axis.normalize()));
-        let mat = mats.add(StandardMaterial { base_color: Color::srgb(0.035, 0.008, 0.008), perceptual_roughness: 1.0, reflectance: 0.0, ..default() });
+        let dbg = std::env::var_os("FOREST_CAVITY_DEBUG").is_some();
+        let mat = mats.add(StandardMaterial { base_color: if dbg { Color::srgb(1.0, 0.0, 0.0) } else { Color::srgb(0.035, 0.008, 0.008) }, emissive: if dbg { LinearRgba::rgb(4.0, 0.0, 0.0) } else { LinearRgba::BLACK }, perceptual_roughness: 1.0, reflectance: 0.0, ..default() });
         let c = commands
             .spawn((
                 Mesh3d(meshes.add(Sphere::new(0.5).mesh().ico(2).unwrap())),
@@ -1231,7 +1251,7 @@ pub(super) fn mouth_cavity(
             .id();
         info!("CAVITY spawned for {:?}: local {:?} rot {:?}", e, local, rot);
         commands.entity(head).add_child(c);
-        commands.entity(e).try_insert(Cavity(c, local, rot));
+        commands.entity(e).try_insert(Cavity(c, local, rot, hw));
     }
 }
 
