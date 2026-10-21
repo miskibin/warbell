@@ -9,7 +9,7 @@ lengths / world deltas from the Mixamo T-pose, mirrored onto our body frame).
 - WALK: one in-place loop, rotated so frame 0 is the LEFT heel strike (the game keys footstep
   sfx / dust on the gait phase crossing 0 and 0.5), plus the speed the stance boot sweeps back at
   (leg lengths / s) — the player plays the loop at ground speed / that, so the boots never skate.
-- RUN: Mixamo's "Fast Run" (default settings) downloaded on the knight's own Mixamo auto-rig (`Knight Fast Run.fbx`), kept
+- RUN: Mixamo's "Running" (default settings) downloaded on the knight's own Mixamo auto-rig (`Knight Running.fbx`), kept
   exactly as Mixamo plays it: `in_place` takes the forward travel off, nothing else is touched
   ([`sliders`] / `symmetric` / `even_stance` stay for clips cut from other characters).
 - ORC_WALK / ORC_RUN: Mixamo's "Orc Walk" (male, a heavy rolling waddle) and "Mutant Run" for the
@@ -252,7 +252,7 @@ lines += [f'/// One walk loop ({len(Wc)} frames), frame 0 = left heel strike.',
           f'pub(super) const WALK_SPEED: f32 = {wsp:.4f}; // legs / s',
           f'pub(super) const WALK_DUTY: f32 = {wd:.4f};',
           f'pub(super) const WALK: [[f32; 53]; {len(Wc)}] = [', fmt(Wc), '];', '']
-rc = mx.Clip(os.path.join(src_dir, 'Knight Fast Run.fbx'))
+rc = mx.Clip(os.path.join(src_dir, 'Knight Running.fbx'))
 b = mx.Baker(rc)
 ts, P = rc.sample()
 R = np.concatenate([b.frames(ts, P), b.direct(P)], -1)  # the bone turns ride along through the cycle cut
@@ -266,7 +266,7 @@ for q in range(0, Rd.shape[1], 4):  # one hemisphere frame to frame, so the game
 print('  right arm bind x (body frame):', (b.c.tpose['upperarm_r'][0] * mx.M)[0])
 # Downloaded on the knight's own rig, so it is kept exactly as Mixamo plays it: no sliders, no
 # mirroring, no retiming — only the travel taken out (the game moves the root).
-lines += [f'/// One run loop ({len(Rc)} frames), frame 0 = left heel strike: Mixamo "Fast Run" on the',
+lines += [f'/// One run loop ({len(Rc)} frames), frame 0 = left heel strike: Mixamo "Running" on the',
           '/// knight auto-rig, untouched.',
           f'pub(super) const RUN_SPEED: f32 = {rsp:.4f}; // legs / s',
           f'pub(super) const RUN_DUTY: f32 = {rd:.4f};',
