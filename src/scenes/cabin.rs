@@ -214,6 +214,14 @@ pub(super) struct Rain {
     phase: f32,
 }
 
+/// A hand on the exterior ship's deck: a silhouette against the sky and the stern lantern. Place in the
+/// exterior rig's frame, driven by `crew_follow`.
+#[derive(Component)]
+pub(super) struct Crew {
+    at: Vec3,
+    yaw: f32,
+}
+
 #[derive(Component)]
 pub(super) struct ExtRain {
     phase: f32,
@@ -232,9 +240,12 @@ pub(super) struct SeatFit(Vec3);
 /// waterline (model y 10) on the rig's origin, and centred.
 const MODEL_SCALE: f32 = 0.1;
 const MODEL_AT: Vec3 = Vec3::new(0.74, -1.0, 1.0);
-/// How far astern of the cabin ship the exterior ship lies, and its heading relative to it.
-const EXT_DIST: f32 = 90.0;
-const EXT_YAW: f32 = 0.9;
+/// How far astern of the cabin ship the exterior ship lies, and its heading relative to it. Close
+/// enough that the cabin's two actors stay inside the NPC anim-cull range (`npc_skin::ANIM_CULL2`, 90 u)
+/// and behind the camera, so they are live the moment the picture cuts back (render with
+/// `FOREST_ANIMLOD=0 FOREST_SKINSHADOW=all` so off-screen people are not parked either).
+const EXT_DIST: f32 = 45.0;
+const EXT_YAW: f32 = 0.0;
 /// The finale's exterior shot (the camera has backed out of the stern window and cut to the sea).
 const EXT_FINAL: f32 = 130.0;
 
@@ -279,7 +290,7 @@ fn shot_ext(t: f32) -> (Vec3, Vec3, f32, f32, Option<Vec3>) {
     if t < EXT_FINAL {
         // The hymn rising through her hull: low off the stern quarter, the dark sail, the stern lantern, a slow drift in.
         let k = ease(lin(at::SHIP.0, at::SHIP.1));
-        (v(8.5, 1.5, -17.0).lerp(v(6.0, 2.2, -13.5), k), v(0.0, 3.6, -1.0), 46.0 - 4.0 * k, 0.12, Some(v(0.0, 2.5, -5.0)))
+        (v(9.5, 4.6, -19.0).lerp(v(6.5, 5.0, -15.0), k), v(0.0, 3.0, -4.5), 46.0 - 4.0 * k, 0.12, Some(v(0.0, 2.5, -5.0)))
     } else {
         // The pull-back: she's a small lit shape in the dark, the camera drawing away and up.
         let k = ease(lin(EXT_FINAL, END));
@@ -747,6 +758,22 @@ pub(super) fn setup(
         commands.entity(ship).add_child(e);
     }
 
+    // The crew: silhouettes at the tiller and the rail of the exterior ship (stern castle y 2.8, main deck y 1.4
+    // in the rig's frame), lit only by her lantern and the flashes.
+    for (i, (at, yaw)) in [
+        (Vec3::new(-0.7, 2.8, -6.6), 0.4),
+        (Vec3::new(0.9, 2.8, -7.9), -2.2),
+        (Vec3::new(-1.9, 1.4, -1.0), 1.2),
+        (Vec3::new(1.6, 1.4, 1.2), -1.5),
+        (Vec3::new(0.2, 1.4, 3.4), 3.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let c = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, Vec2::ZERO, 0.0, None, 51 + i as u32 * 7);
+        commands.entity(c).insert((ns::SkinRequest(ns::GUARD), ns::SkinClip("Idle_Loop"), Crew { at, yaw }, SceneProp));
+    }
+
     // Rain round the exterior camera: the same sheet blown up, standing in the exterior ship's frame.
     for i in 0..2 {
         let e = commands
@@ -1124,6 +1151,23 @@ pub(super) fn letter_follow(
     }
 }
 
+/// The exterior ship's crew stand on her deck as she rocks.
+pub(super) fn crew_follow(state: Res<SceneState>, mut crew: Query<(&Crew, &mut Transform, &mut crate::villagers::Villager)>) {
+    if state.active != Some(SceneId::ShipCabin) {
+        return;
+    }
+    let xf = ext_xf(state.clock.max(0.0));
+    let (_, ship_yaw, _) = xf.rotation.to_euler(EulerRot::YXZ);
+    for (c, mut tf, mut v) in &mut crew {
+        let w = xf.transform_point(c.at);
+        v.pos = Vec2::new(w.x, w.z);
+        v.facing = ship_yaw + c.yaw;
+        v.moving = false;
+        tf.translation = w;
+        tf.rotation = xf.rotation * Quat::from_rotation_y(c.yaw);
+    }
+}
+
 /// Harrow's and Wat's mouths follow their lines' loudness (see `lipsync`).
 pub(super) fn mouths(
     mut commands: Commands,
@@ -1152,7 +1196,13 @@ pub(super) fn mouths(
             .filter(|(_, vo)| vo.4 == *role)
             .filter_map(|((_, env), vo)| env.as_deref().map(|env| crate::lipsync::sample(env, t - vo.0)))
             .fold(0.0, f32::max);
+        // The recording is smooth ElevenLabs speech: its loudness envelope barely breathes, so the raw jaw
+        // hardly parts. Any voiced frame opens the mouth a good way, loud syllables all the way.
+        let open = if open > 0.015 { 1.0 + 1.6 * (open * 2.5).min(1.0) } else { 0.0 };
         commands.entity(e).try_insert(crate::lipsync::MouthOpen(open));
+        if std::env::var_os("FOREST_MOUTHLOG").is_some() {
+            info!("MOUTH t={t:.2} {role:?} open={open:.2} envs_loaded={}", clips.iter().filter(|c| c.1.is_some()).count());
+        }
     }
 }
 
