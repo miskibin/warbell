@@ -18,6 +18,12 @@ ffmpeg -framerate 24 -i target/clips/cabin/frame_%05d.png -c:v libx264 -pix_fmt 
 python3 tools/cutscene/cabin_audio.py mix /tmp/cabin_v.mp4 cabin.mp4
 ```
 
+## Tekst do nagrania
+
+Mówione kwestie i tagi ElevenLabs: `docs/audio/elevenlabs-p0-poklad.md`.
+Muzyka, która nie leci pod dialogiem: `docs/audio/cutscene-music-suno.md` (A1-1).
+Poniższy montaż opisuje film ze starymi klipami. `cabin.rs` nie ruszać, dopóki nie ma nowych take'ów.
+
 ## Reżyseria (86 s, trzy ruchy)
 
 Pierwsza wersja (49.5 s) mówiła cały dialog scenariusza jednym ciągiem, przy jednej nieruchomej
