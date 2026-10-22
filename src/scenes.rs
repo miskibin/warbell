@@ -193,7 +193,7 @@ impl Plugin for ScenesPlugin {
                     .chain(),
             )
             .add_systems(Update, (drive_farm_audio, farm_hammers, fort_mouths.after(drive_fort_scene)))
-            .add_systems(Update, (cabin::mouths, cabin::seat_fit, cabin::letter_follow, cabin::crew_follow, cabin::mouth_cavity).after(cabin::drive))
+            .add_systems(Update, (cabin::mouths, cabin::seat_fit, cabin::letter_follow, cabin::crew_follow, cabin::log_heads).after(cabin::drive))
             // Pin the staged hero LAST (after locomotion/gravity have run) and just before transforms
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(
@@ -1646,10 +1646,10 @@ enum FortRole {
 /// A scripted head turn layered on top of the clip (radians, in the body's frame): yaw left/right,
 /// pitch up, roll = a tilt of the head. Eased toward `want` each frame; `bone` is found lazily.
 #[derive(Component, Default)]
-struct HeadLook {
+pub(super) struct HeadLook {
     cur: Vec3,
     want: Vec3,
-    bone: Option<Entity>,
+    pub(super) bone: Option<Entity>,
 }
 
 /// A scripted point: the right arm swung straight out at `at` (world), blended in by `w` over the

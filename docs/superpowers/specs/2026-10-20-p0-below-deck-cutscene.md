@@ -96,7 +96,9 @@ Ujęcia (thin lens, ostrość na mówiącym / na Wacie w ruchu):
   (`Walk_Loop`, tempo z prędkości), bierze list (`PickUp_Table` przewijany), stoi (`Idle_Loop`),
   obroty wygładzone. List to osobny rekwizyt: leży na stole, od chwyconej klatki jedzie w prawej
   dłoni Wata (`letter_follow`). Drzwi na zawiasie otwierają się na korytarz (`door_open`).
-  Usta z obwiedni nagranych kwestii, przyciętych tak jak w miksie (lip-sync jak w P.3).
+  Usta: wizemy MakeHuman na skórach (`add_face_morphs.py`: szczęka, 14 kształtów, mruganie, zęby, język,
+  ciemne wnętrze), grane po ścieżce Rhubarba danej kwestii w czasie sceny (`lipsync::Speech`); twarz Harrowa
+  przy oknie ma zimne światło księżyca przez okno (`FaceMoon`, ×7 przy błysku).
 - Hełm na stole i tarcza na burcie za krzesłem to **prawdziwe części zbroi rycerza z gry**
   (`player::spawn_part_prop`) — ta sama zbroja, którą Wat założy na plaży.
 - Napisy: wszystkie kwestie, cięte na pauzach nagrań (`cabin.rs` `VO` / `LINES`).

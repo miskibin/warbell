@@ -216,11 +216,13 @@ fn play_line(
         })
     });
     let dur = clip_secs / speed + 0.15;
-    // The townsperson saying it moves their mouth (the hero / orks / rivals have no talking face).
+    // The person saying it moves their mouth (townsfolk and the rival's soldiers wear the talking
+    // MPFB skins; the hero's face is never shown talking and orks have no talking face).
     if let Some(utt) = utt {
         utt.hush();
-        if let (Some(at), true) = (pos, matches!(line.speaker, Speaker::Villager | Speaker::Captive | Speaker::Life | Speaker::Cast(_))) {
-            utt.speak(line.id, sources.get(&clip).expect("loaded above"), at, now, speed);
+        let talker = matches!(line.speaker, Speaker::Villager | Speaker::Captive | Speaker::Life | Speaker::Cast(_) | Speaker::Rival);
+        if let (Some(at), true, Some(path)) = (pos, talker, super::lines::voice_clip_path(line)) {
+            utt.speak(line.id, path, sources.get(&clip).expect("loaded above"), at, now, speed);
         }
     }
     // In skirmish the listener rides the iso camera ~90u overhead, so a SPATIAL voice (villager /

@@ -237,6 +237,11 @@ const HAIR_SHADES: [Vec3; 5] = [
     Vec3::new(1.25, 1.25, 1.25),
 ];
 
+/// Pins a person's hair to one of [`HAIR_SHADES`] (a cast member whose look must not depend on the
+/// per-person hash, e.g. a cutscene's lead).
+#[derive(Component, Clone, Copy)]
+pub struct HairShade(pub usize);
+
 /// A stable per-person hash (outfit dye, hair, height) from the root entity.
 fn person_hash(e: Entity) -> u32 {
     let mut h = e.index_u32().wrapping_mul(0x9E37_79B9) ^ 0x5bd1_e995;
@@ -299,6 +304,9 @@ fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: Re
         let mut m = HashMap::new();
         m.insert("npc_body", materials.add(atlas(false)));
         m.insert("npc_cloth", materials.add(atlas(true)));
+        // teeth, tongue and the dark mouth bag (`add_face_morphs.py`), coloured per vertex
+        // (dimmed: inside a mouth the teeth sit in the lips' shadow, which no light here casts)
+        m.insert("npc_mouth", materials.add(StandardMaterial { base_color: Color::srgb(0.62, 0.6, 0.58), perceptual_roughness: 0.55, reflectance: 0.25, ..default() }));
         for (k, rough) in [("hair", 0.62), ("beard", 0.7), ("brow", 0.7), ("lash", 0.7)] {
             // not every look has every card (no beard on the women / kids)
             if std::path::Path::new(&format!("assets/npc/npc_{name}_{k}.dds")).exists() {
@@ -445,6 +453,7 @@ fn skin_ready(
     mat_names: Query<&GltfMaterialName>,
     names: Query<&Name>,
     morphs: Query<(), With<bevy::mesh::morph::MorphWeights>>,
+    shades: Query<&HairShade>,
     mut roots: Query<&mut Skinned>,
 ) {
     let inst = ready.entity;
@@ -469,6 +478,7 @@ fn skin_ready(
             let (cloth, hair) = &cast.vars[sk.look as usize];
             let var = match mn.0.as_str() {
                 "npc_cloth" if !uniform_look(sk.look) => cloth.get((h % cloth.len() as u32) as usize),
+                "npc_hair" if shades.get(*root).is_ok() => hair.get(shades.get(*root).map_or(0, |s| s.0)),
                 "npc_hair" if !matches!(sk.look, ELDER_M | ELDER_F | MERCHANT | WOODCUTTER | MAUD) => hair.get(((h >> 8) % hair.len().max(1) as u32) as usize),
                 _ => None,
             };
