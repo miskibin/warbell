@@ -74,6 +74,21 @@ pub fn run() {
         // Orks own their drive (gait phase included) — posed the same frame, as in game.
         app.add_systems(Update, ork_anim_drive.before(crate::biped::animate_biped));
     }
+    // `FOREST_VIEW_SAY=<clip under assets/>` — every previewed townsperson says that voice line on a
+    // loop, its face playing the clip's mouth-shape track (`lipsync`), silently: look-dev for the
+    // talking faces (frame the head with `FOREST_CAM`).
+    if let Ok(clip) = std::env::var("FOREST_VIEW_SAY") {
+        let clip: &'static str = Box::leak(clip.into_boxed_str());
+        app.add_plugins(crate::lipsync::LipSyncPlugin).add_systems(
+            Update,
+            move |time: Res<Time>, mut commands: Commands, q: Query<Entity, With<crate::npc_skin::Skinned>>| {
+                let t = time.elapsed_secs() % 6.0;
+                for e in &q {
+                    commands.entity(e).try_insert(crate::lipsync::Speech(Some((clip, t))));
+                }
+            },
+        );
+    }
     // `FOREST_VIEW=life` — the village-life clips on a row of townsfolk (`FOREST_VIEW_LIFE=sit|
     // rise|carry|bow|yawn|hide`, default the standing acts), posed straight from `anim::village`.
     if std::env::var("FOREST_VIEW").is_ok_and(|v| v == "life") {
