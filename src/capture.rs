@@ -67,7 +67,12 @@ impl Plugin for CapturePlugin {
             // spaced frames) — for frame-exact animation reviews.
             // The clip audio capture (`audio_capture.rs`, on unless `FOREST_CLIP_AUDIO=0`) needs this
             // too: it renders exactly 1/fps of audio per saved frame, so the sim must advance exactly that.
-            if std::env::var("FOREST_CLIP_FIXED").is_ok() || std::env::var("FOREST_CLIP_AUDIO").as_deref() != Ok("0") {
+            // So does a filmed cutscene (`FOREST_SCENE`), even silent: its soundtrack is mixed offline on
+            // the scene clock, and a merely capped step ran that clock ~20% slow (a 144 s film drifted 28 s).
+            if std::env::var("FOREST_CLIP_FIXED").is_ok()
+                || std::env::var("FOREST_CLIP_AUDIO").as_deref() != Ok("0")
+                || std::env::var("FOREST_SCENE").is_ok()
+            {
                 app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
                     1.0 / cfg.fps as f32,
                 )));
