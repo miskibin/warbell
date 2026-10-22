@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """P.0 "Below Deck" (ShipCabin) audio: the cue list + the offline soundtrack mix.
 
+STALE — do NOT use `mix` for the current film: it is the first (86 s, a1_* takes) cut. The 143.6 s
+one-take cut (p0_cabin_NN lines, "Swallow the Salt" hymn, "Silence Between Notes", thunder) is mixed by
+tools/cutscene/cabin_mix.py <out_dir> -> <out_dir>/p0_cabin_mix_v8.wav (point its VOD at a scratch dir
+unless the lines are being re-cut: it re-exports assets/audio/vo/campaign/p0_cabin_NN.ogg).
+
 VIDEO rig only: the scene exists to be filmed (FOREST_SCENE=cabin + FOREST_CLIP), never triggered in game.
 
     python tools/cutscene/cabin_audio.py gen                 # write assets/cutscene/ship_cabin.cues
