@@ -386,19 +386,33 @@ fn tf_signatures(world: &mut World, mut st: Local<Option<QueryState<Entity, Chan
     if *step < 2 {
         return; // first pass only primes the change ticks
     }
-    let mut sig: bevy::platform::collections::HashMap<String, u32> = Default::default();
+    // (entities, descendants dirtied) per component signature: a changed root dirties its subtree.
+    let mut sig: bevy::platform::collections::HashMap<String, (u32, u32)> = Default::default();
     for e in es {
+        let sub = world.get::<Children>(e).map_or(0, |_| {
+            let mut n = 0u32;
+            let mut stack = vec![e];
+            while let Some(x) = stack.pop() {
+                if let Some(ch) = world.get::<Children>(x) {
+                    n += ch.len() as u32;
+                    stack.extend(ch.iter());
+                }
+            }
+            n
+        });
         let Ok(it) = world.inspect_entity(e) else { continue };
         let mut names: Vec<String> = it
             .map(|(_, c)| { let n = format!("{:?}", c.name()); n.rsplit("::").next().unwrap_or("").trim_matches(['"', '>', ')']).to_string() })
             .filter(|n| !matches!(n.as_str(), "Transform" | "GlobalTransform" | "Visibility" | "InheritedVisibility" | "ViewVisibility" | "TransformTreeChanged" | "ChildOf" | "Children" | "VisibilityClass" | "Aabb" | "Name"))
             .collect();
         names.sort();
-        *sig.entry(names.join(",")).or_default() += 1;
+        let s = sig.entry(names.join(",")).or_default();
+        s.0 += 1;
+        s.1 += sub;
     }
     let mut v: Vec<_> = sig.into_iter().collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1));
-    for (s, n) in v.iter().take(25) {
-        info!("TFSIG {n:5}  {}", &s[..s.len().min(260)]);
+    v.sort_by(|a, b| (b.1 .0 + b.1 .1).cmp(&(a.1 .0 + a.1 .1)));
+    for (s, (n, d)) in v.iter().take(25) {
+        info!("TFSIG {n:5} +{d:6}  {}", &s[..s.len().min(260)]);
     }
 }

@@ -562,9 +562,11 @@ fn animal_brain(
             let keep = a.body_r + guard + head_reach(a.species, a.body_r);
             lp = crate::orks::lunge_clear_of_hero(lp, hero.pos, keep);
         }
-        tf.translation = Vec3::new(lp.x, gy + bob, lp.y);
+        let translation = Vec3::new(lp.x, gy + bob, lp.y);
         // Springy recoil-wobble on a blow taken (reuses the orks' / dummies' shape).
-        tf.rotation = Quat::from_rotation_y(a.facing) * Quat::from_rotation_x(crate::orks::recoil_tilt(a.hit_recoil, now));
+        let rotation = Quat::from_rotation_y(a.facing) * Quat::from_rotation_x(crate::orks::recoil_tilt(a.hit_recoil, now));
+        // Only on a real change: a grazing, standing animal re-propagated its whole skin every frame.
+        crate::steer::set_pose(&mut tf, translation, rotation);
     }
 
     // Signal each prey caught this frame; `resolve_prey_kills` fades it (not an instant pop) and

@@ -115,7 +115,12 @@ fn seat_fit(
         let Ok(mut tf) = tfs.get_mut(sk.inst()) else { continue };
         // World offset → the root's local frame (rotation + uniform scale).
         let (scale, rot, _) = gt.to_scale_rotation_translation();
-        tf.translation = rot.inverse() * (fit.0 * weight) / scale.x.max(1e-3);
+        let offset = rot.inverse() * (fit.0 * weight) / scale.x.max(1e-3);
+        // Only a real change: a write marks the skin root changed and re-propagates its whole rig
+        // (~80 joints + meshes) — this ran for every resident every frame, mostly writing zero.
+        if tf.translation != offset {
+            tf.translation = offset;
+        }
     }
 }
 
@@ -1739,8 +1744,8 @@ fn life_brain(
         }
         let bob = if v.moving { ((now + v.phase) * v.gait).sin().abs() * v.bob } else { 0.0 };
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(gy);
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        // Only on a real change (a sitter / standing chatter holds still).
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
 }
 

@@ -224,6 +224,7 @@ fn drive_night_sky(
         &mut Transform,
         (Or<(With<Moon>, With<MoonGlow>)>, Without<StarField>, Without<NightSkyRig>, Without<Camera3d>),
     >,
+    mut mat_step: Local<i64>,
 ) {
     let Some(mats) = mats else { return };
     let (Ok(cam), Ok((mut rig, mut vis))) = (cam_q.single(), rig_q.single_mut()) else { return };
@@ -252,7 +253,15 @@ fn drive_night_sky(
         tf.translation = moon_dir * (DOME_R - 1.0);
     }
 
-    // Fade the shared materials with `night` (+ a gentle global twinkle on the stars).
+    // Fade the shared materials with `night` (+ a gentle global twinkle on the stars) — at 10 Hz:
+    // the twinkle made this a StandardMaterial write EVERY night frame, and any such write makes
+    // Bevy's `AssetChanged` specialization filters walk every StandardMaterial mesh on the island
+    // (with none they short-circuit). A 0.1 s step of a <1 Hz, ±10% shimmer is invisible.
+    let step = (time.elapsed_secs_f64() * 10.0).floor() as i64;
+    if step == *mat_step {
+        return;
+    }
+    *mat_step = step;
     let twinkle = 1.0 + 0.06 * (t * 2.3).sin() + 0.04 * (t * 5.1).sin();
     let s = STAR_BRIGHT * night * twinkle;
     // Write only real changes (all three sit at 0 the whole day): `get_mut` marks the asset modified.

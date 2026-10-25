@@ -634,9 +634,9 @@ fn ork_brain(
             let keep = o.body_r + hero_guard_radius(hero.pos, hero.facing, hero.blocking, o.pos);
             lp = lunge_clear_of_hero(lp, hero.pos, keep);
         }
-        tf.translation = Vec3::new(lp.x, gy + bob, lp.y);
         // Springy recoil-wobble on a blow taken (composes with the facing yaw).
-        tf.rotation = Quat::from_rotation_y(o.facing) * Quat::from_rotation_x(recoil_tilt(o.hit_recoil, now));
+        let rot = Quat::from_rotation_y(o.facing) * Quat::from_rotation_x(recoil_tilt(o.hit_recoil, now));
+        crate::steer::set_pose(&mut tf, Vec3::new(lp.x, gy + bob, lp.y), rot);
     }
 
     music.fighting = fighting;

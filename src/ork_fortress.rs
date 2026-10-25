@@ -2814,8 +2814,7 @@ fn denizen_brain(time: Res<Time>, mut q: Query<(&mut Denizen, &mut Transform)>) 
         }
         let gy = ground_y(d.pos.x, d.pos.y).unwrap_or(tf.translation.y);
         let bob = if d.moving { (tw * d.gait + d.phase).sin().abs() * d.bob } else { 0.0 };
-        tf.translation = Vec3::new(d.pos.x, gy + bob, d.pos.y);
-        tf.rotation = Quat::from_rotation_y(d.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(d.pos.x, gy + bob, d.pos.y), Quat::from_rotation_y(d.facing));
     }
 }
 
