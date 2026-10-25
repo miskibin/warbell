@@ -20,6 +20,9 @@ impl Plugin for MatCheckPlugin {
         if std::env::var_os("FOREST_HIDEMAT").is_some() {
             app.add_systems(PostUpdate, hide_mat);
         }
+        if std::env::var_os("FOREST_MESHSRC").is_some() {
+            app.add_systems(Last, mesh_sources);
+        }
         if std::env::var_os("FOREST_VERTREPORT").is_some() {
             app.init_resource::<VertCensus>().add_systems(PostUpdate, (census_added, census_report).chain())
                 .add_systems(Last, (asset_churn, transform_churn))
@@ -414,5 +417,71 @@ fn tf_signatures(world: &mut World, mut st: Local<Option<QueryState<Entity, Chan
     v.sort_by(|a, b| (b.1 .0 + b.1 .1).cmp(&(a.1 .0 + a.1 .1)));
     for (s, (n, d)) in v.iter().take(25) {
         info!("TFSIG {n:5} +{d:6}  {}", &s[..s.len().min(260)]);
+    }
+}
+
+/// `FOREST_MESHSRC=1`: every 5 s, the meshes added / modified (= uploaded to the GPU) in that window,
+/// grouped by the component signature of the entities drawing them (plus vertex counts), so the
+/// owner of a streaming upload burst names itself. Meshes no entity draws yet are counted as
+/// "(no user yet)" — e.g. a LOD twin built ahead of its swap.
+fn mesh_sources(world: &mut World, mut acc: Local<(Vec<AssetId<Mesh>>, f32, Option<bevy::ecs::message::MessageCursor<AssetEvent<Mesh>>>)>) {
+    let cursor = acc.2.get_or_insert_with(|| world.resource::<Messages<AssetEvent<Mesh>>>().get_cursor());
+    let evs: Vec<AssetId<Mesh>> = cursor
+        .read(world.resource::<Messages<AssetEvent<Mesh>>>())
+        .filter_map(|e| match e {
+            AssetEvent::Added { id } | AssetEvent::Modified { id } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    acc.0.extend(evs);
+    let t = world.resource::<Time<Real>>().elapsed_secs();
+    if t - acc.1 < 5.0 {
+        return;
+    }
+    acc.1 = t;
+    let ids: bevy::platform::collections::HashSet<AssetId<Mesh>> = acc.0.drain(..).collect();
+    if ids.is_empty() {
+        return;
+    }
+    let mut users: bevy::platform::collections::HashMap<AssetId<Mesh>, Entity> = Default::default();
+    let mut q = world.query::<(Entity, &Mesh3d)>();
+    for (e, m) in q.iter(world) {
+        if ids.contains(&m.0.id()) {
+            users.entry(m.0.id()).or_insert(e);
+        }
+    }
+    let mut sig: bevy::platform::collections::HashMap<String, (u32, usize)> = Default::default();
+    for id in &ids {
+        // Render-world-only meshes have no CPU attributes left (count_vertices would panic).
+        let verts = world.resource::<Assets<Mesh>>().get(*id).and_then(|m| m.try_attribute(Mesh::ATTRIBUTE_POSITION).ok()).map_or(0, |a| a.len());
+        let key = match users.get(id) {
+            None => "(no user yet)".to_string(),
+            Some(&e) => {
+                // The entity's own markers, plus its parent's (chunk meshes often hang off a tagged root).
+                let mut names = Vec::new();
+                let mut cur = Some(e);
+                for _ in 0..2 {
+                    let Some(x) = cur else { break };
+                    if let Ok(it) = world.inspect_entity(x) {
+                        names.extend(
+                            it.map(|(_, c)| format!("{:?}", c.name()).rsplit("::").next().unwrap_or("").trim_matches(['"', '>', ')']).to_string())
+                                .filter(|n| !matches!(n.as_str(), "Transform" | "GlobalTransform" | "Visibility" | "InheritedVisibility" | "ViewVisibility" | "TransformTreeChanged" | "ChildOf" | "Children" | "VisibilityClass" | "Aabb" | "Name" | "Mesh3d" | "PreviousGlobalTransform")),
+                        );
+                    }
+                    cur = world.get::<ChildOf>(x).map(|c| c.parent());
+                }
+                names.sort();
+                names.dedup();
+                names.join(",")
+            }
+        };
+        let s = sig.entry(key).or_default();
+        s.0 += 1;
+        s.1 += verts;
+    }
+    let mut v: Vec<_> = sig.into_iter().collect();
+    v.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+    for (k, (n, verts)) in v.iter().take(8) {
+        info!("MESHSRC {n:4} meshes {:6.0}k verts  {}", *verts as f32 / 1000.0, &k[..k.len().min(220)]);
     }
 }

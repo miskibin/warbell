@@ -168,8 +168,13 @@ fn perf_state_watch(
 
 /// See `FOREST_SPIKEWATCH` above.
 fn perf_spike_watch(time: Res<Time<Real>>, mut last_spike: Local<f32>) {
+    // `FOREST_SPIKEWATCH=<ms>` sets the threshold (a bare `1` = the old 50 ms).
+    static LIMIT: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    let limit = *LIMIT.get_or_init(|| {
+        std::env::var("FOREST_SPIKEWATCH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| *v >= 5.0).unwrap_or(50.0) / 1000.0
+    });
     let dt = time.delta_secs();
-    if dt < 0.05 {
+    if dt < limit {
         return;
     }
     let now = time.elapsed_secs();

@@ -1120,59 +1120,51 @@ impl Chunks {
         // then spawn serially in the groups' iteration order.
         let groups: Vec<_> = self.groups.into_iter().collect();
         let merged = crate::par::par_map(groups.len(), |gi| merge_group(kit, &groups[gi].1, groups[gi].0 .1 == Tier::PropsFar));
-        for (((key, tier, slice, mat, snow), _), base) in groups.into_iter().zip(merged) {
-            if let Some(base) = base {
-                let r = Recipe { tier, slice, mat, snow, items: Vec::new() };
-                spawn_group(kit, commands, meshes, key, &r, base, cull);
+        for (((key, tier, slice, mat, snow), _), pieces) in groups.into_iter().zip(merged) {
+            let r = Recipe { tier, slice, mat, snow, items: Vec::new() };
+            for mut base in pieces {
+                let centre = centre_on_aabb(&mut base);
+                spawn_group(kit, commands, meshes, key, &r, base, centre, cull);
             }
         }
     }
 }
 
-/// Merge one group's queued kit parts into a single chunk-local mesh (`None` if empty).
-fn merge_group(kit: &Kit, items: &[(usize, usize, Transform)], lod: bool) -> Option<Mesh> {
+/// Vertices per merged chunk piece. A group past this (a 16u chunk of scanned rocks reached 290k
+/// vertices / 21 MB) is cut into several meshes, because Bevy uploads each new mesh whole on the
+/// render thread (~0.7 ms/MB): one giant piece was a single 15 ms hitch, however the streamer
+/// paced its landing.
+const PIECE_VERTS: usize = 48_000;
+
+/// Merge one group's queued kit parts into chunk-local meshes of at most ~[`PIECE_VERTS`]
+/// vertices each (empty if the group is).
+fn merge_group(kit: &Kit, items: &[(usize, usize, Transform)], lod: bool) -> Vec<Mesh> {
     let mesh = |m: usize, p: usize| {
         let part = &kit.models[m].parts[p];
         if lod { part.lod_mesh() } else { &part.mesh }
     };
-    let mut it = items.iter();
-    let &(m0, p0, t0) = it.next()?;
-    let mut base = mesh(m0, p0).clone().transformed_by(t0);
-    for &(m, p, t) in it {
+    let mut pieces = Vec::new();
+    let mut base: Option<Mesh> = None;
+    for &(m, p, t) in items {
         let part = mesh(m, p).clone().transformed_by(t);
-        if base.merge(&part).is_err() {
-            warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
+        match &mut base {
+            Some(b) if b.count_vertices() + part.count_vertices() <= PIECE_VERTS => {
+                if b.merge(&part).is_err() {
+                    warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
+                }
+            }
+            _ => pieces.extend(base.replace(part)),
         }
     }
-    Some(base)
+    pieces.extend(base);
+    pieces
 }
 
-/// Spawn one merged chunk group (mesh already merged). Returns the entity.
-fn spawn_group(
-    kit: &Kit,
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    key: (i32, i32),
-    r: &Recipe,
-    mut base: Mesh,
-    cull: bool,
-) -> Entity {
-    // GPU-only: the merged chunk is never read back on the CPU (the reskin pass inspects it in
-    // PostUpdate of its spawn frame, before extraction), so drop the main-world copy once
-    // it's uploaded. These merges were ~3 GiB of resident RAM at MAP_SCALE 3.9.
-    base.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
-    let (near, far) = match r.tier {
-        Tier::Props if props_lod_enabled() => (0.0, PROPS_LOD),
-        Tier::Props => (0.0, PROPS_FAR),
-        Tier::PropsFar => (PROPS_LOD, PROPS_FAR),
-        Tier::Cover => (0.0, COVER_FAR),
-        Tier::Clutter => (0.0, CLUTTER_FAR),
-        Tier::LushNear => (0.0, LUSH_NEAR),
-        // Starts a band early: it thins in under the near ring's thin-out (`DISSOLVE_BAND`).
-        Tier::LushFar => (LUSH_NEAR - dissolve_band(), LUSH_FAR),
-    };
-    // Origin on the AABB centre: the range test (`use_aabb: false`) and the shader's dissolve
-    // (`foliage_wind_prepass.wesl`, which only sees the entity origin) measure the same distance.
+/// Move a merged chunk mesh's origin onto its AABB centre and return that centre (chunk-local):
+/// the range test (`use_aabb: false`) and the shader's dissolve (`foliage_wind_prepass.wesl`,
+/// which only sees the entity origin) then measure the same distance. A full vertex scan, so the
+/// streamed path runs it on the merge task, off the main thread.
+fn centre_on_aabb(base: &mut Mesh) -> Vec3 {
     let centre = match base.attribute(Mesh::ATTRIBUTE_POSITION) {
         Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) if !p.is_empty() => {
             let (lo, hi) = p.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), v| (lo.min(Vec3::from(*v)), hi.max(Vec3::from(*v))));
@@ -1181,6 +1173,44 @@ fn spawn_group(
         _ => Vec3::ZERO,
     };
     base.translate_by(-centre);
+    centre
+}
+
+/// A tier's drawn far edge at base render distance (what `spawn_group` puts in its range).
+fn tier_far(tier: Tier) -> f32 {
+    match tier {
+        Tier::Props if props_lod_enabled() => PROPS_LOD,
+        Tier::Props | Tier::PropsFar => PROPS_FAR,
+        Tier::Cover => COVER_FAR,
+        Tier::Clutter => CLUTTER_FAR,
+        Tier::LushNear => LUSH_NEAR,
+        Tier::LushFar => LUSH_FAR,
+    }
+}
+
+/// Spawn one merged chunk group (mesh already merged and centred by [`centre_on_aabb`]).
+#[allow(clippy::too_many_arguments)]
+fn spawn_group(
+    kit: &Kit,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    key: (i32, i32),
+    r: &Recipe,
+    mut base: Mesh,
+    centre: Vec3,
+    cull: bool,
+) -> Entity {
+    // GPU-only: the merged chunk is never read back on the CPU (the reskin pass inspects it in
+    // PostUpdate of its spawn frame, before extraction), so drop the main-world copy once
+    // it's uploaded. These merges were ~3 GiB of resident RAM at MAP_SCALE 3.9.
+    base.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+    let near = match r.tier {
+        Tier::PropsFar => PROPS_LOD,
+        // Starts a band early: it thins in under the near ring's thin-out (`DISSOLVE_BAND`).
+        Tier::LushFar => LUSH_NEAR - dissolve_band(),
+        _ => 0.0,
+    };
+    let far = tier_far(r.tier);
     let mut e = commands.spawn((
         Mesh3d(meshes.add(base)),
         Transform::from_translation(chunk_center(key) + centre),
@@ -1205,8 +1235,8 @@ fn spawn_group(
 // The kit undergrowth / clutter / props (every `Chunks` group) used to be merged and spawned for
 // the WHOLE island at boot — ~39M vertices at MAP_SCALE 3.9 — although each tier is culled past
 // <= PROPS_FAR (75u). Now `Chunks::spawn` parks compact recipes (model, part, transform) per 16u
-// chunk, and [`stream_cover`] merges + spawns only the chunks within the [`stream_radii`] spawn radius of the camera,
-// despawning those past its despawn radius (hysteresis). Placement is still decided once at build
+// chunk, and [`stream_cover`] merges + spawns each chunk's tiers within their [`stream_radius`] of the camera,
+// despawning those past [`despawn_radius`] (hysteresis). Placement is still decided once at build
 // time, so a chunk respawns identically. `FOREST_NOCULL=1` / `FOREST_NOSTREAM=1` restore the
 // spawn-everything path.
 
@@ -1219,15 +1249,23 @@ struct Recipe {
     items: Vec<(usize, usize, Transform)>,
 }
 
+/// One streamed unit: a chunk's recipes of one tier. Each tier streams at its own reach, so the
+/// grass carpet (most of the vertex data, up to ~30 MB a chunk) is only resident within ~50-85u
+/// instead of out at the far props' 95u, which cuts what a walk has to upload several-fold.
+type Unit = ((i32, i32), Tier);
+
 #[derive(Default)]
 struct CoverStream {
     /// Every chunk's recipes (resident, compact).
     chunks: HashMap<(i32, i32), Vec<Recipe>>,
-    /// Chunks currently spawned -> their entities.
-    live: HashMap<(i32, i32), Vec<Entity>>,
-    /// Chunks whose merge is running on the async compute pool (one mesh per recipe, in order).
-    /// Merging off the main thread keeps a moving camera from ever stalling a frame on it.
-    pending: HashMap<(i32, i32), bevy::tasks::Task<Vec<Option<Mesh>>>>,
+    /// Units (partly) spawned -> their entities.
+    live: HashMap<Unit, Vec<Entity>>,
+    /// Units whose merge is running on the async compute pool: (recipe index in the chunk, mesh
+    /// centred on its AABB, that centre). Merging off the main thread keeps a moving camera from
+    /// ever stalling a frame on it.
+    pending: HashMap<Unit, bevy::tasks::Task<Vec<(usize, Mesh, Vec3)>>>,
+    /// Merged meshes waiting for their upload slot (see [`LAND_BUDGET_BYTES`]).
+    ready: HashMap<Unit, Vec<(usize, Mesh, Vec3)>>,
     /// Recipes changed (or the last pass hit its per-frame budget) — re-evaluate even if the
     /// camera hasn't moved.
     dirty: bool,
@@ -1236,20 +1274,45 @@ struct CoverStream {
 static STREAM: std::sync::LazyLock<std::sync::Mutex<CoverStream>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(CoverStream::default()));
 
-/// (spawn, despawn) radii, camera XZ -> chunk centre. Spawn: the farthest tier culls at PROPS_FAR
-/// measured to the chunk AABB, so the centre test gets a chunk half-diagonal (~11.3u) plus slack
-/// (95u at Normal). Despawn: past spawn by enough that pacing along the boundary doesn't thrash.
-/// The Settings render distance widens the spawn radius (`quality::cover_view_scale`, x1 at
-/// Normal); the per-frame budgets below are unchanged, so a wider ring just fills over more frames.
-fn stream_radii() -> (f32, f32) {
-    let stream_in = PROPS_FAR * crate::quality::cover_view_scale() + 20.0;
-    (stream_in, stream_in + 24.0)
+/// How far (camera XZ -> chunk centre) a tier's chunks are needed: its live drawn far edge, plus a
+/// chunk half-diagonal (the range is measured to the chunk's AABB centre, anywhere in the chunk),
+/// plus a lead so a sprinting hero (~4.7 u/s) never outruns the merge + upload queue. The far edge
+/// follows the render distance the way `quality::scale_visibility_ranges` stretches the ranges
+/// (margins under 40u stay put, ground cover takes `ground_factor`); the far props keep the old
+/// radius (`cover_view_scale`) so Far / Extreme stream no more props than before.
+fn stream_radius(tier: Tier) -> f32 {
+    const HALF_DIAG: f32 = 11.4;
+    let base = tier_far(tier);
+    if base >= PROPS_FAR {
+        return base * crate::quality::cover_view_scale() + 20.0;
+    }
+    let reach = if base < 40.0 { base } else { base * crate::quality::ground_factor(crate::quality::view_scale()) };
+    reach + HALF_DIAG + STREAM_LEAD
 }
-/// Most chunk KEYS whose async merge is launched per frame (nearest first); the rest follow next
-/// frame. The boot radius (~110 keys) is queued within ~4 frames.
-const STREAM_BUDGET: usize = 32;
-/// Vertices of finished chunk merges landed (spawned + uploaded) per frame — see `stream_cover`.
-const LAND_BUDGET_VERTS: usize = 80_000;
+
+/// Lead (units) a tier streams in ahead of its drawn range: ~3.4 s at a sprint.
+const STREAM_LEAD: f32 = 16.0;
+
+/// Despawn radius: past the spawn radius by enough that pacing along the boundary doesn't thrash.
+fn despawn_radius(tier: Tier) -> f32 {
+    stream_radius(tier) + 16.0
+}
+
+/// Most units whose async merge is launched per frame (most urgent first); the rest follow next
+/// frame.
+const STREAM_BUDGET: usize = 48;
+/// Mesh bytes (vertex + index) landed (spawned + uploaded) per frame; always at least one mesh.
+/// Bevy's `allocate_and_free_meshes` interleaves + stages every new mesh on the render thread at
+/// ~0.7 ms/MB, so landing whole chunks (20-40 MB at once) was a 15-28 ms hitch every half-second
+/// while walking.
+const LAND_BUDGET_BYTES: usize = 2 << 20;
+
+/// The landing budget for units already inside their drawn range (see `stream_cover`).
+const LATE_BUDGET_BYTES: usize = 16 << 20;
+
+fn mesh_bytes(m: &Mesh) -> usize {
+    m.get_vertex_buffer_size() + m.get_index_buffer_bytes().map_or(0, |b| b.len())
+}
 
 /// Is cover streaming on? (`FOREST_NOSTREAM=1` turns it off; `FOREST_NOCULL` bypasses it too.)
 pub fn cover_stream_enabled() -> bool {
@@ -1264,6 +1327,7 @@ pub fn reset_cover_stream() {
     st.chunks.clear();
     st.live.clear();
     st.pending.clear(); // dropping a Task cancels it
+    st.ready.clear();
     st.dirty = false;
 }
 
@@ -1271,14 +1335,14 @@ fn stream_cover(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     cams: Query<&GlobalTransform, With<Camera3d>>,
-    ready: Res<crate::biome::WorldReady>,
+    world_ready: Res<crate::biome::WorldReady>,
     mut last: Local<Option<Vec2>>,
-    mut last_in: Local<f32>,
+    mut last_scale: Local<(f32, f32)>,
 ) {
     // Idle while a world (re)build is in flight: an in-process rebuild clears `WorldReady` before
     // it wipes the `BiomeEntity`s, so a chunk streamed in from the OLD recipes can never slip past
     // that wipe as an orphan (the build resets the store at phase 0).
-    if !ready.0 {
+    if !world_ready.0 {
         return;
     }
     let Some(kit) = get() else { return };
@@ -1286,47 +1350,58 @@ fn stream_cover(
     let t = cam.translation();
     let p = Vec2::new(t.x, t.z);
     let mut guard = STREAM.lock().expect("cover stream poisoned");
-    let CoverStream { chunks, live, pending, dirty } = &mut *guard;
+    let CoverStream { chunks, live, pending, ready, dirty } = &mut *guard;
     if chunks.is_empty() && live.is_empty() {
         return;
     }
-    let centre = |k: &(i32, i32)| {
+    let dist = |k: &(i32, i32)| {
         let c = chunk_center(*k);
-        Vec2::new(c.x, c.z)
+        Vec2::new(c.x, c.z).distance(p)
     };
-    // Land finished merges (spawned whole-chunk at once, so a chunk never appears half-built),
-    // nearest first and at most LAND_BUDGET_VERTS per frame (always at least one chunk): landing
-    // every finished chunk in one frame put a whole ring of chunks through Bevy's mesh upload at
-    // once — 20-40 ms `allocate_and_free_meshes` hitches while walking. The rest land next frame.
-    let mut done: Vec<((i32, i32), f32)> =
-        pending.iter().filter(|(_, t)| t.is_finished()).map(|(k, _)| (*k, centre(k).distance(p))).collect();
-    done.sort_by(|a, b| a.1.total_cmp(&b.1));
-    let mut landed_verts = 0usize;
-    for (key, _) in done {
-        if landed_verts >= LAND_BUDGET_VERTS {
-            break; // still in `pending`, so next frame lands it (this runs before the idle early-out)
+    // Finished merges join the upload queue.
+    let done: Vec<Unit> = pending.iter().filter(|(_, t)| t.is_finished()).map(|(u, _)| *u).collect();
+    for u in done {
+        if let Some(task) = pending.remove(&u) {
+            ready.insert(u, bevy::tasks::block_on(task));
         }
-        let Some(task) = pending.remove(&key) else { continue };
-        let merged = bevy::tasks::block_on(task);
-        let ents = live.entry(key).or_default();
-        if let Some(recipes) = chunks.get(&key) {
-            for (r, mesh) in recipes.iter().zip(merged) {
-                if let Some(mesh) = mesh {
-                    landed_verts += mesh.count_vertices();
-                    ents.push(spawn_group(kit, &mut commands, &mut meshes, key, r, mesh, true));
-                }
+    }
+    // Land queued meshes, most urgent unit first (deepest inside its spawn radius), up to
+    // LAND_BUDGET_BYTES. A unit may land over several frames; it streams in well before its
+    // drawn range, so a half-landed unit is never on screen. A unit already inside its drawn range
+    // (the camera jumped: boot, load, respawn) lands on the larger LATE_BUDGET_BYTES — a few
+    // heavy frames at a cut beat bare ground.
+    if !ready.is_empty() {
+        let mut order: Vec<(Unit, f32)> = ready.keys().map(|u| (*u, dist(&u.0) - stream_radius(u.1))).collect();
+        order.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let mut bytes = 0usize;
+        for (u, urgency) in order {
+            let late = urgency < -STREAM_LEAD;
+            let budget = if late { LATE_BUDGET_BYTES } else { LAND_BUDGET_BYTES };
+            if bytes >= budget {
+                break; // still in `ready`, so next frame lands it (this runs before the idle early-out)
+            }
+            let Some(mut queue) = ready.remove(&u) else { continue };
+            let Some(recipes) = chunks.get(&u.0) else { continue };
+            let ents = live.entry(u).or_default();
+            while bytes < budget {
+                let Some((ri, mesh, centre)) = queue.pop() else { break };
+                bytes += mesh_bytes(&mesh);
+                ents.push(spawn_group(kit, &mut commands, &mut meshes, u.0, &recipes[ri], mesh, centre, true));
+            }
+            if !queue.is_empty() {
+                ready.insert(u, queue);
             }
         }
     }
-    let (stream_in, stream_out) = stream_radii();
-    // A render-distance change re-evaluates the ring even with the camera parked.
-    if !*dirty && pending.is_empty() && last.is_some_and(|l| l.distance(p) < 2.0) && *last_in == stream_in {
+    let scale = (crate::quality::view_scale(), crate::quality::cover_view_scale());
+    // A render-distance change re-evaluates the rings even with the camera parked.
+    if !*dirty && pending.is_empty() && ready.is_empty() && last.is_some_and(|l| l.distance(p) < 2.0) && *last_scale == scale {
         return;
     }
     *last = Some(p);
-    *last_in = stream_in;
-    live.retain(|k, ents| {
-        if centre(k).distance(p) <= stream_out {
+    *last_scale = scale;
+    live.retain(|u, ents| {
+        if dist(&u.0) <= despawn_radius(u.1) {
             return true;
         }
         for e in ents.drain(..) {
@@ -1334,23 +1409,59 @@ fn stream_cover(
         }
         false
     });
-    // A merge for a chunk the camera already left is dropped (cancelled).
-    pending.retain(|k, _| centre(k).distance(p) <= stream_out);
-    let mut need: Vec<((i32, i32), f32)> = chunks
-        .keys()
-        .filter(|k| !live.contains_key(*k) && !pending.contains_key(*k))
-        .map(|k| (*k, centre(k).distance(p)))
-        .filter(|(_, d)| *d <= stream_in)
-        .collect();
+    // A merge (or queued upload) for a unit the camera already left is dropped (cancelled).
+    pending.retain(|u, _| dist(&u.0) <= despawn_radius(u.1));
+    ready.retain(|u, _| dist(&u.0) <= despawn_radius(u.1));
+    let mut need: Vec<(Unit, f32)> = Vec::new();
+    for (k, recipes) in chunks.iter() {
+        let d = dist(k);
+        let mut seen: Vec<Tier> = Vec::with_capacity(6);
+        for r in recipes {
+            if seen.contains(&r.tier) {
+                continue;
+            }
+            seen.push(r.tier);
+            let u = (*k, r.tier);
+            let rad = stream_radius(r.tier);
+            if d <= rad && !live.contains_key(&u) && !pending.contains_key(&u) && !ready.contains_key(&u) {
+                need.push((u, d - rad));
+            }
+        }
+    }
+    static LAG_LOG: OnceLock<bool> = OnceLock::new();
+    if *LAG_LOG.get_or_init(|| std::env::var_os("FOREST_STREAMLAG").is_some()) {
+        // Units already inside their drawn range (urgency past the lead) but not merged yet.
+        let late = |u: &Unit| dist(&u.0) - stream_radius(u.1) < -STREAM_LEAD;
+        let n = need.iter().filter(|(u, _)| late(u)).count()
+            + pending.keys().filter(|u| late(u)).count()
+            + ready.keys().filter(|u| late(u)).count();
+        if n > 0 {
+            info!("STREAMLAG {n} units inside their drawn range not landed");
+        }
+    }
     need.sort_by(|a, b| a.1.total_cmp(&b.1));
     *dirty = need.len() > STREAM_BUDGET;
     need.truncate(STREAM_BUDGET);
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
-    for (key, _) in need {
-        let items: Vec<(Vec<(usize, usize, Transform)>, bool)> =
-            chunks[&key].iter().map(|r| (r.items.clone(), r.tier == Tier::PropsFar)).collect();
-        let task = pool.spawn(async move { items.iter().map(|(it, lod)| merge_group(kit, it, *lod)).collect::<Vec<_>>() });
-        pending.insert(key, task);
+    for (u, _) in need {
+        let items: Vec<(usize, Vec<(usize, usize, Transform)>, bool)> = chunks[&u.0]
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.tier == u.1)
+            .map(|(i, r)| (i, r.items.clone(), r.tier == Tier::PropsFar))
+            .collect();
+        let task = pool.spawn(async move {
+            items
+                .iter()
+                .flat_map(|(i, it, lod)| {
+                    merge_group(kit, it, *lod).into_iter().map(move |mut m| {
+                        let c = centre_on_aabb(&mut m);
+                        (*i, m, c)
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+        pending.insert(u, task);
     }
 }
 

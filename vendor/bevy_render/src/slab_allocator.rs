@@ -464,6 +464,14 @@ where
         self.allocator.allocate_large(key, layout);
     }
 
+    /// (slab id, new capacity bytes) of each slab this stage will grow or create.
+    pub fn pending_growth(&self) -> Vec<(u32, u64)> {
+        self.slabs_to_reallocate.keys().filter_map(|id| match self.allocator.slabs.get(id) {
+            Some(Slab::General(s)) => Some((id.id.get(), s.current_slot_capacity as u64 * s.element_layout.slot_size())),
+            _ => None,
+        }).collect()
+    }
+
     /// Completes the transaction, performing any queued resize operations.
     pub fn commit(mut self, render_device: &RenderDevice, render_queue: &RenderQueue) {
         // Drop slabs that were emptied by their contents being reallocated

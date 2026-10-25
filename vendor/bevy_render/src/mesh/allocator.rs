@@ -425,6 +425,12 @@ impl MeshAllocator {
         render_device: &RenderDevice,
         render_queue: &RenderQueue,
     ) {
+        // WARBELL PATCH: `FOREST_ALLOCLOG=1` logs every frame whose mesh upload takes > 2 ms
+        // (count, vertex MB, alloc / slab-growth / copy split) — how the walking hitches were found.
+        static LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let log = *LOG.get_or_init(|| std::env::var_os("FOREST_ALLOCLOG").is_some());
+        let t_start = std::time::Instant::now();
+        let mut log_bytes = 0u64;
         let mut allocation_stage = self.slab_allocator.stage_allocation();
 
         // Loop over each mesh that was extracted this frame.
@@ -495,7 +501,10 @@ impl MeshAllocator {
         }
 
         // Perform growth.
+        let grows = if log { allocation_stage.pending_growth() } else { Vec::new() };
+        let t_alloc = t_start.elapsed();
         allocation_stage.commit(render_device, render_queue);
+        let t_commit = t_start.elapsed();
 
         // Copy new mesh data in.
         for (mesh_id, mesh) in &extracted_meshes.extracted {
@@ -508,6 +517,16 @@ impl MeshAllocator {
             self.copy_mesh_index_data(mesh_id, mesh, render_device, render_queue);
             #[cfg(feature = "morph")]
             self.copy_mesh_morph_target_data(mesh_id, mesh, render_device, render_queue);
+            log_bytes += vertex_buffer_size;
+        }
+        let total = t_start.elapsed();
+        if log && total.as_secs_f32() > 0.002 {
+            bevy_log::info!(
+                "ALLOC {:.2}ms meshes={} vbytes={:.1}MB alloc={:.2} commit={:.2} copy={:.2} grows={:?}",
+                total.as_secs_f32() * 1e3, extracted_meshes.extracted.len(), log_bytes as f32 / 1e6,
+                t_alloc.as_secs_f32() * 1e3, (t_commit - t_alloc).as_secs_f32() * 1e3,
+                (total - t_commit).as_secs_f32() * 1e3, grows
+            );
         }
     }
 
