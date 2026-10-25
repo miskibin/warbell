@@ -1176,8 +1176,7 @@ fn villager_brain(
 
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
 }
 
@@ -1280,8 +1279,7 @@ fn worker_steer(
         }
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
 }
 
@@ -1344,8 +1342,7 @@ fn pilgrim_brain(
 
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
 }
 
@@ -1555,8 +1552,7 @@ fn npc_fight_back(
         }
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
 }
 
@@ -2007,8 +2003,7 @@ fn guard_combat(
         // Ground-follow (guards own their full transform since they're out of villager_brain).
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
 
     // Apply guard strikes to hostile Health; reap the slain, enrage struck beasts.

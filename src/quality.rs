@@ -1058,6 +1058,13 @@ fn apply_quality(
             // and grass edges TAA had just softened — the "over-sharpened" read of the mid-ground.
             e.insert(TemporalAntiAliasing::default());
             e.remove::<ContrastAdaptiveSharpening>();
+            // Mip bias -0.5, not Bevy's TAA default of -1: a full mip sharper aliases the distant
+            // ground / foliage textures faster than TAA's motion-time history (10% blend, variance
+            // clipped) can average them, i.e. the far-field crawl while the camera moves. Measured on
+            // a parallax-free pan clip: -1 -> -0.5 cuts the mid-distance shimmer residual ~6% and
+            // costs no geometric edge sharpness. `FOREST_MIPBIAS=<b>` overrides (A/B).
+            let bias = std::env::var("FOREST_MIPBIAS").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(-0.5);
+            e.insert(MipBias(bias));
         } else {
             e.remove::<(TemporalAntiAliasing, TemporalJitter, MipBias, ContrastAdaptiveSharpening)>();
         }
@@ -1112,6 +1119,12 @@ fn apply_quality(
     }
 }
 
+/// **Inert on Bevy 0.20:** `MainPassResolutionOverride` is only read in the RENDER world and nothing
+/// extracts the main-world component we insert (Bevy's DLSS inserts it render-side itself) — and even
+/// extracted, no pass upscales the sub-rect main pass, so TAA / post would read a quarter-filled
+/// target. Measured Oct 2026: a 0.6 still is exactly as sharp as 1.0 (same high-frequency energy). Real render
+/// scaling needs an offscreen target + upscale; until then this (and [`DynRes`]) do nothing.
+///
 /// The effective render-scale: the `FOREST_RENDERSCALE` env override wins (A/B tuning on the target
 /// machine), else the player's [`GraphicsSettings::render_scale`]. On a weak GPU the main 3D pass
 /// (rasterising the whole scene) IS the frame — a Radeon 840M iGPU spends ~30 ms in

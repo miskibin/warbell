@@ -477,8 +477,22 @@ fn fx_rise(time: Res<Time>, mut q: Query<(&FxRise, &RestXf, &mut Transform)>) {
     }
 }
 
-fn fx_pulse(time: Res<Time>, mut mats: ResMut<Assets<StandardMaterial>>, q: Query<(&FxPulse, &ViewVisibility)>) {
-    let t = time.elapsed_secs();
+fn fx_pulse(
+    time: Res<Time>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    q: Query<(&FxPulse, &ViewVisibility)>,
+    mut last_step: Local<i64>,
+) {
+    // 10 Hz, not every frame: ANY StandardMaterial change in a frame makes Bevy's `AssetChanged`
+    // filters walk every StandardMaterial mesh entity on the island (specialization checks for the
+    // main, prepass and shadow phases); with no change they short-circuit. These glows breathe at
+    // <1 rad/s, so a 0.1 s step is a ~2% brightness change — invisible.
+    let step = (time.elapsed_secs_f64() * 10.0).floor() as i64;
+    if step == *last_step {
+        return;
+    }
+    *last_step = step;
+    let t = step as f32 * 0.1;
     // Only parts on screen: every landmark glow on the island used to rewrite its material each
     // frame (`get_mut` re-uploads it and makes Bevy re-check every mesh entity for specialization).
     for (p, vis) in &q {

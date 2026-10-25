@@ -16,6 +16,16 @@ use bevy::prelude::*;
 /// around them and never walk into water (`ground_at_world` → `None`).
 pub const MAX_STEP: f32 = 0.6;
 
+/// Write a body root's pose only on a real change. Any `Transform` write marks the root changed,
+/// and transform propagation then re-walks the body's whole rig (a skinned body: ~100 joints +
+/// meshes) — idle walkers rewriting the same pose every frame paid that for nothing.
+pub fn set_pose(tf: &mut Mut<Transform>, translation: Vec3, rotation: Quat) {
+    if tf.translation != translation || tf.rotation != rotation {
+        tf.translation = translation;
+        tf.rotation = rotation;
+    }
+}
+
 /// Footing height at `(x, z)`: terrain, or the bridge deck where the river shows through.
 /// `worldmap::ground_at_world` is terrain-only (`None` over the river), but `can_stand` lets a
 /// mover step ONTO a deck (A* threads NPCs across the river over the planks), so EVERY mover that

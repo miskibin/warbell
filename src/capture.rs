@@ -14,6 +14,7 @@
 //! | `FOREST_CLIP_FPS`    | playback fps → fixed timestep + ffmpeg rate (default 30) |
 //! | `FOREST_CLIP_WARMUP` | warm-up frames before the first save (default 30) |
 //! | `FOREST_CLIP_ORBIT`  | `"cx,cy,cz,radius,height,deg_per_sec"` slow camera orbit around a point |
+//! | `FOREST_CLIP_PAN`    | `"x,y,z,pitch_deg,deg_per_sec[,start_yaw_deg]"` eye fixed, yaw pans: motion with no parallax, so a rigid-shift-compensated frame diff isolates shimmer / crawl (AA A/Bs) |
 //! | `FOREST_CLIP_AUDIO`  | `0` = no `<dir>/audio.wav` (default: the game's own audio, frame-locked — `audio_capture.rs`) |
 
 use bevy::prelude::*;
@@ -271,6 +272,8 @@ struct ClipCfg {
     warmup: u32,
     fps: u32,
     orbit: Option<Orbit>,
+    /// `FOREST_CLIP_PAN`: (eye, pitch°, yaw°/s, start yaw°)
+    pan: Option<(Vec3, f32, f32, f32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -321,6 +324,10 @@ fn clip_cfg(dir: String) -> ClipCfg {
         warmup: num("FOREST_CLIP_WARMUP", 30.0).max(0.0) as u32,
         fps: num("FOREST_CLIP_FPS", 30.0).max(1.0) as u32,
         orbit: std::env::var("FOREST_CLIP_ORBIT").ok().and_then(parse_orbit),
+        pan: std::env::var("FOREST_CLIP_PAN").ok().and_then(|s| {
+            let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+            (v.len() >= 5).then(|| (Vec3::new(v[0], v[1], v[2]), v[3], v[4], v.get(5).copied().unwrap_or(0.0)))
+        }),
     }
 }
 
@@ -356,8 +363,23 @@ fn clip_orbit(
     clock: Res<ClipClock>,
     mut cam: Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
 ) {
+    if let Some((eye, pitch, speed, start)) = cfg.pan {
+        let yaw = (start + speed * clock.saved as f32 / cfg.fps as f32).to_radians();
+        let rot = Quat::from_euler(EulerRot::YXZ, yaw, pitch.to_radians(), 0.0);
+        for (mut tf, fly) in &mut cam {
+            *tf = Transform::from_translation(eye).with_rotation(rot);
+            if let Some(mut fly) = fly {
+                (fly.yaw, fly.pitch, fly.target_yaw, fly.target_pitch) = (yaw, pitch.to_radians(), yaw, pitch.to_radians());
+                fly.vel = Vec3::ZERO;
+            }
+        }
+        return;
+    }
     let Some(o) = cfg.orbit else { return };
-    let t = clock.frame.saturating_sub(cfg.warmup) as f32 / cfg.fps as f32;
+    // Keyed on frames SAVED, not ticks since boot: recording starts only once the pipelines settle
+    // (a boot-dependent tick), so a tick-keyed path started each run at a different angle and two
+    // A/B clips framed different scenery. The eye parks at `start` through the warm-up.
+    let t = clock.saved as f32 / cfg.fps as f32;
     let ang = (o.start + o.speed * t).to_radians();
     let (mut center, mut height) = (o.center, o.height);
     let mut pos = Vec3::new(o.center.x + o.radius * ang.cos(), 0.0, o.center.z + o.radius * ang.sin());

@@ -1146,8 +1146,7 @@ fn rival_combat(
 
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
 }
 
@@ -1203,8 +1202,7 @@ fn rival_workers(
         }
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
 }
 
@@ -1515,8 +1513,7 @@ fn rival_raid_brain(
         }
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
-        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
-        tf.rotation = Quat::from_rotation_y(v.facing);
+        crate::steer::set_pose(&mut tf, Vec3::new(v.pos.x, gy + bob, v.pos.y), Quat::from_rotation_y(v.facing));
     }
     // Keep a persistent "under attack" banner up for the WHOLE life of the raid — it must not lapse
     // while any raider is still alive (the night-only siege keep-alert doesn't cover daytime raids).

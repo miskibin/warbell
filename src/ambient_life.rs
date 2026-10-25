@@ -18,7 +18,7 @@
 use bevy::prelude::*;
 
 use crate::player::HeroState;
-use crate::siege::GameTime;
+use crate::scene::SkyClock;
 
 /// How many butterflies wander near the hero. Kept low — a few drifting specks, not a swarm.
 const BUTTERFLY_COUNT: usize = 2;
@@ -73,9 +73,12 @@ impl Plugin for AmbientLifePlugin {
     }
 }
 
-/// True when the siege clock reads daytime.
-fn is_day(gt: &GameTime) -> bool {
-    crate::scene::night_of(gt.0) < DAY_MAX
+/// True when the sky clock reads daytime.
+/// `SkyClock::t` is the 0..1 day fraction `night_of` expects. (It used to read `siege::GameTime`,
+/// which is SECONDS: day flipped every half second, the butterflies hovered half-faded and their
+/// materials were rewritten every frame.)
+fn is_day(clock: &SkyClock) -> bool {
+    crate::scene::night_of(clock.t) < DAY_MAX
 }
 
 /// A small butterfly: a tiny dark body with paired fore + hind wings that flap together about the
@@ -214,18 +217,18 @@ fn spawn_once(
 fn fly_butterflies(
     time: Res<Time>,
     hero: Option<Res<HeroState>>,
-    gt: Option<Res<GameTime>>,
+    clock: Option<Res<SkyClock>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut q: Query<(&mut Butterfly, &mut Transform, &mut Visibility)>,
 ) {
-    let (Some(hero), Some(gt)) = (hero, gt) else { return };
+    let (Some(hero), Some(clock)) = (hero, clock) else { return };
     let t = time.elapsed_secs_wrapped();
     let dt = time.delta_secs();
     let hx = hero.pos.x;
     let hz = hero.pos.y;
     let here_green = crate::worldmap::is_grass_world(hx, hz)
         || crate::worldmap::tile_biome_world(hx, hz) == Some(crate::biome::Biome::Forest);
-    let show = is_day(&gt) && here_green && hero.alive;
+    let show = is_day(&clock) && here_green && hero.alive;
 
     for (mut b, mut tf, mut vis) in &mut q {
         // Ease opacity toward the target (1 out / 0 gone) so they dissolve in and out, never pop.
