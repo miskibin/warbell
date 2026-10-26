@@ -648,6 +648,36 @@ pub fn swing_test(
     cues.write(AudioCue::HeroGruntSwing);
 }
 
+/// Cinematic staging of the Heavy: a scene (`scenes::storm`'s coda) holds the hero in the charge
+/// stance (`coil`) and lets the blow go (`release`, consumed) without any input, like
+/// [`swing_test`] does for captures.
+#[derive(Resource, Default)]
+pub struct StagedStrike {
+    pub coil: bool,
+    pub release: bool,
+    from: Option<f32>,
+}
+
+/// Applies [`StagedStrike`] after `player_attack` (which disarms an unheld charge every frame).
+pub fn staged_strike(time: Res<Time>, mut staged: ResMut<StagedStrike>, mut cues: MessageWriter<AudioCue>, mut hero_q: Query<&mut Hero>) {
+    let Ok(mut hero) = hero_q.single_mut() else { return };
+    let now = time.elapsed_secs();
+    if std::mem::take(&mut staged.release) {
+        staged.from = None;
+        hero.charge_t = -1.0;
+        if !hero.attacking {
+            begin_swing(&mut hero, true, None, now, false);
+            cues.write(AudioCue::HeroGruntSwing);
+            cues.write(AudioCue::Slam);
+        }
+    } else if staged.coil {
+        let from = *staged.from.get_or_insert(now);
+        hero.charge_t = now - from;
+    } else {
+        staged.from = None;
+    }
+}
+
 pub fn player_attack(
     time: Res<Time>,
     mode: Res<PlayMode>,

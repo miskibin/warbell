@@ -282,7 +282,9 @@ fn apply_scene_change(
             return;
         }
         if std::mem::take(&mut *rehearsed) && sheet_times().is_none() {
-            state.clock = 0.0;
+            // `FOREST_SCENE_FROM=<s>`: the recording starts at that second of the film (iterate on
+            // one beat in motion without filming everything before it)
+            state.clock = std::env::var("FOREST_SCENE_FROM").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
         }
         if let (true, Some(times)) = (is_cutscene(state.active), sheet_times()) {
             // `FOREST_SCENE_SHEET_HOLD=n` holds each time n frames (keep every n-th): skins posed,

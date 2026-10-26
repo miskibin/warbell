@@ -13,7 +13,7 @@ mod block;
 pub(crate) mod boom;
 mod camera;
 mod charge;
-mod combat;
+pub(crate) mod combat;
 
 pub(crate) use combat::{
     spawn_burst, spawn_chips, spawn_dash_trail, spawn_heal_burst, spawn_motes, spawn_shockwave,
@@ -434,6 +434,7 @@ impl Plugin for PlayerPlugin {
         if let Some(d) = envf("FOREST_TPS_DIST") { orbit.dist = d; }
         app.insert_resource(start_mode)
             .init_resource::<HeroState>()
+            .init_resource::<combat::StagedStrike>()
             .init_resource::<PendingHeroDamage>()
             .init_resource::<PendingCrit>()
             .init_resource::<PlayerRes>()
@@ -479,7 +480,7 @@ impl Plugin for PlayerPlugin {
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
                     // After the sim chain: the pose reads this frame's swing / charge (the staged
                     // `swing_test` charge included), not last frame's.
-                    anim::hero_anim.after(combat::swing_test),
+                    anim::hero_anim.after(combat::swing_test).after(combat::staged_strike),
                     camera::fp_head_track.after(anim::hero_anim), // FP eye on the head + spine aim
                     combat::update_sparks,
                     combat::update_fx_fades,
@@ -524,6 +525,7 @@ impl Plugin for PlayerPlugin {
                     block::player_block,
                     combat::player_attack,
                     combat::swing_test, // debug: FOREST_SWINGTEST=1 loops the attack chain for a capture
+                    combat::staged_strike, // a cutscene's held / released Heavy (`StagedStrike`)
                     arts::player_arts, // warden weapon arts (after move/attack so a dash sticks)
                     combat::ensure_combat_health,
                     health::apply_hero_damage,

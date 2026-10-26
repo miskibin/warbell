@@ -26,12 +26,12 @@ jednej klatce na każdą sekundę sceny (wszystkie ujęcia w jednym bootcie, ~30
 | 0–4 | czerń | kajuta, potem rafa: trzask kadłuba, grzmot, dzwon, krzyki; Wat budzi się (`p1_wat_01`) |
 | 4–7.7 | **pokład** wraku przechylony (kamera z rollem): załoga przy dzwonie, rafa, piorun nad morzem | dzwon, sztorm na pokładzie, fala przez burtę |
 | 7.7–12 | czerń | kadłub, druga fala; dźwięk schodzi „pod wodę”, sekunda ciszy |
-| 12–20.6 | **plaża** z oczu Wata na kolanach: sześć orków z pochodniami wychodzi z lasu, idą, drugi błysk — szarża, trzeci błysk: ork w obiektywie, cięcie | przybój, deszcz, kaszel (`p1_wat_02`), pomruki, szarża (`cs_orks_charge`), ryk — cięcie w ciszę |
+| 12–20.6 | **plaża** z oczu Wata na kolanach: sześć orków z pochodniami wychodzi z lasu, idą, drugi błysk — rozpędzają się do szarży (tempo przechodzi płynnie, `smooth_track`), trzeci błysk: ork w obiektywie, cięcie | przybój, deszcz, kaszel (`p1_wat_02`), warczenie z daleka, okrzyk prowadzącego, okrzyki bandy i tupot coraz bliżej (take Azrak `ork-cry-*`, przestrajany), ryk w obiektywie — szybkie wyciszenie |
 | 22–26.9 | **Harrow** na wznak, topór, ork nad nim, Maud patrzy na Wata (podwójny błysk) | grzmot, potem tylko deszcz i pochodnia |
 | 26.9–31 | długa czerń | deszcz, oddech Wata |
 | 31–37.7 | **hełm** w piasku przy pochodni; za nim, nieostro, Maud z naramiennikiem przy klęczącym Wacie; drugi błysk przenosi ostrość na nich | płyta (`cs_plate_wet`), echo „Tighter.” (P.0), wysiłek (`p1_wat_03`) |
 | 37.7–40 | czerń | daleki róg orków |
-| 40–45.7 | **koda**: rycerz w zbroi Harrowa na plaży, orkowie biegną z pochodniami | Maud: „Ser Godric's up! Behind him, all of you!” (`a1_maud_04`), ryk, zderzenie — cięcie |
+| 40–46 | **koda**: rycerz w zbroi Harrowa na plaży dobywa miecza i tarczy, wychodzi orkom naprzeciw, napina Ciężki cios (`player::combat::StagedStrike`) i puszcza go na pierwszego — błysk, cięcie | Maud: „Ser Godric's up! Behind him, all of you!” (`a1_maud_04`), okrzyki bandy, ryk, cios w tarczę |
 
 ## Jak jest zbudowana
 
@@ -51,7 +51,8 @@ jednej klatce na każdą sekundę sceny (wszystkie ujęcia w jednym bootcie, ~30
 
 ## Brakujące / zastępcze
 
-- `p1_ork_01`/`02` (Dante) nie nagrane → ryk z gry (`ork-roar.ogg`).
+- Głosy i SFX do nagrania (miks podbiera je sam, gdy się pojawią): `docs/audio/elevenlabs-p1-piorun.md`.
+- `FOREST_SCENE_FROM=<s>` startuje nagranie od danej sekundy filmu (iteracja jednego fragmentu).
 - Deszcz na otwartym i sztorm na morzu są syntezowane w miksie (szum + fale); `cs_beach_storm`,
   `cs_deck_storm`, `cs_thunder_close` z listy brakujących wciąż by pomogły (grzmoty to dwa take'i z P.0).
 - Harrow/Wat to dalej zastępstwa (`guard` / `archer`), jak w P.0.

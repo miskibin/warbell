@@ -41,7 +41,7 @@ Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
 | ⬜ | `cs_wave_slam` | heavy wave slamming against a wooden ship's hull heard from inside the cabin, deep thud, timbers groan, water rushing off | 3 s |
 | ⬜ | `cs_paper_rustle` | a folded, wax-sealed parchment letter picked up off a wooden table, dry paper rustle, close, quiet room | 0.8 s |
 | ⬜ | `cs_door_creak` | an old wooden ship's cabin door: iron latch lifted, then the door swung slowly open on creaking iron hinges | 2.0 s |
-| ✅ | `cs_orks_charge` | a war band of a dozen orcs charging across wet sand toward the listener, guttural war cries, heavy running feet, torches roaring and whooshing in the wind | 6 s |
+| ❌ | `cs_orks_charge` (odrzucony 2026-10-26, plik usunięty; orkowie to dziś take Azrak `ork-cry-*`) | a war band of a dozen orcs charging across wet sand toward the listener, guttural war cries, heavy running feet, torches roaring and whooshing in the wind | 6 s |
 | ✅ | `cs_plate_wet` | a heavy steel shoulder plate lifted from wet sand and held against a mail shirt, metal clink, water dripping, close | 1.5 s |
 | ✅ | `cs_sailors_panic` | several sailors shouting in panic on a storm-tossed deck, near and far, no clear words, wind and rain over them | 6 s |
 | ✅ | `cs_ship_bell_alarm` | a ship's brass bell rung frantically and unevenly by hand in a violent storm, heard from mid-deck through wind and rain, irregular strikes | 6 s |
@@ -56,4 +56,4 @@ Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
 - Pętle (loop) muszą się bezszwowo zapętlać — poproś generator o „seamless loop” albo daj 2× dłuższy plik, przytnę sam.
 - `life_sfx_chatter`: ElevenLabs, 14.9 s → pętla 13.9 s (crossfade 1 s), mono, -18.8 LUFS. Jeszcze nie w `SFX_KEYS` (`village_life.rs`).
 - `cs_ship_cabin`: ElevenLabs, 8 s zamiast 20 s → pętla 6.5 s (crossfade 1.5 s), **stereo** (do filmu), -18 LUFS, w `assets/audio/sfx/cutscene/`. Krótka pętla: przy 90-sekundowej scenie warto kiedyś dograć dłuższą.
-- `cs_orks_charge`, `cs_plate_wet`, `cs_sailors_panic`, `cs_ship_bell_alarm` — cutscenka P.1 „Piorun” (`tools/cutscene/storm_mix.py`, który sam je tnie i normalizuje do `assets/audio/sfx/cutscene/`). Brakujące P.1 (`cs_thunder_close`, `cs_deck_storm`, `cs_beach_storm`) są dziś syntezowane / pożyczone z P.0.
+- `cs_plate_wet`, `cs_sailors_panic`, `cs_ship_bell_alarm` — cutscenka P.1 „Piorun” (`tools/cutscene/storm_mix.py`, który sam je tnie i normalizuje do `assets/audio/sfx/cutscene/`). Brakujące P.1 (`cs_thunder_close`, `cs_deck_storm`, `cs_beach_storm`) są dziś syntezowane / pożyczone z P.0.

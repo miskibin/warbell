@@ -45,7 +45,7 @@ mod at {
     pub const BEACH: (f32, f32) = (12.0, 20.6);
     pub const HARROW: (f32, f32) = (22.0, 26.9);
     pub const HELM: (f32, f32) = (31.0, 37.7);
-    pub const CODA: (f32, f32) = (40.0, 45.7);
+    pub const CODA: (f32, f32) = (40.0, 46.0);
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -99,6 +99,7 @@ pub(super) const STRIKES: &[(f32, f32)] = &[
     (34.3, 0.8),
     (40.05, 0.6),
     (43.4, 0.35),
+    (45.7, 0.9),
 ];
 
 /// Lightning brightness 0..1 at `t`: three ragged pulses and a slow afterglow — long enough for the
@@ -458,16 +459,7 @@ fn place(role: Role, s: Shot, t: f32) -> Option<(Vec3, f32, &'static str, Option
 /// An ork's mark in shot `s` at `t`: (world XZ, facing, moving), or `None` (hidden).
 fn ork_place(i: u8, s: Shot, t: f32) -> Option<(Vec2, f32, bool)> {
     let st = stage();
-    // Along keyed marks `(time, inland, along)` (beach frame), held at the ends.
-    let track = |keys: &[(f32, f32, f32)]| {
-        let n = keys.len();
-        let k = keys.windows(2).position(|w| t < w[1].0).unwrap_or(n - 2);
-        let (a, b) = (keys[k], keys[k + 1]);
-        let u = ((t - a.0) / (b.0 - a.0)).clamp(0.0, 1.0);
-        let (pa, pb) = (st.p(a.1, a.2), st.p(b.1, b.2));
-        let d = pb - pa;
-        (pa.lerp(pb, u), d.x.atan2(d.y), t > keys[0].0 && t < keys[n - 1].0)
-    };
+    let track = |keys: &[(f32, f32, f32)]| smooth_track(&st, keys, t);
     match (i, s) {
         // Out of the trees toward the camera (at the waterline): they come down the beach at a walk,
         // the second flash shows them where they are, and they charge — the lead one onto the lens.
@@ -484,15 +476,55 @@ fn ork_place(i: u8, s: Shot, t: f32) -> Option<(Vec2, f32, bool)> {
             Some((p, d.x.atan2(d.y) + 0.5, false))
         }
         // The coda's charge, at the knight in the surf.
-        (0, Shot::Coda) => Some(track(&[(40.0, 24.0, -1.0), (45.7, KNIGHT.0 + 1.4, KNIGHT.1 - 0.2)])),
-        (1, Shot::Coda) => Some(track(&[(40.0, 27.0, 4.0), (45.7, 13.0, 2.2)])),
-        (2, Shot::Coda) => Some(track(&[(40.0, 28.0, -5.0), (45.7, 15.0, -3.0)])),
+        (0, Shot::Coda) => Some(track(&[(40.0, 25.0, -1.0), (46.0, KNIGHT.0 + KNIGHT_TO + 1.3, KNIGHT.1 - 0.2)])),
+        (1, Shot::Coda) => Some(track(&[(40.0, 27.0, 4.0), (46.0, 12.0, 2.2)])),
+        (2, Shot::Coda) => Some(track(&[(40.0, 28.0, -5.0), (46.0, 14.0, -3.0)])),
         _ => None,
     }
 }
 
-/// The knight's mark in the coda (beach frame), facing up the beach.
+/// Along keyed marks `(time, inland, along)` (beach frame), held at the ends. The pace eases from
+/// one leg's to the next over a second and a half round each key, so a walk breaks into the charge
+/// (and the gait blends walk -> run) instead of switching on the spot.
+fn smooth_track(st: &Stage, keys: &[(f32, f32, f32)], t: f32) -> (Vec2, f32, bool) {
+    const R: f32 = 0.75;
+    const DT: f32 = 1.0 / 120.0;
+    let pts: Vec<Vec2> = keys.iter().map(|k| st.p(k.1, k.2)).collect();
+    let lens: Vec<f32> = pts.windows(2).map(|w| w[0].distance(w[1])).collect();
+    let total: f32 = lens.iter().sum();
+    let speed = |tau: f32| {
+        let leg = |i: usize| lens[i] / (keys[i + 1].0 - keys[i].0).max(1e-3);
+        let mut v = leg(0);
+        for k in 1..keys.len() - 1 {
+            let u = ((tau - (keys[k].0 - R)) / (2.0 * R)).clamp(0.0, 1.0);
+            v += (leg(k) - leg(k - 1)) * u * u * (3.0 - 2.0 * u);
+        }
+        v
+    };
+    let (t0, t1) = (keys[0].0, keys[keys.len() - 1].0);
+    let (mut s_at, mut s_all, mut tau) = (0.0, 0.0, t0);
+    while tau < t1 {
+        let ds = speed(tau + DT * 0.5) * DT;
+        if tau < t {
+            s_at += ds.min((t - tau) / DT * ds);
+        }
+        s_all += ds;
+        tau += DT;
+    }
+    let mut d = s_at * total / s_all.max(1e-4);
+    let mut i = 0;
+    while i + 1 < lens.len() && d > lens[i] {
+        d -= lens[i];
+        i += 1;
+    }
+    let dir = (pts[i + 1] - pts[i]).normalize_or_zero();
+    (pts[i] + dir * d.min(lens[i]), dir.x.atan2(dir.y), t > t0 && t < t1)
+}
+
+/// The knight's mark in the coda (beach frame), facing up the beach; he steps up to meet them.
 const KNIGHT: (f32, f32) = (5.0, 0.0);
+const KNIGHT_STEP: (f32, f32) = (42.3, 43.7);
+const KNIGHT_TO: f32 = 1.3;
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn drive(
@@ -504,8 +536,10 @@ pub(super) fn drive(
     mut orks: Query<(&mut crate::orks::Ork, &mut Transform, &StormOrk, &mut Visibility), Without<Role>>,
     mut only: Query<(&OnlyIn, &mut Visibility), (Without<Role>, Without<StormOrk>)>,
     mut fade: Query<&mut BackgroundColor, With<super::FarmFade>>,
+    (mut hero_q, mut strike): (Query<&mut crate::player::Hero>, ResMut<crate::player::combat::StagedStrike>),
 ) {
     if state.active != Some(SceneId::Storm) {
+        strike.coil = false;
         return;
     }
     let t = state.clock.max(0.0);
@@ -555,8 +589,30 @@ pub(super) fn drive(
     }
 
     // The knight stands in the surf for the coda; until then he waits far down the beach.
-    let (ki, ka) = if t >= at::CODA.0 - 0.5 { KNIGHT } else { (2.0, 60.0) };
+    // In the coda he gets ready the way the game's knight does: the orks come out of the dark, he
+    // draws sword and shield, steps up the beach to meet them, coils the Heavy and lets it go as
+    // the first one reaches him. Till then he waits far down the beach, out of every shot.
+    let coda = t >= at::CODA.0 - 0.5;
+    let step = ((t - KNIGHT_STEP.0) / (KNIGHT_STEP.1 - KNIGHT_STEP.0)).clamp(0.0, 1.0);
+    let ki = KNIGHT.0 + KNIGHT_TO * step * step * (3.0 - 2.0 * step);
+    let (ki, ka) = if coda { (ki, KNIGHT.1) } else { (2.0, 60.0) };
     state.hero = Some((st.at(ki, ka, 0.0), st.yaw(1.0, 0.0)));
+    let walking = coda && step > 0.0 && step < 1.0;
+    state.hero_moving = walking;
+    if let Ok(mut hero) = hero_q.single_mut() {
+        if coda && t >= 40.7 {
+            hero.combat_until = now + 1.0;
+        }
+        if walking {
+            crate::player::anim::stage_gait(&mut hero, KNIGHT_TO / (KNIGHT_STEP.1 - KNIGHT_STEP.0), time.delta_secs());
+        } else {
+            hero.moving_amt *= (-time.delta_secs() * 8.0).exp();
+        }
+    }
+    strike.coil = coda && (44.1..45.15).contains(&t);
+    if coda && (45.15..45.25).contains(&t) {
+        strike.release = true;
+    }
 
     // Black between the pictures; each one cuts in on its strike.
     let on = shot(t);

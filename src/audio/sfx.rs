@@ -181,11 +181,11 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .iter()
             .map(|name| (1..=FOOT_TAKES).map(|n| asset.load(format!("audio/footsteps/{name}-{n}.ogg"))).collect())
             .collect(),
-        ork_grunts: ["audio/ork-grunt-1.ogg", "audio/ork-grunt-2.ogg", "audio/ork-grunt-3.ogg", "audio/monster-snarl.ogg", "audio/monster-growl.ogg"]
-            .iter()
-            .map(|f| asset.load(*f))
-            .collect(),
-        ork_roars: ["audio/ork-roar.ogg", "audio/wave-start-roar.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        // Ork voice: one ElevenLabs take (Azrak, "Menacing Monster", 2026-10-26) cut in three:
+        // ork-cry-1 a long roar, ork-cry-2 a barked "Hyah!", ork-cry-3 a second roar. (The old
+        // grunt/roar/growl files were thrown out: they sounded like nothing an ork would make.)
+        ork_grunts: ["audio/ork-cry-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        ork_roars: ["audio/ork-cry-1.ogg", "audio/ork-cry-3.ogg"].iter().map(|f| asset.load(*f)).collect(),
         boss_roars: ["audio/boss-roar-1.ogg", "audio/boss-roar-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         boss_windup: asset.load("audio/ability-cast.ogg"),
         war_horn: asset.load("audio/war-horn.ogg"),
@@ -375,7 +375,7 @@ pub(crate) fn play_cues(
                     continue;
                 }
                 let clip = pick(&bank.ork_grunts, &mut seed);
-                spatial_shot(&mut commands, clip, 0.55 * voice, jitter(&mut seed, 0.14), pos);
+                spatial_shot(&mut commands, clip, 0.4 * voice, jitter(&mut seed, 0.14), pos);
             }
             AudioCue::OrkRoar(pos) => {
                 if !throttle.allow(T_ROAR, now) {
