@@ -37,7 +37,7 @@ pub(super) fn day_dev() -> bool {
     static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *V.get_or_init(|| std::env::var_os("FOREST_STORM_DAY").is_some())
 }
-pub(super) const END: f32 = 47.5;
+pub(super) const END: f32 = 48.8;
 
 /// The shots, on the scene clock (s). Everything between them is black.
 mod at {
@@ -45,7 +45,7 @@ mod at {
     pub const BEACH: (f32, f32) = (12.0, 20.6);
     pub const HARROW: (f32, f32) = (22.0, 26.9);
     pub const HELM: (f32, f32) = (31.0, 37.7);
-    pub const CODA: (f32, f32) = (40.0, 46.0);
+    pub const CODA: (f32, f32) = (40.0, 47.25);
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -83,7 +83,7 @@ fn staged(t: f32) -> Shot {
 }
 
 /// One moment inside each shot, for the clip warm-up's rehearsal (`scenes::rehearsal`).
-pub(super) const REHEARSAL: &[f32] = &[5.0, 14.0, 19.5, 24.4, 34.5, 41.0, 44.5];
+pub(super) const REHEARSAL: &[f32] = &[5.0, 14.0, 19.5, 24.4, 34.5, 41.0, 45.0];
 
 /// The lightning: (time, strength). Each shot opens on its first strike (the picture cuts in on
 /// the flash); the mix (`storm_mix.py`) puts the thunder under the same list.
@@ -99,7 +99,7 @@ pub(super) const STRIKES: &[(f32, f32)] = &[
     (34.3, 0.8),
     (40.05, 0.6),
     (43.4, 0.35),
-    (45.7, 0.9),
+    (47.05, 0.9),
 ];
 
 /// Lightning brightness 0..1 at `t`: three ragged pulses and a slow afterglow — long enough for the
@@ -258,6 +258,8 @@ pub(super) fn setup(
             seed += 1;
         }
         let e = arm.spawn(commands, v, crate::orks::Faction::Red, p, p, seed);
+        // (the coda's blows land for real -- blood on the sand -- but the fight is choreographed,
+        // `drive` / `FIGHT`, and the HP bars are hidden for the film)
         commands.entity(e).insert((super::SceneActor, StormOrk(i)));
     }
 
@@ -459,7 +461,8 @@ fn place(role: Role, s: Shot, t: f32) -> Option<(Vec3, f32, &'static str, Option
 /// An ork's mark in shot `s` at `t`: (world XZ, facing, moving), or `None` (hidden).
 fn ork_place(i: u8, s: Shot, t: f32) -> Option<(Vec2, f32, bool)> {
     let st = stage();
-    let track = |keys: &[(f32, f32, f32)]| smooth_track(&st, keys, t);
+    let track = |keys: &[(f32, f32, f32)]| smooth_track(&st, keys, t, false);
+    let charge = |keys: &[(f32, f32, f32)]| smooth_track(&st, keys, t, true);
     match (i, s) {
         // Out of the trees toward the camera (at the waterline): they come down the beach at a walk,
         // the second flash shows them where they are, and they charge — the lead one onto the lens.
@@ -476,9 +479,10 @@ fn ork_place(i: u8, s: Shot, t: f32) -> Option<(Vec2, f32, bool)> {
             Some((p, d.x.atan2(d.y) + 0.5, false))
         }
         // The coda's charge, at the knight in the surf.
-        (0, Shot::Coda) => Some(track(&[(40.0, 25.0, -1.0), (46.0, KNIGHT.0 + KNIGHT_TO + 1.3, KNIGHT.1 - 0.2)])),
-        (1, Shot::Coda) => Some(track(&[(40.0, 27.0, 4.0), (46.0, 12.0, 2.2)])),
-        (2, Shot::Coda) => Some(track(&[(40.0, 28.0, -5.0), (46.0, 14.0, -3.0)])),
+        // the first onto his shield, the second in as it falls, the third still coming
+        (0, Shot::Coda) => Some(charge(&[(40.0, 25.0, -1.0), (FIGHT.ork0_in, KNIGHT.0 + KNIGHT_TO + 1.35, KNIGHT.1 - 0.15)])),
+        (1, Shot::Coda) => Some(charge(&[(40.0, 27.0, 4.0), (FIGHT.ork1_in, KNIGHT.0 + KNIGHT_TO + 1.45, KNIGHT.1 + 0.9)])),
+        (2, Shot::Coda) => Some(track(&[(40.0, 28.0, -5.0), (at::CODA.1, 12.5, -2.6)])),
         _ => None,
     }
 }
@@ -486,7 +490,7 @@ fn ork_place(i: u8, s: Shot, t: f32) -> Option<(Vec2, f32, bool)> {
 /// Along keyed marks `(time, inland, along)` (beach frame), held at the ends. The pace eases from
 /// one leg's to the next over a second and a half round each key, so a walk breaks into the charge
 /// (and the gait blends walk -> run) instead of switching on the spot.
-fn smooth_track(st: &Stage, keys: &[(f32, f32, f32)], t: f32) -> (Vec2, f32, bool) {
+fn smooth_track(st: &Stage, keys: &[(f32, f32, f32)], t: f32, stop: bool) -> (Vec2, f32, bool) {
     const R: f32 = 0.75;
     const DT: f32 = 1.0 / 120.0;
     let pts: Vec<Vec2> = keys.iter().map(|k| st.p(k.1, k.2)).collect();
@@ -502,9 +506,11 @@ fn smooth_track(st: &Stage, keys: &[(f32, f32, f32)], t: f32) -> (Vec2, f32, boo
         v
     };
     let (t0, t1) = (keys[0].0, keys[keys.len() - 1].0);
+    // `stop`: pulled up over the last stretch (into a fight), not halted dead from a run
+    let brake = |tau: f32| if stop { (((t1 - tau) / 0.9).clamp(0.0, 1.0)).powf(0.7) } else { 1.0 };
     let (mut s_at, mut s_all, mut tau) = (0.0, 0.0, t0);
     while tau < t1 {
-        let ds = speed(tau + DT * 0.5) * DT;
+        let ds = speed(tau + DT * 0.5) * brake(tau + DT * 0.5) * DT;
         if tau < t {
             s_at += ds.min((t - tau) / DT * ds);
         }
@@ -523,8 +529,33 @@ fn smooth_track(st: &Stage, keys: &[(f32, f32, f32)], t: f32) -> (Vec2, f32, boo
 
 /// The knight's mark in the coda (beach frame), facing up the beach; he steps up to meet them.
 const KNIGHT: (f32, f32) = (5.0, 0.0);
-const KNIGHT_STEP: (f32, f32) = (42.3, 43.7);
+const KNIGHT_STEP: (f32, f32) = (42.3, 43.6);
 const KNIGHT_TO: f32 = 1.3;
+
+/// The coda's fight, on the scene clock: the first ork pulls up on him and swings, he takes it on
+/// the shield and answers with the light chain (chop, slash, thrust), it goes down; the second is
+/// in by then and gets two before the flash and the cut.
+struct Fight {
+    ork0_in: f32,
+    ork0_swing: f32,
+    block: (f32, f32),
+    swings: [f32; 5],
+    ork0_dies: f32,
+    ork1_in: f32,
+    ork1_swing: f32,
+    /// The camera cuts from behind him to the side of the fight.
+    side: f32,
+}
+const FIGHT: Fight = Fight {
+    ork0_in: 44.3,
+    ork0_swing: 44.42,
+    block: (44.28, 44.9),
+    swings: [44.95, 45.38, 45.8, 46.42, 46.86],
+    ork0_dies: 45.98,
+    ork1_in: 46.35,
+    ork1_swing: 46.48,
+    side: 44.12,
+};
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn drive(
@@ -533,16 +564,20 @@ pub(super) fn drive(
     mut state: ResMut<SceneState>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     mut actors: Query<(Entity, &mut crate::villagers::Villager, &mut Transform, &mut crate::npc_skin::SkinClip, &Role, &mut Visibility), Without<StormOrk>>,
-    mut orks: Query<(&mut crate::orks::Ork, &mut Transform, &StormOrk, &mut Visibility), Without<Role>>,
+    mut orks: Query<(Entity, &mut crate::orks::Ork, &mut Transform, &StormOrk, &mut Visibility, Has<crate::dying::Dying>), Without<Role>>,
     mut only: Query<(&OnlyIn, &mut Visibility), (Without<Role>, Without<StormOrk>)>,
     mut fade: Query<&mut BackgroundColor, With<super::FarmFade>>,
     (mut hero_q, mut strike): (Query<&mut crate::player::Hero>, ResMut<crate::player::combat::StagedStrike>),
+    mut last_t: Local<f32>,
 ) {
     if state.active != Some(SceneId::Storm) {
         strike.coil = false;
+        strike.block = false;
         return;
     }
     let t = state.clock.max(0.0);
+    let prev = std::mem::replace(&mut *last_t, t);
+    let crossed = |at: f32| prev < at && t >= at && t - prev < 0.5;
     let now = time.elapsed_secs();
     let s = staged(t);
     let st = stage();
@@ -567,7 +602,20 @@ pub(super) fn drive(
             None => *vis = Visibility::Hidden,
         }
     }
-    for (mut o, mut tf, k, mut vis) in &mut orks {
+    for (e, mut o, mut tf, k, mut vis, dying) in &mut orks {
+        if dying {
+            continue; // the death fade owns it now
+        }
+        if s == Shot::Coda {
+            if (k.0 == 0 && crossed(FIGHT.ork0_swing)) || (k.0 == 1 && crossed(FIGHT.ork1_swing)) {
+                o.atk_anim = now;
+            }
+            if k.0 == 0 && crossed(FIGHT.ork0_dies) {
+                let away = Vec2::new(tf.translation.x, tf.translation.z) - st.p(KNIGHT.0 + KNIGHT_TO, KNIGHT.1);
+                crate::dying::begin_dying_struck(&mut commands, e, now, away, false);
+                continue;
+            }
+        }
         match ork_place(k.0, s, t) {
             Some((p, facing, moving)) => {
                 *vis = Visibility::Inherited;
@@ -609,9 +657,9 @@ pub(super) fn drive(
             hero.moving_amt *= (-time.delta_secs() * 8.0).exp();
         }
     }
-    strike.coil = coda && (44.1..45.15).contains(&t);
-    if coda && (45.15..45.25).contains(&t) {
-        strike.release = true;
+    strike.block = coda && (FIGHT.block.0..FIGHT.block.1).contains(&t);
+    if coda && FIGHT.swings.iter().any(|&sw| crossed(sw)) {
+        strike.swing = true;
     }
 
     // Black between the pictures; each one cuts in on its strike.
@@ -632,8 +680,14 @@ pub(super) fn drive(
     }
 }
 
-/// The one spoken line (`a1_maud_04`), as a caption.
-const LINES: &[(f32, f32, &str, &str)] = &[(41.2, 2.6, "Maud", "Ser Godric's up! Behind him, all of you!")];
+/// The spoken lines, as captions (timed with `storm_mix.py`).
+const LINES: &[(f32, f32, &str, &str)] = &[
+    (0.1, 2.1, "Sailor", "Reef! Reef off the bow!"),                       // p1_sailor_01
+    (4.5, 2.5, "Sailor", "Ring it! All hands, brace!"),                    // p1_sailor_02
+    (23.0, 2.2, "Wat", "Ser...? Ser Godric."),                             // p1_wat_04
+    (31.5, 4.4, "Maud", "He's gone, Wat. Put it on. They need a knight standing."), // p1_maud_01
+    (41.2, 2.6, "Maud", "Ser Godric's up! Behind him, all of you!"),       // a1_maud_04
+];
 
 /// Props that move: the bell swinging on its yoke, the sky and the bolts, the rain, the fires.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -828,13 +882,21 @@ pub(super) fn camera(t: f32) -> ((super::Cam, Option<f32>), Vec3) {
             (eye, look, 38.0, 0.45, Some(eye + (look - eye).normalize() * f), 0.0)
         }
         // Behind the knight in the surf, a slow push as the first one comes for him.
+        // The fight, from the side: low, the knight left, the orks coming in from the right.
+        Shot::Coda if t >= FIGHT.side => {
+            let k = ease(lin(FIGHT.side, at::CODA.1));
+            let kx = KNIGHT.0 + KNIGHT_TO;
+            let eye = st.at(kx + 0.6, KNIGHT.1 - 3.9, 1.2).lerp(st.at(kx + 0.75, KNIGHT.1 - 3.3, 1.15), k);
+            let look = st.at(kx + 0.9, KNIGHT.1 + 0.35, 1.05);
+            (eye, look, 40.0, 0.5, Some(st.at(kx + 0.7, KNIGHT.1, 1.2)), 0.0)
+        }
         Shot::Coda => {
-            let k = ease(lin(at::CODA.0, at::CODA.1));
+            let k = ease(lin(at::CODA.0, FIGHT.side));
             let eye = st.at(KNIGHT.0 - 4.4, KNIGHT.1 + 1.7, 1.05).lerp(st.at(KNIGHT.0 - 3.6, KNIGHT.1 + 1.45, 1.0), k);
             let look = st.at(KNIGHT.0 + 14.0, KNIGHT.1 - 1.2, 2.3);
             let knight = st.at(KNIGHT.0, KNIGHT.1, 1.5);
             let lead = ork_place(0, Shot::Coda, t).map_or(knight, |(p, ..)| Vec3::new(p.x, ground(p) + 1.4, p.y));
-            let f = knight.lerp(lead, ease(lin(43.6, 44.8)));
+            let f = knight.lerp(lead, ease(lin(43.4, 44.1)));
             (eye, look, 42.0, 0.5, Some(f), 0.0)
         }
         Shot::Black => unreachable!("staged() never returns Black"),

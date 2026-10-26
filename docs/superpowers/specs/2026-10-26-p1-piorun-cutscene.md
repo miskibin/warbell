@@ -31,7 +31,7 @@ jednej klatce na każdą sekundę sceny (wszystkie ujęcia w jednym bootcie, ~30
 | 26.9–31 | długa czerń | deszcz, oddech Wata |
 | 31–37.7 | **hełm** w piasku przy pochodni; za nim, nieostro, Maud z naramiennikiem przy klęczącym Wacie; drugi błysk przenosi ostrość na nich | płyta (`cs_plate_wet`), echo „Tighter.” (P.0), wysiłek (`p1_wat_03`) |
 | 37.7–40 | czerń | daleki róg orków |
-| 40–46 | **koda**: rycerz w zbroi Harrowa na plaży dobywa miecza i tarczy, wychodzi orkom naprzeciw, napina Ciężki cios (`player::combat::StagedStrike`) i puszcza go na pierwszego — błysk, cięcie | Maud: „Ser Godric's up! Behind him, all of you!” (`a1_maud_04`), okrzyki bandy, ryk, cios w tarczę |
+| 40–47.25 | **koda**: rycerz w zbroi Harrowa dobywa miecza i tarczy, wychodzi orkom naprzeciw; od kontaktu kamera z boku: przyjmuje cios pierwszego na tarczę, odpowiada lekką serią (cięcie, cięcie, pchnięcie — `player::combat::StagedStrike`), ork pada, drugi wpada, dwa ciosy — błysk, cięcie (`FIGHT`) | Maud: „Ser Godric's up! Behind him, all of you!” (`a1_maud_04`), okrzyki bandy, tarcza, świsty i trafienia, okrzyki bólu, śmierć |
 
 ## Jak jest zbudowana
 

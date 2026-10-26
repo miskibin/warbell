@@ -21,14 +21,14 @@ A = os.path.join(REPO, "assets", "audio") + "/"
 U = "C:/Users/skibi/.claude/uploads/1beee172-f53a-4969-af9e-54051690752a/"   # P.1 takes (2026-10-26)
 U0 = "C:/Users/skibi/.claude/uploads/8e2e82b7-28fb-4c50-9c5e-c561e0e56d41/"  # P.0 thunder takes
 SR = 48000
-END = 47.5
+END = 48.8
 N = int(END * SR)
 rng = np.random.default_rng(1)
 
 # ---- the scene's timeline (storm.rs) ---------------------------------------------------------
-DECK, BEACH, HARROW, HELM, CODA = (4.0, 7.7), (12.0, 20.6), (22.0, 26.9), (31.0, 37.7), (40.0, 46.0)
+DECK, BEACH, HARROW, HELM, CODA = (4.0, 7.7), (12.0, 20.6), (22.0, 26.9), (31.0, 37.7), (40.0, 47.25)
 STRIKES = [(4.05, 1.0), (5.95, 0.55), (12.05, 1.0), (16.6, 0.42), (20.22, 0.9), (22.05, 1.0), (24.3, 0.8),
-           (31.05, 0.85), (34.3, 0.8), (40.05, 0.6), (43.4, 0.35), (45.7, 0.9)]
+           (31.05, 0.85), (34.3, 0.8), (40.05, 0.6), (43.4, 0.35), (47.05, 0.9)]
 
 
 def load(p, ch=2):
@@ -162,6 +162,15 @@ if "--cut" in sys.argv:
                     ("cs_sailors_panic", "31391482-several_sailors_shou_2-1792998821354.mp3")):
         export(load(U + f), CS + name + ".ogg", False, -18)
     export(load(U + "b3201920-a_ship_s_brass_bell__3-1792998942570.mp3")[: int(2.85 * SR)], CS + "cs_ship_bell_alarm.ogg", False, -18)
+    # The P.1 dialogue session (ElevenLabs, one export, the voices per line): cut at its gaps.
+    dlg = load(U + "93739048-ElevenLabs_2026-10-26T09_11_58_Azrak_-_Menacing_Monster_pvc_sp88_s45_sb37_v4.mp3", 1)
+    k = [0.0, snap(dlg, 2.39, 0.2), snap(dlg, 4.88, 0.08), snap(dlg, 7.01, 0.12), snap(dlg, 11.48, 0.15)]
+    for (name, target), (a, b) in zip((("p1_sailor_02", -15), ("p1_wat_04", -18), ("p1_sailor_01", -15), ("p1_maud_01", -16)), zip(k, k[1:])):
+        export(fade(dlg[int(a * SR):int(b * SR)], 0.01, 0.06), VO + name + ".ogg", True, target)
+        # p1_sailor_02 Julian:    [shouting over the storm] "Ring it! All hands, brace!"
+        # p1_wat_04    Sully:     [whispering, shaken] "Ser...? Ser Godric."
+        # p1_sailor_01 Wilf:      [shouting, panicked] "Reef! Reef off the bow!"
+        # p1_maud_01   MoanElisa: [low, urgent] "He's gone, Wat. Put it on. They need a knight standing."
     export(load(U0 + "ef362061-Firefly_audio_Powerful_realistic_thunderclap_deep_explosive_cra_variation4.wav"), CS + "cs_thunder_crack.ogg", False, -16)
     export(load(U0 + "f728e8b1-Firefly_audio_Powerful_realistic_thunderclap_deep_explosive_cra_variation3.wav"), CS + "cs_thunder_roll.ogg", False, -16)
 
@@ -188,10 +197,9 @@ hull = opt(CS + "cs_hull_reef.ogg")
 wave_deck = opt(CS + "cs_wave_deck.ogg")
 draw = opt(CS + "cs_sword_draw.ogg")
 clash = opt(CS + "cs_shield_clash.ogg")
-# the orks' voice: the Azrak take the game's ork bank is cut from (roar, "Hyah!", roar), plus more
-# cries once recorded
-cries = [load(A + f"ork-cry-{k}.ogg", 1) for k in (1, 2, 3)]
-more = opt(VO + "p1_ork_03.ogg", 1)
+# the orks' voice: the game's ork bank (three ElevenLabs SFX takes cut in seven, `audio/sfx.rs`)
+VOICES = {k: load(A + f"ork-voice-{k}.ogg", 1) for k in ("a1", "a2", "a3", "d1", "d2", "w1", "w2")}
+ROARS, BARKS = ["a1", "a3", "d1", "w1"], ["a2", "w2"]
 
 
 def rate(x, r):
@@ -210,6 +218,24 @@ def pan(x, p):
 def far(x, k):
     """Distance `k` 0 (at the ear) .. 1 (up the beach): duller and quieter."""
     return filt(st(x), "low", 6000 - 5000 * k) * db(-14 * k)
+
+
+def ork(key, semis, k, p=0.0, target=-18, tag="o"):
+    """One ork's cry, made into a throat of its own and put in the scene: pitched (`semis`), doubled
+    an octave-and-a-bit down under itself (a chest under the shout, so no single voice actor reads
+    through), driven a little into saturation, the fizz above 6.5 kHz taken off, a short room, then
+    distance `k` (0 at the ear .. 1 up the beach) and pan `p`."""
+    x = st(VOICES[key])
+    hi = rate(x, 2 ** (semis / 12))
+    lo = rate(x, 2 ** ((semis - 7) / 12))
+    n = max(len(hi), len(lo) + int(0.012 * SR))
+    y = np.zeros((n, 2), np.float32)
+    y[: len(hi)] += hi
+    y[int(0.012 * SR): int(0.012 * SR) + len(lo)] += lo * db(-7)
+    y = np.tanh(2.2 * y / (np.abs(y).max() + 1e-9)) / np.tanh(2.2)
+    y = filt(y, "low", 6500) + 0.35 * filt(y, "low", 220)
+    y = reverb(y, 0.7, 0.18)
+    return pan(far(lufs(y, target, tag), k), p)
 
 
 def sweep_down(x, t0, t1, lo=240):
@@ -316,17 +342,14 @@ B = np.zeros((N, 2), np.float32)
 for ts, k in STRIKES:
     if SHORE < ts < BEACH[1]:
         thunder(B, ts, k)
-throats = cries + ([more] if more is not None else [])
-for i, (tg, r, p) in enumerate(((13.0, 0.78, -0.4), (14.1, 0.72, 0.3), (15.2, 0.8, -0.1), (15.9, 0.75, 0.5))):
-    c = throats[[0, 2, 0, 2][i]]
-    place(B, pan(far(lufs(rate(c, r), -20, f"sn{i}"), 0.8), p), tg)            # snarls up the beach
-place(B, pan(far(lufs(rate(cries[1], 0.95), -16, "lead"), 0.5), 0.0), 16.75)    # "Hyah!": the charge
+for i, (tg, key, se, p) in enumerate(((13.0, "d2", -2, -0.4), (14.1, "d1", -4, 0.3), (15.2, "d2", 1, -0.1), (15.9, "a2", -3, 0.5))):
+    place(B, ork(key, se, 0.85, p, -20, f"sn{i}"), tg)                          # snarls up the beach
+place(B, ork("w1", 0, 0.5, 0.0, -16, "lead"), 16.7)                             # the lead's cry: the charge
 for i in range(9):                                                              # the band, closing
-    tg = 17.2 + i * 0.36 + rng.uniform(-0.1, 0.1)
-    k = 0.75 - 0.6 * i / 8
-    c = throats[rng.integers(0, len(throats))]
-    place(B, pan(far(lufs(rate(c, rng.uniform(0.8, 1.12)), -18, f"band{i}"), k), rng.uniform(-0.7, 0.7)), tg)
-place(B, lufs(rate(cries[0], 0.9), -11, "roar_lens")[: int(0.75 * SR)], 19.85)  # on the lens; the cut takes its tail
+    tg = 17.15 + i * 0.37 + rng.uniform(-0.12, 0.12)
+    key = [ROARS, BARKS][i % 2][rng.integers(0, 2)]
+    place(B, ork(key, rng.uniform(-4, 3), 0.8 - 0.6 * i / 8, rng.uniform(-0.7, 0.7), -18, f"band{i}"), tg)
+place(B, ork("a1", -1, 0.0, 0.0, -11, "lens")[: int(0.75 * SR)], 19.85)       # on the lens; the cut takes its tail
 feet = [load(A + f"footsteps/sand-{k}.ogg") for k in range(1, 5)]
 for o in range(6):                                                              # their running feet
     cad = rng.uniform(0.31, 0.37)
@@ -351,30 +374,41 @@ place(S, wat1[int(1.2 * SR):] * db(-9), 27.6)                        # his breat
 if maud1 is not None:
     place(S, lufs(maud1, -18, "maud1"), 31.5)
     place(S, lufs(plate, -21, "plate"), 31.2)
-    place(S, wat3 * db(-3), 35.4)
+    place(S, wat3 * db(-3), 36.1)
 else:
     place(S, lufs(plate, -21, "plate"), 32.2)
     place(S, lufs(filt(reverb(tighter, 2.2, 0.55), "band", [250, 3200]), -29, "tighter"), 33.15)
     place(S, wat3 * db(-3), 34.75)
 place(S, lufs(plate[int(0.3 * SR):], -27, "plate2"), 35.9)
-place(S, pan(far(lufs(rate(cries[0], 0.7), -20, "horncry"), 0.85), 0.4), 38.4)   # far off: they come again
+place(S, ork("d1", -6, 0.9, 0.4, -20, "horncry"), 38.4)                          # far off: they come again
 
 # ---- 6. coda: Maud behind him, he draws and steps up, the band's cries, the blow -- cut ----------
 if draw is not None:
     place(S, lufs(draw, -18, "draw"), 40.75)
 place(S, lufs(maud, -17, "maud"), 41.2)
-for i in range(7):
-    tg = 42.0 + i * 0.5 + rng.uniform(-0.12, 0.12)
-    k = 0.8 - 0.55 * i / 6
-    c = throats[rng.integers(0, len(throats))]
-    place(S, pan(far(lufs(rate(c, rng.uniform(0.8, 1.1)), -18, f"cband{i}"), k), rng.uniform(-0.6, 0.6)), tg)
-place(S, lufs(rate(cries[2], 0.92), -12, "croar"), 44.9)
-CLASH = CODA[1] - 0.3
+for i in range(7):                                                             # the band, coming on
+    tg = 42.0 + i * 0.48 + rng.uniform(-0.12, 0.12)
+    key = [ROARS, BARKS][i % 2][rng.integers(0, 2)]
+    place(S, ork(key, rng.uniform(-4, 2), 0.85 - 0.5 * i / 6, rng.uniform(-0.6, 0.6), -18, f"cband{i}"), tg)
+# the fight (storm.rs `FIGHT`): the first one's cry as it swings, the club on his shield; the light
+# chain -- each blade a whoosh and a bite, the ork barking at each -- the death; the second one in
+FIGHT = dict(ork0_swing=44.42, swings=[44.95, 45.38, 45.8, 46.42, 46.86], ork0_dies=45.98, ork1_swing=46.48)
+place(S, ork("a2", -1, 0.15, 0.2, -14, "f_o0"), FIGHT["ork0_swing"] - 0.15)
+place(S, lufs(load(A + "block-1.ogg"), -13, "f_blk"), FIGHT["ork0_swing"] + 0.26)
+place(S, lufs(filt(load(A + "body-thud-heavy-2.ogg"), "low", 1500), -18, "f_blkt"), FIGHT["ork0_swing"] + 0.26)
+whoosh = [load(A + "player-swing-1.ogg"), load(A + "player-swing-2.ogg")]
+bites = [load(A + f"flesh-cut-{k}.ogg") for k in (1, 2, 3)]
+for i, sw in enumerate(FIGHT["swings"]):
+    place(S, lufs(whoosh[i % 2], -19, f"f_w{i}"), sw + 0.02)
+    place(S, lufs(filt(bites[i % 3], "low", 4200), -17, f"f_b{i}"), sw + 0.19)
+    if i in (0, 1, 3):
+        place(S, ork(BARKS[i % 2], rng.uniform(1, 4), 0.1, 0.25, -17, f"f_pain{i}"), sw + 0.22)
+place(S, ork("d1", -3, 0.1, 0.2, -15, "f_die")[: int(1.6 * SR)], FIGHT["ork0_dies"] - 0.05)
+place(S, lufs(load(A + "body-thud-heavy-1.ogg"), -16, "f_fall"), FIGHT["ork0_dies"] + 0.75)
+place(S, ork("w1", 1, 0.2, 0.35, -14, "f_o1"), FIGHT["ork1_swing"] - 0.3)
+CLASH = CODA[1] - 0.2
 if clash is not None:
-    place(S, lufs(clash, -10, "clash"), CLASH)
-else:
-    place(S, lufs(load(A + "block-1.ogg"), -12, "clash"), CLASH)
-    place(S, lufs(load(A + "body-thud-heavy-1.ogg"), -14, "clashthud"), CLASH)
+    place(S, lufs(clash, -11, "clash"), CLASH)
 
 shore = (rain * sched([(0, -90), (UNDER[1] - 0.2, -90), (SHORE + 0.4, 0), (BEACH[1], 0), (BEACH[1] + 0.3, -3), (HARROW[0], -2), (24.9, -2), (26.0, -6), (HELM[0], -6), (END - 2.5, -4), (END, -30)])
          + sea * sched([(0, -90), (UNDER[1] - 0.3, -90), (SHORE + 0.5, 2), (BEACH[1], 2), (BEACH[1] + 0.3, -10), (HARROW[0], -4), (24.9, -4), (26.0, -14), (HELM[0], -10), (CODA[0] - 0.2, -10), (CODA[0] + 0.6, -3), (CODA[1], -3), (CODA[1] + 0.4, -20), (END, -40)])

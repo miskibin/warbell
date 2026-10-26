@@ -8,14 +8,16 @@ Głosy: Eleven v3, te same co w banku (`assets/audio/vo/campaign/VOICES.md`), ka
 
 | plik | głos | tekst | kiedy |
 |---|---|---|---|
-| `p1_sailor_01.ogg` | Wilf | `[shouting, panicked] Reef! Reef off the bow!` | czerń, tuż przed uderzeniem (przez pokład) |
-| `p1_sailor_02.ogg` | Darby Skelm | `[shouting over the storm] Ring it! All hands, brace!` | ujęcie pokładu |
-| `p1_wat_04.ogg` | Sully | `[whispering, shaken] Ser...? Ser Godric.` | Harrow na piasku |
-| `p1_maud_01.ogg` | MoanElisa | `[low, urgent] He's gone, Wat. Put it on. They need a knight standing.` | hełm (zastępuje echo „Tighter.”) |
-| `p1_ork_03.ogg` | Azrak | `[roaring] Graaagh! [pause] [war cry] Hrah! Hrah! [pause] [snarling] Kill! [pause] [roaring] Waaagh!` | dodatkowe gardła bandy |
+| ✅ `p1_sailor_01.ogg` | Wilf | `[shouting, panicked] Reef! Reef off the bow!` | czerń, tuż przed uderzeniem (przez pokład) |
+| ✅ `p1_sailor_02.ogg` | Julian (nagrane głosem Harrowa — rozkaz na pokładzie brzmi jak on) | `[shouting over the storm] Ring it! All hands, brace!` | ujęcie pokładu |
+| ✅ `p1_wat_04.ogg` | Sully | `[whispering, shaken] Ser...? Ser Godric.` | Harrow na piasku |
+| ✅ `p1_maud_01.ogg` | MoanElisa | `[low, urgent] He's gone, Wat. Put it on. They need a knight standing.` | hełm (zastępuje echo „Tighter.”) |
+| ❌ `p1_ork_03.ogg` | Azrak (odrzucony: kiczowate; orkowie to dziś SFX `ork-voice-*`) | `[roaring] Graaagh! [pause] [war cry] Hrah! Hrah! [pause] [snarling] Kill! [pause] [roaring] Waaagh!` | dodatkowe gardła bandy |
 
-Już są: `p1_wat_01..03` (Sully: oddech, kaszel, wysiłek), `a1_maud_04` (koda), głos orków to take Azrak
-pocięty na `assets/audio/ork-cry-1..3.ogg` (też bank orków w grze, `audio/sfx.rs`).
+Już są: `p1_wat_01..03` (Sully: oddech, kaszel, wysiłek), `a1_maud_04` (koda). Głos orków to trzy take'i SFX
+(„Aggressive fantasy orc”, „Deep menacing orc growl”, „Fantasy orc warrior”) pocięte na
+`assets/audio/ork-voice-{a1,a2,a3,d1,d2,w1,w2}.ogg` — bank orków w grze (`audio/sfx.rs`) i w filmie, gdzie
+każdy okrzyk dostaje własne gardło (`storm_mix.py::ork`: wysokość, dubel niżej, saturacja, pokój, dystans).
 
 ## SFX (`assets/audio/sfx/cutscene/`, stereo, ~-18 LUFS)
 

@@ -448,7 +448,7 @@ struct HasHpBar;
 /// A follower bar that tracks `ork` (any hittable: ork, animal, or town NPC) and despawns when it
 /// dies.
 #[derive(Component)]
-struct HpBar {
+pub(crate) struct HpBar {
     ork: Entity,
     /// World-Y the bar floats at above the tracked entity — creatures sit higher than townsfolk.
     y: f32,

@@ -181,11 +181,15 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .iter()
             .map(|name| (1..=FOOT_TAKES).map(|n| asset.load(format!("audio/footsteps/{name}-{n}.ogg"))).collect())
             .collect(),
-        // Ork voice: one ElevenLabs take (Azrak, "Menacing Monster", 2026-10-26) cut in three:
-        // ork-cry-1 a long roar, ork-cry-2 a barked "Hyah!", ork-cry-3 a second roar. (The old
-        // grunt/roar/growl files were thrown out: they sounded like nothing an ork would make.)
-        ork_grunts: ["audio/ork-cry-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
-        ork_roars: ["audio/ork-cry-1.ogg", "audio/ork-cry-3.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        // Ork voice: three ElevenLabs SFX takes (2026-10-26: "Aggressive fantasy orc", "Deep menacing
+        // orc growl", "Fantasy orc warrior") cut into seven: a1-a3 the aggressive roars, d1 the deep
+        // growl and d2 its low rumbling tail, w1-w2 the warrior's cries. The short ones are the aggro
+        // grunts, the long ones the roars; each plays with a pitch jitter so a warband isn't one throat.
+        ork_grunts: ["audio/ork-voice-a2.ogg", "audio/ork-voice-w2.ogg", "audio/ork-voice-d2.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        ork_roars: ["audio/ork-voice-a1.ogg", "audio/ork-voice-a3.ogg", "audio/ork-voice-d1.ogg", "audio/ork-voice-w1.ogg"]
+            .iter()
+            .map(|f| asset.load(*f))
+            .collect(),
         boss_roars: ["audio/boss-roar-1.ogg", "audio/boss-roar-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         boss_windup: asset.load("audio/ability-cast.ogg"),
         war_horn: asset.load("audio/war-horn.ogg"),

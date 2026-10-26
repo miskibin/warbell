@@ -1498,6 +1498,7 @@ fn farm_clear_stage(
     >,
     flies: Query<(), Or<(With<crate::decor::Firefly>, With<crate::particles::Particle>)>>,
     mut fly_tf: Query<&mut Transform, Or<(With<crate::decor::Firefly>, With<crate::particles::Particle>)>>,
+    mut bars: Query<&mut Visibility, (With<crate::combat_fx::HpBar>, Without<crate::firelight::Ember>, Without<crate::decor::Firefly>, Without<crate::particles::Particle>, Without<crate::ambient_life::Butterfly>, Without<crate::town::BuildPlot>)>,
     mut embers: Query<&mut Visibility, (With<crate::firelight::Ember>, Without<crate::decor::Firefly>, Without<crate::particles::Particle>, Without<crate::ambient_life::Butterfly>, Without<crate::town::BuildPlot>)>,
     mut hidden: Local<Vec<(Entity, Visibility)>>,
     mut logged: Local<bool>,
@@ -1518,6 +1519,10 @@ fn farm_clear_stage(
         }
         // nor sparks off the torches: the rain puts them out (each lives a second or two)
         for mut v in &mut embers {
+            *v = Visibility::Hidden;
+        }
+        // no HP bars over a film's fight
+        for mut v in &mut bars {
             *v = Visibility::Hidden;
         }
         if !std::mem::replace(&mut *logged, true) {

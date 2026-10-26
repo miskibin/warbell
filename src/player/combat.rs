@@ -648,20 +648,37 @@ pub fn swing_test(
     cues.write(AudioCue::HeroGruntSwing);
 }
 
-/// Cinematic staging of the Heavy: a scene (`scenes::storm`'s coda) holds the hero in the charge
-/// stance (`coil`) and lets the blow go (`release`, consumed) without any input, like
-/// [`swing_test`] does for captures.
+/// Cinematic staging of the hero's fighting (a cutscene's fight, `scenes::storm`'s coda), with no
+/// input, as [`swing_test`] does for captures: `swing` (consumed) = one light blow, buffered into the
+/// combo when a swing is still running, so a run of them chains chop -> slash -> thrust; `block` =
+/// the shield held up; `coil` / `release` (consumed) = the Heavy's charge stance and its blow.
 #[derive(Resource, Default)]
 pub struct StagedStrike {
+    pub swing: bool,
+    pub block: bool,
     pub coil: bool,
     pub release: bool,
     from: Option<f32>,
 }
 
 /// Applies [`StagedStrike`] after `player_attack` (which disarms an unheld charge every frame).
-pub fn staged_strike(time: Res<Time>, mut staged: ResMut<StagedStrike>, mut cues: MessageWriter<AudioCue>, mut hero_q: Query<&mut Hero>) {
-    let Ok(mut hero) = hero_q.single_mut() else { return };
+pub fn staged_strike(time: Res<Time>, mut staged: ResMut<StagedStrike>, mut cues: MessageWriter<AudioCue>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
+    let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
     let now = time.elapsed_secs();
+    if staged.block {
+        if !hh.blocking {
+            hh.guard_raised_at = now;
+        }
+        hh.blocking = true;
+    }
+    if std::mem::take(&mut staged.swing) {
+        if hero.attacking {
+            hero.queued = true;
+        } else {
+            begin_swing(&mut hero, false, None, now, false);
+            cues.write(AudioCue::HeroGruntSwing);
+        }
+    }
     if std::mem::take(&mut staged.release) {
         staged.from = None;
         hero.charge_t = -1.0;
