@@ -21,14 +21,16 @@ A = os.path.join(REPO, "assets", "audio") + "/"
 U = "C:/Users/skibi/.claude/uploads/1beee172-f53a-4969-af9e-54051690752a/"   # P.1 takes (2026-10-26)
 U0 = "C:/Users/skibi/.claude/uploads/8e2e82b7-28fb-4c50-9c5e-c561e0e56d41/"  # P.0 thunder takes
 SR = 48000
-END = 59.6
+END = 66.0
 N = int(END * SR)
 rng = np.random.default_rng(1)
 
 # ---- the scene's timeline (storm.rs) ---------------------------------------------------------
-DECK, BEACH, STAND, HARROW, HELM, CODA = (4.0, 7.7), (12.0, 20.6), (21.6, 28.0), (28.6, 33.5), (37.6, 44.3), (46.6, 58.4)
+DECK, BEACH, STAND, HARROW, HELM, CODA = (4.0, 7.7), (12.0, 20.6), (21.6, 29.0), (29.6, 34.5), (38.6, 48.3), (50.6, 64.5)
+DON = 44.6   # Wat puts the helmet on
 STRIKES = [(4.05, 1.0), (5.95, 0.55), (12.05, 1.0), (16.6, 0.42), (20.22, 0.9), (21.62, 1.0), (22.62, 0.65), (23.35, 0.5),
-           (24.95, 0.95), (25.75, 0.75), (28.65, 1.0), (30.9, 0.8), (37.65, 0.85), (40.9, 0.8), (46.65, 0.6), (50.0, 0.35), (56.7, 0.9)]
+           (24.95, 0.95), (25.75, 0.75), (29.65, 1.0), (31.9, 0.8), (38.65, 0.85), (41.9, 0.8), (46.7, 0.75), (50.65, 0.6), (54.0, 0.35),
+           (58.45, 0.6), (61.0, 0.9)]
 
 
 def load(p, ch=2):
@@ -398,8 +400,10 @@ place(H, lufs(load(A + "body-thud-heavy-2.ogg"), -12, "s_hit"), 24.98)          
 place(H, lufs(filt(bites[2], "low", 3000), -17, "s_hitb"), 24.98)
 place(H, ork("a1", -3, 0.2, 0.3, -13, "s_o6b"), 25.35)                          # the big one finishes it
 place(H, lufs(load(A + "body-thud-heavy-1.ogg"), -12, "s_kill"), 25.6)
-place(H, lufs(load(A + "body-thud-heavy-2.ogg"), -15, "s_down"), 26.55)          # he goes down
-place(H, pan(lufs(grunt2, -18, "s_g2"), 0.35), 26.9)                            # and they grunt over him
+place(H, lufs(filt(load(A + "block-1.ogg"), "high", 900), -14, "s_helm"), 25.62)   # the helmet knocked off: steel
+place(H, lufs(filt(load(A + "block-2.ogg"), "low", 2500), -20, "s_helm2"), 26.25)  # ...landing in the sand
+place(H, lufs(load(A + "body-thud-heavy-2.ogg"), -14, "s_down"), 27.25)          # he goes down
+place(H, pan(lufs(grunt2, -18, "s_g2"), 0.35), 27.7)                            # and they grunt over him
 H = (H + fire * sched([(0, -90), (STAND[0], -10), (STAND[1], -6), (END, -6)])) * sched([(0, -90), (STAND[0] - 0.2, -90), (STAND[0], 0), (STAND[1] - 0.05, 0), (STAND[1] + 0.3, -90), (END, -90)])
 
 # ---- 5. Harrow dead -- 6. the helmet -- the black between ----------------------------------------
@@ -409,38 +413,42 @@ for ts, k in STRIKES:
         thunder(S, ts, k)
 place(S, wat2, SHORE + 0.3)
 if wat4 is not None:
-    place(S, wat4 * db(-2), 29.6)
-place(S, wat1[int(1.2 * SR):] * db(-9), 34.2)                        # his breathing in the long black
+    place(S, wat4 * db(-2), 30.6)
+place(S, wat1[int(1.2 * SR):] * db(-9), 35.2)                        # his breathing in the long black
 if maud1 is not None:
-    place(S, lufs(maud1, -18, "maud1"), 38.1)
-    place(S, lufs(plate, -21, "plate"), 37.8)
-    place(S, wat3 * db(-3), 42.7)
-else:
+    place(S, lufs(maud1, -18, "maud1"), 39.1)
     place(S, lufs(plate, -21, "plate"), 38.8)
-    place(S, lufs(filt(reverb(tighter, 2.2, 0.55), "band", [250, 3200]), -29, "tighter"), 39.75)
-    place(S, wat3 * db(-3), 41.35)
-place(S, lufs(plate[int(0.3 * SR):], -27, "plate2"), 42.5)
-place(S, timed(pan(far(band_far, 0.9), 0.4), 44.0, [(0, -90), (44.0, -90), (44.8, -6), (46.2, -2), (END, -2)]), 44.0)   # far off: they come again
+    place(S, wat3 * db(-3), 43.7)
+else:
+    place(S, lufs(plate, -21, "plate"), 39.8)
+    place(S, lufs(filt(reverb(tighter, 2.2, 0.55), "band", [250, 3200]), -29, "tighter"), 40.75)
+    place(S, wat3 * db(-3), 42.35)
+place(S, lufs(plate[int(0.3 * SR):], -27, "plate2"), 43.5)
+# the helmet: lifted out of the sand, up, and down onto his head -- a breath in the iron
+place(S, lufs(filt(plate, "high", 600), -24, "don1"), DON + 0.35)
+place(S, lufs(filt(load(A + "block-2.ogg"), "low", 1800), -19, "don2"), DON + 2.05)
+place(S, lufs(filt(wat1[int(1.6 * SR):], "low", 1400), -22, "don3"), DON + 2.3)
+place(S, timed(pan(far(band_far, 0.9), 0.4), 48.0, [(0, -90), (48.0, -90), (48.8, -6), (50.2, -2), (END, -2)]), 48.0)   # far off: they come again
 
 # ---- 7. coda: Maud behind him, he draws and steps up; the fight; the camera draws away ----------
 if draw is not None:
-    place(S, lufs(draw, -18, "draw"), 47.35)
-place(S, lufs(maud, -17, "maud"), 47.8)
+    place(S, lufs(draw, -18, "draw"), 51.35)
+place(S, lufs(maud, -17, "maud"), 51.8)
 for i in range(7):                                                             # the band, coming on
-    tg = 48.6 + i * 0.48 + rng.uniform(-0.12, 0.12)
+    tg = 52.6 + i * 0.48 + rng.uniform(-0.12, 0.12)
     key = [ROARS, BARKS][i % 2][rng.integers(0, 2)]
     place(S, ork(key, rng.uniform(-4, 2), 0.85 - 0.5 * i / 6, rng.uniform(-0.6, 0.6), -18, f"cband{i}"), tg)
-place(S, timed(run_bed, 48.0, [(0, -90), (48.2, -90), (49.2, -9), (51.4, -6), (52.0, -14), (END, -14)]), 48.0)
+place(S, timed(run_bed, 52.0, [(0, -90), (52.2, -90), (53.2, -9), (55.4, -6), (56.0, -14), (END, -14)]), 52.0)
 # the fight (storm.rs `FIGHT`, `ORK_SWINGS`, `ORK_DEATHS`): each ork's cry as it swings; the club on his
 # shield; each blade a whoosh and a bite and the ork's grunt; each death a groan and the body landing
-ORK_SWINGS = [(0, 51.62), (1, 53.68), (2, 54.8), (5, 56.55)]
-ORK_DEATHS = [(0, 53.18), (1, 54.2), (2, 56.2), (5, 57.25)]
-SWINGS = [52.15, 52.58, 53.0, 53.62, 54.06, 55.25, 55.65, 56.05, 56.7, 57.1]
-BLOCKS = [51.5, 54.75]
-pull = sched([(0, 0), (54.3, 0), (58.4, -9), (END, -12)])        # the camera drawing away takes the fight with it
+ORK_SWINGS = [(9, 55.62), (10, 57.35), (11, 58.6), (12, 59.9), (13, 61.25), (11, 59.45), (13, 62.0)]
+ORK_DEATHS = [(9, 57.18), (10, 58.45), (11, 59.7), (12, 61.0), (13, 62.35)]
+SWINGS = [56.15, 56.58, 57.0, 57.85, 58.28, 58.7, 59.12, 59.55, 60.4, 60.8, 61.4, 61.8, 62.2]
+BLOCKS = [55.5, 57.3, 59.8]
+pull = sched([(0, 0), (58.6, 0), (63.6, -9), (END, -12)])        # the camera drawing away takes the fight with it
 F = np.zeros((N, 2), np.float32)
 for i, (o, ts) in enumerate(ORK_SWINGS):
-    place(F, ork(["a2", "w2", "a2", "w2"][i], rng.uniform(-2, 2), 0.15, 0.25, -14, f"f_o{i}"), ts - 0.15)
+    place(F, ork(BARKS[i % 2], rng.uniform(-3, 3), 0.15, rng.uniform(-0.5, 0.5), -14, f"f_o{i}"), ts - 0.15)
 for i, b in enumerate(BLOCKS):
     place(F, lufs(load(A + f"block-{1 + i % 2}.ogg"), -13, f"f_blk{i}"), b + 0.3)
     place(F, lufs(filt(load(A + "body-thud-heavy-2.ogg"), "low", 1500), -18, f"f_blkt{i}"), b + 0.3)
@@ -450,18 +458,18 @@ for i, sw in enumerate(SWINGS):
     if i % 2 == 0:
         place(F, pan([grunt1, grunt2][(i // 2) % 2], 0.25) * db(-3), sw + 0.22)
 for i, (o, ts) in enumerate(ORK_DEATHS):
-    place(F, ork(["d1", "a3", "d1", "a3"][i], -3 - i, 0.1, 0.2, -15, f"f_die{i}")[: int(1.5 * SR)], ts - 0.05)
+    place(F, ork(["d1", "a3"][i % 2], -2 - i, 0.1, rng.uniform(-0.5, 0.5), -15, f"f_die{i}")[: int(1.5 * SR)], ts - 0.05)
     place(F, lufs(load(A + "body-thud-heavy-1.ogg"), -16, f"f_fall{i}"), ts + 0.75)
 if clash is not None:
     place(F, lufs(clash, -11, "clash"), SWINGS[0] + 0.19)
 S += F * pull
 
-shore = (rain * sched([(0, -90), (UNDER[1] - 0.2, -90), (SHORE + 0.4, 0), (BEACH[1], 0), (BEACH[1] + 0.3, -3), (HARROW[0], -2), (31.5, -2), (32.6, -6), (HELM[0], -6), (END - 2.5, -4), (END, -30)])
-         + sea * sched([(0, -90), (UNDER[1] - 0.3, -90), (SHORE + 0.5, 2), (BEACH[1], 2), (BEACH[1] + 0.3, -4), (STAND[1], -4), (HARROW[0], -4), (31.5, -4), (32.6, -14), (HELM[0], -10), (CODA[0] - 0.2, -10), (CODA[0] + 0.6, -3), (CODA[1], -3), (CODA[1] + 0.4, -20), (END, -40)])
+shore = (rain * sched([(0, -90), (UNDER[1] - 0.2, -90), (SHORE + 0.4, 0), (BEACH[1], 0), (BEACH[1] + 0.3, -3), (HARROW[0], -2), (32.5, -2), (33.6, -6), (HELM[0], -6), (END - 2.5, -4), (END, -30)])
+         + sea * sched([(0, -90), (UNDER[1] - 0.3, -90), (SHORE + 0.5, 2), (BEACH[1], 2), (BEACH[1] + 0.3, -4), (STAND[1], -4), (HARROW[0], -4), (32.5, -4), (33.6, -14), (HELM[0], -10), (CODA[0] - 0.2, -10), (CODA[0] + 0.6, -3), (CODA[1], -3), (CODA[1] + 0.4, -20), (END, -40)])
          + water * sched([(0, -90), (UNDER[1], -90), (SHORE + 0.5, 0), (CODA[1], 0), (CODA[1] + 0.4, -20), (END, -40)])
          + wind * sched([(0, -90), (UNDER[1], -90), (SHORE + 0.5, -8), (BEACH[1], -6), (BEACH[1] + 0.3, -10), (STAND[1], -10), (HARROW[0], -14), (CODA[0], -8), (CODA[1], -4), (CODA[1] + 0.5, -30), (END, -40)])
          + fire * sched([(0, -90), (HARROW[0] - 0.3, -90), (HARROW[0], -6), (HARROW[1], -6), (HARROW[1] + 0.3, -90),
-                         (HELM[0] - 0.3, -90), (HELM[0], -9), (HELM[1], -9), (HELM[1] + 0.3, -90), (CODA[0] - 0.3, -90), (CODA[0], -8), (54.3, -4), (CODA[1], -14), (CODA[1] + 0.2, -90), (END, -90)])
+                         (HELM[0] - 0.3, -90), (HELM[0], -9), (HELM[1], -9), (HELM[1] + 0.3, -90), (CODA[0] - 0.3, -90), (CODA[0], -8), (58.6, -4), (CODA[1], -14), (CODA[1] + 0.2, -90), (END, -90)])
          + S + B + H)
 # the picture goes to black at the end of the pull: the storm going on without us
 shore *= sched([(0, 0), (CODA[1] - 0.6, 0), (CODA[1] + 0.4, -8), (END, -16)])

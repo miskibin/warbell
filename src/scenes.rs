@@ -202,6 +202,8 @@ impl Plugin for ScenesPlugin {
             .add_systems(Update, (drive_farm_audio, farm_hammers, fort_mouths.after(drive_fort_scene)))
             .add_systems(Update, (cabin::mouths, cabin::seat_fit, cabin::letter_follow, cabin::crew_follow, cabin::log_heads).after(cabin::drive))
             .add_systems(Update, storm::harrow_sword.after(storm::drive))
+            // after the bones are posed and propagated (last frame's globals, like `letter_follow`)
+            .add_systems(PostUpdate, storm::helmets.before(bevy::transform::TransformSystems::Propagate))
             // Pin the staged hero LAST (after locomotion/gravity have run) and just before transforms
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(
@@ -2206,7 +2208,7 @@ fn fort_head_look(
     globals: Query<&GlobalTransform>,
     mut tfs: Query<&mut Transform>,
 ) {
-    if !matches!(state.active, Some(SceneId::FortArrival | SceneId::ShipCabin)) {
+    if !matches!(state.active, Some(SceneId::FortArrival | SceneId::ShipCabin | SceneId::Storm)) {
         return;
     }
     for (mut hl, sk, root) in &mut roots {

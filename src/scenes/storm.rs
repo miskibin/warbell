@@ -21,7 +21,7 @@
 //! beyond it are the game's own. The lightning is the moon: each flash swings the night's key light
 //! round to that shot's bolt and throws it up for a ragged second (`farm_camera` applies [`light`]).
 
-use std::f32::consts::{FRAC_PI_2, TAU};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
 
@@ -37,17 +37,21 @@ pub(super) fn day_dev() -> bool {
     static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *V.get_or_init(|| std::env::var_os("FOREST_STORM_DAY").is_some())
 }
-pub(super) const END: f32 = 59.6;
+pub(super) const END: f32 = 66.0;
 
 /// The shots, on the scene clock (s). Everything between them is black.
 mod at {
     pub const DECK: (f32, f32) = (4.0, 7.7);
     pub const BEACH: (f32, f32) = (12.0, 20.6);
     /// Harrow's last stand, between Wat and them.
-    pub const STAND: (f32, f32) = (21.6, 28.0);
-    pub const HARROW: (f32, f32) = (28.6, 33.5);
-    pub const HELM: (f32, f32) = (37.6, 44.3);
-    pub const CODA: (f32, f32) = (46.6, 58.4);
+    pub const STAND: (f32, f32) = (21.6, 29.0);
+    /// Inside the stand: the camera cuts in close for his death.
+    pub const FALL: f32 = 24.4;
+    pub const HARROW: (f32, f32) = (29.6, 34.5);
+    pub const HELM: (f32, f32) = (38.6, 48.3);
+    /// Inside the helmet shot: over Wat's shoulder as he puts it on.
+    pub const DON: f32 = 44.6;
+    pub const CODA: (f32, f32) = (50.6, 64.5);
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -88,7 +92,7 @@ fn staged(t: f32) -> Shot {
 }
 
 /// One moment inside each shot, for the clip warm-up's rehearsal (`scenes::rehearsal`).
-pub(super) const REHEARSAL: &[f32] = &[5.0, 14.0, 19.5, 23.0, 25.5, 31.0, 41.0, 47.5, 51.5, 55.0];
+pub(super) const REHEARSAL: &[f32] = &[5.0, 14.0, 19.5, 23.0, 26.0, 32.0, 41.0, 46.0, 51.5, 56.0, 59.0, 62.0];
 
 /// The lightning: (time, strength). Each shot opens on its first strike (the picture cuts in on
 /// the flash); the mix (`storm_mix.py`) puts the thunder under the same list.
@@ -103,13 +107,15 @@ pub(super) const STRIKES: &[(f32, f32)] = &[
     (23.35, 0.5),
     (24.95, 0.95),
     (25.75, 0.75),
-    (28.65, 1.0),
-    (30.9, 0.8),
-    (37.65, 0.85),
-    (40.9, 0.8),
-    (46.65, 0.6),
-    (50.0, 0.35),
-    (56.7, 0.9),
+    (29.65, 1.0),
+    (31.9, 0.8),
+    (38.65, 0.85),
+    (41.9, 0.8),
+    (46.7, 0.75),
+    (50.65, 0.6),
+    (54.0, 0.35),
+    (58.45, 0.6),
+    (61.0, 0.9),
 ];
 
 /// Lightning brightness 0..1 at `t`: three ragged pulses and a slow afterglow — long enough for the
@@ -187,9 +193,21 @@ pub(super) enum Role {
     Wat,
 }
 
+/// The helmet in the sand of the helmet shot (gives way to [`WornHelm`] when Wat lifts it).
+#[derive(Component)]
+pub(super) struct SandHelm;
+
+/// A helmet worn (or held) by Harrow / Wat, placed each frame on his head or hand bone.
+#[derive(Component)]
+pub(super) struct WornHelm(Role);
+
 /// Harrow's sword (put in his right hand by `harrow_sword` once his skin is ready).
 #[derive(Component)]
 pub(super) struct HarrowSword;
+
+/// The orks: 0-5 the beach's torch-bearers, 6-8 Harrow's (6 dies on his blade, 7 kills him and
+/// stands over him, 8 catches him from the flank), 9-13 the ones that close round the knight.
+const ORKS: u8 = 14;
 
 /// One of the orks: its index in the cast.
 #[derive(Component)]
@@ -255,20 +273,23 @@ pub(super) fn setup(
         commands.entity(e).insert((ns::SkinRequest(if i == 1 { ns::VILLAGER_M } else { ns::GUARD }), ns::SkinClip("Idle_Rail_Loop"), Role::Sailor(i)));
     }
     let harrow = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, Vec2::ZERO, 0.0, None, 21);
-    commands.entity(harrow).insert((ns::SkinRequest(look("harrow", ns::GUARD)), ns::HairShade(2), ns::SkinClip("Death01"), Role::Harrow));
+    commands.entity(harrow).insert((ns::SkinRequest(look("harrow", ns::GUARD)), ns::HairShade(2), ns::SkinClip("Death01"), Role::Harrow, super::HeadLook::default()));
     let maud = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, Vec2::ZERO, 0.0, None, 47);
     commands.entity(maud).insert((ns::SkinRequest(ns::MAUD), ns::SkinClip("Idle_Loop"), Role::Maud, super::HeadLook::default()));
     let wat = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, Vec2::ZERO, 0.0, None, 33);
-    commands.entity(wat).insert((ns::SkinRequest(look("wat", ns::ARCHER)), ns::HairShade(1), ns::SkinClip("Fixing_Kneeling"), Role::Wat));
+    commands.entity(wat).insert((ns::SkinRequest(look("wat", ns::ARCHER)), ns::HairShade(1), ns::SkinClip("Fixing_Kneeling"), Role::Wat, super::HeadLook::default()));
 
     // The orks: six out of the trees (the beach), one standing over Harrow, and the first three
     // again for the coda's charge. The grunts and berserkers are the game's own torch-bearers
     // (`orks::Armory::spawn` picks them by seed; the seed is searched for one that carries).
-    for i in 0..7u8 {
-        let v = [OrkVariant::Grunt, OrkVariant::Berserker, OrkVariant::Grunt, OrkVariant::Scout, OrkVariant::Grunt, OrkVariant::Berserker, OrkVariant::Berserker][i as usize];
+    for i in 0..ORKS {
+        let v = [OrkVariant::Grunt, OrkVariant::Berserker, OrkVariant::Grunt, OrkVariant::Scout, OrkVariant::Grunt, OrkVariant::Berserker][i as usize % 6];
         let p = st.p(60.0, i as f32 * 3.0);
+        // the beach's six carry torches (a line of fire coming down out of the trees); the ones that
+        // fight up close don't (a held torch swung about behind their backs and beside them)
+        let torch = i < 6;
         let mut seed = 0x5701 + i as u32 * 977;
-        while v != OrkVariant::Scout && (seed.wrapping_mul(2_654_435_761) >> 7) % 100 >= 35 {
+        while v != OrkVariant::Scout && ((seed.wrapping_mul(2_654_435_761) >> 7) % 100 < 35) != torch {
             seed += 1;
         }
         let e = arm.spawn(commands, v, crate::orks::Faction::Red, p, p, seed);
@@ -364,11 +385,41 @@ pub(super) fn setup(
         let p = st.at(HELM_I, HELM_A, -0.02);
         commands.entity(helm).insert((
             Name::new("storm_helm"),
+            SandHelm,
             Transform::from_translation(p).with_rotation(Quat::from_rotation_y(st.yaw(-0.4, 1.0)) * Quat::from_rotation_z(1.25)),
             OnlyIn(Shot::Helm),
             SceneProp,
         ));
     }
+
+    // The helmet on Harrow's head (knocked off by the killing blow) and the one Wat lifts and puts
+    // on: the knight's own helm, moved each frame by `helmets`.
+    for who in [Role::Harrow, Role::Wat] {
+        if let Some(h) = crate::player::spawn_part_prop(commands, meshes, images, creature_mats, "Head") {
+            commands.entity(h).insert((Name::new("storm_worn_helm"), WornHelm(who), Visibility::Hidden, SceneProp));
+        }
+    }
+    // Torches in the sand: what lights the stand and the coda's fight between the strikes (held
+    // ones swung about behind the orks' backs) -- the beach party's, dropped and stuck where they ran.
+    for (shot, at, lying) in [
+        (Shot::Stand, before_harrow(1.6, 1.8), true),
+        (Shot::Stand, before_harrow(-1.2, -1.6), false),
+        (Shot::Coda, ring_at(0.5, 3.4), false),
+        (Shot::Coda, ring_at(-1.3, 3.0), true),
+        (Shot::Coda, ring_at(2.4, 3.6), false),
+        (Shot::Helm, (4.9, 5.3), false),
+    ] {
+        ground_torch(commands, meshes, assets, st.at(at.0, at.1, 0.0), lying, shot);
+    }
+    // Maud's lantern, set down on the sand in front of him (out of the frame): the warm light on his
+    // face and the helmet as it goes on.
+    commands.spawn((
+        PointLight { color: Color::srgb(1.0, 0.62, 0.3), intensity: 90_000.0, range: 6.0, radius: 0.1, shadow_maps_enabled: true, ..default() },
+        Transform::from_translation(st.at(6.6, 3.7, 0.55)),
+        FlameLight { base: 90_000.0, phase: 0.9 },
+        OnlyIn(Shot::Helm),
+        SceneProp,
+    ));
 
     // The sky: a dome of low cloud just inside the night sky's (it hides the stars and the moon),
     // mottled dark grey-blue, lit up by every strike; the glow a strike throws on the cloud where
@@ -401,7 +452,7 @@ pub(super) fn setup(
         cull_mode: None,
         ..default()
     });
-    for strike in [0usize, 2, 5, 13, 14] {
+    for strike in [0usize, 2, 5, 13, 15] {
         commands.spawn((
             Mesh3d(meshes.add(bolt_mesh(strike as u32 * 13 + 7))),
             MeshMaterial3d(bolt_mat.clone()),
@@ -478,7 +529,10 @@ fn place(role: Role, s: Shot, t: f32) -> Option<(Vec3, f32, &'static str, Option
             Some((p, d.x.atan2(d.y), "Idle_Loop", None))
         }
         // Behind the helmet: Wat on one knee, Maud at his shoulder with the plate.
+        // the helmet up in his hands, slowly, and down onto his head (`helmets`)
+        (Role::Wat, Shot::Helm) if t >= at::DON => Some((st.at(5.6, 4.3, 0.0), st.yaw(0.0, -1.0), "Consume", Some((((t - at::DON - 0.3) * 0.42).clamp(0.0, 0.62))))),
         (Role::Wat, Shot::Helm) => Some((st.at(5.6, 4.3, 0.0), st.yaw(0.0, -1.0), "Fixing_Kneeling", Some(1.4 + 0.25 * (t * 0.9).sin().abs()))),
+        (Role::Maud, Shot::Helm) if t >= at::DON => Some((st.at(6.7, 5.0, 0.0), st.yaw(-0.6, -0.8), "Idle_Loop", None)),
         (Role::Maud, Shot::Helm) => Some((st.at(5.75, 3.4, 0.0), st.yaw(-0.15, 1.0), "Interact", Some(0.55 + 0.05 * (t * 1.3).sin()))),
         _ => None,
     }
@@ -500,7 +554,7 @@ fn before_harrow(d: f32, side: f32) -> (f32, f32) {
 }
 
 /// Harrow's stand, beat by beat (scene seconds): (clip, scrubbed playhead).
-const STAND_BEATS: StandBeats = StandBeats { cut: 22.15, block: 23.35, hit: 24.9, fall: 25.55 };
+const STAND_BEATS: StandBeats = StandBeats { cut: 22.15, block: 23.35, hit: 24.9, fall: 25.6 };
 struct StandBeats {
     cut: f32,
     block: f32,
@@ -516,13 +570,20 @@ fn harrow_stand(t: f32) -> (&'static str, Option<f32>) {
         t if t < b.block + 0.95 => ("Sword_Block", Some((t - b.block).min(0.95))),
         t if t < b.hit => ("Sword_Idle", None),
         t if t < b.fall => ("Hit_Knockback", Some((t - b.hit).min(0.66))),
-        t => ("Death01", Some((t - b.fall).min(1.88))),
+        // slowed: he goes down in the close-up, not in a blink
+        t => ("Death01", Some(((t - b.fall) * 0.7).min(1.88))),
     }
 }
 
 /// When an ork swings its club (`Ork::atk_anim`), and when one goes down (`Dying`), by cast index.
-const ORK_SWINGS: &[(u8, f32)] = &[(6, 23.2), (4, 24.75), (6, 25.35), (0, 51.62), (1, 53.68), (2, 54.8), (5, 56.55)];
-const ORK_DEATHS: &[(u8, f32)] = &[(3, 22.75), (0, 53.18), (1, 54.2), (2, 56.2), (5, 57.25)];
+const ORK_SWINGS: &[(u8, f32)] = &[
+    (7, 23.2), (8, 24.75), (7, 25.4),
+    (9, 55.62), (10, 57.35), (11, 58.6), (12, 59.9), (13, 61.25), (11, 59.45), (13, 62.0),
+];
+const ORK_DEATHS: &[(u8, f32)] = &[(6, 22.75), (9, 57.18), (10, 58.45), (11, 59.7), (12, 61.0), (13, 62.35)];
+
+/// The killing blow knocks Harrow's helmet off.
+const HELM_OFF: f32 = 25.62;
 
 /// An ork's mark in shot `s` at `t`: (world XZ, facing, moving), or `None` (hidden).
 fn ork_place(i: u8, s: Shot, t: f32) -> Option<(Vec2, f32, bool)> {
@@ -539,21 +600,22 @@ fn ork_place(i: u8, s: Shot, t: f32) -> Option<(Vec2, f32, bool)> {
         (4, Shot::Beach) => Some(track(&[(12.0, 23.0, -7.5), (16.6, 19.0, -7.0), (20.6, 12.0, -5.4)])),
         (5, Shot::Beach) => Some(track(&[(12.0, 25.5, 1.5), (16.4, 21.5, 1.4), (20.6, 14.0, 1.2)])),
         // The stand: the first onto his blade, the big one onto his shield, the third from his flank.
-        (3, Shot::Stand) => Some(charge(&[(21.0, HARROW_AT.0 + 2.0, HARROW_AT.1 - 9.0), (22.25, before_harrow(1.25, 0.1).0, before_harrow(1.25, 0.1).1)])),
-        (6, Shot::Stand) => Some(charge(&[(21.0, HARROW_AT.0 + 3.5, HARROW_AT.1 - 11.0), (23.05, before_harrow(1.35, -0.45).0, before_harrow(1.35, -0.45).1)])),
-        (4, Shot::Stand) => Some(charge(&[(21.0, HARROW_AT.0 - 1.5, HARROW_AT.1 - 12.0), (24.55, before_harrow(0.9, 0.95).0, before_harrow(0.9, 0.95).1)])),
+        (6, Shot::Stand) => Some(charge(&[(21.0, HARROW_AT.0 + 2.0, HARROW_AT.1 - 9.0), (22.25, before_harrow(0.95, 0.1).0, before_harrow(0.95, 0.1).1)])),
+        (7, Shot::Stand) => Some(charge(&[(21.0, HARROW_AT.0 + 3.5, HARROW_AT.1 - 11.0), (23.05, before_harrow(1.0, -0.4).0, before_harrow(1.0, -0.4).1)])),
+        (8, Shot::Stand) => Some(charge(&[(21.0, HARROW_AT.0 - 1.5, HARROW_AT.1 - 12.0), (24.55, before_harrow(0.8, 0.7).0, before_harrow(0.8, 0.7).1)])),
         // Standing over Harrow, his back to the trees.
-        (6, Shot::Harrow) => {
+        (7, Shot::Harrow) => {
             let p = st.p(6.5, 0.2);
             let d = st.p(1.2, 0.8) - p;
             Some((p, d.x.atan2(d.y) + 0.5, false))
         }
         // The coda's charge, at the knight in the surf.
         // one after another onto him: the first onto his shield, the rest as each falls
-        (0, Shot::Coda) => Some(charge(&[(46.6, 25.0, -1.0), (51.5, KNIGHT.0 + KNIGHT_TO + 1.35, KNIGHT.1 - 0.15)])),
-        (1, Shot::Coda) => Some(charge(&[(46.6, 27.0, 4.0), (53.55, KNIGHT.0 + KNIGHT_TO + 1.45, KNIGHT.1 + 0.9)])),
-        (2, Shot::Coda) => Some(charge(&[(46.6, 30.0, -5.0), (54.65, KNIGHT.0 + KNIGHT_TO + 1.4, KNIGHT.1 - 0.9)])),
-        (5, Shot::Coda) => Some(charge(&[(46.6, 33.0, 2.5), (56.4, KNIGHT.0 + KNIGHT_TO + 1.45, KNIGHT.1 + 0.7)])),
+        (9..=13, Shot::Coda) => {
+            let (ang, arrive) = RING[(i - 9) as usize];
+            let (far, near) = (ring_at(ang, 24.0 + (i as f32 * 2.3) % 6.0), ring_at(ang, 1.0));
+            Some(charge(&[(at::CODA.0, far.0, far.1), (arrive, near.0, near.1)]))
+        }
         _ => None,
     }
 }
@@ -600,24 +662,39 @@ fn smooth_track(st: &Stage, keys: &[(f32, f32, f32)], t: f32, stop: bool) -> (Ve
 
 /// The knight's mark in the coda (beach frame), facing up the beach; he steps up to meet them.
 const KNIGHT: (f32, f32) = (5.0, 0.0);
-const KNIGHT_STEP: (f32, f32) = (48.9, 50.2);
+const KNIGHT_STEP: (f32, f32) = (52.9, 54.2);
 const KNIGHT_TO: f32 = 1.3;
+
+/// Where each of the coda's orks comes at him from (radians off straight up the beach, + to his
+/// right) and when it reaches him.
+const RING: [(f32, f32); 5] = [(0.0, 55.5), (0.9, 56.25), (-0.9, 57.0), (1.75, 58.0), (-1.8, 58.7)];
+
+/// The point `d` out from the knight's fighting mark along `ang` (beach frame).
+fn ring_at(ang: f32, d: f32) -> (f32, f32) {
+    (KNIGHT.0 + KNIGHT_TO + ang.cos() * d, KNIGHT.1 + ang.sin() * d)
+}
+
+/// Which of them he is fighting at `t` (he turns to meet each).
+fn coda_target(t: f32) -> Option<usize> {
+    let ends = [57.2, 58.5, 59.75, 61.05, 62.4];
+    (t >= 55.2).then(|| ends.iter().position(|&e| t < e).unwrap_or(4))
+}
 
 /// The coda's fight, on the scene clock: the first ork pulls up on him and swings, he takes it on
 /// the shield and answers with the light chain (chop, slash, thrust), it goes down; then the next and
 /// the next -- and from the second kill the camera rises and draws away over it.
 struct Fight {
     side: f32,
-    blocks: [(f32, f32); 2],
-    swings: [f32; 10],
+    blocks: [(f32, f32); 3],
+    swings: [f32; 13],
     /// The camera's draw-back, up and away over the fight.
     pull: (f32, f32),
 }
 const FIGHT: Fight = Fight {
-    side: 50.72,
-    blocks: [(51.5, 52.1), (54.75, 55.2)],
-    swings: [52.15, 52.58, 53.0, 53.62, 54.06, 55.25, 55.65, 56.05, 56.7, 57.1],
-    pull: (54.3, 58.4),
+    side: 54.9,
+    blocks: [(55.5, 56.1), (57.3, 57.8), (59.8, 60.3)],
+    swings: [56.15, 56.58, 57.0, 57.85, 58.28, 58.7, 59.12, 59.55, 60.4, 60.8, 61.4, 61.8, 62.2],
+    pull: (58.6, 63.6),
 };
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -632,6 +709,7 @@ pub(super) fn drive(
     mut fade: Query<&mut BackgroundColor, With<super::FarmFade>>,
     (mut hero_q, mut strike): (Query<&mut crate::player::Hero>, ResMut<crate::player::combat::StagedStrike>),
     mut last_t: Local<f32>,
+    mut knight_yaw: Local<f32>,
 ) {
     if state.active != Some(SceneId::Storm) {
         strike.coil = false;
@@ -675,6 +753,7 @@ pub(super) fn drive(
         if ORK_DEATHS.iter().any(|&(i, at)| i == k.0 && crossed(at)) {
             // falls away from whoever cut it down
             let by = if s == Shot::Stand { st.p(HARROW_AT.0, HARROW_AT.1) } else { st.p(KNIGHT.0 + KNIGHT_TO, KNIGHT.1) };
+            // (a corpse keeps no fight in it: the knight turns on to the next)
             crate::dying::begin_dying_struck(&mut commands, e, now, Vec2::new(tf.translation.x, tf.translation.z) - by, false);
             continue;
         }
@@ -706,11 +785,23 @@ pub(super) fn drive(
     let step = ((t - KNIGHT_STEP.0) / (KNIGHT_STEP.1 - KNIGHT_STEP.0)).clamp(0.0, 1.0);
     let ki = KNIGHT.0 + KNIGHT_TO * step * step * (3.0 - 2.0 * step);
     let (ki, ka) = if coda { (ki, KNIGHT.1) } else { (2.0, 60.0) };
-    state.hero = Some((st.at(ki, ka, 0.0), st.yaw(1.0, 0.0)));
+    let want_yaw = match coda_target(t) {
+        Some(k) => {
+            let (ang, _) = RING[k];
+            st.yaw(ang.cos(), ang.sin())
+        }
+        None => st.yaw(1.0, 0.0),
+    };
+    let dy = (want_yaw - *knight_yaw + PI).rem_euclid(TAU) - PI;
+    *knight_yaw += dy * (1.0 - (-time.delta_secs() * 7.0).exp());
+    if !coda {
+        *knight_yaw = st.yaw(1.0, 0.0);
+    }
+    state.hero = Some((st.at(ki, ka, 0.0), *knight_yaw));
     let walking = coda && step > 0.0 && step < 1.0;
     state.hero_moving = walking;
     if let Ok(mut hero) = hero_q.single_mut() {
-        if coda && t >= 47.3 {
+        if coda && t >= 51.3 {
             hero.combat_until = now + 1.0;
         }
         if walking {
@@ -761,6 +852,110 @@ pub(super) fn harrow_sword(
     commands.entity(hand).add_child(e);
 }
 
+/// A torch stuck upright in the sand (or dropped on it): stave, flame, a warm light that casts.
+fn ground_torch(commands: &mut Commands, meshes: &mut Assets<Mesh>, assets: &SceneAssets, at: Vec3, lying: bool, shot: Shot) {
+    let rot = if lying { Quat::from_rotation_y(at.x * 3.1) * Quat::from_rotation_z(-1.35) } else { Quat::from_rotation_z(0.12) };
+    let base = at + if lying { Vec3::Y * 0.05 } else { -Vec3::Y * 0.3 };
+    let e = commands.spawn((Transform::from_translation(base).with_rotation(rot), Visibility::default(), OnlyIn(shot), SceneProp)).id();
+    prop_child(commands, meshes, assets, e, torch_mesh());
+    let tip = base + rot * Vec3::new(0.0, 0.74, 0.0) + Vec3::Y * 0.04;
+    commands.spawn((
+        Mesh3d(assets.flame_mesh.clone()),
+        MeshMaterial3d(assets.flame_mat.clone()),
+        Transform::from_translation(tip).with_scale(Vec3::splat(0.42)),
+        bevy::light::NotShadowCaster,
+        Flame { phase: at.z * 1.7, size: 0.42 },
+        OnlyIn(shot),
+        SceneProp,
+    ));
+    commands.spawn((
+        PointLight { color: Color::srgb(1.0, 0.52, 0.2), intensity: 40_000.0, range: 10.0, radius: 0.1, shadow_maps_enabled: true, ..default() },
+        Transform::from_translation(tip + Vec3::Y * 0.25),
+        FlameLight { base: 40_000.0, phase: at.z * 1.7 },
+        OnlyIn(shot),
+        SceneProp,
+    ));
+}
+
+/// Look-dev: `FOREST_HHELM="x,y,z,rx,ry,rz,scale"` (head-bone frame) overrides how a worn helmet sits.
+fn helm_on_head() -> Transform {
+    let v: Vec<f32> = std::env::var("FOREST_HHELM").ok().map(|s| s.split(',').filter_map(|n| n.trim().parse().ok()).collect()).unwrap_or_default();
+    if v.len() == 7 {
+        return Transform::from_xyz(v[0], v[1], v[2]).with_rotation(Quat::from_euler(EulerRot::XYZ, v[3], v[4], v[5])).with_scale(Vec3::splat(v[6]));
+    }
+    Transform::from_xyz(0.0, -0.04, 0.0).with_scale(Vec3::splat(1.0))
+}
+
+/// Where the helmets are: on Harrow's head till the blow (then flung off onto the sand, where it lies
+/// through the shot of him dead); in Wat's hands as he lifts it, then settling onto his head.
+#[allow(clippy::type_complexity)]
+pub(super) fn helmets(
+    state: Res<SceneState>,
+    actors: Query<(&Role, &crate::npc_skin::Skinned, &super::HeadLook)>,
+    globals: Query<&GlobalTransform>,
+    mut worn: Query<(&WornHelm, &mut Transform, &mut Visibility), Without<SandHelm>>,
+    mut sand: Query<&mut Visibility, (With<SandHelm>, Without<WornHelm>)>,
+) {
+    if state.active != Some(SceneId::Storm) {
+        return;
+    }
+    let t = state.clock.max(0.0);
+    let st = stage();
+    let s = staged(t);
+    let mount = helm_on_head();
+    let bone = |who: Role, hand: bool| {
+        actors.iter().find(|(r, ..)| **r == who).and_then(|(_, sk, hl)| if hand { sk.hand_r } else { hl.bone }).and_then(|b| globals.get(b).ok()).map(|g| g.affine())
+    };
+    let on = |g: bevy::math::Affine3A, m: Transform| Transform::from_matrix((g * m.compute_affine()).into());
+    let lifted = s == Shot::Helm && t >= at::DON + 0.3;
+    for mut v in &mut sand {
+        if lifted {
+            *v = Visibility::Hidden;
+        }
+    }
+    for (w, mut tf, mut vis) in &mut worn {
+        let place = match (w.0, s) {
+            (Role::Harrow, Shot::Beach | Shot::Stand) if t < HELM_OFF => bone(Role::Harrow, false).map(|g| on(g, mount)),
+            (Role::Harrow, Shot::Stand | Shot::Harrow) => {
+                // flung off: up and away from the blow, tumbling, onto the sand by his head
+                let from = st.at(HARROW_AT.0, HARROW_AT.1, 1.6);
+                let rest = before_harrow(-1.3, -0.9);
+                let to = st.at(rest.0, rest.1, 0.0);
+                let u = ((t - HELM_OFF) / 0.65).clamp(0.0, 1.0);
+                let p = from.lerp(to, u) + Vec3::Y * 0.9 * (u * (1.0 - u) * 4.0);
+                let spin = Quat::from_rotation_x(u * 4.2) * Quat::from_rotation_z(u * 1.3);
+                let rest_rot = Quat::from_rotation_y(st.yaw(0.6, -1.0)) * Quat::from_rotation_z(1.3);
+                Some(Transform::from_translation(p).with_rotation(if u < 1.0 { spin } else { rest_rot }))
+            }
+            (Role::Wat, Shot::Helm) if lifted => {
+                // in his right hand until it is up by his face, then onto his head
+                let k = ((t - (at::DON + 1.6)) / 0.5).clamp(0.0, 1.0);
+                let held = bone(Role::Wat, true).map(|g| on(g, Transform::from_xyz(0.0, 0.08, 0.12)));
+                let head = bone(Role::Wat, false).map(|g| on(g, mount));
+                match (held, head) {
+                    (Some(a), Some(b)) => Some(Transform {
+                        translation: a.translation.lerp(b.translation, k),
+                        rotation: a.rotation.slerp(b.rotation, k),
+                        scale: a.scale.lerp(b.scale, k),
+                    }),
+                    (a, b) => b.or(a),
+                }
+            }
+            _ => None,
+        };
+        if std::env::var_os("FOREST_HELMLOG").is_some() {
+            info!("HELM t={t:.2} {:?} {:?} place={:?}", w.0, s, place.map(|p| p.translation));
+        }
+        match place {
+            Some(p) => {
+                *tf = p;
+                *vis = Visibility::Inherited;
+            }
+            None => *vis = Visibility::Hidden,
+        }
+    }
+}
+
 /// An arming sword, its origin in the fist, the blade up +Y.
 fn sword_mesh() -> Mesh {
     crate::meshkit::merged_flat(vec![
@@ -775,9 +970,9 @@ fn sword_mesh() -> Mesh {
 const LINES: &[(f32, f32, &str, &str)] = &[
     (0.1, 2.1, "Sailor", "Reef! Reef off the bow!"),                       // p1_sailor_01
     (4.5, 2.5, "Sailor", "Ring it! All hands, brace!"),                    // p1_sailor_02
-    (29.6, 2.2, "Wat", "Ser...? Ser Godric."),                             // p1_wat_04
-    (38.1, 4.4, "Maud", "He's gone, Wat. Put it on. They need a knight standing."), // p1_maud_01
-    (47.8, 2.6, "Maud", "Ser Godric's up! Behind him, all of you!"),       // a1_maud_04
+    (30.6, 2.2, "Wat", "Ser...? Ser Godric."),                             // p1_wat_04
+    (39.1, 4.4, "Maud", "He's gone, Wat. Put it on. They need a knight standing."), // p1_maud_01
+    (51.8, 2.6, "Maud", "Ser Godric's up! Behind him, all of you!"),       // a1_maud_04
 ];
 
 /// Props that move: the bell swinging on its yoke, the sky and the bolts, the rain, the fires.
@@ -898,7 +1093,7 @@ pub(super) fn light(t: f32) -> Light {
         // from behind Wat, low: on the faces
         Shot::Harrow => (90.0, inl * 0.75 + along * 0.45 - Vec3::Y * 0.55),
         // from up the beach behind them: a rim on the helmet, the pair against the sky
-        Shot::Helm => (70.0, -inl * 0.7 + along * 0.4 - Vec3::Y * 0.5),
+        Shot::Helm => (160.0, -inl * 0.7 + along * 0.4 - Vec3::Y * 0.5),
         // from behind the camera's shoulder: the light the knight's plate catches
         Shot::Coda => (2600.0, inl * 0.7 - along * 0.35 - Vec3::Y * 0.55),
         Shot::Black => (0.0, -Vec3::Y),
@@ -959,6 +1154,16 @@ pub(super) fn camera(t: f32) -> ((super::Cam, Option<f32>), Vec3) {
             let lead = ork_place(0, Shot::Beach, t).map(|(p, ..)| Vec3::new(p.x, ground(p) + 1.4, p.y));
             (eye, look, 46.0, 0.6, lead, -0.04)
         }
+        // His death, close: down at his level as they club him and he goes down, the helmet off.
+        Shot::Stand if t >= at::FALL => {
+            let k = ease(lin(at::FALL, at::STAND.1));
+            let c = st.at(HARROW_AT.0, HARROW_AT.1, 0.0);
+            // from beyond them, up a little: the two orks' backs low in the frame, him between
+            let (a0, a1) = (before_harrow(3.3, 1.2), before_harrow(2.9, 1.0));
+            let eye = st.at(a0.0, a0.1, 2.0).lerp(st.at(a1.0, a1.1, 1.55), k);
+            let look = c + Vec3::Y * (1.15 - 0.75 * ease(lin(25.6, 27.6)));
+            (eye, look, 36.0, 0.55, Some(look), 0.0)
+        }
         // Harrow's stand, from up the beach: low, the three of them black against the sea and the
         // lightning, a slow drift in.
         Shot::Stand => {
@@ -975,13 +1180,21 @@ pub(super) fn camera(t: f32) -> ((super::Cam, Option<f32>), Vec3) {
             let look = st.at(5.6, 2.0, 0.85);
             (eye, look, 44.0, 0.5, Some(st.at(5.2, 1.6, 0.4)), 0.02)
         }
+        // Wat from the front, in the lantern's light, Maud behind him: the helmet lifted, and down
+        // over his face -- a slow push in as it settles.
+        Shot::Helm if t >= at::DON => {
+            let k = ease(lin(at::DON, at::HELM.1));
+            let head = st.at(5.6, 4.3, 1.5);
+            let eye = st.at(6.55, 2.2, 1.55).lerp(st.at(6.25, 2.75, 1.55), k);
+            (eye, head - Vec3::Y * 0.12, 36.0, 0.6, Some(head), 0.0)
+        }
         // The helmet at the lens, then focus pulled past it onto the two of them.
         Shot::Helm => {
             let eye = st.at(HELM_I - 0.8, HELM_A - 0.35, 0.3);
             let look = st.at(5.6, 3.3, 0.55);
             let helm = st.at(HELM_I, HELM_A, 0.12);
             let pair = st.at(5.65, 3.8, 0.8);
-            let k = ease(lin(40.8, 42.0));
+            let k = ease(lin(41.8, 43.0));
             let f = eye.distance(helm) + (eye.distance(pair) - eye.distance(helm)) * k;
             (eye, look, 38.0, 0.45, Some(eye + (look - eye).normalize() * f), 0.0)
         }
@@ -992,7 +1205,9 @@ pub(super) fn camera(t: f32) -> ((super::Cam, Option<f32>), Vec3) {
             let k = ease(lin(FIGHT.side, FIGHT.pull.0));
             let kp = ease(lin(FIGHT.pull.0, FIGHT.pull.1));
             let kx = KNIGHT.0 + KNIGHT_TO;
-            let near = st.at(kx + 0.6, KNIGHT.1 - 3.9, 1.2).lerp(st.at(kx + 0.75, KNIGHT.1 - 3.3, 1.15), k);
+            // behind his left shoulder, up a little, clear of the ring they close
+            let (n0, n1) = (ring_at(-2.5, 4.6), ring_at(-2.35, 4.0));
+            let near = st.at(n0.0, n0.1, 1.9).lerp(st.at(n1.0, n1.1, 1.7), k);
             let eye = near.lerp(st.at(kx - 6.5, KNIGHT.1 - 9.0, 7.5), kp);
             let look = st.at(kx + 0.9, KNIGHT.1 + 0.35, 1.05).lerp(st.at(kx + 0.8, KNIGHT.1, 0.6), kp);
             let fov = 40.0 + 8.0 * kp;
@@ -1004,7 +1219,7 @@ pub(super) fn camera(t: f32) -> ((super::Cam, Option<f32>), Vec3) {
             let look = st.at(KNIGHT.0 + 14.0, KNIGHT.1 - 1.2, 2.3);
             let knight = st.at(KNIGHT.0, KNIGHT.1, 1.5);
             let lead = ork_place(0, Shot::Coda, t).map_or(knight, |(p, ..)| Vec3::new(p.x, ground(p) + 1.4, p.y));
-            let f = knight.lerp(lead, ease(lin(50.0, 50.7)));
+            let f = knight.lerp(lead, ease(lin(54.2, 54.9)));
             (eye, look, 42.0, 0.5, Some(f), 0.0)
         }
         Shot::Black => unreachable!("staged() never returns Black"),
