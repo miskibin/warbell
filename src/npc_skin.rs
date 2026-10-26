@@ -632,6 +632,12 @@ fn held_for(look: u8, right: bool) -> Held {
 /// +Y, edge toward +X, 1 unit ~ 1 m; the shield a disc facing +Z yawed 1.15 rad) sits in the fist.
 /// `work`: a tool / blade / bow runs through the fist pinky -> index (chopping, hoeing, fighting,
 /// drawing); otherwise each is carried its own way (see [`Held`]; `head` = grip -> head distance).
+/// The fighting grip in a hand bone (a prop's +Y along the haft / blade, its origin in the fist) --
+/// for a scene that puts its own weapon in someone's hand.
+pub fn fist_grip(right: bool) -> Transform {
+    grip(Held::Blade, right, true, 0.0)
+}
+
 fn grip(held: Held, right: bool, work: bool, head: f32) -> Transform {
     let (across, palm, centre) = fist(right);
     if held == Held::Shield {
@@ -821,7 +827,8 @@ fn drive_skins(
         // A scripted / life-act clip (`SkinClip`) puts its own prop in the hands (a hammer, a plank
         // bundle…): the trade tool carried by the outfit would hang there wrong (a hoe held upside
         // down through a kneel), so it is hidden for the act and comes back with the work clips.
-        let acting = !dying && !d.attacking && hint.is_some_and(|h| !h.0.is_empty());
+        // (a scripted sword clip -- a cutscene's fight -- keeps the sword and shield in hand)
+        let acting = !dying && !d.attacking && hint.is_some_and(|h| !h.0.is_empty() && !h.0.starts_with("Sword_"));
         let want_vis = if acting { Visibility::Hidden } else { Visibility::Inherited };
         for &(pe, _, _) in &sk.props {
             if let Ok(mut v) = prop_vis.get_mut(pe) {
@@ -844,7 +851,7 @@ fn drive_skins(
             }
             sk.clip = clip;
             // two-handed work / fight clips grip the haft through the fist, the rest carry it
-            let work = matches!(clip, "TreeChopping_Loop" | "Farm_Harvest" | "Sword_Regular_A" | "Spell_Simple_Shoot");
+            let work = matches!(clip, "TreeChopping_Loop" | "Farm_Harvest" | "Spell_Simple_Shoot") || clip.starts_with("Sword_");
             if work != sk.work_grip || first {
                 sk.work_grip = work;
                 for &(pe, held, head) in &sk.props {

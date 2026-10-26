@@ -19,19 +19,20 @@ jednej klatce na każdą sekundę sceny (wszystkie ujęcia w jednym bootcie, ~30
 `FOREST_STORM_DAY=1` = ta sama inscenizacja w południe bez burzy (widać, gdzie kto stoi);
 `FOREST_FLASH_LUX`, `FOREST_STORM_SKY`, `FOREST_STORM_FOG` = siła błysku, kopuły nieba, mgły.
 
-## Montaż (47.5 s, zero dialogu poza kodą, zero muzyki)
+## Montaż (59.6 s @ 24 fps, kod: `storm.rs::at`, `STAND_BEATS`, `FIGHT`, `ORK_SWINGS` / `ORK_DEATHS`)
 
 | s | obraz | dźwięk |
 |---|---|---|
-| 0–4 | czerń | kajuta, potem rafa: trzask kadłuba, grzmot, dzwon, krzyki; Wat budzi się (`p1_wat_01`) |
-| 4–7.7 | **pokład** wraku przechylony (kamera z rollem): załoga przy dzwonie, rafa, piorun nad morzem | dzwon, sztorm na pokładzie, fala przez burtę |
-| 7.7–12 | czerń | kadłub, druga fala; dźwięk schodzi „pod wodę”, sekunda ciszy |
-| 12–20.6 | **plaża** z oczu Wata na kolanach: sześć orków z pochodniami wychodzi z lasu, idą, drugi błysk — rozpędzają się do szarży (tempo przechodzi płynnie, `smooth_track`), trzeci błysk: ork w obiektywie, cięcie | przybój, deszcz, kaszel (`p1_wat_02`), warczenie z daleka, okrzyk prowadzącego, okrzyki bandy i tupot coraz bliżej (take Azrak `ork-cry-*`, przestrajany), ryk w obiektywie — szybkie wyciszenie |
-| 22–26.9 | **Harrow** na wznak, topór, ork nad nim, Maud patrzy na Wata (podwójny błysk) | grzmot, potem tylko deszcz i pochodnia |
-| 26.9–31 | długa czerń | deszcz, oddech Wata |
-| 31–37.7 | **hełm** w piasku przy pochodni; za nim, nieostro, Maud z naramiennikiem przy klęczącym Wacie; drugi błysk przenosi ostrość na nich | płyta (`cs_plate_wet`), echo „Tighter.” (P.0), wysiłek (`p1_wat_03`) |
-| 37.7–40 | czerń | daleki róg orków |
-| 40–47.25 | **koda**: rycerz w zbroi Harrowa dobywa miecza i tarczy, wychodzi orkom naprzeciw; od kontaktu kamera z boku: przyjmuje cios pierwszego na tarczę, odpowiada lekką serią (cięcie, cięcie, pchnięcie — `player::combat::StagedStrike`), ork pada, drugi wpada, dwa ciosy — błysk, cięcie (`FIGHT`) | Maud: „Ser Godric's up! Behind him, all of you!” (`a1_maud_04`), okrzyki bandy, tarcza, świsty i trafienia, okrzyki bólu, śmierć |
+| 0–4 | czerń | kajuta; marynarz przez pokład: „Reef! Reef off the bow!”; rafa, grzmot, dzwon, krzyki; Wat budzi się |
+| 4–7.7 | **pokład** przechylony, załoga przy dzwonie, piorun nad morzem | dzwon, „Ring it! All hands, brace!” (głos Juliana = Harrow), sztorm |
+| 7.7–12 | czerń | fala, wszystko schodzi pod wodę i wypływa w plażę (bez dziury ciszy) |
+| 12–20.6 | **plaża** z oczu Wata: orkowie z pochodniami wychodzą z lasu, idą, rozpędzają się w szarżę; Harrow wchodzi w kadr przed Wata z mieczem | daleka banda, warczenie, okrzyk prowadzącego, okrzyki bandy, rozmyty tupot |
+| 21.6–28 | **ostatnia walka Harrowa**, sylwetki na tle morza w błyskach: zabija pierwszego, blok drugiego, trzeci trafia go z boku, drugi dobija, Harrow pada | świsty, trafienia, chrząknięcia orków, uderzenie w tarczę, upadek |
+| 28.6–33.5 | **Harrow** martwy na piasku, ork nad nim, Maud patrzy na Wata | szept Wata: „Ser...? Ser Godric.”, deszcz |
+| 33.5–37.6 | czerń | oddech Wata |
+| 37.6–44.3 | **hełm** w piasku przy pochodni; Maud z naramiennikiem przy klęczącym Wacie | Maud: „He's gone, Wat. Put it on. They need a knight standing.”, płyta, wysiłek |
+| 44.3–46.6 | czerń | daleka banda: idą znowu |
+| 46.6–58.4 | **koda**: rycerz dobywa broni, wychodzi naprzeciw; z boku: blok, seria (cięcie, cięcie, pchnięcie), ork pada, następny i następny; od drugiego trupa kamera wznosi się i oddala nad walką, ciała na piasku; ściemnienie | Maud: „Ser Godric's up! Behind him, all of you!”, okrzyki, tarcza, ciosy, śmierci |
 
 ## Jak jest zbudowana
 

@@ -18,6 +18,8 @@ Już są: `p1_wat_01..03` (Sully: oddech, kaszel, wysiłek), `a1_maud_04` (koda)
 („Aggressive fantasy orc”, „Deep menacing orc growl”, „Fantasy orc warrior”) pocięte na
 `assets/audio/ork-voice-{a1,a2,a3,d1,d2,w1,w2}.ogg` — bank orków w grze (`audio/sfx.rs`) i w filmie, gdzie
 każdy okrzyk dostaje własne gardło (`storm_mix.py::ork`: wysokość, dubel niżej, saturacja, pokój, dystans).
+Do tego `ork-voice-g1/g2` (dwa „orc warrior grunt”, też w banku gry), `cs_ork_band_far` (banda z daleka) i
+`cs_orks_run` (bieg, w miksie rozmyty i cichy: `smear`).
 
 ## SFX (`assets/audio/sfx/cutscene/`, stereo, ~-18 LUFS)
 

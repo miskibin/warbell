@@ -183,9 +183,10 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .collect(),
         // Ork voice: three ElevenLabs SFX takes (2026-10-26: "Aggressive fantasy orc", "Deep menacing
         // orc growl", "Fantasy orc warrior") cut into seven: a1-a3 the aggressive roars, d1 the deep
-        // growl and d2 its low rumbling tail, w1-w2 the warrior's cries. The short ones are the aggro
+        // growl and d2 its low rumbling tail, w1-w2 the warrior's cries; g1-g2 two "orc warrior
+        // grunt" takes. The short ones are the aggro
         // grunts, the long ones the roars; each plays with a pitch jitter so a warband isn't one throat.
-        ork_grunts: ["audio/ork-voice-a2.ogg", "audio/ork-voice-w2.ogg", "audio/ork-voice-d2.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        ork_grunts: ["audio/ork-voice-a2.ogg", "audio/ork-voice-w2.ogg", "audio/ork-voice-d2.ogg", "audio/ork-voice-g1.ogg", "audio/ork-voice-g2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         ork_roars: ["audio/ork-voice-a1.ogg", "audio/ork-voice-a3.ogg", "audio/ork-voice-d1.ogg", "audio/ork-voice-w1.ogg"]
             .iter()
             .map(|f| asset.load(*f))
