@@ -152,7 +152,7 @@ fn key_axis(keys: &ButtonInput<KeyCode>, pos: KeyCode, neg: KeyCode) -> f32 {
 /// Camera-relative WASD/arrow move direction on the ground plane (world XZ, normalized), or
 /// `None` when no move key is held. Shared by [`player_move`] and the [`player_roll`] arm so the
 /// roll dives exactly the way the player is steering.
-fn move_input(keys: &ButtonInput<KeyCode>, cam: Option<&Transform>) -> Option<Vec2> {
+pub(crate) fn move_input(keys: &ButtonInput<KeyCode>, cam: Option<&Transform>) -> Option<Vec2> {
     let mut fwd = cam.map(|c| *c.forward()).unwrap_or(Vec3::NEG_Z);
     fwd.y = 0.0;
     if fwd.length_squared() < 1e-6 {
@@ -223,7 +223,7 @@ pub fn player_roll(
     mut next_test: Local<f32>,
 ) {
     let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
-    let idle = hero.roll_t < 0.0 && hero.dash_t < 0.0 && hero.on_ground;
+    let idle = hero.roll_t < 0.0 && hero.dash_t < 0.0 && hero.on_ground && !hero.mounted;
     // Debug/capture hook: `FOREST_ROLLTEST=1` re-arms a forward roll on a ~1.8s loop (no keypress
     // under a capture; skips the pointer-lock/stamina gates) so a `FOREST_TPS` clip can frame the
     // somersault — same pattern as `FOREST_BELLTEST`.
@@ -803,6 +803,25 @@ pub fn player_move(
     // Hold still in FreeRoam (fly-cam drives the view), while down (awaiting respawn), or in build
     // mode (WASD then drives the build palette, not the knight). Keep the mirror current; `alive=false`
     // when down so orks stop chasing the corpse.
+    // In the saddle the horse (`crate::horse`, ordered after this) owns pos / y / facing and the root.
+    if hero.mounted {
+        hero.moving = false;
+        hero.moving_amt = 0.0;
+        hero.run_amt = 0.0;
+        hero.vel = Vec2::ZERO;
+        hero.vel_y = 0.0;
+        hero.on_ground = true;
+        hero.dash_t = -1.0;
+        hero.roll_t = -1.0;
+        hero.stance_amt = 0.0;
+        hero.strafe_twist = 0.0;
+        hero.back_amt = 0.0;
+        hero.sprint_held = false;
+        write_state(&mut state, &hero);
+        state.alive = player.0.is_alive();
+        return;
+    }
+
     if *mode != PlayMode::Play || !player.0.is_alive() || build_mode.active {
         hero.moving = false;
         hero.vel = Vec2::ZERO;

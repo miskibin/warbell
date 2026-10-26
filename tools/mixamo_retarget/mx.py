@@ -90,7 +90,8 @@ class Clip:
             self.bones = {k: v for k, v in self.bones.items() if k not in FINGERS}
         # The T-pose (bind) reference = the unevaluated default pose.
         self.tpose = {k: world(self.nodes[v]) for k, v in self.bones.items()}
-        self.stack = self.stacks['mixamo.com']
+        # Mixamo names its take 'mixamo.com'; a pose exported from Blender (Riding.fbx) has one take of its own name
+        self.stack = self.stacks.get('mixamo.com') or next(iter(self.stacks.values()))
 
     def sample(self, fps=FPS):
         """-> times, {bone: (pos (n,3) cm, quat (n,4) xyzw)} in the file's own (Y-up, +Z-forward) frame."""

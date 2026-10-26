@@ -87,6 +87,7 @@ mod grade;
 mod groundcover;
 mod groundtest; // FOREST_GROUNDTEST=1: floating flat grass plane to isolate the terrain shader
 mod hints;
+mod horse; // the rideable horse: L calls it (fade), WASD steers, a fight throws the knight off and it bolts
 mod hud;
 mod interaction;
 mod inventory;
@@ -406,6 +407,7 @@ fn main() {
         .add_plugins(meadow::MeadowPlugin)
         // The farmed countryside's grazing horses (the rest is static, spawned by the world build).
         .add_plugins(countryside::CountrysidePlugin)
+        .add_plugins(horse::HorsePlugin) // rideable horse: L to mount / dismount, bolts when a fight starts
         .add_plugins((pasture::PasturePlugin, drill_yard::DrillYardPlugin, watch_beacon::WatchBeaconPlugin, caravan::CaravanPlugin))
         // Last-of-the-line alert (heir-count stinger + persistent banner). Standalone: the tuples
         // above are at the `Plugins` arity-15 cap.

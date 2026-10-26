@@ -542,7 +542,7 @@ fn gait_at(v: f32) -> Gait {
 }
 
 /// World units per footman model metre (rig scale × `HERO_SCALE`).
-fn hero_model_scale() -> f32 {
+pub(crate) fn hero_model_scale() -> f32 {
     super::footman::leg_rig().scale * super::HERO_SCALE
 }
 
@@ -2066,6 +2066,8 @@ pub(crate) enum Clip {
     Dash,
     Roll,
     Victory,
+    /// In the saddle (`crate::horse`).
+    Ride,
 }
 
 #[derive(Default)]
@@ -2359,7 +2361,8 @@ pub fn hero_anim(
     let fight = foe_close || now < hero_mut.combat_until;
     // Holding Shift in a fight (no swing / block under way) puts the weapons away so the hero can
     // run: no sprinting with sword and shield drawn.
-    let want_drawn = action || hero_mut.victory || (fight && !hero_mut.sprint_held);
+    // In the saddle the hands are on the reins: everything stays slung.
+    let want_drawn = !hero_mut.mounted && (action || hero_mut.victory || (fight && !hero_mut.sprint_held));
     sheath.update(dt, want_drawn, action, hero_mut.sprint_held);
     hero_mut.weapons_drawn = sheath.drawn;
     hero_mut.kit_reach = sheath.reach_t.is_some();
@@ -2416,7 +2419,9 @@ pub fn hero_anim(
     // them (stride → jump at take-off, jump → stride on landing, a swing starting mid-run, the
     // dash/charge entering) used to SNAP the whole rig in one frame. On a clip change, freeze the
     // last written pose and ease from it into the new clip over a short, per-transition window.
-    let clip = if hero.victory {
+    let clip = if hero.mounted {
+        Clip::Ride
+    } else if hero.victory {
         Clip::Victory
     } else if hero.roll_t >= 0.0 {
         Clip::Roll
@@ -2437,7 +2442,14 @@ pub fn hero_anim(
         let u_l = (hero.walk_phase / std::f32::consts::TAU).rem_euclid(1.0);
         blend.lead_right = moving > 0.05 && u_l < g.duty;
     }
-    let pose = if hero.victory {
+    let pose = if hero.mounted {
+        // Astride the horse: the seat posed in Blender, the trunk pitched by the ride's sway and the
+        // head held level against it (the horse seats the hips and owns the bounce).
+        let mut p = mixamo::ride();
+        p.torso.r *= rx(hero.ride_lean);
+        p.head.r *= rx(-0.7 * hero.ride_lean);
+        p
+    } else if hero.victory {
         victory_pose(now)
     } else if hero.roll_t >= 0.0 {
         // Dodge roll: fold into the tuck through the somersault's core, unfolding at both ends so
@@ -2524,6 +2536,7 @@ pub fn hero_anim(
             (Clip::Air, Clip::Loco) => 0.09,                 // landing (the squash carries the rest)
             (Clip::Loco, Clip::Air) => 0.12,                 // take-off into the jump/leap
             (_, Clip::Victory) => 0.3,
+            (_, Clip::Ride) | (Clip::Ride, _) => 0.3, // swung up into / down out of the saddle
             _ => 0.14,
         };
         if let Some(last) = blend.last {
@@ -2600,7 +2613,7 @@ pub fn hero_anim(
 
         // Landing squash folded over the locomotion pose right after touchdown (studio positive-knee
         // crouch: hips dip, knees bend, thighs settle back, feet flatten, torso leans in).
-        if landing > 0.0 && !attack && hero.on_ground {
+        if landing > 0.0 && !attack && hero.on_ground && !hero.mounted {
             match part.joint {
                 Joint::Hips => tf.translation.y -= 0.12 * landing,
                 Joint::KneeL | Joint::KneeR => tf.rotation *= rx(0.9 * landing),
@@ -2629,7 +2642,8 @@ pub fn hero_anim(
     // the difference (low-passed, so a change of the planted boot doesn't pop).
     // Not the Mixamo run, though: it has real flight (both boots up), which this pulled back down
     // into a squat; it is grounded once, as a whole loop, in `mixamo::direct`.
-    let grounded = hero.on_ground && hero.roll_t < 0.0 && hero.dash_t < 0.0;
+    // Nor in the saddle: the boots hang in the stirrups, the horse seats the hips.
+    let grounded = hero.on_ground && hero.roll_t < 0.0 && hero.dash_t < 0.0 && !hero.mounted;
     let flight = if matches!(clip, Clip::Loco) && mixamo_gait() { mixamo::owns_height(hero.gait_speed / hero_model_scale()) * moving } else { 0.0 };
     let want = if grounded { (-legs.boot_height()).clamp(-GROUND_FIX_MAX, GROUND_FIX_MAX) * (1.0 - flight) } else { 0.0 };
     let k = (dt * if grounded { 40.0 } else { 10.0 }).min(1.0);

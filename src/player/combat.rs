@@ -738,7 +738,7 @@ pub fn player_attack(
     >,
 ) {
     let Ok((mut hero, mut hh, mut hero_tf)) = hero_q.single_mut() else { return };
-    if *mode != PlayMode::Play || !player.0.is_alive() || hero.roll_t >= 0.0 {
+    if *mode != PlayMode::Play || !player.0.is_alive() || hero.roll_t >= 0.0 || hero.mounted {
         // Out of play, down, or mid dodge-roll (the roll cancelled the swing on arm).
         hero.attacking = false;
         hero.charge_t = -1.0;

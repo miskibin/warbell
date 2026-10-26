@@ -18,10 +18,10 @@ pub fn player_block(
     mode: Res<PlayMode>,
     player: Res<PlayerRes>,
     buttons: Res<ButtonInput<MouseButton>>,
-    mut hero_q: Query<&mut HeroHealth>,
+    mut hero_q: Query<(&mut HeroHealth, &super::Hero)>,
     mut hero_state: ResMut<super::HeroState>,
 ) {
-    let Ok(mut hh) = hero_q.single_mut() else { return };
+    let Ok((mut hh, hero)) = hero_q.single_mut() else { return };
     let dt = time.delta_secs();
 
     // Stamina pool grows with hero level — a veteran guards longer. Level is persisted on
@@ -33,7 +33,7 @@ pub fn player_block(
     hh.stamina_max = want_max;
     hh.stamina = hh.stamina.min(hh.stamina_max);
 
-    if *mode != PlayMode::Play || !player.0.is_alive() {
+    if *mode != PlayMode::Play || !player.0.is_alive() || hero.mounted {
         hh.blocking = false;
         hero_state.blocking = false;
         return;

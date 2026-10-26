@@ -426,6 +426,7 @@ fn controls_pane(p: &mut Pane<'_>, fonts: &UiFonts, fp: &FirstPerson) {
         ("E", "Interact"),
         ("F", "Loot"),
         ("I", "Satchel"),
+        ("L", "Mount / dismount horse"),
         ("R", "Recruit"),
         ("H", "Help"),
         ("V", "Toggle camera"),

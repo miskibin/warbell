@@ -351,6 +351,16 @@ pub(super) fn roll(u: f32) -> Pose {
     p
 }
 
+/// Astride the horse: the seat posed in Blender on Henry S's horse (feet in the stirrups, reins in
+/// hand), baked in the pelvis frame. The hips sit at the clips' authored 1.05 (the footman's
+/// `HIP_REST_Y` once `hero_anim` shifts them) — `crate::horse` puts that point on the saddle.
+pub(super) fn ride() -> Pose {
+    let f = sample_once(&mc::RIDE, 0.0);
+    let mut p = dress(solve(&f, false), 0.0, 0.0, 1.0);
+    p.hips = Jp { t: Some(Vec3::new(0.0, 1.05, 0.0)), r: Quat::IDENTITY };
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

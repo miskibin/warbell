@@ -50,6 +50,8 @@ use bevy::prelude::*;
 /// scaled by the SAME 1.35× so proportions stay consistent; animals are deliberately left small.
 /// Camera `EYE_H`/`FP_EYE_H` (player/camera.rs) track this height.
 pub const HERO_SCALE: f32 = 0.6345;
+/// The horse ([`crate::horse`]) steers by the knight's own camera-relative WASD.
+pub(crate) use movement::move_input;
 /// The hero root's scale. The footman asset is mirrored across X on import (`footman.rs`), which
 /// left the knight holding his sword in the LEFT hand and the shield in the right; flipping X back
 /// here makes him right-handed in third AND first person (Bevy flips the winding for a negative
@@ -248,6 +250,13 @@ pub struct Hero {
     pub disengaged: bool,
     /// How long the input has pointed away from the foe (s) — the disengage needs a deliberate beat.
     pub away_for: f32,
+    /// In the saddle ([`crate::horse`]): the horse owns `pos` / `y` / `facing` (it seats the hips on
+    /// the saddle each frame), locomotion and every combat input stand down, and [`anim`] holds the
+    /// riding seat. Transient — a load or a fight puts the hero back on foot.
+    pub mounted: bool,
+    /// The rider's trunk pitch forward over the withers (rad), written by the horse while mounted:
+    /// speed, plus the seat's lag through starts and stops.
+    pub ride_lean: f32,
 }
 
 /// Seconds the "in combat" state lingers past the last blow dealt/taken (drives the stance).
@@ -304,6 +313,8 @@ impl Hero {
             kit_reach: false,
             disengaged: false,
             away_for: 0.0,
+            mounted: false,
+            ride_lean: 0.0,
         }
     }
 }
