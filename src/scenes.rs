@@ -38,6 +38,7 @@ use crate::siege::InvaderArmory;
 use crate::meshkit::{merged_flat as merged, tinted_hex as tinted};
 
 mod cabin;
+mod storm;
 
 // ── Public tags ──────────────────────────────────────────────────────────────────────
 
@@ -69,11 +70,14 @@ pub enum SceneId {
     /// Screenplay P.0 "Na pokładzie": Harrow and Wat in the stern cabin, a storm outside, three days
     /// out from Kell. Video rig only (`FOREST_SCENE=cabin`) — never triggered by the game.
     ShipCabin,
+    /// Screenplay P.1 "Piorun": four pictures out of black, each lit by one lightning strike —
+    /// the wreck, the orks on the beach, Harrow dead, the helmet. Video rig only (`FOREST_SCENE=storm`).
+    Storm,
 }
 
 /// The scripted, letterboxed cutscenes (vs. the looped trailer tableaus).
 fn is_cutscene(id: Option<SceneId>) -> bool {
-    matches!(id, Some(SceneId::FarmMorning | SceneId::FortArrival | SceneId::ShipCabin))
+    matches!(id, Some(SceneId::FarmMorning | SceneId::FortArrival | SceneId::ShipCabin | SceneId::Storm))
 }
 
 /// What the F1 panel asks for vs. what's currently staged. `clock` is seconds since the active scene
@@ -172,6 +176,7 @@ impl Plugin for ScenesPlugin {
                 "farm" | "farmmorning" | "ch2" | "protection" => Some(SceneId::FarmMorning),
                 "fort" | "fortarrival" | "p3" => Some(SceneId::FortArrival),
                 "cabin" | "ship" | "shipcabin" | "p0" | "belowdeck" => Some(SceneId::ShipCabin),
+                "storm" | "p1" | "piorun" | "lightning" => Some(SceneId::Storm),
                 _ => None,
             };
         }
@@ -189,6 +194,8 @@ impl Plugin for ScenesPlugin {
                     drive_fort_scene,
                     fort_birds,
                     cabin::drive,
+                    storm::drive,
+                    storm::drive_fx,
                 )
                     .chain(),
             )
@@ -256,11 +263,35 @@ fn apply_scene_change(
     mut subs: ResMut<crate::subtitles::Subtitles>,
     fonts: Option<Res<crate::ui::fonts::UiFonts>>,
     server: Res<AssetServer>,
+    mut rehearsed: Local<bool>,
 ) {
     if state.want == state.active {
         // A clip's warm-up frames don't count: the scene starts when recording does.
         // `FOREST_SCENE_T` freezes the clock at that instant (a still of one moment of the cutscene).
         let still = is_cutscene(state.active) && std::env::var_os("FOREST_SCENE_T").is_some();
+        // Look-dev contact sheet: `FOREST_SCENE_SHEET="t1,t2,…"` under `FOREST_CLIP` saves one frame
+        // at each listed scene second (the clock jumps per saved frame), every shot in one boot.
+        // A clip's warm-up rehearses the film: the clock flicks through every shot so each actor,
+        // prop and light set is drawn once and its pipelines are compiled before recording starts
+        // (first sight of a skinned look compiles for seconds, and it showed as people missing, or
+        // only their faces and hands, in the first frames of a shot). Back to 0 when it starts.
+        let warming = prog.as_ref().is_some_and(|p| !p.recording);
+        if let (true, Some(r)) = (warming, rehearsal(state.active)) {
+            state.clock = r[(time.elapsed_secs() * 1.5) as usize % r.len()];
+            *rehearsed = true;
+            return;
+        }
+        if std::mem::take(&mut *rehearsed) && sheet_times().is_none() {
+            state.clock = 0.0;
+        }
+        if let (true, Some(times)) = (is_cutscene(state.active), sheet_times()) {
+            // `FOREST_SCENE_SHEET_HOLD=n` holds each time n frames (keep every n-th): skins posed,
+            // the camera's cut settled.
+            let hold = std::env::var("FOREST_SCENE_SHEET_HOLD").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).max(1);
+            let k = prog.as_ref().map_or(0, |p| p.frame as usize) / hold;
+            state.clock = times[k.min(times.len() - 1)];
+            return;
+        }
         if !still && !prog.is_some_and(|p| !p.recording) {
             state.clock += time.delta_secs();
         }
@@ -410,6 +441,10 @@ fn apply_scene_change(
             pin_sky(&mut clock, cabin::SKY);
             cabin::setup(&mut commands, &mut meshes, &mut images, &mut creature_mats, &mut std_mats, &assets, fonts.as_deref(), &server);
         }
+        SceneId::Storm => {
+            pin_sky(&mut clock, if storm::day_dev() { 0.3 } else { storm::SKY });
+            storm::setup(&mut commands, &mut meshes, &mut images, &mut creature_mats, &mut std_mats, &assets, arm);
+        }
         SceneId::BarrelPeek => {
             pin_sky(&mut clock, 0.82);
             // A peasant peeking out from behind a barrel in the yard.
@@ -434,6 +469,29 @@ fn apply_scene_change(
         -crate::cinematic::PRE_ROLL
     };
     state.active = Some(id);
+}
+
+/// Look-dev: the storm's haze against its dome (`FOREST_STORM_FOG`, x the dome's horizon colour).
+fn fog_gain() -> f32 {
+    static V: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("FOREST_STORM_FOG").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0))
+}
+
+/// The moments a cutscene's warm-up flicks through (one per shot), if it has any.
+fn rehearsal(id: Option<SceneId>) -> Option<&'static [f32]> {
+    match id {
+        Some(SceneId::Storm) => Some(storm::REHEARSAL),
+        _ => None,
+    }
+}
+
+fn sheet_times() -> Option<&'static [f32]> {
+    static T: std::sync::OnceLock<Option<Vec<f32>>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let v: Vec<f32> = std::env::var("FOREST_SCENE_SHEET").ok()?.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+        (!v.is_empty()).then_some(v)
+    })
+    .as_deref()
 }
 
 // ── Per-frame drives ───────────────────────────────────────────────────────────────────
@@ -1038,6 +1096,7 @@ fn drive_farm_audio(
         *cues = parse_cues(match state.active {
             Some(SceneId::FortArrival) => include_str!("../assets/cutscene/fort_arrival.cues"),
             Some(SceneId::ShipCabin) => include_str!("../assets/cutscene/ship_cabin.cues"),
+            Some(SceneId::Storm) => include_str!("../assets/cutscene/storm.cues"),
             _ => include_str!("../assets/cutscene/farm_morning.cues"),
         });
         *next = 0;
@@ -1196,6 +1255,10 @@ fn farm_camera(
     >,
     mut ibl: Query<&mut bevy::light::EnvironmentMapLight, With<Camera3d>>,
     mut ambient: ResMut<GlobalAmbientLight>,
+    (mut moon, mut fog): (
+        Query<(&mut DirectionalLight, &mut Transform), (With<crate::scene::Moon>, Without<Camera3d>)>,
+        Query<&mut bevy::pbr::DistanceFog, With<Camera3d>>,
+    ),
     mut saved: Local<Option<FarmLookSaved>>,
     mut last_eye: Local<Option<Vec3>>,
 ) {
@@ -1247,9 +1310,14 @@ fn farm_camera(
     let now = time.elapsed_secs();
     let fort = state.active == Some(SceneId::FortArrival);
     let ship = state.active == Some(SceneId::ShipCabin);
+    let storm = state.active == Some(SceneId::Storm);
     let mut up = Vec3::Y;
     let ((eye, at, fov_deg, band), focus) = if fort {
         fort_shot(t)
+    } else if storm {
+        let (shot, roll_up) = storm::camera(t);
+        up = roll_up;
+        shot
     } else if ship {
         let (shot, ship_up) = cabin::camera(t);
         up = ship_up;
@@ -1257,7 +1325,7 @@ fn farm_camera(
     } else {
         (farm_shot(t, world_y_at(FARM)), None)
     };
-    let thin = fort || ship;
+    let thin = fort || ship || storm;
     // Handheld: slow, tiny, incommensurate drifts on position and aim (never a shake).
     let h = |f: f32, ph: f32| (now * f + ph).sin();
     let sway = Vec3::new(h(0.9, 0.0) + 0.5 * h(2.3, 1.0), h(1.1, 2.0) * 0.6, h(0.7, 4.0)) * 0.012;
@@ -1322,8 +1390,8 @@ fn farm_camera(
         dof.far_ramp = 16.0;
         // Below deck everything is within a few metres, so the cabin film opens the aperture
         // wider: the hull behind a close face melts the way a fast lens does in lamplight.
-        dof.max_radius = if ship { 9.0 } else if thin { 4.5 } else { 7.0 };
-        dof.lens = if ship { band * 1.5 } else if thin { band } else { 0.0 };
+        dof.max_radius = if ship || storm { 9.0 } else if thin { 4.5 } else { 7.0 };
+        dof.lens = if ship || storm { band * 1.5 } else if thin { band } else { 0.0 };
     }
     if let Some(g) = grade.as_mut() {
         g.grain = 0.045;
@@ -1349,6 +1417,25 @@ fn farm_camera(
             g.streak = 0.5;
             g.weave = 0.45;
         }
+        if storm {
+            // Night and lightning on fast stock: cold, near-colourless, the blacks crushed, the
+            // flashes blooming off the wet; only the torches keep their orange.
+            g.grain = 0.16;
+            g.vignette = 0.7;
+            g.highlight_tint = Vec3::new(0.96, 1.0, 1.08);
+            g.shadow_tint = Vec3::new(0.86, 0.95, 1.14);
+            g.split = 0.6;
+            g.vibrance = 0.0;
+            g.saturation = 0.62;
+            g.contrast = 1.16;
+            g.toe = 0.008;
+            g.toe_tint = Vec3::new(0.82, 0.9, 1.0);
+            g.clarity = 0.7;
+            g.halation = 0.85;
+            g.streak = 0.55;
+            g.weave = 0.5;
+            g.aberration = 0.0025;
+        }
         if fort {
             // Golden hour: warmer highlights, a cooler blue in the shade, a touch more split.
             g.highlight_tint = Vec3::new(1.13, 1.0, 0.80);
@@ -1358,6 +1445,30 @@ fn farm_camera(
             g.halation = 0.5;
             g.streak = 0.7;
             g.weave = 0.45;
+        }
+    }
+    if storm && !storm::day_dev() {
+        // The storm's own light over what `advance_sky` wrote this frame (it rewrites all of it
+        // every frame, so the night comes back by itself after the film).
+        let l = storm::light(t);
+        let fl = l.flash;
+        for (mut m, mut tf) in &mut moon {
+            m.illuminance = l.moon;
+            m.color = Color::srgb(0.62 + 0.3 * fl, 0.7 + 0.25 * fl, 1.0);
+            *tf = Transform::from_translation(-l.dir * 120.0).looking_to(l.dir, Vec3::Y);
+        }
+        ambient.color = Color::srgb(0.55 + 0.35 * fl, 0.62 + 0.3 * fl, 0.85 + 0.15 * fl);
+        ambient.brightness = l.ambient;
+        for mut env in &mut ibl {
+            env.intensity = l.ibl;
+        }
+        // The rain's haze closes in, and fades into the cloud dome's horizon (lit with it on a
+        // strike), so the land beyond it melts into the storm instead of ending at the dome.
+        let haze = storm::SKY_HORIZON * storm::sky_gain() * (1.0 + 22.0 * fl) * fog_gain();
+        for mut f in &mut fog {
+            f.color = Color::linear_rgb(haze.x, haze.y, haze.z);
+            f.directional_light_color = Color::NONE;
+            f.falloff = bevy::pbr::FogFalloff::Linear { start: 8.0, end: storm::SKY_R - 6.0 };
         }
     }
     if ship {
@@ -1381,11 +1492,36 @@ fn farm_clear_stage(
     state: Res<SceneState>,
     mut q: Query<
         (Entity, &mut Visibility, &GlobalTransform),
-        Or<(With<crate::ambient_life::Butterfly>, With<crate::town::BuildPlot>)>,
+        Or<(With<crate::ambient_life::Butterfly>, With<crate::town::BuildPlot>, With<crate::decor::Firefly>, With<crate::particles::Particle>)>,
     >,
+    flies: Query<(), Or<(With<crate::decor::Firefly>, With<crate::particles::Particle>)>>,
+    mut fly_tf: Query<&mut Transform, Or<(With<crate::decor::Firefly>, With<crate::particles::Particle>)>>,
+    mut embers: Query<&mut Visibility, (With<crate::firelight::Ember>, Without<crate::decor::Firefly>, Without<crate::particles::Particle>, Without<crate::ambient_life::Butterfly>, Without<crate::town::BuildPlot>)>,
     mut hidden: Local<Vec<(Entity, Visibility)>>,
+    mut logged: Local<bool>,
 ) {
-    if state.active == Some(SceneId::FarmMorning) {
+    if state.active == Some(SceneId::Storm) {
+        // no fireflies (or the biome's weather motes) out in a storm: its own rain falls instead
+        for (e, mut v, _) in &mut q {
+            if *v != Visibility::Hidden && flies.contains(e) {
+                hidden.push((e, *v));
+                *v = Visibility::Hidden;
+            }
+        }
+        // (and shrunk to nothing: their own systems re-scale them every frame in Update)
+        let mut n = 0;
+        for mut tf in &mut fly_tf {
+            tf.scale = Vec3::ZERO;
+            n += 1;
+        }
+        // nor sparks off the torches: the rain puts them out (each lives a second or two)
+        for mut v in &mut embers {
+            *v = Visibility::Hidden;
+        }
+        if !std::mem::replace(&mut *logged, true) {
+            info!("storm: {n} fireflies / weather motes put out");
+        }
+    } else if state.active == Some(SceneId::FarmMorning) {
         for (e, mut v, gt) in &mut q {
             let p = gt.translation();
             if *v != Visibility::Hidden && Vec2::new(p.x, p.z).distance(FARM) < CLEAR_R {

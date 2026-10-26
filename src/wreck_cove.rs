@@ -122,7 +122,8 @@ impl Site {
     fn rot(&self) -> Quat {
         Quat::from_rotation_y(self.yaw)
     }
-    fn to_world(&self, m: Vec3) -> Vec3 {
+    /// Model space → world (model −X inland, +Z the bow along the beach, y up from the site's base).
+    pub fn to_world(&self, m: Vec3) -> Vec3 {
         let r = self.rot() * m;
         Vec3::new(self.pos.x + r.x, self.y + r.y, self.pos.y + r.z)
     }
@@ -187,6 +188,14 @@ pub fn footing_over(wx: f32, wz: f32, ground: Option<f32>) -> Option<f32> {
         }
         (None, g) => g,
     }
+}
+
+/// The world point on the open main deck over model `(mx, mz)`, if that is deck (the P.1 cutscene
+/// stands the crew and its camera on her).
+pub fn deck_point(mx: f32, mz: f32) -> Option<Vec3> {
+    let s = site()?;
+    let y = deck_model_y(mx, mz)?;
+    Some(s.to_world(Vec3::new(mx, y, mz)))
 }
 
 /// Every solid of the wreck as a world OBB `(centre, half-extents, yaw)`: the hull's outer

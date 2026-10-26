@@ -1,0 +1,3 @@
+# P.1 "Piorun" in-game playback (the film is mixed offline by tools/cutscene/storm_mix.py).
+# time  path  volume  [flags]
+0.0  audio/cutscene/storm_mix.ogg  1.0

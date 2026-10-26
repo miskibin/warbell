@@ -126,7 +126,7 @@ impl Plugin for FireLightPlugin {
 /// A single rising ember mote: floats up (no gravity — embers rise), shrinks + flickers over its
 /// short life, then despawns. Shared material, so thousands still batch.
 #[derive(Component)]
-struct Ember {
+pub(crate) struct Ember {
     vel: Vec3,
     life: f32,
     life0: f32,

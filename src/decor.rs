@@ -118,7 +118,7 @@ fn cyl_up(r: f32, h: f32, cy: f32, res: u32, c: u32) -> Mesh {
 /// A hovering glow mote. Stores its drift centre + per-mote phase/speed so the bob is
 /// deterministic and each firefly moves independently.
 #[derive(Component)]
-struct Firefly {
+pub(crate) struct Firefly {
     base: Vec3,
     phase: f32,
     speed: f32,
